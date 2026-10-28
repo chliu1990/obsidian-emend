@@ -30,13 +30,14 @@ npm install
 npm run dev
 npm run build
 npm run lint
+npm test
 ```
 
-- `npm install` installs the dependencies in `package.json`. There is currently no lockfile, so `npm ci` is not available unless one is added.
+- `npm install` installs the dependencies in `package.json`. Use `npm ci` with the committed `package-lock.json` for reproducible installs and CI.
 - `npm run dev` starts esbuild in watch mode and writes `main.js`. It does **not** run TypeScript type checking; use the production build or `npx tsc -noEmit -skipLibCheck` for that check.
 - `npm run build` runs `tsc -noEmit -skipLibCheck` and then creates the production `main.js`.
 - `npm run lint` runs ESLint over the project using the typed `typescript-eslint` setup and `eslint-plugin-obsidianmd` recommended rules.
-- There is no automated test script or test framework at present.
+- `npm test` runs Vitest once; `npm run test:watch` starts watch mode. Tests use the `obsidian` mock alias and must not access a real vault or the network.
 
 `main.js`, source maps, `node_modules/`, and Obsidian's local `data.json` are gitignored. Do not commit generated bundles or local plugin settings.
 
@@ -99,11 +100,13 @@ Settings are loaded with `loadData()`, normalized against defaults, and saved wi
 
 ## Testing instructions
 
-There are no automated unit or integration tests. At minimum, run both checks after code changes:
+Unit tests use Vitest and live under `tests/`, with Obsidian mocked by `tests/mocks/obsidian.ts`. At minimum, run all local gates after code changes:
 
 ```bash
+npm test
 npm run build
 npm run lint
+git diff --check
 ```
 
 These checks do not exercise Obsidian, CodeMirror interaction, or real provider APIs. Perform manual testing by copying `main.js`, `manifest.json`, and `styles.css` to:
@@ -145,4 +148,4 @@ updates `package.json` through npm and invokes the `version` script, which copie
 
 For a release, run a production build and publish `main.js`, `manifest.json`, and `styles.css` as individual assets. The GitHub release tag should exactly match the manifest version, without a leading `v`. Keep `minAppVersion` and the `versions.json` mapping accurate when adopting newer Obsidian APIs.
 
-There is currently no `.github` workflow in this repository; do not assume CI will run lint, builds, tests, or releases automatically.
+Gitea Actions runs lint, tests, and the production build through `.gitea/workflows/ci.yaml`. The `ubuntu-latest` label requires the repository's Docker-backed runner; verify that the runner is online before treating a pushed check as actionable. Releases remain manual.
