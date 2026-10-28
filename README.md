@@ -1,3 +1,11 @@
+# Emend
+
+Emend — AI text correction agent for Obsidian. Originally based on Lapis Lazuli AI Assistant by Taha Yiğit Melek (MIT), substantially rewritten: explicit agent modes, code-level permissions, CriticMarkup-native editing via Track Changes, dynamic skill loading.
+
+
+---
+Original README
+
 # Lapis Lazuli AI Assistant
 
 Lapis Lazuli is an Obsidian plugin that brings context-aware AI chat and git-style edit previews directly into your Markdown notes. It lets you ask questions about the active note, request edits from multiple AI providers, and accept or reject proposed changes before they are written to the file.

@@ -1,269 +1,148 @@
-# Obsidian community plugin
+# Emend / Lapis Lazuli AI Assistant
 
 ## Project overview
 
-- Target: Obsidian Community Plugin (TypeScript → bundled JavaScript).
-- Entry point: `src/main.ts` compiled to `main.js` and loaded by Obsidian.
-- Required release artifacts: `main.js`, `manifest.json`, and optional `styles.css`.
+This repository contains an Obsidian community plugin written in TypeScript and bundled with esbuild. The plugin provides context-aware AI chat, proposed note edits with in-editor diff review, and inline AI suggestions for Markdown notes.
 
-## Environment & tooling
+The repository is in a naming and architecture transition:
 
-- Node.js: use current LTS (Node 18+ recommended).
-- **Package manager: npm** (required for this sample - `package.json` defines npm scripts and dependencies).
-- **Bundler: esbuild** (required for this sample - `esbuild.config.mjs` and build scripts depend on it). Alternative bundlers like Rollup or webpack are acceptable for other projects if they bundle all external dependencies into `main.js`.
-- Types: `obsidian` type definitions.
+- The **current implementation and release identity are Lapis Lazuli**. `manifest.json` uses plugin ID `lapis-lazuli-ai-assistant`, name `Lapis Lazuli AI Assistant`, and version `1.0.2`; `package.json` is named `lapis-lazuli` at the same version.
+- The README introduces **Emend** as the intended rewritten plugin. `IMPLEMENTATION_PLAN.md` describes planned Emend modes, code-level write permissions, CriticMarkup editing, Track Changes integration, and dynamic skill loading.
+- Those Emend mechanisms are **not implemented in the current `src/` files**. Do not describe or extend the planned architecture as though it already exists. When implementing the plan, reconcile names, settings, commands, styles, privacy documentation, and tests together.
 
-**Note**: This sample project has specific technical dependencies on npm and esbuild. If you're creating a plugin from scratch, you can choose different tools, but you'll need to replace the build configuration accordingly.
+The manifest requires Obsidian `1.11.4` or newer and sets `isDesktopOnly` to `false`. Keep runtime code compatible with desktop and mobile Obsidian unless that declaration is deliberately changed.
 
-### Install
+## Technology stack and build process
+
+- TypeScript with strict compiler checks; source files are under `src/`.
+- Obsidian API for plugin lifecycle, workspace views, settings, vault access, notices, and HTTP requests.
+- CodeMirror 6 (`@codemirror/state` and `@codemirror/view`) for editor extensions, state fields, decorations, and review widgets.
+- esbuild bundles `src/main.ts` into a CommonJS `main.js` at the repository root, targeting ES2021.
+- Obsidian, Electron, CodeMirror/Lezer modules, and Node built-ins are external to the bundle and supplied by the host. Other runtime code must be bundled; do not add unbundled runtime dependencies.
+- Development builds include inline source maps and are unminified. Production builds are minified and have no source map.
+
+### Commands
+
+Use npm from the repository root:
 
 ```bash
 npm install
-```
-
-### Dev (watch)
-
-```bash
 npm run dev
-```
-
-### Production build
-
-```bash
 npm run build
+npm run lint
 ```
 
-## Linting
+- `npm install` installs the dependencies in `package.json`. There is currently no lockfile, so `npm ci` is not available unless one is added.
+- `npm run dev` starts esbuild in watch mode and writes `main.js`. It does **not** run TypeScript type checking; use the production build or `npx tsc -noEmit -skipLibCheck` for that check.
+- `npm run build` runs `tsc -noEmit -skipLibCheck` and then creates the production `main.js`.
+- `npm run lint` runs ESLint over the project using the typed `typescript-eslint` setup and `eslint-plugin-obsidianmd` recommended rules.
+- There is no automated test script or test framework at present.
 
-- ESLint is preconfigured with `eslint-plugin-obsidianmd` for Obsidian-specific rules.
-- Run `npm run lint` to lint the project.
-- A GitHub Action automatically lints every commit on all branches.
+`main.js`, source maps, `node_modules/`, and Obsidian's local `data.json` are gitignored. Do not commit generated bundles or local plugin settings.
 
-## File & folder conventions
+## Source organization and responsibilities
 
-- **Organize code into multiple files**: Split functionality across separate modules rather than putting everything in `main.ts`.
-- Source lives in `src/`. Keep `main.ts` small and focused on plugin lifecycle (loading, unloading, registering commands).
-- **Example file structure**:
-    ```
-    src/
-      main.ts           # Plugin entry point, lifecycle management
-      settings.ts       # Settings interface and defaults
-      commands/         # Command implementations
-        command1.ts
-        command2.ts
-      ui/              # UI components, modals, views
-        modal.ts
-        view.ts
-      utils/           # Utility functions, helpers
-        helpers.ts
-        constants.ts
-      types.ts         # TypeScript interfaces and types
-    ```
-- **Do not commit build artifacts**: Never commit `node_modules/`, `main.js`, or other generated files to version control.
-- Keep the plugin small. Avoid large dependencies. Prefer browser-compatible packages.
-- Generated output should be placed at the plugin root or `dist/` depending on your build setup. Release artifacts must end up at the top level of the plugin folder in the vault (`main.js`, `manifest.json`, `styles.css`).
+| Path | Responsibility |
+| --- | --- |
+| `src/main.ts` | Plugin lifecycle and orchestration: settings loading, chat view and command registration, CodeMirror extension registration, note/context selection, AI request coordination, and accept/reject behavior. |
+| `src/chat-view.ts` | Right-sidebar `ItemView`, in-memory chat state, message rendering, composer, copy action, and submission flow. |
+| `src/providers.ts` | Provider-specific HTTP requests, prompt construction, chat JSON protocol parsing, response validation, and provider error formatting. |
+| `src/settings.ts` | Provider catalog, settings interface/defaults, persisted-data normalization, settings tab, and Markdown instruction-file picker. |
+| `src/document-diff-preview.ts` | Line-based LCS diff generation, hunk application/rejection, CodeMirror state field, and diff/review widgets. |
+| `src/inline-suggestions.ts` | Inline suggestion state, position mapping across editor changes, loading/ready/error widgets, and accept/reject actions. |
+| `styles.css` | Chat, inline suggestion, and diff styles using the `lapis-lazuli-` prefix and Obsidian CSS variables. |
+| `esbuild.config.mjs` | Development/watch and production bundle configuration. |
+| `eslint.config.mts` | ESLint flat configuration and typed linting. |
+| `manifest.json` / `versions.json` | Obsidian release metadata and plugin-version-to-minimum-app-version mapping. |
+| `version-bump.mjs` | npm version hook that synchronizes release metadata. |
+| `IMPLEMENTATION_PLAN.md` | Proposed Emend rewrite, not a description of current behavior. |
 
-## Manifest rules (`manifest.json`)
+Keep new feature logic in focused modules rather than adding unrelated responsibilities to an already large module. Preserve the current separation between provider transport, editor state, UI, and plugin orchestration.
 
-- Must include (non-exhaustive):
-    - `id` (plugin ID; for local dev it should match the folder name)
-    - `name`
-    - `version` (Semantic Versioning `x.y.z`)
-    - `minAppVersion`
-    - `description`
-    - `isDesktopOnly` (boolean)
-    - Optional: `author`, `authorUrl`, `fundingUrl` (string or map)
-- Never change `id` after release. Treat it as stable API.
-- Keep `minAppVersion` accurate when using newer APIs.
-- Canonical requirements are coded here: https://github.com/obsidianmd/obsidian-releases/blob/master/.github/workflows/validate-plugin-entry.yml
+## Current runtime architecture
 
-## Testing
+### Target note and request context
 
-- Manual install for testing: copy `main.js`, `manifest.json`, `styles.css` (if any) to:
-    ```
-    <Vault>/.obsidian/plugins/<plugin-id>/
-    ```
-- Reload Obsidian and enable the plugin in **Settings → Community plugins**.
+`main.ts` targets the active Markdown view when available. If focus is in the chat sidebar, it can use the last active still-open Markdown view, then falls back to another open Markdown view. Inline suggestions are stricter and require the active live Markdown editor.
 
-## Commands & settings
+Requests include a bounded Markdown context. Notes within the configured character limit are sent whole; longer notes are windowed around the selection or caret, with `[...]` markers at omitted edges. The default limit is 12,000 characters and the settings UI enforces a minimum of 1,000. Optionally, the vault name and note path are included; this is disabled by default. If an agent instructions Markdown file is selected, its contents are read on each request and appended to the system prompt.
 
-- Any user-facing commands should be added via `this.addCommand(...)`.
-- If the plugin has configuration, provide a settings tab and sensible defaults.
-- Persist settings using `this.loadData()` / `this.saveData()`.
-- Use stable command IDs; avoid renaming once released.
+### Chat and edit review
 
-## Versioning & releases
+1. `chat-view.ts` sends the prompt and up to the last eight ready chat messages to `main.ts`.
+2. `providers.ts` asks the model to classify the request and return JSON: either an `answer` message or an `edit` containing the complete updated Markdown and an optional summary. A surrounding JSON code fence is tolerated during parsing.
+3. Answers appear only in chat. Edit responses do not immediately overwrite the note; `main.ts` computes a line diff and displays it through CodeMirror decorations.
+4. The user can accept/reject the whole preview or individual hunks. Accepted changes are dispatched as CodeMirror editor transactions. Chat history and preview state are in memory, not persisted.
 
-- Bump `version` in `manifest.json` (SemVer) and update `versions.json` to map plugin version → minimum app version.
-- Create a GitHub release whose tag exactly matches `manifest.json`'s `version`. Do not use a leading `v`.
-- Attach `manifest.json`, `main.js`, and `styles.css` (if present) to the release as individual assets.
-- After the initial release, follow the process to add/update your plugin in the community catalog as required.
+The diff currently builds a full longest-common-subsequence table, so large-document edits have quadratic memory/time behavior in the number of lines. Preserve that behavior only knowingly; test performance before changing or expanding whole-document diff use.
 
-## Security, privacy, and compliance
+### Inline suggestions
 
-Follow Obsidian's **Developer Policies** and **Plugin Guidelines**. In particular:
+The `generate-inline-ai-suggestion` editor command replaces selected text or inserts at the caret. A CodeMirror widget shows loading, output, or errors. `+` accepts a ready suggestion and `-` rejects it. Suggestion offsets are mapped through editor transactions. Starting a new suggestion replaces the current inline suggestion state.
 
-- Default to local/offline operation. Only make network requests when essential to the feature.
-- No hidden telemetry. If you collect optional analytics or call third-party services, require explicit opt-in and document clearly in `README.md` and in settings.
-- Never execute remote code, fetch and eval scripts, or auto-update plugin code outside of normal releases.
-- Minimize scope: read/write only what's necessary inside the vault. Do not access files outside the vault.
-- Clearly disclose any external services used, data sent, and risks.
-- Respect user privacy. Do not collect vault contents, filenames, or personal information unless absolutely necessary and explicitly consented.
-- Avoid deceptive patterns, ads, or spammy notifications.
-- Register and clean up all DOM, app, and interval listeners using the provided `register*` helpers so the plugin unloads safely.
+### Providers and settings
 
-## UX & copy guidelines (for UI text, commands, settings)
+DeepSeek and OpenAI use OpenAI-compatible chat-completion requests. Gemini uses `generateContent`, and Claude uses the Messages API. All requests use Obsidian's `requestUrl`, are non-streaming, and require a user-configured API key and model. Provider errors include HTTP status and available provider details.
 
-- Prefer sentence case for headings, buttons, and titles.
-- Use clear, action-oriented imperatives in step-by-step copy.
-- Use **bold** to indicate literal UI labels. Prefer "select" for interactions.
-- Use arrow notation for navigation: **Settings → Community plugins**.
-- Keep in-app strings short, consistent, and free of jargon.
-
-## Performance
-
-- Keep startup light. Defer heavy work until needed.
-- Avoid long-running tasks during `onload`; use lazy initialization.
-- Batch disk access and avoid excessive vault scans.
-- Debounce/throttle expensive operations in response to file system events.
+Settings are loaded with `loadData()`, normalized against defaults, and saved with `saveData()`. API keys, models, active provider, optional instruction-file path, note-path inclusion, and context size are stored locally in Obsidian plugin data. Chat threads, inline suggestions, and diff previews are not saved there.
 
 ## Coding conventions
 
-- TypeScript with `"strict": true` preferred.
-- **Keep `main.ts` minimal**: Focus only on plugin lifecycle (onload, onunload, addCommand calls). Delegate all feature logic to separate modules.
-- **Split large files**: If any file exceeds ~200-300 lines, consider breaking it into smaller, focused modules.
-- **Use clear module boundaries**: Each file should have a single, well-defined responsibility.
-- Bundle everything into `main.js` (no unbundled runtime deps).
-- Avoid Node/Electron APIs if you want mobile compatibility; set `isDesktopOnly` accordingly.
-- Prefer `async/await` over promise chains; handle errors gracefully.
+- Follow the existing TypeScript style: tabs for indentation, single quotes, semicolons, trailing commas where used, and `async`/`await` for asynchronous work.
+- Keep strictness intact. `tsconfig.json` enables `strict`, `noImplicitReturns`, `noFallthroughCasesInSwitch`, `noUncheckedIndexedAccess`, `isolatedModules`, and consistent file-name casing. Handle possibly missing indexed values rather than suppressing these checks.
+- Use the Obsidian DOM helpers already used by views/settings and the widget's `ownerDocument` for CodeMirror widgets. Keep user-facing copy short and in sentence case.
+- Register views, editor extensions, workspace events, commands, and other disposable resources through Obsidian's registration helpers so unload/reload cleans them up. CodeMirror widgets should keep event handling local and prevent unintended editor interactions, as the current widgets do.
+- Use `requestUrl` for provider networking rather than introducing a second HTTP stack. Preserve provider-specific response validation and useful error propagation.
+- Use Obsidian CSS variables and the existing `lapis-lazuli-` CSS prefix for current UI. If completing the Emend rename, update CSS classes and selectors together.
+- Treat public identifiers as stable in the current implementation: plugin ID `lapis-lazuli-ai-assistant`, view type `lapis-lazuli-chat-view`, and command IDs `open-chat` and `generate-inline-ai-suggestion`. A deliberate migration may rename them, but it must be handled consistently rather than incidentally.
+- Avoid Node/Electron-only runtime APIs while `isDesktopOnly` is `false`. Keep startup work limited and avoid unnecessary vault scans or background AI requests.
 
-## Mobile
+## Testing instructions
 
-- Where feasible, test on iOS and Android.
-- Don't assume desktop-only behavior unless `isDesktopOnly` is `true`.
-- Avoid large in-memory structures; be mindful of memory and storage constraints.
+There are no automated unit or integration tests. At minimum, run both checks after code changes:
 
-## Agent do/don't
-
-**Do**
-
-- Add commands with stable IDs (don't rename once released).
-- Provide defaults and validation in settings.
-- Write idempotent code paths so reload/unload doesn't leak listeners or intervals.
-- Use `this.register*` helpers for everything that needs cleanup.
-
-**Don't**
-
-- Introduce network calls without an obvious user-facing reason and documentation.
-- Ship features that require cloud services without clear disclosure and explicit opt-in.
-- Store or transmit vault contents unless essential and consented.
-
-## Common tasks
-
-### Organize code across multiple files
-
-**main.ts** (minimal, lifecycle only):
-
-```ts
-import { Plugin } from 'obsidian';
-import { MySettings, DEFAULT_SETTINGS } from './settings';
-import { registerCommands } from './commands';
-
-export default class MyPlugin extends Plugin {
-	settings!: MySettings;
-
-	async onload() {
-		this.settings = Object.assign(
-			{},
-			DEFAULT_SETTINGS,
-			(await this.loadData()) as Partial<MySettings>,
-		);
-		registerCommands(this);
-	}
-}
+```bash
+npm run build
+npm run lint
 ```
 
-**settings.ts**:
+These checks do not exercise Obsidian, CodeMirror interaction, or real provider APIs. Perform manual testing by copying `main.js`, `manifest.json`, and `styles.css` to:
 
-```ts
-export interface MySettings {
-	enabled: boolean;
-	apiKey: string;
-}
-
-export const DEFAULT_SETTINGS: MySettings = {
-	enabled: true,
-	apiKey: '',
-};
+```text
+<Vault>/.obsidian/plugins/lapis-lazuli-ai-assistant/
 ```
 
-**commands/index.ts**:
+Reload Obsidian and enable the plugin under **Settings → Community plugins**. Configure a provider in the plugin settings. Relevant manual scenarios include:
 
-```ts
-import { Plugin } from 'obsidian';
-import { doSomething } from './my-command';
+- Ask a question and confirm that only a chat answer appears and the note remains unchanged.
+- Request an edit; verify whole-preview and per-hunk accept/reject behavior, including insertion-only, deletion-only, and replacement hunks.
+- Generate inline suggestions with and without selected text; test accept, reject, provider failure, empty output, and edits made while a suggestion is pending.
+- Verify long-note context truncation, optional note-path inclusion, and loading/clearing an agent instructions file.
+- Test each affected provider with valid configuration and an API error; builds alone cannot validate provider models or network behavior.
+- Reload/unload the plugin and check that views, commands, and editor extensions do not duplicate or leak.
+- Exercise mobile behavior when changing UI or APIs, since the manifest declares mobile support.
 
-export function registerCommands(plugin: Plugin) {
-	plugin.addCommand({
-		id: 'do-something',
-		name: 'Do something',
-		callback: () => doSomething(plugin),
-	});
-}
+If implementing the Emend plan, replace this checklist's current diff expectations with explicit tests for mode write gating, CriticMarkup output, selection edits, instruction/skill discovery, and Track Changes behavior.
+
+## Security and privacy
+
+- API keys are secrets stored in Obsidian's local plugin data. Never commit `data.json`, print keys, or include them in logs and error messages.
+- Note content is sent to the selected third-party provider when the user invokes chat or an inline suggestion. There are no background AI requests in the current implementation.
+- The selected agent instructions file is also sent as prompt context. The vault/note path is sent only when **Include note path** is enabled.
+- Current chat edits remain previews until accepted. Do not silently change this to automatic writes; the planned Emend behavior intentionally differs and requires corresponding UX and documentation updates.
+- Do not add telemetry, remote code execution, automatic plugin downloads, or unrelated network calls. Keep file access within the vault and limited to the active note and explicitly selected instructions.
+- Preserve clear provider error handling without exposing request headers or credentials.
+
+## Versioning and deployment
+
+Use semantic versioning. Running:
+
+```bash
+npm version <patch|minor|major>
 ```
 
-### Add a command
+updates `package.json` through npm and invokes the `version` script, which copies `npm_package_version` into `manifest.json`, adds the version and current `minAppVersion` to `versions.json` if absent, and stages those two metadata files. Review the resulting changes rather than editing the files inconsistently.
 
-```ts
-this.addCommand({
-	id: 'your-command-id',
-	name: 'Do the thing',
-	callback: () => this.doTheThing(),
-});
-```
+For a release, run a production build and publish `main.js`, `manifest.json`, and `styles.css` as individual assets. The GitHub release tag should exactly match the manifest version, without a leading `v`. Keep `minAppVersion` and the `versions.json` mapping accurate when adopting newer Obsidian APIs.
 
-### Persist settings
-
-```ts
-interface MySettings { enabled: boolean }
-const DEFAULT_SETTINGS: MySettings = { enabled: true };
-
-async onload() {
-  this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<MySettings>);
-  await this.saveData(this.settings);
-}
-```
-
-### Register listeners safely
-
-```ts
-this.registerEvent(
-	this.app.workspace.on('file-open', (f) => {
-		/* ... */
-	}),
-);
-this.registerDomEvent(activeWindow, 'resize', () => {
-	/* ... */
-});
-this.registerInterval(
-	window.setInterval(() => {
-		/* ... */
-	}, 1000),
-);
-```
-
-## Troubleshooting
-
-- Plugin doesn't load after build: ensure `main.js` and `manifest.json` are at the top level of the plugin folder under `<Vault>/.obsidian/plugins/<plugin-id>/`.
-- Build issues: if `main.js` is missing, run `npm run build` or `npm run dev` to compile your TypeScript source code.
-- Commands not appearing: verify `addCommand` runs after `onload` and IDs are unique.
-- Settings not persisting: ensure `loadData`/`saveData` are awaited and you re-render the UI after changes.
-- Mobile-only issues: confirm you're not using desktop-only APIs; check `isDesktopOnly` and adjust.
-
-## References
-
-- Obsidian sample plugin: https://github.com/obsidianmd/obsidian-sample-plugin
-- API documentation: https://docs.obsidian.md
-- Developer policies: https://docs.obsidian.md/Developer+policies
-- Plugin guidelines: https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines
-- Style guide: https://help.obsidian.md/style-guide
+There is currently no `.github` workflow in this repository; do not assume CI will run lint, builds, tests, or releases automatically.
