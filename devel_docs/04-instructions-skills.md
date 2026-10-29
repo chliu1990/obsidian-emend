@@ -27,5 +27,5 @@ Load only vault-root `AGENTS.md` and directly referenced Markdown skills beneath
 - Green: the same focused command passed 1 file and 18 tests after implementation; it still passes after test-only lint cleanup.
 - Full local gate: `npm test`, `npm run lint`, `npm run build`, and `git diff --check` passed. Vitest reports 4 files and 45 tests passed; lint produced no findings; the build includes strict TypeScript checking and production bundling.
 - Self-review: the diff is limited to the requested loader, focused tests, and this stage record. No legacy runtime/chat/provider file, dependency, generated bundle, vault data, or secret was changed. No Obsidian UI or real-provider test is applicable to this domain-only stage.
-- Implementation CI: pending.
+- Implementation commit `fd91d172ff157941e64dea82386d2a024804e248`: Gitea run 24 at http://127.0.0.1:19705/cliu/obsidian-emend/actions/runs/24 and job 33 at http://127.0.0.1:19705/cliu/obsidian-emend/actions/runs/24/jobs/33 completed with conclusion **success** on `emend-macos-docker`. Checkout, setup-node, `npm ci`, lint, test, and build all succeeded.
 - Documentation-evidence CI: pending.
