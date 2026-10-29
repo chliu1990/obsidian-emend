@@ -1,4 +1,4 @@
-import { requestUrl, type RequestUrlParam } from 'obsidian';
+import { requestAiResponse } from './provider-stream';
 import type { EmendSettings } from './types';
 
 export interface AiSuggestionContext {
@@ -22,23 +22,6 @@ export type AiChatResponse =
 			updatedMarkdown: string;
 			summary?: string;
 	  };
-
-interface OpenAiLikeResponse {
-	choices?: Array<{
-		message?: {
-			content?: string | null;
-		};
-	}>;
-	error?: ProviderErrorPayload;
-}
-
-interface ProviderErrorPayload {
-	message?: string;
-	type?: string;
-	code?: string | number | null;
-	param?: string | null;
-	status?: string;
-}
 
 export async function requestAiSuggestion(
 	settings: EmendSettings,
@@ -74,32 +57,18 @@ async function requestAiText(args: {
 	userPrompt: string;
 	history: AiMessage[];
 }) {
-	const { settings, systemPrompt, userPrompt, history } = args;
-	const provider = settings.providers[settings.activeProvider];
-	const apiKey = provider.apiKey.trim();
-	const model = provider.model.trim();
-	const baseUrl = provider.baseUrl.trim().replace(/\/+$/, '');
-
-	if (!apiKey) {
-		throw new Error(`${provider.name} API key is missing.`);
-	}
-
-	if (!model) {
-		throw new Error(`${provider.name} model name is missing.`);
-	}
-
-	if (!baseUrl) {
-		throw new Error(`${provider.name} base URL is missing.`);
-	}
-
-	return requestOpenAiLikeSuggestion({
-		apiKey,
-		model,
-		url: `${baseUrl}/chat/completions`,
-		systemPrompt,
-		userPrompt,
-		history,
-	});
+	const controller = new AbortController();
+	const result = await requestAiResponse(
+		{
+			provider: args.settings.providers[args.settings.activeProvider],
+			systemPrompt: args.systemPrompt,
+			userPrompt: args.userPrompt,
+			history: args.history,
+		},
+		{ onEvent: () => undefined },
+		controller.signal,
+	);
+	return result.content;
 }
 
 function buildInlineSystemPrompt() {
@@ -174,118 +143,4 @@ function parseChatResponse(response: string): AiChatResponse {
 function stripCodeFence(response: string) {
 	const match = response.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
 	return match?.[1] ?? response;
-}
-
-async function requestOpenAiLikeSuggestion(args: {
-	apiKey: string;
-	model: string;
-	url: string;
-	systemPrompt: string;
-	userPrompt: string;
-	history: AiMessage[];
-}) {
-	const response = await requestProviderUrl({
-		url: args.url,
-		method: 'POST',
-		throw: false,
-		headers: {
-			Authorization: `Bearer ${args.apiKey}`,
-			'Content-Type': 'application/json',
-		},
-		body: JSON.stringify({
-			model: args.model,
-			messages: [
-				{
-					role: 'system',
-					content: args.systemPrompt,
-				},
-				...args.history,
-				{
-					role: 'user',
-					content: args.userPrompt,
-				},
-			],
-			temperature: 0.3,
-		}),
-	});
-	const data = response.json as OpenAiLikeResponse;
-
-	assertOkResponse(response.status, data.error, response.text);
-
-	const content = data.choices?.[0]?.message?.content;
-	if (!content) {
-		throw new Error('No text was found in the provider response.');
-	}
-
-	return content;
-}
-
-async function requestProviderUrl(request: RequestUrlParam) {
-	return requestUrl({
-		...request,
-		throw: false,
-	});
-}
-
-function assertOkResponse(
-	status: number,
-	error: ProviderErrorPayload | undefined,
-	responseText: string,
-) {
-	if (status >= 200 && status < 300) {
-		return;
-	}
-
-	throw new Error(formatProviderError(status, error, responseText));
-}
-
-function formatProviderError(
-	status: number,
-	error: ProviderErrorPayload | undefined,
-	responseText: string,
-) {
-	const details = [`API request failed with HTTP ${status}.`];
-	const message = error?.message?.trim();
-
-	if (message) {
-		details.push(message);
-	}
-
-	const metadata = [
-		formatErrorField('type', error?.type),
-		formatErrorField('code', error?.code),
-		formatErrorField('param', error?.param),
-		formatErrorField('status', error?.status),
-	].filter((value): value is string => Boolean(value));
-
-	if (metadata.length > 0) {
-		details.push(`Details: ${metadata.join(', ')}.`);
-	}
-
-	const rawResponse = responseText.trim();
-	if (!message && rawResponse) {
-		details.push(`Response: ${rawResponse}`);
-	}
-
-	return details.join('\n');
-}
-
-function formatErrorField(label: string, value: unknown) {
-	if (value === undefined || value === null || value === '') {
-		return undefined;
-	}
-
-	return `${label}=${formatErrorValue(value)}`;
-}
-
-function formatErrorValue(value: unknown) {
-	if (typeof value === 'string') {
-		return value;
-	}
-
-	if (typeof value === 'number' || typeof value === 'boolean') {
-		return String(value);
-	}
-
-	return JSON.stringify(value);
 }

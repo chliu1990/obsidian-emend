@@ -6,5 +6,5 @@
 	"description": "Context-aware AI chat and edit previews for Markdown notes with DeepSeek, Kimi, and custom OpenAI-compatible providers.",
 	"author": "Taha Yiğit Melek",
 	"authorUrl": "https://github.com/tahayigitmelek",
-	"isDesktopOnly": false
+	"isDesktopOnly": true
 }
