@@ -148,4 +148,4 @@ updates `package.json` through npm and invokes the `version` script, which copie
 
 For a release, run a production build and publish `main.js`, `manifest.json`, and `styles.css` as individual assets. The GitHub release tag should exactly match the manifest version, without a leading `v`. Keep `minAppVersion` and the `versions.json` mapping accurate when adopting newer Obsidian APIs.
 
-Gitea Actions runs lint, tests, and the production build through `.gitea/workflows/ci.yaml`. The `ubuntu-latest` label requires the repository's Docker-backed runner; verify that the runner is online before treating a pushed check as actionable. Releases remain manual.
+Gitea Actions runs lint, tests, and the production build through `.gitea/workflows/ci.yaml`. The unique `emend-macos` label targets the repository's `emend-macos-docker` runner; verify that runner is online before treating a pushed check as actionable. Releases remain manual.
