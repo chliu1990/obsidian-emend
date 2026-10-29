@@ -153,18 +153,18 @@ class InlineSuggestionWidget extends WidgetType {
 	toDOM(view: EditorView) {
 		const ownerDocument = view.dom.ownerDocument;
 		const container = ownerDocument.createElement('div');
-		container.className = `lapis-lazuli-inline-widget is-${this.suggestion.status}`;
+		container.className = `emend-inline-widget is-${this.suggestion.status}`;
 
 		const toolbar = ownerDocument.createElement('div');
-		toolbar.className = 'lapis-lazuli-inline-toolbar';
+		toolbar.className = 'emend-inline-toolbar';
 
 		const label = ownerDocument.createElement('span');
-		label.className = 'lapis-lazuli-inline-label';
+		label.className = 'emend-inline-label';
 		label.textContent = getStatusLabel(this.suggestion);
 		toolbar.appendChild(label);
 
 		const actions = ownerDocument.createElement('span');
-		actions.className = 'lapis-lazuli-inline-actions';
+		actions.className = 'emend-inline-actions';
 
 		if (this.suggestion.status === 'ready') {
 			actions.appendChild(
@@ -189,7 +189,7 @@ class InlineSuggestionWidget extends WidgetType {
 		container.appendChild(toolbar);
 
 		const body = ownerDocument.createElement('div');
-		body.className = 'lapis-lazuli-inline-body';
+		body.className = 'emend-inline-body';
 		body.textContent = getBodyText(this.suggestion);
 		container.appendChild(body);
 
@@ -209,7 +209,7 @@ function createActionButton(
 ) {
 	const button = ownerDocument.createElement('button');
 	button.type = 'button';
-	button.className = 'lapis-lazuli-inline-button';
+	button.className = 'emend-inline-button';
 	button.textContent = label;
 	button.title = title;
 	button.setAttribute('aria-label', title);
@@ -224,16 +224,16 @@ function createActionButton(
 
 function getStatusLabel(suggestion: InlineSuggestion) {
 	if (suggestion.status === 'loading') {
-		return 'Lapis Lazuli · Loading...';
+		return 'Emend · Loading...';
 	}
 
 	if (suggestion.status === 'error') {
-		return 'Lapis Lazuli · Error';
+		return 'Emend · Error';
 	}
 
 	return suggestion.mode === 'replace'
-		? 'Lapis Lazuli · Suggested change'
-		: 'Lapis Lazuli · Suggested addition';
+		? 'Emend · Suggested change'
+		: 'Emend · Suggested addition';
 }
 
 function getBodyText(suggestion: InlineSuggestion) {

@@ -1,104 +1,113 @@
-import {
-	App,
-	FuzzySuggestModal,
-	PluginSettingTab,
-	Setting,
-	TFile,
-} from 'obsidian';
-import type LapisLazuliPlugin from './main';
+import { App, PluginSettingTab, setIcon, Setting } from 'obsidian';
+import type EmendPlugin from './main';
+import type {
+	EmendSettings,
+	ProviderConfig,
+	ProviderId,
+	ReasoningEffort,
+} from './types';
 
 export const AI_PROVIDERS = [
 	{
 		id: 'deepseek',
 		name: 'DeepSeek',
 		defaultModel: 'deepseek-v4-flash',
+		defaultBaseUrl: 'https://api.deepseek.com',
 	},
 	{
-		id: 'openai',
-		name: 'OpenAI',
-		defaultModel: 'gpt-4o-mini',
+		id: 'kimi',
+		name: 'Kimi',
+		defaultModel: 'kimi-k2-turbo-preview',
+		defaultBaseUrl: 'https://api.moonshot.cn/v1',
 	},
 	{
-		id: 'gemini',
-		name: 'Gemini',
-		defaultModel: 'gemini-3.5-flash',
-	},
-	{
-		id: 'claude',
-		name: 'Claude',
-		defaultModel: 'claude-haiku-4-5',
+		id: 'custom',
+		name: 'Custom',
+		defaultModel: '',
+		defaultBaseUrl: '',
 	},
 ] as const;
 
-export type AiProviderId = (typeof AI_PROVIDERS)[number]['id'];
+const DEFAULT_MODES = ['ask', 'edit', 'discuss', 'brainstorm'] as const;
+const REASONING_EFFORTS: ReasoningEffort[] = ['low', 'medium', 'high'];
+const CUSTOM_MODEL_OPTION = '__custom__';
 
-export interface LapisLazuliSettings {
-	activeProvider: AiProviderId;
-	apiKeys: Record<AiProviderId, string>;
-	models: Record<AiProviderId, string>;
-	agentInstructionsFilePath: string;
-	includeNotePathInContext: boolean;
-	maxContextCharacters: number;
-}
-
-export const DEFAULT_SETTINGS: LapisLazuliSettings = {
-	activeProvider: 'openai',
-	apiKeys: {
-		deepseek: '',
-		openai: '',
-		gemini: '',
-		claude: '',
+export const DEFAULT_SETTINGS: EmendSettings = {
+	activeProvider: 'deepseek',
+	providers: {
+		deepseek: {
+			name: 'DeepSeek',
+			baseUrl: 'https://api.deepseek.com',
+			apiKey: '',
+			model: 'deepseek-v4-flash',
+			reasoningEffort: 'high',
+		},
+		kimi: {
+			name: 'Kimi',
+			baseUrl: 'https://api.moonshot.cn/v1',
+			apiKey: '',
+			model: 'kimi-k2-turbo-preview',
+			reasoningEffort: 'high',
+		},
+		custom: {
+			name: 'Custom',
+			baseUrl: '',
+			apiKey: '',
+			model: '',
+			reasoningEffort: 'high',
+		},
 	},
-	models: Object.fromEntries(
-		AI_PROVIDERS.map((provider) => [provider.id, provider.defaultModel]),
-	) as Record<AiProviderId, string>,
-	agentInstructionsFilePath: '',
+	defaultMode: 'ask',
 	includeNotePathInContext: false,
 	maxContextCharacters: 12000,
 };
 
-export function normalizeSettings(
-	data: Partial<LapisLazuliSettings> | null,
-): LapisLazuliSettings {
-	const activeProvider = isProviderId(data?.activeProvider)
-		? data.activeProvider
+export function normalizeSettings(data: unknown): EmendSettings {
+	const root = isRecord(data) ? data : {};
+	const persistedProviders = isRecord(root.providers) ? root.providers : {};
+	const activeProvider = isProviderId(root.activeProvider)
+		? root.activeProvider
 		: DEFAULT_SETTINGS.activeProvider;
+	const defaultMode = isDefaultMode(root.defaultMode)
+		? root.defaultMode
+		: DEFAULT_SETTINGS.defaultMode;
 
 	return {
 		activeProvider,
-		apiKeys: {
-			...DEFAULT_SETTINGS.apiKeys,
-			...(data?.apiKeys ?? {}),
+		providers: {
+			deepseek: normalizeProviderConfig(
+				DEFAULT_SETTINGS.providers.deepseek,
+				persistedProviders.deepseek,
+			),
+			kimi: normalizeProviderConfig(
+				DEFAULT_SETTINGS.providers.kimi,
+				persistedProviders.kimi,
+			),
+			custom: normalizeProviderConfig(
+				DEFAULT_SETTINGS.providers.custom,
+				persistedProviders.custom,
+			),
 		},
-		models: {
-			...DEFAULT_SETTINGS.models,
-			...(data?.models ?? {}),
-		},
-		agentInstructionsFilePath:
-			data?.agentInstructionsFilePath ??
-			DEFAULT_SETTINGS.agentInstructionsFilePath,
+		defaultMode,
 		includeNotePathInContext:
-			typeof data?.includeNotePathInContext === 'boolean'
-				? data.includeNotePathInContext
+			typeof root.includeNotePathInContext === 'boolean'
+				? root.includeNotePathInContext
 				: DEFAULT_SETTINGS.includeNotePathInContext,
-		maxContextCharacters:
-			typeof data?.maxContextCharacters === 'number'
-				? data.maxContextCharacters
-				: DEFAULT_SETTINGS.maxContextCharacters,
+		maxContextCharacters: normalizeContextLimit(root.maxContextCharacters),
 	};
 }
 
-export function getProviderName(providerId: AiProviderId) {
+export function getProviderName(providerId: ProviderId) {
 	return (
 		AI_PROVIDERS.find((provider) => provider.id === providerId)?.name ??
 		providerId
 	);
 }
 
-export class LapisLazuliSettingTab extends PluginSettingTab {
+export class EmendSettingTab extends PluginSettingTab {
 	constructor(
 		app: App,
-		private readonly plugin: LapisLazuliPlugin,
+		private readonly plugin: EmendPlugin,
 	) {
 		super(app, plugin);
 	}
@@ -123,23 +132,22 @@ export class LapisLazuliSettingTab extends PluginSettingTab {
 					dropdown.addOption(item.id, item.name);
 				}
 
-				dropdown
-					.setValue(activeProvider)
-					.onChange(async (value) => {
-						if (!isProviderId(value)) {
-							return;
-						}
+				dropdown.setValue(activeProvider).onChange(async (value) => {
+					if (!isProviderId(value)) {
+						return;
+					}
 
-						this.plugin.settings.activeProvider = value;
-						await this.plugin.saveSettings();
-						this.renderSettings();
-					});
+					this.plugin.settings.activeProvider = value;
+					await this.plugin.saveSettings();
+					this.renderSettings();
+				});
 			});
 
 		if (!provider) {
 			return;
 		}
 
+		const config = this.plugin.settings.providers[provider.id];
 		new Setting(containerEl)
 			.setName(`${provider.name} API key`)
 			.setDesc('The key is stored locally in Obsidian plugin settings.')
@@ -147,49 +155,101 @@ export class LapisLazuliSettingTab extends PluginSettingTab {
 				text.inputEl.type = 'password';
 				text
 					.setPlaceholder(`${provider.name} API key`)
-					.setValue(this.plugin.settings.apiKeys[provider.id])
+					.setValue(config.apiKey)
 					.onChange(async (value) => {
-						this.plugin.settings.apiKeys[provider.id] = value.trim();
+						config.apiKey = value.trim();
 						await this.plugin.saveSettings();
 					});
 			});
 
 		new Setting(containerEl)
-			.setName(`${provider.name} model`)
-			.setDesc('Change the provider model name here when needed.')
+			.setName(`${provider.name} base URL`)
+			.setDesc('OpenAI-compatible API base URL.')
 			.addText((text) =>
 				text
-					.setPlaceholder(provider.defaultModel)
-					.setValue(this.plugin.settings.models[provider.id])
+					.setPlaceholder(provider.defaultBaseUrl || 'https://example.com/v1')
+					.setValue(config.baseUrl)
 					.onChange(async (value) => {
-						this.plugin.settings.models[provider.id] = value.trim();
+						config.baseUrl = value.trim();
 						await this.plugin.saveSettings();
 					}),
 			);
 
-		const agentFilePath = this.plugin.settings.agentInstructionsFilePath;
-		new Setting(containerEl)
-			.setName('Agent instructions file')
-			.setDesc(agentFilePath || 'No Markdown file selected.')
-			.addButton((button) =>
-				button.setButtonText('Select file').onClick(() => {
-					new MarkdownFileSuggestModal(this.app, async (file) => {
-						this.plugin.settings.agentInstructionsFilePath = file.path;
+		const modelSetting = new Setting(containerEl)
+			.setName(`${provider.name} model`)
+			.setDesc('Choose the preset or enter a custom model name.');
+		setIcon(modelSetting.nameEl.createSpan(), 'cpu');
+		modelSetting
+			.addDropdown((dropdown) => {
+				if (provider.defaultModel) {
+					dropdown.addOption(provider.defaultModel, provider.defaultModel);
+				}
+				if (config.model && config.model !== provider.defaultModel) {
+					dropdown.addOption(config.model, config.model);
+				}
+				dropdown.addOption(CUSTOM_MODEL_OPTION, 'Custom model');
+				dropdown
+					.setValue(config.model || CUSTOM_MODEL_OPTION)
+					.onChange(async (value) => {
+						if (value === CUSTOM_MODEL_OPTION) {
+							return;
+						}
+
+						config.model = value;
 						await this.plugin.saveSettings();
 						this.renderSettings();
-					}).open();
-				}),
-			)
-			.addButton((button) =>
-				button
-					.setButtonText('Clear')
-					.setDisabled(!agentFilePath)
-					.onClick(async () => {
-						this.plugin.settings.agentInstructionsFilePath = '';
+					});
+			})
+			.addText((text) =>
+				text
+					.setPlaceholder('Custom model name')
+					.setValue(config.model)
+					.onChange(async (value) => {
+						config.model = value.trim();
 						await this.plugin.saveSettings();
-						this.renderSettings();
 					}),
 			);
+
+		const reasoningSetting = new Setting(containerEl)
+			.setName('Reasoning effort')
+			.setDesc('Default reasoning effort for this provider.');
+		setIcon(reasoningSetting.nameEl.createSpan(), 'brain');
+		reasoningSetting.addDropdown((dropdown) => {
+			for (const effort of REASONING_EFFORTS) {
+				dropdown.addOption(effort, capitalize(effort));
+			}
+
+			dropdown
+				.setValue(config.reasoningEffort)
+				.onChange(async (value) => {
+					if (!isReasoningEffort(value)) {
+						return;
+					}
+
+					config.reasoningEffort = value;
+					await this.plugin.saveSettings();
+				});
+		});
+
+		new Setting(containerEl)
+			.setName('Default mode')
+			.setDesc('Saved default for the planned chat mode selector.')
+			.addDropdown((dropdown) => {
+				for (const mode of DEFAULT_MODES) {
+					dropdown.addOption(mode, capitalize(mode));
+				}
+
+				dropdown
+					.setValue(this.plugin.settings.defaultMode)
+					.onChange(async (value) => {
+						if (!isDefaultMode(value)) {
+							return;
+						}
+
+						this.plugin.settings.defaultMode = value;
+						await this.plugin.saveSettings();
+					});
+			});
 
 		new Setting(containerEl)
 			.setName('Include note path')
@@ -214,40 +274,59 @@ export class LapisLazuliSettingTab extends PluginSettingTab {
 					.setPlaceholder(String(DEFAULT_SETTINGS.maxContextCharacters))
 					.setValue(String(this.plugin.settings.maxContextCharacters))
 					.onChange(async (value) => {
-						const parsed = Number.parseInt(value, 10);
-						this.plugin.settings.maxContextCharacters = Number.isFinite(
-							parsed,
-						)
-							? Math.max(1000, parsed)
-							: DEFAULT_SETTINGS.maxContextCharacters;
+						this.plugin.settings.maxContextCharacters = normalizeContextLimit(
+							Number.parseInt(value, 10),
+						);
 						await this.plugin.saveSettings();
 					});
 			});
 	}
 }
 
-function isProviderId(value: unknown): value is AiProviderId {
+function normalizeProviderConfig(
+	defaults: ProviderConfig,
+	data: unknown,
+): ProviderConfig {
+	const config = isRecord(data) ? data : {};
+	return {
+		name: stringOrDefault(config.name, defaults.name),
+		baseUrl: stringOrDefault(config.baseUrl, defaults.baseUrl),
+		apiKey: stringOrDefault(config.apiKey, defaults.apiKey),
+		model: stringOrDefault(config.model, defaults.model),
+		reasoningEffort: isReasoningEffort(config.reasoningEffort)
+			? config.reasoningEffort
+			: defaults.reasoningEffort,
+	};
+}
+
+function normalizeContextLimit(value: unknown) {
+	return typeof value === 'number' && Number.isFinite(value)
+		? Math.max(1000, Math.floor(value))
+		: DEFAULT_SETTINGS.maxContextCharacters;
+}
+
+function stringOrDefault(value: unknown, fallback: string) {
+	return typeof value === 'string' ? value : fallback;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isProviderId(value: unknown): value is ProviderId {
 	return AI_PROVIDERS.some((provider) => provider.id === value);
 }
 
-class MarkdownFileSuggestModal extends FuzzySuggestModal<TFile> {
-	constructor(
-		app: App,
-		private readonly onChooseFile: (file: TFile) => void | Promise<void>,
-	) {
-		super(app);
-		this.setPlaceholder('Select an agent instructions Markdown file');
-	}
+function isReasoningEffort(value: unknown): value is ReasoningEffort {
+	return REASONING_EFFORTS.some((effort) => effort === value);
+}
 
-	getItems(): TFile[] {
-		return this.app.vault.getMarkdownFiles();
-	}
+function isDefaultMode(
+	value: unknown,
+): value is EmendSettings['defaultMode'] {
+	return DEFAULT_MODES.some((mode) => mode === value);
+}
 
-	getItemText(file: TFile): string {
-		return file.path;
-	}
-
-	onChooseItem(file: TFile): void {
-		void this.onChooseFile(file);
-	}
+function capitalize(value: string) {
+	return value.charAt(0).toUpperCase() + value.slice(1);
 }

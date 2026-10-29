@@ -18,6 +18,8 @@ main.js
 
 # obsidian
 data.json
+test_vault/
+.stage02-manual-vault/
 
 # Exclude macOS Finder (System Explorer) View States
 .DS_Store

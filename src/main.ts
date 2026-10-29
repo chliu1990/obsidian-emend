@@ -1,9 +1,6 @@
-import { Editor, MarkdownView, Notice, Plugin, TFile } from 'obsidian';
+import { Editor, MarkdownView, Notice, Plugin } from 'obsidian';
 import { EditorView } from '@codemirror/view';
-import {
-	LAPIS_LAZULI_CHAT_VIEW_TYPE,
-	LapisLazuliChatView,
-} from './chat-view';
+import { EMEND_CHAT_VIEW_TYPE, EmendChatView } from './chat-view';
 import {
 	applyHunkToMarkdown,
 	applyHunksToMarkdown,
@@ -25,10 +22,10 @@ import {
 } from './inline-suggestions';
 import {
 	DEFAULT_SETTINGS,
-	LapisLazuliSettingTab,
-	LapisLazuliSettings,
+	EmendSettingTab,
 	normalizeSettings,
 } from './settings';
+import type { EmendSettings } from './types';
 import {
 	AiMessage,
 	AiSuggestionContext,
@@ -44,8 +41,8 @@ interface ContextWindow {
 	text: string;
 }
 
-export default class LapisLazuliPlugin extends Plugin {
-	settings!: LapisLazuliSettings;
+export default class EmendPlugin extends Plugin {
+	settings!: EmendSettings;
 	private cancelledSuggestionIds = new Set<string>();
 	private lastMarkdownView: MarkdownView | null = null;
 
@@ -53,8 +50,8 @@ export default class LapisLazuliPlugin extends Plugin {
 		await this.loadSettings();
 
 		this.registerView(
-			LAPIS_LAZULI_CHAT_VIEW_TYPE,
-			(leaf) => new LapisLazuliChatView(leaf, this),
+			EMEND_CHAT_VIEW_TYPE,
+			(leaf) => new EmendChatView(leaf, this),
 		);
 		this.rememberActiveMarkdownView();
 		this.registerEvent(
@@ -89,7 +86,8 @@ export default class LapisLazuliPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'open-chat',
+			// eslint-disable-next-line obsidianmd/commands/no-plugin-id-in-command-id -- Required Stage 02 public identifier.
+			id: 'emend:open-chat',
 			name: 'Open AI chat',
 			callback: () => {
 				void this.activateChatView();
@@ -112,13 +110,11 @@ export default class LapisLazuliPlugin extends Plugin {
 			},
 		});
 
-		this.addSettingTab(new LapisLazuliSettingTab(this.app, this));
+		this.addSettingTab(new EmendSettingTab(this.app, this));
 	}
 
 	async loadSettings() {
-		this.settings = normalizeSettings(
-			(await this.loadData()) as Partial<LapisLazuliSettings> | null,
-		);
+		this.settings = normalizeSettings(await this.loadData());
 	}
 
 	async saveSettings() {
@@ -128,9 +124,9 @@ export default class LapisLazuliPlugin extends Plugin {
 
 	private refreshChatModelLabels() {
 		for (const leaf of this.app.workspace.getLeavesOfType(
-			LAPIS_LAZULI_CHAT_VIEW_TYPE,
+			EMEND_CHAT_VIEW_TYPE,
 		)) {
-			if (leaf.view instanceof LapisLazuliChatView) {
+			if (leaf.view instanceof EmendChatView) {
 				leaf.view.refreshActiveModelLabel();
 			}
 		}
@@ -138,12 +134,12 @@ export default class LapisLazuliPlugin extends Plugin {
 
 	async activateChatView() {
 		const existingLeaf = this.app.workspace.getLeavesOfType(
-			LAPIS_LAZULI_CHAT_VIEW_TYPE,
+			EMEND_CHAT_VIEW_TYPE,
 		)[0];
 		const leaf =
 			existingLeaf ??
 			(await this.app.workspace.ensureSideLeaf(
-				LAPIS_LAZULI_CHAT_VIEW_TYPE,
+				EMEND_CHAT_VIEW_TYPE,
 				'right',
 				{
 					active: true,
@@ -152,7 +148,7 @@ export default class LapisLazuliPlugin extends Plugin {
 			));
 
 		await leaf.setViewState({
-			type: LAPIS_LAZULI_CHAT_VIEW_TYPE,
+			type: EMEND_CHAT_VIEW_TYPE,
 			active: true,
 		});
 		this.app.workspace.setActiveLeaf(leaf, { focus: true });
@@ -172,7 +168,7 @@ export default class LapisLazuliPlugin extends Plugin {
 		const editor = markdownView.editor;
 		const from = editor.posToOffset(editor.getCursor('from'));
 		const to = editor.posToOffset(editor.getCursor('to'));
-		const context = await this.buildSuggestionContext(
+		const context = this.buildSuggestionContext(
 			editor,
 			from,
 			to,
@@ -231,7 +227,7 @@ export default class LapisLazuliPlugin extends Plugin {
 		});
 
 		try {
-			const context = await this.buildSuggestionContext(
+			const context = this.buildSuggestionContext(
 				editor,
 				from,
 				to,
@@ -270,17 +266,17 @@ export default class LapisLazuliPlugin extends Plugin {
 					message,
 				}),
 			});
-			new Notice(`Lapis Lazuli: ${message}`);
+			new Notice(`Emend: ${message}`);
 		}
 	}
 
-	private async buildSuggestionContext(
+	private buildSuggestionContext(
 		editor: Editor,
 		from: number,
 		to: number,
 		userMessage: string,
 		markdownView: MarkdownView,
-	): Promise<AiSuggestionContext> {
+	): AiSuggestionContext {
 		const fullNote = editor.getValue();
 		const maxContextCharacters = Math.max(
 			1000,
@@ -300,24 +296,7 @@ export default class LapisLazuliPlugin extends Plugin {
 				? getNotePathWithVaultName(markdownView)
 				: undefined,
 			userMessage,
-			agentInstructions: await this.loadAgentInstructions(),
 		};
-	}
-
-	private async loadAgentInstructions() {
-		const path = this.settings.agentInstructionsFilePath.trim();
-		if (!path) {
-			return undefined;
-		}
-
-		const file = this.app.vault.getAbstractFileByPath(path);
-		if (!(file instanceof TFile) || file.extension !== 'md') {
-			throw new Error(
-				'The selected agent instructions file was not found. Choose another Markdown file in settings.',
-			);
-		}
-
-		return this.app.vault.cachedRead(file);
 	}
 
 	private acceptSuggestion(suggestion: InlineSuggestion, view: EditorView) {

@@ -1,36 +1,39 @@
 # Emend
 
-Emend — AI text correction agent for Obsidian. Originally based on Lapis Lazuli AI Assistant by Taha Yiğit Melek (MIT), substantially rewritten: explicit agent modes, code-level permissions, CriticMarkup-native editing via Track Changes, dynamic skill loading.
+Emend is an Obsidian plugin for context-aware AI chat and reviewable edits to Markdown notes. It is based on Lapis Lazuli AI Assistant by Taha Yiğit Melek and is being rewritten in stages. See [CREDITS.md](CREDITS.md) for attribution.
 
+## Current features
 
----
-Original README
+- DeepSeek, Kimi, and custom OpenAI-compatible providers with editable API keys, base URLs, model names, and reasoning-effort settings.
+- Context-aware chat with the active Markdown note.
+- Chat-only answers and JSON-based edit responses using the temporary legacy protocol.
+- In-editor diff previews with whole-preview and per-hunk accept/reject actions.
+- Temporary inline suggestions, accepted with `+` and rejected with `-`.
+- Optional note-path sharing and a configurable context character limit.
 
-# Lapis Lazuli AI Assistant
+The default-mode setting is saved for the planned mode selector; explicit modes, code-level write permissions, streaming, CriticMarkup editing, Track Changes integration, and automatic instruction/skill loading are not implemented yet.
 
-Lapis Lazuli is an Obsidian plugin that brings context-aware AI chat and git-style edit previews directly into your Markdown notes. It lets you ask questions about the active note, request edits from multiple AI providers, and accept or reject proposed changes before they are written to the file.
+## Setup and usage
 
-## Features
+1. Install the plugin as `emend` and enable **Emend** under **Settings → Community plugins**.
+2. In Emend settings, choose a provider and enter its API key, base URL, and model. DeepSeek and Kimi have editable presets; a custom provider requires an OpenAI-compatible base URL.
+3. Open **AI chat** from the ribbon or Command Palette. Ask a question for a chat-only answer, or request an edit to review proposed changes in the note.
+4. Use **Accept all**, **Reject all**, or the per-hunk actions before any chat edit is written.
+5. The legacy **Generate inline AI suggestion** command remains available temporarily.
 
-- Multi-provider AI: Choose DeepSeek, OpenAI, Gemini, or Claude from the plugin settings.
-- Context-aware chat: Send the active Markdown note plus your chat message to the selected provider.
-- Question answering: Ask questions about the current note and receive answers only in the chat panel.
-- Git-style edit preview: Request additions, rewrites, or removals and preview green additions and red deletions directly in the Markdown editor.
-- Partial apply: Accept or reject all proposed edits, or review changes one hunk at a time with Accept hunk and Reject hunk.
-- Inline suggestions: Generate temporary inline suggestions and accept them with + or reject them with -.
-- Extra instructions: Add optional global instructions that are appended only when the setting is not empty.
-- Local settings: Store provider keys and plugin settings through Obsidian's standard local plugin data.
-
-## Usage
-
-- Setting up providers: Open Settings > Community plugins > Lapis Lazuli, choose a provider, enter its API key, and confirm the model name.
-- Opening chat: Use the ribbon icon or run Open AI chat from the Command Palette.
-- Asking questions: Ask about the active note to receive a chat-only answer.
-- Requesting edits: Ask for an addition, rewrite, fix, translation, or removal to preview proposed changes directly in the note.
-- Applying changes: Use Accept all or Reject all, or accept/reject individual hunks with Accept hunk and Reject hunk.
-- Inline suggestions: Run Generate inline AI suggestion from the Command Palette, then select + to apply or - to dismiss.
-- Copying answers: Use the Copy button on AI chat messages to copy the response.
+Emend uses the new `emend` plugin ID and does not migrate Lapis Lazuli settings.
 
 ## Privacy
 
-Lapis Lazuli does not make background AI requests. Note content is sent only when you trigger a chat or inline command. API keys are stored through Obsidian's standard plugin data mechanism.
+Emend makes no background AI requests. Note content is sent to the selected provider only when you invoke chat or an inline suggestion. API keys and settings are stored locally through Obsidian's plugin data mechanism. The vault and note path are sent only when **Include note path** is enabled.
+
+## Development
+
+```bash
+npm ci
+npm test
+npm run lint
+npm run build
+```
+
+The plugin currently supports desktop and mobile Obsidian. Stage 05 of the rewrite plans to introduce desktop-only streaming.

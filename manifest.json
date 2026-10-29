@@ -1,9 +1,9 @@
 {
-	"id": "lapis-lazuli-ai-assistant",
-	"name": "Lapis Lazuli AI Assistant",
+	"id": "emend",
+	"name": "Emend",
 	"version": "1.0.2",
 	"minAppVersion": "1.11.4",
-	"description": "Context-aware inline AI assistance for active Markdown notes with DeepSeek, OpenAI, Gemini, and Claude.",
+	"description": "Context-aware AI chat and edit previews for Markdown notes with DeepSeek, Kimi, and custom OpenAI-compatible providers.",
 	"author": "Taha Yiğit Melek",
 	"authorUrl": "https://github.com/tahayigitmelek",
 	"isDesktopOnly": false

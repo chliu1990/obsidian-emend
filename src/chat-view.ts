@@ -1,9 +1,8 @@
 import { ItemView, Notice, WorkspaceLeaf } from 'obsidian';
 import { AiMessage } from './providers';
-import type LapisLazuliPlugin from './main';
-import { getProviderName } from './settings';
+import type EmendPlugin from './main';
 
-export const LAPIS_LAZULI_CHAT_VIEW_TYPE = 'lapis-lazuli-chat-view';
+export const EMEND_CHAT_VIEW_TYPE = 'emend-chat-view';
 
 interface ChatMessage {
 	id: string;
@@ -13,7 +12,7 @@ interface ChatMessage {
 	kind?: 'answer' | 'edit';
 }
 
-export class LapisLazuliChatView extends ItemView {
+export class EmendChatView extends ItemView {
 	private messages: ChatMessage[] = [];
 	private inputEl: HTMLTextAreaElement | null = null;
 	private activeModelEl: HTMLElement | null = null;
@@ -21,13 +20,13 @@ export class LapisLazuliChatView extends ItemView {
 
 	constructor(
 		leaf: WorkspaceLeaf,
-		private readonly plugin: LapisLazuliPlugin,
+		private readonly plugin: EmendPlugin,
 	) {
 		super(leaf);
 	}
 
 	getViewType() {
-		return LAPIS_LAZULI_CHAT_VIEW_TYPE;
+		return EMEND_CHAT_VIEW_TYPE;
 	}
 
 	getDisplayText() {
@@ -60,19 +59,19 @@ export class LapisLazuliChatView extends ItemView {
 	private render() {
 		const { contentEl } = this;
 		contentEl.empty();
-		contentEl.addClass('lapis-lazuli-chat-view');
+		contentEl.addClass('emend-chat-view');
 
-		const headerEl = contentEl.createDiv('lapis-lazuli-chat-header');
+		const headerEl = contentEl.createDiv('emend-chat-header');
 		headerEl.createDiv({
-			cls: 'lapis-lazuli-chat-title',
+			cls: 'emend-chat-title',
 			text: 'AI chat',
 		});
 		headerEl.createDiv({
-			cls: 'lapis-lazuli-chat-context',
+			cls: 'emend-chat-context',
 			text: this.plugin.getActiveNoteLabel(),
 		});
 
-		const messagesEl = contentEl.createDiv('lapis-lazuli-chat-messages');
+		const messagesEl = contentEl.createDiv('emend-chat-messages');
 		if (this.messages.length === 0) {
 			this.renderEmptyState(messagesEl);
 		} else {
@@ -81,9 +80,9 @@ export class LapisLazuliChatView extends ItemView {
 			}
 		}
 
-		const composerEl = contentEl.createDiv('lapis-lazuli-chat-composer');
+		const composerEl = contentEl.createDiv('emend-chat-composer');
 		this.inputEl = composerEl.createEl('textarea', {
-			cls: 'lapis-lazuli-chat-input',
+			cls: 'emend-chat-input',
 			attr: {
 				placeholder: 'What do you want to add or change in the active note?',
 				rows: '4',
@@ -97,13 +96,13 @@ export class LapisLazuliChatView extends ItemView {
 			}
 		});
 
-		const actionsEl = composerEl.createDiv('lapis-lazuli-chat-composer-actions');
+		const actionsEl = composerEl.createDiv('emend-chat-composer-actions');
 		this.activeModelEl = actionsEl.createDiv({
-			cls: 'lapis-lazuli-chat-active-model',
+			cls: 'emend-chat-active-model',
 			text: this.getActiveModelLabel(),
 		});
 		const sendButton = actionsEl.createEl('button', {
-			cls: 'lapis-lazuli-chat-primary-button',
+			cls: 'emend-chat-primary-button',
 			text: this.isSending ? 'Sending...' : 'Send',
 		});
 		sendButton.disabled = this.isSending;
@@ -113,30 +112,30 @@ export class LapisLazuliChatView extends ItemView {
 	}
 
 	private renderEmptyState(containerEl: HTMLElement) {
-		const emptyEl = containerEl.createDiv('lapis-lazuli-chat-empty');
+		const emptyEl = containerEl.createDiv('emend-chat-empty');
 		emptyEl.createDiv({
-			cls: 'lapis-lazuli-chat-empty-title',
+			cls: 'emend-chat-empty-title',
 			text: 'Chat with the active note',
 		});
 		emptyEl.createDiv({
-			cls: 'lapis-lazuli-chat-empty-body',
+			cls: 'emend-chat-empty-body',
 			text: 'Ask a question to get a chat answer, or request an edit to preview git-style changes directly in the note.',
 		});
 	}
 
 	private renderMessage(containerEl: HTMLElement, message: ChatMessage) {
 		const messageEl = containerEl.createDiv(
-			`lapis-lazuli-chat-message is-${message.role} is-${message.status}`,
+			`emend-chat-message is-${message.role} is-${message.status}`,
 		);
-		const headerEl = messageEl.createDiv('lapis-lazuli-chat-message-header');
+		const headerEl = messageEl.createDiv('emend-chat-message-header');
 		headerEl.createDiv({
-			cls: 'lapis-lazuli-chat-message-label',
+			cls: 'emend-chat-message-label',
 			text: message.role === 'user' ? 'You' : 'AI',
 		});
 
 		if (message.role === 'assistant' && message.status !== 'loading') {
 			const copyButton = headerEl.createEl('button', {
-				cls: 'lapis-lazuli-chat-copy-button',
+				cls: 'emend-chat-copy-button',
 				text: 'Copy',
 			});
 			copyButton.addEventListener('click', () => {
@@ -146,7 +145,7 @@ export class LapisLazuliChatView extends ItemView {
 
 		if (message.status === 'loading') {
 			messageEl.createDiv({
-				cls: 'lapis-lazuli-chat-message-content',
+				cls: 'emend-chat-message-content',
 				text: 'Preparing a response...',
 			});
 			return;
@@ -154,14 +153,14 @@ export class LapisLazuliChatView extends ItemView {
 
 		if (message.status === 'error') {
 			messageEl.createDiv({
-				cls: 'lapis-lazuli-chat-message-content',
+				cls: 'emend-chat-message-content',
 				text: message.content,
 			});
 			return;
 		}
 
 		messageEl.createDiv({
-			cls: 'lapis-lazuli-chat-message-content',
+			cls: 'emend-chat-message-content',
 			text: message.content,
 		});
 	}
@@ -205,7 +204,7 @@ export class LapisLazuliChatView extends ItemView {
 		} catch (error) {
 			loadingMessage.content = getErrorMessage(error);
 			loadingMessage.status = 'error';
-			new Notice(`Lapis Lazuli: ${loadingMessage.content}`);
+			new Notice(`Emend: ${loadingMessage.content}`);
 		} finally {
 			this.isSending = false;
 			this.render();
@@ -226,11 +225,11 @@ export class LapisLazuliChatView extends ItemView {
 	}
 
 	private getActiveModelLabel() {
-		const provider = this.plugin.settings.activeProvider;
-		const model = this.plugin.settings.models[provider]?.trim();
-		return model
-			? `${getProviderName(provider)} · ${model}`
-			: getProviderName(provider);
+		const provider = this.plugin.settings.providers[
+			this.plugin.settings.activeProvider
+		];
+		const model = provider.model.trim();
+		return model ? `${provider.name} · ${model}` : provider.name;
 	}
 }
 

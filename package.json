@@ -1,5 +1,5 @@
 {
-	"name": "lapis-lazuli",
+	"name": "emend",
 	"version": "1.0.2",
 	"description": "Context-aware inline AI assistance for active Markdown notes in Obsidian.",
 	"main": "main.js",

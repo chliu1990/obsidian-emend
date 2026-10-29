@@ -1,14 +1,14 @@
-# Emend / Lapis Lazuli AI Assistant
+# Emend
 
 ## Project overview
 
 This repository contains an Obsidian community plugin written in TypeScript and bundled with esbuild. The plugin provides context-aware AI chat, proposed note edits with in-editor diff review, and inline AI suggestions for Markdown notes.
 
-The repository is in a naming and architecture transition:
+The repository is in an architecture transition:
 
-- The **current implementation and release identity are Lapis Lazuli**. `manifest.json` uses plugin ID `lapis-lazuli-ai-assistant`, name `Lapis Lazuli AI Assistant`, and version `1.0.2`; `package.json` is named `lapis-lazuli` at the same version.
-- The README introduces **Emend** as the intended rewritten plugin. `IMPLEMENTATION_PLAN.md` describes planned Emend modes, code-level write permissions, CriticMarkup editing, Track Changes integration, and dynamic skill loading.
-- Those Emend mechanisms are **not implemented in the current `src/` files**. Do not describe or extend the planned architecture as though it already exists. When implementing the plan, reconcile names, settings, commands, styles, privacy documentation, and tests together.
+- The **current implementation and release identity are Emend**. `manifest.json` uses plugin ID `emend`, name `Emend`, and version `1.0.2`; `package.json` is named `emend` at the same version. This is a clean plugin ID with no Lapis Lazuli data migration.
+- The current runtime temporarily retains the legacy JSON chat protocol, diff review, and inline suggestions. `IMPLEMENTATION_PLAN.md` describes planned explicit modes, code-level write permissions, CriticMarkup editing, Track Changes integration, streaming, and dynamic skill loading.
+- Those planned mechanisms are **not implemented in the current `src/` files**. Do not describe or extend the planned architecture as though it already exists. When implementing the plan, reconcile names, settings, commands, styles, privacy documentation, and tests together.
 
 The manifest requires Obsidian `1.11.4` or newer and sets `isDesktopOnly` to `false`. Keep runtime code compatible with desktop and mobile Obsidian unless that declaration is deliberately changed.
 
@@ -47,11 +47,12 @@ npm test
 | --- | --- |
 | `src/main.ts` | Plugin lifecycle and orchestration: settings loading, chat view and command registration, CodeMirror extension registration, note/context selection, AI request coordination, and accept/reject behavior. |
 | `src/chat-view.ts` | Right-sidebar `ItemView`, in-memory chat state, message rendering, composer, copy action, and submission flow. |
-| `src/providers.ts` | Provider-specific HTTP requests, prompt construction, chat JSON protocol parsing, response validation, and provider error formatting. |
-| `src/settings.ts` | Provider catalog, settings interface/defaults, persisted-data normalization, settings tab, and Markdown instruction-file picker. |
+| `src/providers.ts` | OpenAI-compatible HTTP requests, prompt construction, temporary chat JSON protocol parsing, response validation, and provider error formatting. |
+| `src/settings.ts` | Provider catalog, defaults, persisted-data normalization, and the settings tab. |
+| `src/types.ts` | Shared provider, reasoning-effort, and persisted settings types. |
 | `src/document-diff-preview.ts` | Line-based LCS diff generation, hunk application/rejection, CodeMirror state field, and diff/review widgets. |
 | `src/inline-suggestions.ts` | Inline suggestion state, position mapping across editor changes, loading/ready/error widgets, and accept/reject actions. |
-| `styles.css` | Chat, inline suggestion, and diff styles using the `lapis-lazuli-` prefix and Obsidian CSS variables. |
+| `styles.css` | Chat, inline suggestion, and diff styles using the `emend-` prefix and Obsidian CSS variables. |
 | `esbuild.config.mjs` | Development/watch and production bundle configuration. |
 | `eslint.config.mts` | ESLint flat configuration and typed linting. |
 | `manifest.json` / `versions.json` | Obsidian release metadata and plugin-version-to-minimum-app-version mapping. |
@@ -66,7 +67,7 @@ Keep new feature logic in focused modules rather than adding unrelated responsib
 
 `main.ts` targets the active Markdown view when available. If focus is in the chat sidebar, it can use the last active still-open Markdown view, then falls back to another open Markdown view. Inline suggestions are stricter and require the active live Markdown editor.
 
-Requests include a bounded Markdown context. Notes within the configured character limit are sent whole; longer notes are windowed around the selection or caret, with `[...]` markers at omitted edges. The default limit is 12,000 characters and the settings UI enforces a minimum of 1,000. Optionally, the vault name and note path are included; this is disabled by default. If an agent instructions Markdown file is selected, its contents are read on each request and appended to the system prompt.
+Requests include a bounded Markdown context. Notes within the configured character limit are sent whole; longer notes are windowed around the selection or caret, with `[...]` markers at omitted edges. The default limit is 12,000 characters and the settings UI enforces a minimum of 1,000. Optionally, the vault name and note path are included; this is disabled by default. No instruction file is loaded in the current runtime; automatic instruction and skill discovery is planned for Stage 04.
 
 ### Chat and edit review
 
@@ -83,9 +84,9 @@ The `generate-inline-ai-suggestion` editor command replaces selected text or ins
 
 ### Providers and settings
 
-DeepSeek and OpenAI use OpenAI-compatible chat-completion requests. Gemini uses `generateContent`, and Claude uses the Messages API. All requests use Obsidian's `requestUrl`, are non-streaming, and require a user-configured API key and model. Provider errors include HTTP status and available provider details.
+DeepSeek, Kimi, and custom providers all use the same OpenAI-compatible chat-completion request. Each provider has an editable base URL, API key, model, and reasoning-effort setting. Requests use Obsidian's `requestUrl`, are non-streaming, and require a configured base URL, API key, and model. Reasoning effort is persisted for the planned streaming transport but is not sent by the legacy request path. Provider errors include HTTP status and available provider details.
 
-Settings are loaded with `loadData()`, normalized against defaults, and saved with `saveData()`. API keys, models, active provider, optional instruction-file path, note-path inclusion, and context size are stored locally in Obsidian plugin data. Chat threads, inline suggestions, and diff previews are not saved there.
+Settings are loaded with `loadData()`, normalized against defaults, and saved with `saveData()`. Per-provider configuration, active provider, default mode, note-path inclusion, and context size are stored locally in Obsidian plugin data. The default mode is reserved for the planned mode selector and does not alter the temporary JSON protocol. Chat threads, inline suggestions, and diff previews are not saved there.
 
 ## Coding conventions
 
@@ -93,9 +94,9 @@ Settings are loaded with `loadData()`, normalized against defaults, and saved wi
 - Keep strictness intact. `tsconfig.json` enables `strict`, `noImplicitReturns`, `noFallthroughCasesInSwitch`, `noUncheckedIndexedAccess`, `isolatedModules`, and consistent file-name casing. Handle possibly missing indexed values rather than suppressing these checks.
 - Use the Obsidian DOM helpers already used by views/settings and the widget's `ownerDocument` for CodeMirror widgets. Keep user-facing copy short and in sentence case.
 - Register views, editor extensions, workspace events, commands, and other disposable resources through Obsidian's registration helpers so unload/reload cleans them up. CodeMirror widgets should keep event handling local and prevent unintended editor interactions, as the current widgets do.
-- Use `requestUrl` for provider networking rather than introducing a second HTTP stack. Preserve provider-specific response validation and useful error propagation.
-- Use Obsidian CSS variables and the existing `lapis-lazuli-` CSS prefix for current UI. If completing the Emend rename, update CSS classes and selectors together.
-- Treat public identifiers as stable in the current implementation: plugin ID `lapis-lazuli-ai-assistant`, view type `lapis-lazuli-chat-view`, and command IDs `open-chat` and `generate-inline-ai-suggestion`. A deliberate migration may rename them, but it must be handled consistently rather than incidentally.
+- Use `requestUrl` for provider networking rather than introducing a second HTTP stack until the planned streaming stage. Preserve response validation and useful error propagation.
+- Use Obsidian CSS variables and the `emend-` CSS prefix for current UI. Update CSS classes and selectors together.
+- Current public identifiers are plugin ID `emend`, view type `emend-chat-view`, chat command ID `emend:open-chat`, and temporary inline command ID `generate-inline-ai-suggestion`. Keep renames consistent and deliberate.
 - Avoid Node/Electron-only runtime APIs while `isDesktopOnly` is `false`. Keep startup work limited and avoid unnecessary vault scans or background AI requests.
 
 ## Testing instructions
@@ -112,15 +113,16 @@ git diff --check
 These checks do not exercise Obsidian, CodeMirror interaction, or real provider APIs. Perform manual testing by copying `main.js`, `manifest.json`, and `styles.css` to:
 
 ```text
-<Vault>/.obsidian/plugins/lapis-lazuli-ai-assistant/
+<Vault>/.obsidian/plugins/emend/
 ```
 
 Reload Obsidian and enable the plugin under **Settings → Community plugins**. Configure a provider in the plugin settings. Relevant manual scenarios include:
 
+- Switch among all three providers, edit each provider's settings, reload Obsidian, and verify that the values and non-sensitive preferences persist without reading Lapis Lazuli data.
 - Ask a question and confirm that only a chat answer appears and the note remains unchanged.
 - Request an edit; verify whole-preview and per-hunk accept/reject behavior, including insertion-only, deletion-only, and replacement hunks.
 - Generate inline suggestions with and without selected text; test accept, reject, provider failure, empty output, and edits made while a suggestion is pending.
-- Verify long-note context truncation, optional note-path inclusion, and loading/clearing an agent instructions file.
+- Verify long-note context truncation and optional note-path inclusion.
 - Test each affected provider with valid configuration and an API error; builds alone cannot validate provider models or network behavior.
 - Reload/unload the plugin and check that views, commands, and editor extensions do not duplicate or leak.
 - Exercise mobile behavior when changing UI or APIs, since the manifest declares mobile support.
@@ -131,9 +133,9 @@ If implementing the Emend plan, replace this checklist's current diff expectatio
 
 - API keys are secrets stored in Obsidian's local plugin data. Never commit `data.json`, print keys, or include them in logs and error messages.
 - Note content is sent to the selected third-party provider when the user invokes chat or an inline suggestion. There are no background AI requests in the current implementation.
-- The selected agent instructions file is also sent as prompt context. The vault/note path is sent only when **Include note path** is enabled.
+- The vault/note path is sent only when **Include note path** is enabled. Planned instruction and skill loading must be documented when implemented.
 - Current chat edits remain previews until accepted. Do not silently change this to automatic writes; the planned Emend behavior intentionally differs and requires corresponding UX and documentation updates.
-- Do not add telemetry, remote code execution, automatic plugin downloads, or unrelated network calls. Keep file access within the vault and limited to the active note and explicitly selected instructions.
+- Do not add telemetry, remote code execution, automatic plugin downloads, or unrelated network calls. Keep current file access within the vault and limited to the active note.
 - Preserve clear provider error handling without exposing request headers or credentials.
 
 ## Versioning and deployment

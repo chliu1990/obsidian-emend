@@ -239,7 +239,7 @@ function buildDiffDecorations(
 
 			decorations.push(
 				Decoration.line({
-					class: 'lapis-lazuli-diff-delete-line',
+					class: 'emend-diff-delete-line',
 				}).range(line.from),
 			);
 		}
@@ -274,10 +274,10 @@ class DocumentDiffActionsWidget extends WidgetType {
 	toDOM(view: EditorView) {
 		const ownerDocument = view.dom.ownerDocument;
 		const container = ownerDocument.createElement('div');
-		container.className = 'lapis-lazuli-diff-actions';
+		container.className = 'emend-diff-actions';
 
 		const label = ownerDocument.createElement('span');
-		label.className = 'lapis-lazuli-diff-actions-label';
+		label.className = 'emend-diff-actions-label';
 		label.textContent = `${this.preview.changes.length} proposed change${
 			this.preview.changes.length === 1 ? '' : 's'
 		}`;
@@ -324,13 +324,13 @@ class HunkWidget extends WidgetType {
 	toDOM(view: EditorView) {
 		const ownerDocument = view.dom.ownerDocument;
 		const container = ownerDocument.createElement('div');
-		container.className = 'lapis-lazuli-diff-hunk';
+		container.className = 'emend-diff-hunk';
 
 		const header = ownerDocument.createElement('div');
-		header.className = 'lapis-lazuli-diff-hunk-header';
+		header.className = 'emend-diff-hunk-header';
 
 		const label = ownerDocument.createElement('span');
-		label.className = 'lapis-lazuli-diff-hunk-label';
+		label.className = 'emend-diff-hunk-label';
 		label.textContent = getHunkLabel(this.hunk);
 		header.appendChild(label);
 
@@ -361,19 +361,19 @@ class HunkWidget extends WidgetType {
 
 function createInsertedLines(ownerDocument: Document, hunk: DocumentDiffHunk) {
 	const container = ownerDocument.createElement('div');
-	container.className = 'lapis-lazuli-diff-insert-block';
+	container.className = 'emend-diff-insert-block';
 
 	for (const line of hunk.insertLines) {
 		const lineEl = ownerDocument.createElement('div');
-		lineEl.className = 'lapis-lazuli-diff-insert-line';
+		lineEl.className = 'emend-diff-insert-line';
 
 		const prefix = ownerDocument.createElement('span');
-		prefix.className = 'lapis-lazuli-diff-prefix';
+		prefix.className = 'emend-diff-prefix';
 		prefix.textContent = '+';
 		lineEl.appendChild(prefix);
 
 		const text = ownerDocument.createElement('span');
-		text.className = 'lapis-lazuli-diff-text';
+		text.className = 'emend-diff-text';
 		text.textContent = line;
 		lineEl.appendChild(text);
 
@@ -390,7 +390,7 @@ function createButton(
 ) {
 	const button = ownerDocument.createElement('button');
 	button.type = 'button';
-	button.className = 'lapis-lazuli-diff-button';
+	button.className = 'emend-diff-button';
 	button.textContent = label;
 	button.addEventListener('click', (event) => {
 		event.preventDefault();
