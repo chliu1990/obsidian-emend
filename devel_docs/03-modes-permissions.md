@@ -26,5 +26,5 @@ Add the domain contracts for explicit Ask, Edit, Discuss, and Brainstorm modes, 
 - Green: the same focused command passed 2 files and 14 tests after implementation.
 - Full local gate: `npm test`, `npm run lint`, `npm run build`, and `git diff --check` passed. Vitest reports 3 files and 27 tests passed; lint produced no findings; the build includes strict TypeScript checking and production bundling.
 - Self-review: the diff is limited to the requested domain types, mode/prompt and permission modules, focused tests, and this stage record. No legacy runtime/chat/provider file, dependency, generated bundle, vault data, or secret was changed. No Obsidian UI or real-provider test is applicable to this domain-only stage.
-- Implementation CI: pending.
+- Implementation commit `a48bb955e1555978098ce08f87d33daed3053362`: Gitea run 21 at http://127.0.0.1:19705/cliu/obsidian-emend/actions/runs/21 and job 30 at http://127.0.0.1:19705/cliu/obsidian-emend/actions/runs/21/jobs/30 completed with conclusion **success** on `emend-macos-docker`. Checkout, setup-node, `npm ci`, lint, test, and build all succeeded.
 - Documentation-evidence CI: pending.
