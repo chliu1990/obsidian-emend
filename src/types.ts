@@ -2,6 +2,24 @@ export type ProviderId = 'deepseek' | 'kimi' | 'custom';
 
 export type ReasoningEffort = 'low' | 'medium' | 'high';
 
+export type Mode = 'ask' | 'edit' | 'discuss' | 'brainstorm';
+
+export interface AiMessage {
+	role: 'user' | 'assistant';
+	content: string;
+	mode: Mode;
+}
+
+export interface ProviderHistoryMessage {
+	role: 'user' | 'assistant';
+	content: string;
+}
+
+export interface InstructionPromptParts {
+	agentText?: string;
+	skillTexts: Map<string, string>;
+}
+
 export interface ProviderConfig {
 	name: string;
 	baseUrl: string;
@@ -13,7 +31,7 @@ export interface ProviderConfig {
 export interface EmendSettings {
 	activeProvider: ProviderId;
 	providers: Record<ProviderId, ProviderConfig>;
-	defaultMode: 'ask' | 'edit' | 'discuss' | 'brainstorm';
+	defaultMode: Mode;
 	includeNotePathInContext: boolean;
 	maxContextCharacters: number;
 }
