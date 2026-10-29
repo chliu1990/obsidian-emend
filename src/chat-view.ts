@@ -1,15 +1,36 @@
-import { ItemView, Notice, WorkspaceLeaf } from 'obsidian';
-import { AiMessage } from './providers';
+import {
+	ItemView,
+	MarkdownRenderer,
+	Notice,
+	setIcon,
+	WorkspaceLeaf,
+} from 'obsidian';
 import type EmendPlugin from './main';
+import { MODES } from './mode';
+import type { ReadOnlyMode } from './request-coordinator';
+import type { ProviderHistoryMessage } from './types';
 
 export const EMEND_CHAT_VIEW_TYPE = 'emend-chat-view';
+
+const READ_ONLY_MODES = MODES.filter(
+	(mode): mode is (typeof MODES)[number] & { id: ReadOnlyMode } =>
+		mode.id !== 'edit',
+);
+
+const MODE_PLACEHOLDERS: Record<ReadOnlyMode, string> = {
+	ask: 'Ask about the active note...',
+	discuss: 'Discuss an idea in the active note...',
+	brainstorm: 'Brainstorm ideas for the active note...',
+};
 
 interface ChatMessage {
 	id: string;
 	role: 'user' | 'assistant';
 	content: string;
-	status: 'ready' | 'loading' | 'error';
-	kind?: 'answer' | 'edit';
+	reasoning: string;
+	mode: ReadOnlyMode;
+	sourcePath: string;
+	status: 'ready' | 'loading' | 'error' | 'stopped';
 }
 
 export class EmendChatView extends ItemView {
@@ -17,12 +38,22 @@ export class EmendChatView extends ItemView {
 	private inputEl: HTMLTextAreaElement | null = null;
 	private activeModelEl: HTMLElement | null = null;
 	private isSending = false;
+	private selectedMode: ReadOnlyMode;
+	private activeController: AbortController | null = null;
+	private pendingRenderFrame: number | null = null;
+	private pendingMessages = new Set<ChatMessage>();
+	private messageBodyEls = new Map<string, HTMLElement>();
+	private closed = false;
 
 	constructor(
 		leaf: WorkspaceLeaf,
 		private readonly plugin: EmendPlugin,
 	) {
 		super(leaf);
+		this.selectedMode =
+			plugin.settings.defaultMode === 'edit'
+				? 'ask'
+				: plugin.settings.defaultMode;
 	}
 
 	getViewType() {
@@ -38,10 +69,16 @@ export class EmendChatView extends ItemView {
 	}
 
 	protected async onOpen() {
+		this.closed = false;
 		this.render();
 	}
 
 	protected async onClose() {
+		this.closed = true;
+		this.activeController?.abort();
+		this.cancelPendingRender();
+		this.pendingMessages.clear();
+		this.messageBodyEls.clear();
 		this.activeModelEl = null;
 		this.inputEl = null;
 		this.contentEl.empty();
@@ -57,6 +94,9 @@ export class EmendChatView extends ItemView {
 	}
 
 	private render() {
+		this.cancelPendingRender();
+		this.pendingMessages.clear();
+		this.messageBodyEls.clear();
 		const { contentEl } = this;
 		contentEl.empty();
 		contentEl.addClass('emend-chat-view');
@@ -71,6 +111,24 @@ export class EmendChatView extends ItemView {
 			text: this.plugin.getActiveNoteLabel(),
 		});
 
+		const modeSelectorEl = contentEl.createDiv('emend-chat-mode-selector');
+		for (const mode of READ_ONLY_MODES) {
+			const button = modeSelectorEl.createEl('button', {
+				cls: `emend-chat-mode-button${this.selectedMode === mode.id ? ' is-active' : ''}`,
+				attr: {
+					'aria-pressed': String(this.selectedMode === mode.id),
+					title: mode.label,
+				},
+			});
+			setIcon(button, mode.icon);
+			button.createSpan({ text: mode.label });
+			button.disabled = this.isSending;
+			button.addEventListener('click', () => {
+				this.selectedMode = mode.id;
+				this.render();
+			});
+		}
+
 		const messagesEl = contentEl.createDiv('emend-chat-messages');
 		if (this.messages.length === 0) {
 			this.renderEmptyState(messagesEl);
@@ -84,7 +142,7 @@ export class EmendChatView extends ItemView {
 		this.inputEl = composerEl.createEl('textarea', {
 			cls: 'emend-chat-input',
 			attr: {
-				placeholder: 'What do you want to add or change in the active note?',
+				placeholder: MODE_PLACEHOLDERS[this.selectedMode],
 				rows: '4',
 			},
 		});
@@ -101,13 +159,20 @@ export class EmendChatView extends ItemView {
 			cls: 'emend-chat-active-model',
 			text: this.getActiveModelLabel(),
 		});
-		const sendButton = actionsEl.createEl('button', {
-			cls: 'emend-chat-primary-button',
-			text: this.isSending ? 'Sending...' : 'Send',
+		const actionButton = actionsEl.createEl('button', {
+			cls: this.isSending
+				? 'emend-chat-secondary-button'
+				: 'emend-chat-primary-button',
+			text: this.isSending ? 'Stop' : 'Send',
 		});
-		sendButton.disabled = this.isSending;
-		sendButton.addEventListener('click', () => {
-			void this.submitPrompt();
+		actionButton.addEventListener('click', () => {
+			if (this.isSending) {
+				this.activeController?.abort();
+				actionButton.disabled = true;
+				actionButton.textContent = 'Stopping...';
+			} else {
+				void this.submitPrompt();
+			}
 		});
 	}
 
@@ -119,7 +184,7 @@ export class EmendChatView extends ItemView {
 		});
 		emptyEl.createDiv({
 			cls: 'emend-chat-empty-body',
-			text: 'Ask a question to get a chat answer, or request an edit to preview git-style changes directly in the note.',
+			text: 'Ask, discuss, or brainstorm without changing the note. Responses stream here as Markdown.',
 		});
 	}
 
@@ -128,12 +193,27 @@ export class EmendChatView extends ItemView {
 			`emend-chat-message is-${message.role} is-${message.status}`,
 		);
 		const headerEl = messageEl.createDiv('emend-chat-message-header');
-		headerEl.createDiv({
+		const labelsEl = headerEl.createDiv('emend-chat-message-labels');
+		labelsEl.createDiv({
 			cls: 'emend-chat-message-label',
-			text: message.role === 'user' ? 'You' : 'AI',
+			text: message.role === 'user' ? 'You' : 'Emend',
 		});
+		labelsEl.createDiv({
+			cls: 'emend-chat-mode-badge',
+			text: getModeLabel(message.mode),
+		});
+		if (message.status === 'stopped') {
+			labelsEl.createDiv({
+				cls: 'emend-chat-mode-badge',
+				text: 'Stopped',
+			});
+		}
 
-		if (message.role === 'assistant' && message.status !== 'loading') {
+		if (
+			message.role === 'assistant' &&
+			(message.status === 'ready' || message.status === 'stopped') &&
+			message.content
+		) {
 			const copyButton = headerEl.createEl('button', {
 				cls: 'emend-chat-copy-button',
 				text: 'Copy',
@@ -143,26 +223,96 @@ export class EmendChatView extends ItemView {
 			});
 		}
 
-		if (message.status === 'loading') {
-			messageEl.createDiv({
-				cls: 'emend-chat-message-content',
-				text: 'Preparing a response...',
+		const bodyEl = messageEl.createDiv('emend-chat-message-body');
+		this.messageBodyEls.set(message.id, bodyEl);
+		this.renderMessageBody(message);
+	}
+
+	private renderMessageBody(message: ChatMessage) {
+		const bodyEl = this.messageBodyEls.get(message.id);
+		if (!bodyEl || this.closed) {
+			return;
+		}
+		bodyEl.empty();
+
+		if (message.reasoning) {
+			const detailsEl = bodyEl.createEl('details', {
+				cls: 'emend-chat-reasoning',
 			});
+			detailsEl.open = false;
+			detailsEl.createEl('summary', { text: 'Reasoning' });
+			detailsEl.createDiv({
+				cls: 'emend-chat-reasoning-content',
+				text: message.reasoning,
+			});
+		}
+
+		if (!message.content) {
+			if (message.status === 'loading') {
+				bodyEl.createDiv({
+					cls: 'emend-chat-message-content',
+					text: message.reasoning ? '' : 'Waiting for a response...',
+				});
+			}
 			return;
 		}
 
-		if (message.status === 'error') {
-			messageEl.createDiv({
+		if (message.role === 'user' || message.status === 'error') {
+			bodyEl.createDiv({
 				cls: 'emend-chat-message-content',
 				text: message.content,
 			});
 			return;
 		}
 
-		messageEl.createDiv({
-			cls: 'emend-chat-message-content',
-			text: message.content,
+		const currentContentEl = bodyEl.createDiv('emend-chat-message-content');
+		const renderedEl = bodyEl.ownerDocument.createElement('div');
+		renderedEl.className = 'emend-chat-message-content';
+		void MarkdownRenderer.render(
+			this.app,
+			message.content,
+			renderedEl,
+			message.sourcePath,
+			this,
+		)
+			.then(() => {
+				if (!this.closed && currentContentEl.isConnected) {
+					currentContentEl.replaceWith(renderedEl);
+				}
+			})
+			.catch(() => {
+				if (!this.closed && currentContentEl.isConnected) {
+					currentContentEl.textContent = message.content;
+				}
+			});
+	}
+
+	private scheduleMessageRender(message: ChatMessage) {
+		if (this.closed) {
+			return;
+		}
+		this.pendingMessages.add(message);
+		if (this.pendingRenderFrame !== null) {
+			return;
+		}
+
+		const view = this.contentEl.ownerDocument.defaultView ?? window;
+		this.pendingRenderFrame = view.requestAnimationFrame(() => {
+			this.pendingRenderFrame = null;
+			const messages = Array.from(this.pendingMessages);
+			this.pendingMessages.clear();
+			for (const pendingMessage of messages) {
+				this.renderMessageBody(pendingMessage);
+			}
 		});
+	}
+
+	private cancelPendingRender() {
+		if (this.pendingRenderFrame !== null) {
+			const view = this.contentEl.ownerDocument.defaultView ?? window;
+			view.cancelAnimationFrame(this.pendingRenderFrame);
+			this.pendingRenderFrame = null;
+		}
 	}
 
 	private async submitPrompt() {
@@ -171,56 +321,88 @@ export class EmendChatView extends ItemView {
 			return;
 		}
 
+		let context;
+		try {
+			context = this.plugin.captureChatContext();
+		} catch (error) {
+			new Notice(`Emend: ${getErrorMessage(error)}`);
+			return;
+		}
+
 		const history = this.toProviderHistory();
+		const mode = this.selectedMode;
+		const sourcePath = context.file.path;
 		const loadingMessage: ChatMessage = {
 			id: createMessageId(),
 			role: 'assistant',
 			content: '',
+			reasoning: '',
+			mode,
+			sourcePath,
 			status: 'loading',
 		};
+		const controller = new AbortController();
 
 		this.messages.push({
 			id: createMessageId(),
 			role: 'user',
 			content: prompt,
+			reasoning: '',
+			mode,
+			sourcePath,
 			status: 'ready',
 		});
 		this.messages.push(loadingMessage);
+		this.activeController = controller;
 		this.isSending = true;
 		this.render();
 
 		try {
-			const response = await this.plugin.requestChatCompletion(prompt, history);
-			if (response.type === 'answer') {
-				loadingMessage.content = response.message;
-				loadingMessage.kind = 'answer';
-			} else {
-				loadingMessage.content =
-					response.summary ||
-					'Proposed changes are shown directly in the note.';
-				loadingMessage.kind = 'edit';
-			}
+			await this.plugin.requestChatCompletion({
+				context,
+				mode,
+				prompt,
+				history,
+				callbacks: {
+					onContent: (text) => {
+						loadingMessage.content += text;
+						this.scheduleMessageRender(loadingMessage);
+					},
+					onReasoning: (text) => {
+						loadingMessage.reasoning += text;
+						this.scheduleMessageRender(loadingMessage);
+					},
+				},
+				signal: controller.signal,
+			});
 			loadingMessage.status = 'ready';
 		} catch (error) {
-			loadingMessage.content = getErrorMessage(error);
-			loadingMessage.status = 'error';
-			new Notice(`Emend: ${loadingMessage.content}`);
+			if (controller.signal.aborted || isAbortError(error)) {
+				loadingMessage.status = 'stopped';
+				if (!loadingMessage.content && !loadingMessage.reasoning) {
+					loadingMessage.content = 'Response stopped.';
+				}
+			} else {
+				loadingMessage.content = getErrorMessage(error);
+				loadingMessage.status = 'error';
+				new Notice(`Emend: ${loadingMessage.content}`);
+			}
 		} finally {
+			this.activeController = null;
 			this.isSending = false;
-			this.render();
+			if (!this.closed) {
+				this.render();
+			}
 		}
 	}
 
-	private toProviderHistory(): AiMessage[] {
+	private toProviderHistory(): ProviderHistoryMessage[] {
 		return this.messages
 			.filter((message) => message.status === 'ready')
 			.slice(-8)
 			.map((message) => ({
 				role: message.role,
-				content:
-					message.kind === 'edit'
-						? `Proposed note edit: ${message.content}`
-						: message.content,
+				content: message.content,
 			}));
 	}
 
@@ -233,12 +415,20 @@ export class EmendChatView extends ItemView {
 	}
 }
 
+function getModeLabel(mode: ReadOnlyMode) {
+	return MODES.find((candidate) => candidate.id === mode)?.label ?? mode;
+}
+
 function createMessageId() {
 	return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function getErrorMessage(error: unknown) {
 	return error instanceof Error ? error.message : String(error);
+}
+
+function isAbortError(error: unknown) {
+	return error instanceof Error && error.name === 'AbortError';
 }
 
 async function copyToClipboard(content: string) {

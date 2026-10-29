@@ -233,7 +233,7 @@ export class EmendSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName('Default mode')
-			.setDesc('Saved default for the planned chat mode selector.')
+			.setDesc('Initial chat mode; Edit currently falls back to ask.')
 			.addDropdown((dropdown) => {
 				for (const mode of DEFAULT_MODES) {
 					dropdown.addOption(mode, capitalize(mode));

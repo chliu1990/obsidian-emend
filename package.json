@@ -1,7 +1,7 @@
 {
 	"name": "emend",
 	"version": "1.0.2",
-	"description": "Context-aware inline AI assistance for active Markdown notes in Obsidian.",
+	"description": "Context-aware streamed AI chat for Markdown notes in Obsidian.",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {
