@@ -1,10 +1,13 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { Setting } from 'obsidian';
+import { describe, expect, it, vi } from 'vitest';
 import {
 	AI_PROVIDERS,
 	DEFAULT_SETTINGS,
+	EmendSettingTab,
 	normalizeSettings,
 } from '../src/settings';
+import type EmendPlugin from '../src/main';
 
 const manifest = JSON.parse(
 	readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'),
@@ -223,5 +226,49 @@ describe('normalizeSettings', () => {
 		expect(settings).not.toHaveProperty('agentInstructionsFilePath');
 		expect(settings).not.toHaveProperty('apiKeys');
 		expect(settings).not.toHaveProperty('models');
+	});
+});
+
+describe('EmendSettingTab API keys', () => {
+	it('keeps the input masked and delegates reads and writes to the plugin helpers', async () => {
+		const instances = (
+			Setting as unknown as {
+				instances: Array<{
+					name: string;
+					texts: Array<{
+						inputEl: { type: string };
+						value: string;
+						onChangeHandler(value: string): Promise<void>;
+					}>;
+				}>;
+			}
+		).instances;
+		instances.length = 0;
+		const plugin = {
+			settings: structuredClone(DEFAULT_SETTINGS),
+			getApiKey: vi.fn(() => 'dummy-stored-key'),
+			setApiKey: vi.fn(async () => undefined),
+		};
+		const tab = new EmendSettingTab(
+			{} as ConstructorParameters<typeof EmendSettingTab>[0],
+			plugin as unknown as EmendPlugin,
+		);
+		Object.assign(tab, { containerEl: { empty: vi.fn() } });
+
+		(tab as unknown as { display(): void }).display();
+
+		const setting = instances.find(
+			(candidate) => candidate.name === 'DeepSeek API key',
+		);
+		const text = setting?.texts[0];
+		expect(text?.inputEl.type).toBe('password');
+		expect(text?.value).toBe('dummy-stored-key');
+		expect(plugin.getApiKey).toHaveBeenCalledWith('deepseek');
+		await text?.onChangeHandler(' dummy-updated-key ');
+		expect(plugin.setApiKey).toHaveBeenCalledWith(
+			'deepseek',
+			'dummy-updated-key',
+		);
+		expect(plugin.settings.providers.deepseek.apiKey).toBe('');
 	});
 });

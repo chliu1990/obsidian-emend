@@ -97,7 +97,7 @@ Reload Obsidian. Provider settings and saved conversations remain local to the v
 1. Disable **Emend** under **Settings → Community plugins**.
 2. Remove `<Vault>/.obsidian/plugins/emend/` from the vault.
 
-Disabling Emend preserves its settings and chats. Removing `<Vault>/.obsidian/plugins/emend/` also removes its `data.json`, including provider settings and API keys. Saved conversations remain under `<Vault>/.obsidian/emend/`; remove that directory separately if you want to delete them. Do not share either location.
+Disabling Emend preserves its settings and chats. Removing `<Vault>/.obsidian/plugins/emend/` removes its `data.json` and non-secret provider settings, but API keys live separately in Obsidian SecretStorage. Clear each provider's API key in Emend settings before removal if you also want to remove its stored credential. Saved conversations remain under `<Vault>/.obsidian/emend/`; remove that directory separately if you want to delete them. Do not share either location.
 
 ## Troubleshooting
 

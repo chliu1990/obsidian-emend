@@ -63,7 +63,8 @@ npm test
 | `src/instructions-loader.ts` | Vault-root `AGENTS.md` loading and safe, directly referenced skill discovery. |
 | `src/mode.ts` / `src/permissions.ts` | Mode catalog, mode-specific system prompts, and deterministic note-write permission contracts. |
 | `src/quick-actions.ts` | Stable quick-action IDs, labels, deterministic Edit prompts, and shared availability rules. |
-| `src/settings.ts` | Provider catalog, defaults, persisted-data normalization, and the settings tab. |
+| `src/settings.ts` | Provider catalog, defaults, persisted-data normalization, deep sanitized settings clones, and the masked settings tab. |
+| `src/secret-storage.ts` | Exact provider SecretStorage IDs and synchronous SecretStorage reads/writes with per-provider in-memory fallback. |
 | `src/types.ts` | Shared provider, mode, message, reasoning-effort, instruction, selection snapshot, and persisted settings types. |
 | `styles.css` | Streamed chat styles using the `emend-` prefix and Obsidian CSS variables. |
 | `esbuild.config.mjs` | Development/watch and production bundle configuration. |
@@ -126,7 +127,7 @@ DeepSeek, Kimi, and custom providers all use one OpenAI-compatible streaming cha
 
 When valid provider usage is absent, chat coordinators estimate request and response tokens independently as `max(1, ceil(characters / 4))`, using system prompt, retained history, current user prompt, response content, and reasoning. Estimated total is prompt plus completion and is always labeled `Estimated`; it is not provider billing data. No pricing, tokenizer, or model-metadata network calls are added.
 
-Settings are loaded with `loadData()`, normalized against defaults, and saved with `saveData()`. Per-provider configuration including `requestUsage`, active provider, default mode, note-path inclusion, smart selection context, and context size are stored locally in Obsidian plugin data. There is no edit-strategy setting or selector; legacy `editStrategy` values are dropped during normalization because Operations is always used. `smartSelectionContext` defaults to `true`; missing or malformed values normalize to that default, while explicit `false` restores Stage 09 behavior. Ready chat threads use the separate versioned conversation store; stopped/error states are not persisted.
+Settings are loaded with `loadData()` and normalized against defaults. On first load, any legacy plaintext provider key is written to its exact `app.secretStorage` ID (`emend-api-key-deepseek`, `emend-api-key-kimi`, or `emend-api-key-custom`), cleared in memory, and saved back sanitized. Requests resolve each active provider's key through `getApiKey()` with per-provider in-memory fallback; masked settings inputs use `getApiKey()`/`setApiKey()`. Every `saveSettings()` serializes a deep sanitized clone whose three provider `apiKey` fields are empty, regardless of caller mutations. Non-secret per-provider configuration including `requestUsage`, active provider, default mode, note-path inclusion, smart selection context, and context size is stored locally in Obsidian plugin data. There is no edit-strategy setting or selector; legacy `editStrategy` values are dropped during normalization because Operations is always used. `smartSelectionContext` defaults to `true`; missing or malformed values normalize to that default, while explicit `false` restores Stage 09 behavior. Ready chat threads use the separate versioned conversation store; stopped/error states are not persisted.
 
 ## Coding conventions
 
@@ -176,7 +177,7 @@ Selection editing must preserve native `editor.replaceRange` undo and must not r
 
 ## Security and privacy
 
-- API keys are secrets stored in Obsidian's local plugin data. Never commit `data.json`, print keys, or include them in logs and error messages. Manual mock credentials must remain dummy values in ignored vault data.
+- API keys are secrets stored in Obsidian SecretStorage, never in Emend's `data.json`. Legacy plaintext migrates on load, and every save writes empty provider `apiKey` fields. Never commit `data.json`, print keys, or include them in logs and error messages. Manual mock credentials must remain dummy values in ignored vault data.
 - Read-only requests send bounded note content. Full-note Edit sends the complete note regardless of the context limit. Modify Selection sends the complete selection plus surrounding context, never a truncated selection. Default smart context can send complete containing/adjacent paragraphs, YAML frontmatter, or fenced code within the source-character budget; exact omission markers are additional. The opt-out sends Stage 09 symmetric before/after context. Prompts, recent ready chat history for chat requests, vault-root `AGENTS.md`, and directly referenced skills are sent to the selected provider when the user submits. There are no background AI requests; local thread saves perform no networking.
 - Ready chats remain local under `<configDir>/emend/chats/`. Completed usage counts and their provider/estimated source may persist with ready assistant messages. Do not persist credentials, request bodies, note snapshots, loading/error/stopped messages, or full edit responses. Deleting a note does not automatically delete its thread. Preserve malformed data and never overwrite unsupported schema versions. Estimates are character-based, not provider billing data; do not add pricing or model-metadata calls.
 - The vault/note path is sent only when **Include note path** is enabled.

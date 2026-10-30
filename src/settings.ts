@@ -105,6 +105,17 @@ export function normalizeSettings(data: unknown): EmendSettings {
 	};
 }
 
+export function sanitizeSettings(settings: EmendSettings): EmendSettings {
+	return {
+		...settings,
+		providers: {
+			deepseek: { ...settings.providers.deepseek, apiKey: '' },
+			kimi: { ...settings.providers.kimi, apiKey: '' },
+			custom: { ...settings.providers.custom, apiKey: '' },
+		},
+	};
+}
+
 export function getProviderName(providerId: ProviderId) {
 	return (
 		AI_PROVIDERS.find((provider) => provider.id === providerId)?.name ??
@@ -158,15 +169,14 @@ export class EmendSettingTab extends PluginSettingTab {
 		const config = this.plugin.settings.providers[provider.id];
 		new Setting(containerEl)
 			.setName(`${provider.name} API key`)
-			.setDesc('The key is stored locally in Obsidian plugin settings.')
+			.setDesc('The key is stored locally in Obsidian secret storage.')
 			.addText((text) => {
 				text.inputEl.type = 'password';
 				text
 					.setPlaceholder(`${provider.name} API key`)
-					.setValue(config.apiKey)
+					.setValue(this.plugin.getApiKey(provider.id))
 					.onChange(async (value) => {
-						config.apiKey = value.trim();
-						await this.plugin.saveSettings();
+						await this.plugin.setApiKey(provider.id, value.trim());
 					});
 			});
 

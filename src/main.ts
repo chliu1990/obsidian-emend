@@ -23,16 +23,24 @@ import {
 	SelectionEditRequestCoordinator,
 } from './selection-editor';
 import { SelectionModal } from './selection-modal';
+import { ApiKeyStorage } from './secret-storage';
 import {
 	DEFAULT_SETTINGS,
 	EmendSettingTab,
 	normalizeSettings,
+	sanitizeSettings,
 } from './settings';
-import type { EmendSettings, Mode, SelectionSnapshot } from './types';
+import type {
+	EmendSettings,
+	Mode,
+	ProviderId,
+	SelectionSnapshot,
+} from './types';
 
 export default class EmendPlugin extends Plugin {
 	settings!: EmendSettings;
 	conversationStore!: ConversationStore;
+	private apiKeyStorage: ApiKeyStorage | undefined;
 	private lastMarkdownView: MarkdownView | null = null;
 	private pendingNotePaths: Set<string> | undefined;
 
@@ -138,10 +146,37 @@ export default class EmendPlugin extends Plugin {
 
 	async loadSettings() {
 		this.settings = normalizeSettings(await this.loadData());
+		const storage = this.getApiKeyStorage();
+		let migrated = false;
+		for (const providerId of ['deepseek', 'kimi', 'custom'] as const) {
+			const provider = this.settings.providers[providerId];
+			if (provider.apiKey) {
+				storage.setApiKey(providerId, provider.apiKey.trim());
+				provider.apiKey = '';
+				migrated = true;
+			}
+		}
+		if (migrated) {
+			await this.saveSettings();
+		}
+	}
+
+	getApiKey(providerId: ProviderId) {
+		return this.getApiKeyStorage().getApiKey(providerId);
+	}
+
+	async setApiKey(providerId: ProviderId, value: string) {
+		this.getApiKeyStorage().setApiKey(providerId, value.trim());
+		this.settings.providers[providerId].apiKey = '';
+		await this.saveSettings();
+	}
+
+	private getApiKeyStorage() {
+		return (this.apiKeyStorage ??= new ApiKeyStorage(this.app.secretStorage));
 	}
 
 	async saveSettings() {
-		await this.saveData(this.settings);
+		await this.saveData(sanitizeSettings(this.settings));
 		this.refreshChatModelLabels();
 	}
 
@@ -229,7 +264,10 @@ export default class EmendPlugin extends Plugin {
 
 		return this.withNoteRequest(submission.context.file.path, async () => {
 			const dependencies = {
-				provider: this.settings.providers[this.settings.activeProvider],
+				provider: {
+					...this.settings.providers[this.settings.activeProvider],
+					apiKey: this.getApiKey(this.settings.activeProvider),
+				},
 				loadInstructions: () => loadAllInstructions(this.app.vault),
 				request: requestAiResponse,
 			};
@@ -262,7 +300,10 @@ export default class EmendPlugin extends Plugin {
 
 		return this.withNoteRequest(snapshot.file.path, async () => {
 			const coordinator = new SelectionEditRequestCoordinator({
-				provider: this.settings.providers[this.settings.activeProvider],
+				provider: {
+					...this.settings.providers[this.settings.activeProvider],
+					apiKey: this.getApiKey(this.settings.activeProvider),
+				},
 				loadInstructions: () => loadAllInstructions(this.app.vault),
 				request: requestAiResponse,
 				editor,

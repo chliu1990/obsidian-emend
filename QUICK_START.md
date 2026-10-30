@@ -43,7 +43,7 @@ Open **Settings → Emend**, choose a provider, and fill in its settings.
 
 Emend appends `/chat/completions` to the base URL. The provider must support streaming. Reasoning effort defaults to **High**; choose another level if the model does not support it. **Request token usage** is enabled for DeepSeek/Kimi and disabled for custom providers. Disable it if your provider rejects `stream_options`.
 
-API keys are stored locally in Obsidian plugin data. Do not use a real key in screenshots or shared test files.
+API keys are stored in Obsidian SecretStorage, not as plaintext in Emend's `data.json`. Existing plaintext keys migrate automatically on load. Do not use a real key in screenshots or shared test files.
 
 ## 3. Test read-only chat
 

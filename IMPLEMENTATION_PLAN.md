@@ -2,7 +2,7 @@
 
 ## Status
 
-Stages 1–20 of the Emend rewrite are implemented and reviewed. This file is an index to the numbered stage records, not a description of unfinished pseudocode or a second runtime specification.
+Stages 1–21 of the Emend rewrite are implemented and reviewed. This file is an index to the numbered stage records, not a description of unfinished pseudocode or a second runtime specification.
 
 Current behavior is documented in [README.md](README.md) and [AGENTS.md](AGENTS.md). The complete real-Obsidian release matrix is in [devel_docs/manual-verification.md](devel_docs/manual-verification.md); release-candidate results and CI evidence are in [devel_docs/17-release-candidate.md](devel_docs/17-release-candidate.md).
 
@@ -13,7 +13,7 @@ Current behavior is documented in [README.md](README.md) and [AGENTS.md](AGENTS.
 - Operations are the only model-facing edit protocol. The closed JSON command union validates exact original-snapshot ranges atomically and compiles into the internal CriticMarkup path; there is no edit-strategy setting.
 - Full-note Edit sends the complete captured note. Selection editing sends the complete selection plus default smart structural context or the symmetric opt-out; context expansion never expands the replacement target.
 - Vault-root `AGENTS.md` and directly referenced skills are loaded for every request, with skills placed before agent instructions. Note paths are shared only when explicitly enabled.
-- Ready per-note conversations and token-usage metadata persist locally through versioned atomic storage. Credentials, request bodies, note snapshots, transient messages, and full edit responses are not persisted.
+- Ready per-note conversations and token-usage metadata persist locally through versioned atomic storage. Provider credentials persist separately in Obsidian SecretStorage, while plugin `data.json` keeps every `apiKey` empty. Request bodies, note snapshots, transient messages, and full edit responses are not persisted.
 - The Track Changes plugin is required to review accepted annotations. Emend intentionally has no in-plugin Apply/Reject or diff UI.
 
 ## Numbered stage records
@@ -38,6 +38,7 @@ Current behavior is documented in [README.md](README.md) and [AGENTS.md](AGENTS.
 18. [Chat presentation](devel_docs/18-chat-presentation.md) — streamed Markdown presentation and timing evidence.
 19. [Provider metadata](devel_docs/19-provider-metadata.md) — current provider presets and publication metadata.
 20. [Operations-only editing and selection actions](devel_docs/20-operations-selection-actions.md) — one model-facing protocol and shared selection quick actions.
+21. [SecretStorage API keys](devel_docs/21-secret-storage.md) — provider credential migration, request resolution, and sanitized settings persistence.
 
 ## Verification and release process
 
