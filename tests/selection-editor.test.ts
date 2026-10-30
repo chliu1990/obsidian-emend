@@ -30,6 +30,7 @@ const provider: ProviderConfig = {
 	apiKey: 'dummy-test-key',
 	model: 'dummy-model',
 	reasoningEffort: 'low',
+	requestUsage: false,
 };
 
 function markdownFile(path = 'folder/note.md'): TFile {

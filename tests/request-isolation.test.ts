@@ -35,6 +35,7 @@ const provider: ProviderConfig = {
 	apiKey: 'dummy-test-key',
 	model: 'dummy-model',
 	reasoningEffort: 'low',
+	requestUsage: true,
 };
 
 function deferred<T = void>() {
@@ -350,7 +351,10 @@ describe('shared per-note request isolation', () => {
 		expect(requestMock).toHaveBeenCalledOnce();
 
 		pendingResponse.finish();
-		await expect(pending).resolves.toEqual({ applied: true, changeCount: 1 });
+		await expect(pending).resolves.toMatchObject({
+			applied: true,
+			changeCount: 1,
+		});
 		const retrySelection = makeSelection(fixture, 'Note.md', 'beta');
 		respondWith('{~~beta~>delta~~}');
 		await expect(
@@ -416,7 +420,7 @@ describe('shared per-note request isolation', () => {
 					{ role: 'assistant', content: 'B history' },
 				]),
 			),
-		).resolves.toEqual({ applied: true, changeCount: 1 });
+		).resolves.toMatchObject({ applied: true, changeCount: 1 });
 		pendingResponse.finish();
 		await expect(pendingA).rejects.toThrow(STALE_ERROR);
 

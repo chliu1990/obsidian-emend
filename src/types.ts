@@ -1,5 +1,5 @@
 import type { TFile } from 'obsidian';
-import type { ProviderTokenUsage } from './provider-stream';
+import type { TokenUsage } from './token-usage';
 
 export type ProviderId = 'deepseek' | 'kimi' | 'custom';
 
@@ -27,7 +27,7 @@ export interface ChatMessage {
 	sourcePath: string;
 	status: 'ready' | 'loading' | 'error' | 'stopped';
 	timestamp: number;
-	usage?: ProviderTokenUsage;
+	usage?: TokenUsage;
 }
 
 export interface SelectionSnapshot {
@@ -49,6 +49,7 @@ export interface ProviderConfig {
 	apiKey: string;
 	model: string;
 	reasoningEffort: ReasoningEffort;
+	requestUsage: boolean;
 }
 
 export interface EmendSettings {

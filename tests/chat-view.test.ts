@@ -13,6 +13,7 @@ const viewPrototype = EmendChatView.prototype as unknown as {
 	): void;
 	setMode(this: unknown, mode: Mode): void;
 	registerComposerScope(this: unknown): void;
+	renderMessage(this: unknown, containerEl: HTMLElement, message: ChatMessage): void;
 	onClose(this: unknown): Promise<void>;
 };
 
@@ -139,7 +140,12 @@ describe('EmendChatView conversation saving', () => {
 						return {
 							content: 'Answer',
 							reasoning: '',
-							usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4 },
+							usage: {
+								promptTokens: 3,
+								completionTokens: 1,
+								totalTokens: 4,
+								source: 'provider' as const,
+							},
 						};
 					},
 				),
@@ -169,6 +175,7 @@ describe('EmendChatView conversation saving', () => {
 			promptTokens: 3,
 			completionTokens: 1,
 			totalTokens: 4,
+			source: 'provider',
 		});
 		expect(context.messages.every((item) => item.timestamp > 0)).toBe(true);
 	});
@@ -332,5 +339,134 @@ describe('EmendChatView keyboard shortcuts', () => {
 		expect(context.handleComposerKeydown).toHaveBeenCalledWith(composerEvent);
 		expect(registration.func({ target: {} } as unknown as KeyboardEvent)).toBeUndefined();
 		expect(context.handleComposerKeydown).toHaveBeenCalledOnce();
+	});
+});
+
+class FakeElement {
+	readonly children: FakeElement[] = [];
+	className = '';
+	textContent = '';
+
+	constructor(readonly tagName = 'div') {}
+
+	createDiv(options?: string | { cls?: string; text?: string }) {
+		return this.append('div', options);
+	}
+
+	createEl(tagName: string, options?: { cls?: string; text?: string }) {
+		return this.append(tagName, options);
+	}
+
+	addEventListener() {}
+
+	private append(
+		tagName: string,
+		options?: string | { cls?: string; text?: string },
+	) {
+		const child = new FakeElement(tagName);
+		if (typeof options === 'string') {
+			child.className = options;
+		} else {
+			child.className = options?.cls ?? '';
+			child.textContent = options?.text ?? '';
+		}
+		this.children.push(child);
+		return child;
+	}
+}
+
+function findUsageFooter(container: FakeElement): FakeElement | undefined {
+	if (container.className.includes('emend-chat-message-usage')) {
+		return container;
+	}
+	for (const child of container.children) {
+		const match = findUsageFooter(child);
+		if (match) {
+			return match;
+		}
+	}
+	return undefined;
+}
+
+function renderForFooter(message: ChatMessage) {
+	const container = new FakeElement();
+	const context = {
+		messageBodyEls: new Map<string, HTMLElement>(),
+		renderMessageBody: vi.fn(),
+		closed: false,
+	};
+	viewPrototype.renderMessage.call(
+		context,
+		container as unknown as HTMLElement,
+		message,
+	);
+	return container;
+}
+
+describe('EmendChatView token usage footer', () => {
+	it('shows provider total, prompt, and completion usage on completed answers', () => {
+		const container = renderForFooter({
+			...message('answer', 'Note.md'),
+			usage: {
+				promptTokens: 12,
+				completionTokens: 5,
+				totalTokens: 17,
+				source: 'provider',
+			},
+		});
+
+		expect(findUsageFooter(container)?.textContent).toBe(
+			'Provider usage · 17 total · 12 prompt · 5 completion',
+		);
+	});
+
+	it('clearly labels estimated usage on concise Edit confirmations', () => {
+		const container = renderForFooter({
+			...message('Edit applied — 1 changes tracked. Review in Track Changes.', 'Note.md'),
+			mode: 'edit',
+			usage: {
+				promptTokens: 20,
+				completionTokens: 8,
+				totalTokens: 28,
+				source: 'estimated',
+			},
+		});
+
+		expect(findUsageFooter(container)?.textContent).toBe(
+			'Estimated usage · 28 total · 20 prompt · 8 completion',
+		);
+	});
+
+	it.each(['loading', 'error', 'stopped'] as const)(
+		'does not show usage for %s messages',
+		(status) => {
+			const container = renderForFooter({
+				...message(status, 'Note.md'),
+				status,
+				usage: {
+					promptTokens: 1,
+					completionTokens: 1,
+					totalTokens: 2,
+					source: 'estimated',
+				},
+			});
+
+			expect(findUsageFooter(container)).toBeUndefined();
+		},
+	);
+
+	it('does not show usage on user messages', () => {
+		const container = renderForFooter({
+			...message('question', 'Note.md'),
+			role: 'user',
+			usage: {
+				promptTokens: 1,
+				completionTokens: 1,
+				totalTokens: 2,
+				source: 'estimated',
+			},
+		});
+
+		expect(findUsageFooter(container)).toBeUndefined();
 	});
 });

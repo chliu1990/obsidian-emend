@@ -101,6 +101,35 @@ describe('createSseParser', () => {
 		]);
 	});
 
+	it.each([
+		['absent', undefined],
+		['partial', { prompt_tokens: 12, completion_tokens: 5 }],
+		['non-numeric', { prompt_tokens: '12', completion_tokens: 5, total_tokens: 17 }],
+		['negative', { prompt_tokens: -1, completion_tokens: 5, total_tokens: 4 }],
+		['fractional', { prompt_tokens: 12.5, completion_tokens: 5, total_tokens: 17.5 }],
+	])('ignores %s usage', (_label, usage) => {
+		const parser = createSseParser();
+		const payload = JSON.stringify({ choices: [], usage });
+
+		expect(parser.push(bytes(`data: ${payload}\n\n`))).toEqual([]);
+	});
+
+	it('preserves zero token counts reported by the provider', () => {
+		const parser = createSseParser();
+		const events = parser.push(
+			bytes(
+				'data: {"choices":[],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}\n\n',
+			),
+		);
+
+		expect(events).toEqual([
+			{
+				type: 'usage',
+				usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+			},
+		]);
+	});
+
 	it('emits done once for the done sentinel', () => {
 		const parser = createSseParser();
 
@@ -151,6 +180,7 @@ const provider: ProviderConfig = {
 	apiKey: 'test-api-key',
 	model: 'test-model',
 	reasoningEffort: 'medium',
+	requestUsage: true,
 };
 
 function makeRequest(overrides: Partial<AiProviderRequest> = {}): AiProviderRequest {
@@ -234,7 +264,25 @@ describe('requestAiResponse', () => {
 			temperature: 0.3,
 			reasoning_effort: 'medium',
 			stream: true,
+			stream_options: { include_usage: true },
 		});
+	});
+
+	it('omits stream_options when provider usage requests are disabled', async () => {
+		const fetchMock = mockStream([
+			'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
+			'data: [DONE]\n\n',
+		]);
+
+		await requestAiResponse(
+			makeRequest({ provider: { ...provider, requestUsage: false } }),
+			{ onEvent: vi.fn() },
+			new AbortController().signal,
+		);
+
+		const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+		const body = JSON.parse(init.body as string) as Record<string, unknown>;
+		expect(body.stream).toBe(true);
 		expect(body).not.toHaveProperty('stream_options');
 	});
 
@@ -315,6 +363,30 @@ describe('requestAiResponse', () => {
 		expect(error.message).not.toContain(provider.apiKey);
 		expect(error.message).not.toContain('Authorization');
 		expect(error.message).not.toContain('Bearer');
+	});
+
+	it('surfaces usage-option rejection without an automatic retry', async () => {
+		const fetchMock = vi.fn().mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					error: { message: 'stream_options.include_usage is unsupported' },
+				}),
+				{ status: 400 },
+			),
+		);
+		vi.stubGlobal('fetch', fetchMock);
+
+		const error = await getError(
+			requestAiResponse(
+				makeRequest(),
+				{ onEvent: vi.fn() },
+				new AbortController().signal,
+			),
+		);
+
+		expect(error.message).toContain('HTTP 400');
+		expect(error.message).toContain('stream_options.include_usage is unsupported');
+		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 
 	it('reports network errors without exposing credentials', async () => {

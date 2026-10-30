@@ -175,6 +175,7 @@ function toPersistedMessage(message: ChatMessage): ChatMessage {
 			promptTokens: message.usage.promptTokens,
 			completionTokens: message.usage.completionTokens,
 			totalTokens: message.usage.totalTokens,
+			source: message.usage.source,
 		};
 	}
 	return persisted;
@@ -198,7 +199,7 @@ function inspectThread(contents: string): ThreadInspection {
 	}
 	return {
 		kind: 'valid',
-		messages: value.messages.filter(isReadyMessage),
+		messages: value.messages.filter(isReadyMessage).map(normalizeUsageSource),
 	};
 }
 
@@ -229,8 +230,21 @@ function isTokenUsage(value: unknown) {
 		typeof value.completionTokens === 'number' &&
 		Number.isFinite(value.completionTokens) &&
 		typeof value.totalTokens === 'number' &&
-		Number.isFinite(value.totalTokens)
+		Number.isFinite(value.totalTokens) &&
+		(value.source === undefined ||
+			value.source === 'provider' ||
+			value.source === 'estimated')
 	);
+}
+
+function normalizeUsageSource(message: ChatMessage): ChatMessage {
+	if (!message.usage || message.usage.source) {
+		return message;
+	}
+	return {
+		...message,
+		usage: { ...message.usage, source: 'provider' },
+	};
 }
 
 function isMode(value: unknown) {

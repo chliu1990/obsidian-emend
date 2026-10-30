@@ -10,6 +10,8 @@ import {
 	requestAiResponse,
 	type StreamResult,
 } from './provider-stream';
+import { resolveTokenUsage } from './token-usage';
+import type { TokenUsage } from './token-usage';
 import type {
 	InstructionPromptParts,
 	Mode,
@@ -53,20 +55,29 @@ interface EditRequestCoordinatorDependencies
 	writer: NoteWriter;
 }
 
+export interface ChatStreamResult extends Omit<StreamResult, 'usage'> {
+	usage: TokenUsage;
+}
+
+export interface EditRequestResult extends EditResult {
+	usage: TokenUsage;
+}
+
 export class ReadOnlyRequestCoordinator {
 	constructor(
 		private readonly dependencies: ReadOnlyRequestCoordinatorDependencies,
 	) {}
 
-	async submit(submission: ReadOnlySubmission): Promise<StreamResult> {
+	async submit(submission: ReadOnlySubmission): Promise<ChatStreamResult> {
 		const instructions = await this.dependencies.loadInstructions();
-		return this.dependencies.request(
-			{
-				provider: this.dependencies.provider,
-				systemPrompt: getSystemPrompt(submission.mode, instructions),
-				userPrompt: buildUserPrompt(submission.context, submission.prompt),
-				history: submission.history.slice(-8),
-			},
+		const request = {
+			provider: this.dependencies.provider,
+			systemPrompt: getSystemPrompt(submission.mode, instructions),
+			userPrompt: buildUserPrompt(submission.context, submission.prompt),
+			history: submission.history.slice(-8),
+		};
+		const result = await this.dependencies.request(
+			request,
 			{
 				onEvent: (event) => {
 					if (event.type === 'content') {
@@ -78,6 +89,7 @@ export class ReadOnlyRequestCoordinator {
 			},
 			submission.signal,
 		);
+		return { ...result, usage: resolveTokenUsage(request, result) };
 	}
 }
 
@@ -86,20 +98,21 @@ export class EditRequestCoordinator {
 		private readonly dependencies: EditRequestCoordinatorDependencies,
 	) {}
 
-	async submit(submission: EditSubmission): Promise<EditResult> {
+	async submit(submission: EditSubmission): Promise<EditRequestResult> {
 		const instructions = await this.dependencies.loadInstructions();
 		let response = '';
-		await this.dependencies.request(
-			{
-				provider: this.dependencies.provider,
-				systemPrompt: criticMarkupEditStrategy.getFullNotePrompt(instructions),
-				userPrompt: buildUserPrompt(
-					submission.context,
-					submission.prompt,
-					submission.context.sourceText,
-				),
-				history: submission.history.slice(-8),
-			},
+		const request = {
+			provider: this.dependencies.provider,
+			systemPrompt: criticMarkupEditStrategy.getFullNotePrompt(instructions),
+			userPrompt: buildUserPrompt(
+				submission.context,
+				submission.prompt,
+				submission.context.sourceText,
+			),
+			history: submission.history.slice(-8),
+		};
+		const result = await this.dependencies.request(
+			request,
 			{
 				onEvent: (event) => {
 					if (event.type === 'content') {
@@ -117,13 +130,14 @@ export class EditRequestCoordinator {
 			submission.context.sourceText,
 			response,
 		);
-		return applyPreparedEdit(
+		const editResult = await applyPreparedEdit(
 			submission.mode,
 			submission.context,
 			prepared,
 			this.dependencies.writer,
 			submission.signal,
 		);
+		return { ...editResult, usage: resolveTokenUsage(request, result) };
 	}
 }
 

@@ -30,6 +30,7 @@ describe('normalizeSettings', () => {
 			apiKey: '',
 			model: 'deepseek-v4-flash',
 			reasoningEffort: 'high',
+			requestUsage: true,
 		});
 		expect(DEFAULT_SETTINGS.providers.kimi).toEqual({
 			name: 'Kimi',
@@ -37,6 +38,7 @@ describe('normalizeSettings', () => {
 			apiKey: '',
 			model: 'kimi-k2-turbo-preview',
 			reasoningEffort: 'high',
+			requestUsage: true,
 		});
 		expect(DEFAULT_SETTINGS.providers.custom).toEqual({
 			name: 'Custom',
@@ -44,6 +46,7 @@ describe('normalizeSettings', () => {
 			apiKey: '',
 			model: '',
 			reasoningEffort: 'high',
+			requestUsage: false,
 		});
 	});
 
@@ -64,6 +67,7 @@ describe('normalizeSettings', () => {
 					apiKey: 'deepseek-user-key',
 					model: 'deepseek-user-model',
 					reasoningEffort: 'low',
+					requestUsage: false,
 				},
 				kimi: {
 					name: 'Kimi',
@@ -71,6 +75,7 @@ describe('normalizeSettings', () => {
 					apiKey: 'kimi-user-key',
 					model: 'kimi-user-model',
 					reasoningEffort: 'medium',
+					requestUsage: true,
 				},
 				custom: {
 					name: 'Custom',
@@ -78,6 +83,7 @@ describe('normalizeSettings', () => {
 					apiKey: 'custom-user-key',
 					model: 'custom-user-model',
 					reasoningEffort: 'high',
+					requestUsage: true,
 				},
 			},
 			defaultMode: 'discuss',
@@ -97,6 +103,7 @@ describe('normalizeSettings', () => {
 					apiKey: 'user-key',
 					model: 'user-model',
 					reasoningEffort: 'maximum',
+					requestUsage: 'yes',
 				},
 			},
 		});

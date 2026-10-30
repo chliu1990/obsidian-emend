@@ -89,6 +89,7 @@ function readyMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
 			promptTokens: 10,
 			completionTokens: 4,
 			totalTokens: 14,
+			source: 'provider',
 		},
 		...overrides,
 	};
@@ -167,6 +168,7 @@ describe('ConversationStore schema', () => {
 				promptTokens: 10,
 				completionTokens: 4,
 				totalTokens: 14,
+				source: 'provider',
 			},
 		});
 		expect(raw).not.toContain('secret-key');
@@ -195,6 +197,27 @@ describe('ConversationStore schema', () => {
 					null,
 				],
 			}),
+		);
+
+		expect(await store.load('Note.md')).toEqual([readyMessage()]);
+	});
+
+	it('loads legacy provider usage without a source as provider-reported', async () => {
+		const adapter = new MemoryAdapter();
+		const { store } = makeStore(adapter);
+		await store.save('Note.md', [readyMessage()]);
+		const path = threadPath(adapter);
+		const legacyMessage = {
+			...readyMessage(),
+			usage: {
+				promptTokens: 10,
+				completionTokens: 4,
+				totalTokens: 14,
+			},
+		};
+		adapter.files.set(
+			path,
+			JSON.stringify({ version: 1, messages: [legacyMessage] }),
 		);
 
 		expect(await store.load('Note.md')).toEqual([readyMessage()]);

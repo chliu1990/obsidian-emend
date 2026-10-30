@@ -7,10 +7,12 @@ import {
 import { ConversationStore } from './conversation-store';
 import { loadAllInstructions } from './instructions-loader';
 import { createVaultNoteWriter, type EditResult } from './note-writer';
-import { requestAiResponse, type StreamResult } from './provider-stream';
+import { requestAiResponse } from './provider-stream';
 import {
 	EditRequestCoordinator,
 	ReadOnlyRequestCoordinator,
+	type ChatStreamResult,
+	type EditRequestResult,
 	type EditSubmission,
 	type ReadOnlySubmission,
 } from './request-coordinator';
@@ -209,11 +211,13 @@ export default class EmendPlugin extends Plugin {
 
 	async requestChatCompletion(
 		submission: ReadOnlySubmission,
-	): Promise<StreamResult>;
-	async requestChatCompletion(submission: EditSubmission): Promise<EditResult>;
+	): Promise<ChatStreamResult>;
+	async requestChatCompletion(
+		submission: EditSubmission,
+	): Promise<EditRequestResult>;
 	async requestChatCompletion(
 		submission: ReadOnlySubmission | EditSubmission,
-	): Promise<StreamResult | EditResult> {
+	): Promise<ChatStreamResult | EditRequestResult> {
 		if (!submission.prompt.trim()) {
 			throw new Error('Enter a prompt first.');
 		}

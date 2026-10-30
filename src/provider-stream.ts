@@ -71,6 +71,9 @@ export async function requestAiResponse(
 				temperature: 0.3,
 				reasoning_effort: provider.reasoningEffort,
 				stream: true,
+				...(provider.requestUsage
+					? { stream_options: { include_usage: true } }
+					: {}),
 			}),
 			signal,
 		});
@@ -292,17 +295,18 @@ function parseTokenUsage(value: unknown): ProviderTokenUsage | undefined {
 		total_tokens: totalTokens,
 	} = value;
 	if (
-		typeof promptTokens !== 'number' ||
-		!Number.isFinite(promptTokens) ||
-		typeof completionTokens !== 'number' ||
-		!Number.isFinite(completionTokens) ||
-		typeof totalTokens !== 'number' ||
-		!Number.isFinite(totalTokens)
+		!isTokenCount(promptTokens) ||
+		!isTokenCount(completionTokens) ||
+		!isTokenCount(totalTokens)
 	) {
 		return undefined;
 	}
 
 	return { promptTokens, completionTokens, totalTokens };
+}
+
+function isTokenCount(value: unknown): value is number {
+	return typeof value === 'number' && Number.isInteger(value) && value >= 0;
 }
 
 function formatStreamProviderError(value: unknown) {

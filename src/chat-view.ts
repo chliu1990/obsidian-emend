@@ -14,6 +14,7 @@ import {
 	QUICK_ACTIONS,
 	type QuickAction,
 } from './quick-actions';
+import { formatTokenUsage } from './token-usage';
 import type { ChatMessage, Mode, ProviderHistoryMessage } from './types';
 
 export const EMEND_CHAT_VIEW_TYPE = 'emend-chat-view';
@@ -287,6 +288,16 @@ export class EmendChatView extends ItemView {
 		const bodyEl = messageEl.createDiv('emend-chat-message-body');
 		this.messageBodyEls.set(message.id, bodyEl);
 		this.renderMessageBody(message);
+		if (
+			message.role === 'assistant' &&
+			message.status === 'ready' &&
+			message.usage
+		) {
+			messageEl.createDiv({
+				cls: 'emend-chat-message-usage',
+				text: formatTokenUsage(message.usage),
+			});
+		}
 	}
 
 	private renderMessageBody(message: ChatMessage) {
@@ -477,6 +488,7 @@ export class EmendChatView extends ItemView {
 				loadingMessage.content = result.applied
 					? `Edit applied — ${result.changeCount} changes tracked. Review in Track Changes.`
 					: 'No changes were needed.';
+				loadingMessage.usage = result.usage;
 			} else {
 				const result = await this.plugin.requestChatCompletion({
 					context,

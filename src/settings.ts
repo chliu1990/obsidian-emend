@@ -41,6 +41,7 @@ export const DEFAULT_SETTINGS: EmendSettings = {
 			apiKey: '',
 			model: 'deepseek-v4-flash',
 			reasoningEffort: 'high',
+			requestUsage: true,
 		},
 		kimi: {
 			name: 'Kimi',
@@ -48,6 +49,7 @@ export const DEFAULT_SETTINGS: EmendSettings = {
 			apiKey: '',
 			model: 'kimi-k2-turbo-preview',
 			reasoningEffort: 'high',
+			requestUsage: true,
 		},
 		custom: {
 			name: 'Custom',
@@ -55,6 +57,7 @@ export const DEFAULT_SETTINGS: EmendSettings = {
 			apiKey: '',
 			model: '',
 			reasoningEffort: 'high',
+			requestUsage: false,
 		},
 	},
 	defaultMode: 'ask',
@@ -232,6 +235,16 @@ export class EmendSettingTab extends PluginSettingTab {
 		});
 
 		new Setting(containerEl)
+			.setName('Request token usage')
+			.setDesc('Ask this provider to report token usage. Disable this if the provider rejects the option.')
+			.addToggle((toggle) =>
+				toggle.setValue(config.requestUsage).onChange(async (value) => {
+					config.requestUsage = value;
+					await this.plugin.saveSettings();
+				}),
+			);
+
+		new Setting(containerEl)
 			.setName('Default mode')
 			.setDesc('Initial chat mode for each chat session.')
 			.addDropdown((dropdown) => {
@@ -296,6 +309,10 @@ function normalizeProviderConfig(
 		reasoningEffort: isReasoningEffort(config.reasoningEffort)
 			? config.reasoningEffort
 			: defaults.reasoningEffort,
+		requestUsage:
+			typeof config.requestUsage === 'boolean'
+				? config.requestUsage
+				: defaults.requestUsage,
 	};
 }
 

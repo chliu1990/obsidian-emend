@@ -12,6 +12,7 @@ Emend is an Obsidian plugin for context-aware, streamed AI chat and guarded Crit
 - Sequential multi-turn edits use the latest annotated note while preserving earlier Track Changes markup. A shared per-note pending guard prevents full-note, read-only chat, and selection requests from racing; different notes remain independent.
 - Track Changes as the only edit-review surface. Emend has no Apply/Reject or in-plugin diff UI.
 - Per-session mode controls, mode badges and placeholders, model labels, response copying, and Stop for an in-flight request.
+- Completed assistant footers show provider-reported token usage or a clearly labeled character-based estimate, including concise Edit confirmations. Usage persists with the local conversation after reload.
 - Composer and mode keyboard shortcuts: Enter or Mod+Enter sends, Shift+Enter inserts a newline, and Mod+Shift+A/E selects Ask/Edit without submitting. Obsidian maps Mod to Cmd on macOS and Ctrl on Windows/Linux.
 - **Fix grammar**, **Make concise**, and **Add examples** quick actions above the composer. Each submits a visible prompt through the normal guarded Edit flow, including history, persistence, pending isolation, and write validation.
 - Versioned per-note conversation persistence with atomic local writes, rapid-note-switch protection, and safe recovery of malformed thread files.
@@ -22,7 +23,7 @@ Emend is an Obsidian plugin for context-aware, streamed AI chat and guarded Crit
 ## Setup and usage
 
 1. Install the plugin as `emend` on desktop Obsidian and enable **Emend** under **Settings → Community plugins**.
-2. In Emend settings, choose a provider and enter its API key, HTTP(S) base URL, and model. DeepSeek and Kimi have editable presets; a custom provider requires an OpenAI-compatible base URL.
+2. In Emend settings, choose a provider and enter its API key, HTTP(S) base URL, and model. DeepSeek and Kimi have editable presets; a custom provider requires an OpenAI-compatible base URL. **Request token usage** is enabled by default for DeepSeek/Kimi and disabled for custom providers. Disable it if a provider rejects `stream_options`; Emend reports the error and does not retry automatically.
 3. Open **AI chat** from the ribbon or Command Palette. Choose Ask, Discuss, Brainstorm, or Edit, enter a prompt, and select **Send**. Press **Enter** or **Cmd+Enter** on macOS (**Ctrl+Enter** on Windows/Linux) to send; **Shift+Enter** inserts a newline without sending.
 4. Press **Cmd+Shift+A** or **Cmd+Shift+E** on macOS (**Ctrl+Shift+A/E** on Windows/Linux), or run **Switch to ask mode** / **Switch to edit mode** from the Command Palette. These commands open or focus chat, show the selected mode, and preserve the current draft without submitting, making a provider request, or writing the note. A mode change during a pending request applies only to the next request.
 5. Select **Fix grammar**, **Make concise**, or **Add examples** above the composer for a common edit. The action switches to Edit and submits its visible prompt once through the normal guarded flow. Actions are disabled without a usable note and while a request or thread load is pending.
@@ -39,6 +40,8 @@ Emend uses the new `emend` plugin ID and does not migrate Lapis Lazuli settings.
 Emend makes no background AI requests. Note content is sent only when you explicitly submit a chat or selection-edit action. Read-only modes send bounded note content; full-note Edit sends the complete note regardless of the context limit. Modify Selection sends the complete selected text plus bounded before/after context, even when the selection itself exceeds that limit. The prompt, recent ready chat messages for chat requests, vault-root `AGENTS.md`, and directly referenced skill instructions are also sent to the selected provider. API keys and settings are stored locally through Obsidian's plugin data mechanism. The vault and note path are sent only when **Include note path** is enabled.
 
 Ready user and assistant messages are saved locally under `<configDir>/emend/chats/`, with SHA-256 note-path keys and bounded readable filenames. Saving a thread sends nothing to a provider. Loading, stopped, and error messages, API keys, note snapshots, request bodies, and buffered edit responses are not persisted; Edit history keeps only concise result summaries. A malformed thread is left untouched when read and copied to a single `.corrupt` backup before the next save replaces it. Unsupported schema versions are not overwritten. Deleting a note does not automatically delete its stored thread or corrupt backup.
+
+Completed assistant usage counts and their provider/estimated source are saved with ready messages. Estimates use `max(1, ceil(characters / 4))` separately for request and response text; they are not provider billing data. Emend adds no pricing, tokenizer, or model-metadata network calls.
 
 Only full-note Edit and explicit Modify Selection have note-writing paths. They write validated CriticMarkup immediately after completion and target/source checks; Track Changes provides subsequent review.
 

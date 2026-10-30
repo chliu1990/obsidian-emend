@@ -25,6 +25,7 @@ const provider: ProviderConfig = {
 	apiKey: 'dummy-test-key',
 	model: 'dummy-model',
 	reasoningEffort: 'low',
+	requestUsage: true,
 };
 
 function makeContext(overrides: Partial<RequestContext> = {}): RequestContext {
@@ -157,6 +158,54 @@ describe('ReadOnlyRequestCoordinator', () => {
 		await coordinator.submit(makeSubmission({ history }));
 
 		expect(request.mock.calls[0]?.[0].history).toEqual(history.slice(-8));
+	});
+
+	it('adds an estimated usage source using the exact request and response text', async () => {
+		const { coordinator, request } = makeCoordinator();
+
+		const result = await coordinator.submit(makeSubmission());
+
+		const requestArg = request.mock.calls[0]?.[0];
+		if (!requestArg) {
+			throw new Error('Provider request missing.');
+		}
+		const promptTokens = Math.max(
+			1,
+			Math.ceil(
+				(requestArg.systemPrompt.length +
+					requestArg.userPrompt.length +
+					requestArg.history.reduce((sum, item) => sum + item.content.length, 0)) /
+					4,
+			),
+		);
+		const completionTokens = Math.max(
+			1,
+			Math.ceil((result.content.length + result.reasoning.length) / 4),
+		);
+		expect(result.usage).toEqual({
+			promptTokens,
+			completionTokens,
+			totalTokens: promptTokens + completionTokens,
+			source: 'estimated',
+		});
+	});
+
+	it('labels valid provider usage and preserves zero counts', async () => {
+		const request = vi.fn(async (): Promise<StreamResult> => ({
+			content: 'Streamed answer',
+			reasoning: 'Folded reasoning',
+			usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+		}));
+		const { coordinator } = makeCoordinator(request);
+
+		const result = await coordinator.submit(makeSubmission());
+
+		expect(result.usage).toEqual({
+			promptTokens: 0,
+			completionTokens: 0,
+			totalTokens: 0,
+			source: 'provider',
+		});
 	});
 
 	it('builds prompts from captured context without an opt-in path', async () => {
@@ -307,7 +356,11 @@ describe('EditRequestCoordinator', () => {
 
 		const result = await coordinator.submit(submission);
 
-		expect(result).toEqual({ applied: true, changeCount: 1 });
+		expect(result).toMatchObject({
+			applied: true,
+			changeCount: 1,
+			usage: { source: 'estimated' },
+		});
 		expect(submission.callbacks.onReasoning).toHaveBeenCalledExactlyOnceWith(
 			'Editing the complete note.',
 		);
@@ -330,7 +383,11 @@ describe('EditRequestCoordinator', () => {
 
 		const result = await coordinator.submit(makeEditSubmission());
 
-		expect(result).toEqual({ applied: false, changeCount: 0 });
+		expect(result).toMatchObject({
+			applied: false,
+			changeCount: 0,
+			usage: { source: 'estimated' },
+		});
 		expect(writer.write).not.toHaveBeenCalled();
 	});
 
