@@ -49,3 +49,7 @@ Make the validated closed JSON operation protocol the only model-facing editing 
 - Selection actions reuse the existing modal submission callback and active-controller guard. They add no provider, history, persistence, or writer path, and pending/failure behavior is covered by unit and real UI checks.
 - Current `README.md`, `QUICK_START.md`, `AGENTS.md`, and `IMPLEMENTATION_PLAN.md` describe the Operations-only contract and selection actions. Historical stage records retain their original opt-in/default descriptions as evidence of earlier behavior.
 - No generated bundle, vault/profile content, request log, credential, dependency, or other ignored file is intended for git. No implementation or verification blocker was found. Independent task-review approval, if required by the parent workflow, remains separate from this self-review.
+
+## Implementation-run CI evidence
+
+Implementation commit `c8e2a274e32e4b55756d3d5c869822414cdde96c` was pushed on `feat/emend-rewrite`. Gitea push run 97 at http://127.0.0.1:19705/cliu/obsidian-emend/actions/runs/97 and job 119 completed with conclusion **success** on `emend-macos-docker` from 15:42:58Z through 15:43:22Z. All run, job, and log details were retrieved through `tea api`. Checkout reached `HEAD is now at c8e2a27`; Node/npm verification, clean `npm ci`, lint, all **414 tests in 21 files**, and the production build succeeded.
