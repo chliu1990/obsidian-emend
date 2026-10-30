@@ -1,5 +1,31 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, normalizeSettings } from '../src/settings';
+import {
+	AI_PROVIDERS,
+	DEFAULT_SETTINGS,
+	normalizeSettings,
+} from '../src/settings';
+
+const manifest = JSON.parse(
+	readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'),
+) as Record<string, unknown>;
+const packageMetadata = JSON.parse(
+	readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+) as Record<string, unknown>;
+
+describe('publication metadata', () => {
+	it('uses the current author without the original author URL', () => {
+		expect(manifest.author).toBe('Chang Liu and Kimi K3.1 Pro');
+		expect(packageMetadata.author).toBe(manifest.author);
+		expect(manifest).not.toHaveProperty('authorUrl');
+		expect(packageMetadata).not.toHaveProperty('authorUrl');
+	});
+
+	it('retains version 2.0.0', () => {
+		expect(manifest.version).toBe('2.0.0');
+		expect(packageMetadata.version).toBe('2.0.0');
+	});
+});
 
 describe('normalizeSettings', () => {
 	it('returns clean Emend defaults for missing persisted data', () => {
@@ -19,6 +45,26 @@ describe('normalizeSettings', () => {
 	});
 
 	it('provides exactly the DeepSeek, Kimi, and custom presets', () => {
+		expect(AI_PROVIDERS).toEqual([
+			{
+				id: 'deepseek',
+				name: 'DeepSeek',
+				defaultModel: 'deepseek-flash',
+				defaultBaseUrl: 'https://api.deepseek.com',
+			},
+			{
+				id: 'kimi',
+				name: 'Kimi',
+				defaultModel: 'k3.1-pro',
+				defaultBaseUrl: 'https://api.kimi.com/coding/v1',
+			},
+			{
+				id: 'custom',
+				name: 'Custom',
+				defaultModel: '',
+				defaultBaseUrl: '',
+			},
+		]);
 		expect(Object.keys(DEFAULT_SETTINGS.providers)).toEqual([
 			'deepseek',
 			'kimi',
@@ -28,15 +74,15 @@ describe('normalizeSettings', () => {
 			name: 'DeepSeek',
 			baseUrl: 'https://api.deepseek.com',
 			apiKey: '',
-			model: 'deepseek-v4-flash',
+			model: 'deepseek-flash',
 			reasoningEffort: 'high',
 			requestUsage: true,
 		});
 		expect(DEFAULT_SETTINGS.providers.kimi).toEqual({
 			name: 'Kimi',
-			baseUrl: 'https://api.moonshot.cn/v1',
+			baseUrl: 'https://api.kimi.com/coding/v1',
 			apiKey: '',
-			model: 'kimi-k2-turbo-preview',
+			model: 'k3.1-pro',
 			reasoningEffort: 'high',
 			requestUsage: true,
 		});

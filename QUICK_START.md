@@ -27,13 +27,13 @@ Open **Settings → Emend**, choose a provider, and fill in its settings.
 
 - Base URL: `https://api.deepseek.com`
 - API key: your DeepSeek key
-- Model: an available DeepSeek model; replace the preset if your account uses a different name
+- Model: `deepseek-flash`; replace the preset if your account uses a different name
 
 ### Kimi
 
-- Base URL: `https://api.moonshot.cn/v1`
-- API key: your Moonshot/Kimi key
-- Model: an available Kimi model; replace the preset if needed
+- Base URL: `https://api.kimi.com/coding/v1`
+- API key: your Kimi Code key
+- Model: `k3.1-pro`; replace the preset if needed
 
 ### Custom OpenAI-compatible provider
 

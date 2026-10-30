@@ -2,6 +2,7 @@
 	"name": "emend",
 	"version": "2.0.0",
 	"description": "Context-aware streamed AI chat for Markdown notes in Obsidian.",
+	"author": "Chang Liu and Kimi K3.1 Pro",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {
