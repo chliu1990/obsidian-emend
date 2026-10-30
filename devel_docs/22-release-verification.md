@@ -46,3 +46,7 @@ Document actionable context-management and web-search designs without implementi
 - The complete hardening diff from `073766a` through the Stage 22 working tree was also reviewed. Operations remains the only model-facing edit protocol while internal CriticMarkup validation/Track Changes remains intact; selection actions reuse the existing guarded submission path; SecretStorage migration/sanitized saves/request resolution retain provider independence; no second provider transport or note writer was introduced.
 - No new correctness, security, privacy, documentation, or verification blocker was found in these self-reviews. No independent reviewer tool was available in this implementation run, so this records self-review rather than external approval.
 - No generated bundle, vault/profile content, request/result log, verification script, dummy plugin data, credential, or other ignored file is intended for git. No merge or release publication is part of this stage.
+
+## Implementation-run CI evidence
+
+Implementation commit `0a8333bbb59abbafb9d9a413695f1e911986ae93` was pushed on `feat/emend-rewrite`. Gitea push run 105 at http://127.0.0.1:19705/cliu/obsidian-emend/actions/runs/105 and job 127 completed with conclusion **success** on `emend-macos-docker` from 16:32:49Z through 16:33:12Z. Run, job, and log details were retrieved through `tea api`. Checkout reached `HEAD is now at 0a8333b`; clean `npm ci` installed 351 packages, lint passed, all **421 tests in 22 files** passed, and the production build succeeded.
