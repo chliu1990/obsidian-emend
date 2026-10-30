@@ -5,7 +5,18 @@ jobs:
     runs-on: emend-macos
     container: node:24-bookworm
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${GITHUB_TOKEN:-}" ]; then
+            echo "GITHUB_TOKEN is required."
+            exit 1
+          fi
+          git init
+          git remote add origin "http://host.docker.internal:19705/${GITHUB_REPOSITORY}.git"
+          git -c http.extraHeader="Authorization: Bearer ${GITHUB_TOKEN}" fetch --depth 1 origin "${GITHUB_SHA}"
+          git checkout --detach FETCH_HEAD
       - run: node --version && npm --version
       - run: npm ci
       - run: npm run lint
