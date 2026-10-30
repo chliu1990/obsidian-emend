@@ -1,9 +1,7 @@
 import { TFile, type MarkdownView } from 'obsidian';
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
-import {
-	criticMarkupEditStrategy,
-	type EditPreparation,
-} from '../src/edit-strategy';
+import type { EditPreparation } from '../src/edit-strategy';
+import { operationEditStrategy } from '../src/operation-edit-strategy';
 import type {
 	AiProviderRequest,
 	StreamEvent,
@@ -405,7 +403,7 @@ function makeSelectionCoordinator(
 		loadInstructions,
 		request,
 		editor: adapter,
-		editStrategy: criticMarkupEditStrategy,
+		editStrategy: operationEditStrategy,
 	});
 	return { adapter, coordinator, loadInstructions, request };
 }
@@ -425,14 +423,18 @@ function makeSelectionSubmission(
 }
 
 describe('SelectionEditRequestCoordinator', () => {
-	it('loads current instructions and uses the Stage 03 selection prompt', async () => {
+	const replaceBetaResponse = JSON.stringify([
+		{ type: 'replace', target: 'beta', replacement: 'delta' },
+	]);
+
+	it('loads current instructions and uses the operation selection prompt', async () => {
 		const snapshot = makeSnapshot();
 		const instructions: InstructionPromptParts = {
 			agentText: 'Agent instructions',
 			skillTexts: new Map([['skills/review/SKILL.md', 'Review skill']]),
 		};
 		const { coordinator, loadInstructions, request } = makeSelectionCoordinator(
-			selectionRequest(snapshot.selectedText),
+			selectionRequest('[]'),
 			snapshot,
 			instructions,
 		);
@@ -443,7 +445,8 @@ describe('SelectionEditRequestCoordinator', () => {
 		expect(loadInstructions).toHaveBeenCalledTimes(2);
 		for (const call of request.mock.calls) {
 			const systemPrompt = call[0].systemPrompt;
-			expect(systemPrompt).toContain('Return ONLY the modified selected portion');
+			expect(systemPrompt).toContain('bare JSON array');
+			expect(systemPrompt).toContain('selected portion');
 			expect(systemPrompt).not.toContain('Return the COMPLETE note');
 			expect(systemPrompt.indexOf('Review skill')).toBeLessThan(
 				systemPrompt.indexOf('Agent instructions'),
@@ -455,7 +458,7 @@ describe('SelectionEditRequestCoordinator', () => {
 		const sourceText = '0123456789'.repeat(10);
 		const snapshot = makeSnapshot(sourceText, sourceText.slice(40, 50), 40);
 		const { coordinator, request } = makeSelectionCoordinator(
-			selectionRequest(snapshot.selectedText),
+			selectionRequest('[]'),
 			snapshot,
 		);
 
@@ -483,7 +486,7 @@ describe('SelectionEditRequestCoordinator', () => {
 		const sourceText = `Before paragraph.\n\n${paragraph}\n\nAfter paragraph.`;
 		const snapshot = makeSnapshot(sourceText, 'beta');
 		const { adapter, coordinator, request } = makeSelectionCoordinator(
-			selectionRequest('{~~beta~>delta~~}'),
+			selectionRequest(replaceBetaResponse),
 			snapshot,
 		);
 
@@ -510,7 +513,7 @@ describe('SelectionEditRequestCoordinator', () => {
 		const selectedText = sourceText.slice(20, 80);
 		const snapshot = makeSnapshot(sourceText, selectedText, 20);
 		const { coordinator, request } = makeSelectionCoordinator(
-			selectionRequest(selectedText),
+			selectionRequest('[]'),
 			snapshot,
 		);
 
@@ -529,7 +532,7 @@ describe('SelectionEditRequestCoordinator', () => {
 	it('validates and applies only the returned annotated selection', async () => {
 		const snapshot = makeSnapshot();
 		const { adapter, coordinator } = makeSelectionCoordinator(
-			selectionRequest('{~~beta~>delta~~}'),
+			selectionRequest(replaceBetaResponse),
 			snapshot,
 		);
 
@@ -546,7 +549,7 @@ describe('SelectionEditRequestCoordinator', () => {
 	it('returns a no-op result without replacing unchanged output', async () => {
 		const snapshot = makeSnapshot();
 		const { adapter, coordinator } = makeSelectionCoordinator(
-			selectionRequest(snapshot.selectedText),
+			selectionRequest('[]'),
 			snapshot,
 		);
 
@@ -565,7 +568,7 @@ describe('SelectionEditRequestCoordinator', () => {
 
 		await expect(
 			coordinator.submit(makeSelectionSubmission(snapshot)),
-		).rejects.toThrow('Response reject view differs');
+		).rejects.toThrow('Operation edit response must be a bare JSON array.');
 		expect(adapter.readCurrentText).not.toHaveBeenCalled();
 		expect(adapter.replaceRange).not.toHaveBeenCalled();
 	});
@@ -602,9 +605,9 @@ describe('SelectionEditRequestCoordinator', () => {
 				_request: AiProviderRequest,
 				callbacks: { onEvent(event: StreamEvent): void },
 			): Promise<StreamResult> => {
-				callbacks.onEvent({ type: 'content', text: '{~~beta~>delta~~}' });
+				callbacks.onEvent({ type: 'content', text: replaceBetaResponse });
 				controller.abort();
-				return { content: '{~~beta~>delta~~}', reasoning: '' };
+				return { content: replaceBetaResponse, reasoning: '' };
 			},
 		);
 		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);

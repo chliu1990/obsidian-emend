@@ -2,7 +2,7 @@
 
 ## Status
 
-Stages 1–16 of the Emend rewrite are implemented and reviewed. Stage 17 is the final documentation, compatibility, manual-verification, and release-candidate stage. This file is now an index to the numbered stage records, not a description of unfinished pseudocode or a second runtime specification.
+Stages 1–20 of the Emend rewrite are implemented and reviewed. This file is an index to the numbered stage records, not a description of unfinished pseudocode or a second runtime specification.
 
 Current behavior is documented in [README.md](README.md) and [AGENTS.md](AGENTS.md). The complete real-Obsidian release matrix is in [devel_docs/manual-verification.md](devel_docs/manual-verification.md); release-candidate results and CI evidence are in [devel_docs/17-release-candidate.md](devel_docs/17-release-candidate.md).
 
@@ -10,7 +10,7 @@ Current behavior is documented in [README.md](README.md) and [AGENTS.md](AGENTS.
 
 - Emend is desktop-only and requires Obsidian 1.11.4 or newer. DeepSeek, Kimi, and custom HTTP(S) endpoints use one OpenAI-compatible streaming `fetch` transport with Server-Sent Events.
 - Ask, Discuss, and Brainstorm have no note writer. Edit and Modify Selection apply validated CriticMarkup immediately after completion, abort, exact-source, active-target, and permission checks. Track Changes is the only review surface.
-- The default edit strategy accepts a complete CriticMarkup document or annotated selection. The opt-in Operations strategy accepts a closed JSON command union, validates exact original-snapshot ranges atomically, and compiles into the same CriticMarkup path.
+- Operations are the only model-facing edit protocol. The closed JSON command union validates exact original-snapshot ranges atomically and compiles into the internal CriticMarkup path; there is no edit-strategy setting.
 - Full-note Edit sends the complete captured note. Selection editing sends the complete selection plus default smart structural context or the symmetric opt-out; context expansion never expands the replacement target.
 - Vault-root `AGENTS.md` and directly referenced skills are loaded for every request, with skills placed before agent instructions. Note paths are shared only when explicitly enabled.
 - Ready per-note conversations and token-usage metadata persist locally through versioned atomic storage. Credentials, request bodies, note snapshots, transient messages, and full edit responses are not persisted.
@@ -35,6 +35,9 @@ Current behavior is documented in [README.md](README.md) and [AGENTS.md](AGENTS.
 15. [Smart selection context](devel_docs/15-smart-selection-context.md) — structural context without target expansion.
 16. [Operation-based editing](devel_docs/16-operation-based-editing.md) — validated closed JSON operations.
 17. [Release candidate](devel_docs/17-release-candidate.md) — final compatibility review, full verification matrix, and 2.0.0 metadata.
+18. [Chat presentation](devel_docs/18-chat-presentation.md) — streamed Markdown presentation and timing evidence.
+19. [Provider metadata](devel_docs/19-provider-metadata.md) — current provider presets and publication metadata.
+20. [Operations-only editing and selection actions](devel_docs/20-operations-selection-actions.md) — one model-facing protocol and shared selection quick actions.
 
 ## Verification and release process
 

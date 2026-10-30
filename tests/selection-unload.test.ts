@@ -61,8 +61,8 @@ describe('selection request plugin unload', () => {
 		vi.mocked(requestAiResponse)
 			.mockReturnValueOnce(delayedResponse.promise)
 			.mockImplementationOnce(async (_request, callbacks) => {
-				callbacks.onEvent({ type: 'content', text: 'beta' });
-				return { content: 'beta', reasoning: '' };
+				callbacks.onEvent({ type: 'content', text: '[]' });
+				return { content: '[]', reasoning: '' };
 			});
 		const file = new TFile();
 		file.path = 'Selection.md';
@@ -133,7 +133,9 @@ describe('selection request plugin unload', () => {
 		}
 		expect(modal?.signal?.aborted).toBe(true);
 		delayedResponse.resolve({
-			content: '{~~beta~>changed~~}',
+			content: JSON.stringify([
+				{ type: 'replace', target: 'beta', replacement: 'changed' },
+			]),
 			reasoning: '',
 		});
 		await expect(modal?.completion).rejects.toMatchObject({ name: 'AbortError' });

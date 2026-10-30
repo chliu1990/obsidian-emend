@@ -1,8 +1,11 @@
 import { App, Modal, Notice } from 'obsidian';
 import type { EditResult } from './note-writer';
+import { QUICK_ACTIONS } from './quick-actions';
 
 export class SelectionModal extends Modal {
 	private inputEl: HTMLTextAreaElement | null = null;
+	private submitButton: HTMLButtonElement | null = null;
+	private quickActionButtons: HTMLButtonElement[] = [];
 	private activeController: AbortController | null = null;
 
 	constructor(
@@ -19,6 +22,19 @@ export class SelectionModal extends Modal {
 		this.setTitle('Modify selected text');
 		this.contentEl.empty();
 		this.contentEl.addClass('emend-selection-modal');
+		const quickActionsEl = this.contentEl.createDiv('emend-chat-quick-actions');
+		for (const action of QUICK_ACTIONS) {
+			const button = quickActionsEl.createEl('button', {
+				cls: 'emend-chat-quick-action',
+				text: action.label,
+				attr: { 'data-action-id': action.id },
+			});
+			this.quickActionButtons.push(button);
+			button.addEventListener('click', () => {
+				void this.submit(action.prompt);
+			});
+		}
+
 		this.contentEl.createEl('label', {
 			text: 'How do you want to modify this selection?',
 		});
@@ -50,11 +66,11 @@ export class SelectionModal extends Modal {
 				this.close();
 			}
 		});
-		const submitButton = actionsEl.createEl('button', {
+		this.submitButton = actionsEl.createEl('button', {
 			cls: 'emend-chat-primary-button',
 			text: 'Modify selection',
 		});
-		submitButton.addEventListener('click', () => {
+		this.submitButton.addEventListener('click', () => {
 			void this.submit();
 		});
 		this.inputEl.focus();
@@ -64,23 +80,37 @@ export class SelectionModal extends Modal {
 		this.activeController?.abort();
 		this.activeController = null;
 		this.inputEl = null;
+		this.submitButton = null;
+		this.quickActionButtons = [];
 		this.contentEl.empty();
 	}
 
-	private async submit() {
-		const prompt = this.inputEl?.value.trim() ?? '';
-		if (!prompt || this.activeController) {
+	private setPending(pending: boolean) {
+		if (this.inputEl) {
+			this.inputEl.disabled = pending;
+		}
+		if (this.submitButton) {
+			this.submitButton.disabled = pending;
+		}
+		for (const button of this.quickActionButtons) {
+			button.disabled = pending;
+		}
+	}
+
+	private async submit(prompt?: string) {
+		const submittedPrompt = prompt === undefined
+			? this.inputEl?.value.trim() ?? ''
+			: prompt.trim();
+		if (!submittedPrompt || this.activeController) {
 			return;
 		}
 
 		const controller = new AbortController();
 		this.activeController = controller;
-		if (this.inputEl) {
-			this.inputEl.disabled = true;
-		}
+		this.setPending(true);
 
 		try {
-			const result = await this.submitSelection(prompt, controller.signal);
+			const result = await this.submitSelection(submittedPrompt, controller.signal);
 			if (controller.signal.aborted) {
 				return;
 			}
@@ -93,13 +123,11 @@ export class SelectionModal extends Modal {
 		} catch (error) {
 			if (!controller.signal.aborted) {
 				new Notice(`Emend: ${getErrorMessage(error)}`);
-				if (this.inputEl) {
-					this.inputEl.disabled = false;
-				}
 			}
 		} finally {
 			if (this.activeController === controller) {
 				this.activeController = null;
+				this.setPending(false);
 			}
 		}
 	}

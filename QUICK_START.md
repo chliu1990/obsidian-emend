@@ -67,16 +67,15 @@ Useful controls:
 
 ## 4. Test a full-note edit
 
-1. Keep **Edit strategy** set to **Critic markup** in Emend settings.
-2. Select **Edit** in chat and send:
+1. Select **Edit** in chat and send:
 
    ```text
-   Correct the grammar mistake and add one short third idea. Mark every change with CriticMarkup.
+   Correct the grammar mistake and add one short third idea.
    ```
 
-3. Confirm that chat shows an edit confirmation rather than the full rewritten note.
-4. Open the Track Changes review surface. You should see the correction and insertion as reviewable changes.
-5. Accept or reject the changes in Track Changes. Emend itself has no Apply/Reject buttons.
+2. Confirm that chat shows an edit confirmation rather than the full rewritten note.
+3. Open the Track Changes review surface. You should see the correction and insertion as reviewable changes.
+4. Accept or reject the changes in Track Changes. Emend itself has no Apply/Reject buttons.
 
 For quick actions, select **Fix grammar**, **Make concise**, or **Add examples** above the composer. Each switches to Edit and submits one visible request through the same guarded path.
 
@@ -90,17 +89,15 @@ For quick actions, select **Fix grammar**, **Make concise**, or **Add examples**
    Correct the grammar without changing the meaning.
    ```
 
-4. Select **Modify selection**.
+4. Select **Modify selection**, or use **Fix grammar**, **Make concise**, or **Add examples** in the modal to submit a shared quick-action prompt without typing.
 5. Confirm that only the selected sentence receives CriticMarkup. The heading and idea list must remain unchanged.
 6. Review it in Track Changes, or press **Cmd+Z** on macOS (**Ctrl+Z** on Windows/Linux) to undo the editor replacement.
 
 **Smart selection context** is enabled by default. Emend can send the containing paragraph for context, but it never expands the replacement target.
 
-## 6. Try operation-based editing
+## 6. Understand operation-based editing
 
-After the CriticMarkup test succeeds, open **Settings → Emend → Edit strategy** and select **Operations**. Repeat a small edit.
-
-In this mode, Emend asks the model for a closed JSON array of `insert`, `remove`, `replace`, and `comment` commands. Emend validates exact anchors and occurrences, rejects ambiguous or overlapping commands, compiles valid commands into CriticMarkup, and uses the same Track Changes review path. Keep the default **Critic markup** strategy if you do not want to test this protocol.
+Every full-note and selection edit asks the model for a closed JSON array of `insert`, `remove`, `replace`, and `comment` commands. Emend validates exact anchors and occurrences, rejects ambiguous or overlapping commands, compiles valid commands into CriticMarkup, and uses the same Track Changes review path. Operations are the only model-facing edit protocol; there is no edit-strategy setting.
 
 ## 7. Test instructions and skills
 

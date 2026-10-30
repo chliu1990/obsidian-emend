@@ -4,13 +4,7 @@ import {
 	prepareCriticMarkupEdit,
 	toRejectView,
 } from '../src/critic-markup';
-import {
-	criticMarkupEditStrategy,
-	type EditPreparation,
-	type EditStrategy,
-} from '../src/edit-strategy';
-import { getSelectionSystemPrompt, getSystemPrompt } from '../src/mode';
-import type { InstructionPromptParts } from '../src/types';
+import type { EditPreparation } from '../src/edit-strategy';
 
 function tokenSummary(text: string) {
 	return parseCriticMarkup(text).map((token) => ({
@@ -306,34 +300,11 @@ describe('sequential CriticMarkup edits', () => {
 	});
 });
 
-describe('CriticMarkup edit strategy', () => {
-	it('exposes the strategy boundary contract', () => {
+describe('edit preparation contract', () => {
+	it('retains the internal validated CriticMarkup preparation shape', () => {
 		expectTypeOf<EditPreparation>().toEqualTypeOf<{
 			annotatedMarkdown: string;
 			changeCount: number;
 		}>();
-		expectTypeOf(criticMarkupEditStrategy).toExtend<EditStrategy>();
-		expect(criticMarkupEditStrategy.id).toBe('critic-markup');
-	});
-
-	it('delegates full-note and selection prompts to Stage 03', () => {
-		const instructions: InstructionPromptParts = {
-			agentText: 'Agent instructions',
-			skillTexts: new Map([['skills/editing/SKILL.md', 'Editing skill']]),
-		};
-		expect(criticMarkupEditStrategy.getFullNotePrompt(instructions)).toBe(
-			getSystemPrompt('edit', instructions),
-		);
-		expect(criticMarkupEditStrategy.getSelectionPrompt(instructions)).toBe(
-			getSelectionSystemPrompt(instructions),
-		);
-	});
-
-	it('delegates preparation to the validating engine', () => {
-		const original = 'Old text';
-		const response = '{~~Old text~>New text~~}';
-		expect(criticMarkupEditStrategy.prepareEdit(original, response)).toEqual(
-			prepareCriticMarkupEdit(original, response),
-		);
 	});
 });

@@ -254,15 +254,20 @@ describe('sequential full-note edits', () => {
 		const responses = [
 			'Alpha {~~beta~>delta~~} gamma.',
 			'Alpha {~~beta~>delta~~} {~~gamma~>epsilon~~}.',
-			'Alpha {~~beta~>delta~~} {~~gamma~>epsilon~~}.{++ Tail++}',
+			'Alpha {~~beta~>delta~~} {~~gamma~>epsilon~~}.{++Tail++}',
 		];
+		const operationResponses = [
+			[{ type: 'replace', target: 'beta', replacement: 'delta' }],
+			[{ type: 'replace', target: 'gamma', replacement: 'epsilon' }],
+			[{ type: 'insert', anchor: '.', position: 'after', text: 'Tail' }],
+		].map((operations) => JSON.stringify(operations));
 		let responseIndex = 0;
 		requestMock.mockImplementation(
 			async (
 				_request: AiProviderRequest,
 				callbacks: { onEvent(event: { type: 'content'; text: string }): void },
 			): Promise<StreamResult> => {
-				const response = responses[responseIndex++] ?? '';
+				const response = operationResponses[responseIndex++] ?? '';
 				callbacks.onEvent({ type: 'content', text: response });
 				return { content: response, reasoning: '' };
 			},
@@ -333,7 +338,9 @@ describe('sequential full-note edits', () => {
 describe('shared per-note request isolation', () => {
 	it('blocks selection while full-note Edit is pending and releases after success', async () => {
 		const fixture = makePluginFixture({ 'Note.md': 'Alpha beta.' });
-		const pendingResponse = holdResponse('Alpha{++ chat++} beta.');
+		const pendingResponse = holdResponse(JSON.stringify([
+			{ type: 'insert', anchor: 'Alpha', position: 'after', text: ' chat' },
+		]));
 		const pending = fixture.plugin.requestChatCompletion(
 			makeEditSubmission(fixture, 'Note.md'),
 		);
@@ -356,7 +363,7 @@ describe('shared per-note request isolation', () => {
 			changeCount: 1,
 		});
 		const retrySelection = makeSelection(fixture, 'Note.md', 'beta');
-		respondWith('{~~beta~>delta~~}');
+		respondWith(JSON.stringify([{ type: 'replace', target: 'beta', replacement: 'delta' }]));
 		await expect(
 			fixture.plugin.requestSelectionEdit(
 				retrySelection.snapshot,
@@ -373,7 +380,7 @@ describe('shared per-note request isolation', () => {
 	it('blocks chat while selection is pending and keeps read-only chat on the same guard', async () => {
 		const fixture = makePluginFixture({ 'Note.md': 'Alpha beta.' });
 		const selection = makeSelection(fixture, 'Note.md', 'beta');
-		const pendingResponse = holdResponse('{~~beta~>delta~~}');
+		const pendingResponse = holdResponse(JSON.stringify([{ type: 'replace', target: 'beta', replacement: 'delta' }]));
 		const pending = fixture.plugin.requestSelectionEdit(
 			selection.snapshot,
 			'Change beta.',
@@ -404,7 +411,9 @@ describe('shared per-note request isolation', () => {
 			'A.md': 'A original.',
 			'B.md': 'B original.',
 		});
-		const pendingResponse = holdResponse('A{++ late++} original.');
+		const pendingResponse = holdResponse(JSON.stringify([
+			{ type: 'insert', anchor: 'A', position: 'after', text: ' late' },
+		]));
 		const pendingA = fixture.plugin.requestChatCompletion(
 			makeEditSubmission(fixture, 'A.md', 'Edit A.', [
 				{ role: 'assistant', content: 'A history' },
@@ -412,7 +421,9 @@ describe('shared per-note request isolation', () => {
 		);
 		await pendingResponse.started;
 		fixture.setActivePath('B.md');
-		respondWith('B{++ applied++} original.');
+		respondWith(JSON.stringify([
+			{ type: 'insert', anchor: 'B', position: 'after', text: ' applied' },
+		]));
 
 		await expect(
 			fixture.plugin.requestChatCompletion(
@@ -449,8 +460,10 @@ describe('shared per-note request isolation', () => {
 					? holdFailure(new Error('Provider unavailable'))
 					: holdResponse(
 							failure === 'validation error'
-								? 'Not a complete annotated note.'
-								: 'Alpha {~~beta~>delta~~}.',
+								? 'Not a valid operation array.'
+								: JSON.stringify([
+									{ type: 'replace', target: 'beta', replacement: 'delta' },
+								]),
 						);
 			const pending = fixture.plugin.requestChatCompletion(
 				makeEditSubmission(

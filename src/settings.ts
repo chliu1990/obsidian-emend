@@ -1,7 +1,6 @@
 import { App, PluginSettingTab, setIcon, Setting } from 'obsidian';
 import type EmendPlugin from './main';
 import type {
-	EditStrategyId,
 	EmendSettings,
 	ProviderConfig,
 	ProviderId,
@@ -62,7 +61,6 @@ export const DEFAULT_SETTINGS: EmendSettings = {
 		},
 	},
 	defaultMode: 'ask',
-	editStrategy: 'critic-markup',
 	includeNotePathInContext: false,
 	smartSelectionContext: true,
 	maxContextCharacters: 12000,
@@ -77,9 +75,6 @@ export function normalizeSettings(data: unknown): EmendSettings {
 	const defaultMode = isDefaultMode(root.defaultMode)
 		? root.defaultMode
 		: DEFAULT_SETTINGS.defaultMode;
-	const editStrategy = isEditStrategy(root.editStrategy)
-		? root.editStrategy
-		: DEFAULT_SETTINGS.editStrategy;
 
 	return {
 		activeProvider,
@@ -98,7 +93,6 @@ export function normalizeSettings(data: unknown): EmendSettings {
 			),
 		},
 		defaultMode,
-		editStrategy,
 		includeNotePathInContext:
 			typeof root.includeNotePathInContext === 'boolean'
 				? root.includeNotePathInContext
@@ -276,24 +270,6 @@ export class EmendSettingTab extends PluginSettingTab {
 			});
 
 		new Setting(containerEl)
-			.setName('Edit strategy')
-			.setDesc('Choose critic markup documents or opt in to validated JSON edit operations. Both produce tracked changes.')
-			.addDropdown((dropdown) => {
-				dropdown
-					.addOption('critic-markup', 'Critic markup')
-					.addOption('operations', 'Operations')
-					.setValue(this.plugin.settings.editStrategy)
-					.onChange(async (value) => {
-						if (!isEditStrategy(value)) {
-							return;
-						}
-
-						this.plugin.settings.editStrategy = value;
-						await this.plugin.saveSettings();
-					});
-			});
-
-		new Setting(containerEl)
 			.setName('Include note path')
 			.setDesc('Send the active note path with each AI request.')
 			.addToggle((toggle) =>
@@ -383,10 +359,6 @@ function isDefaultMode(
 	value: unknown,
 ): value is EmendSettings['defaultMode'] {
 	return DEFAULT_MODES.some((mode) => mode === value);
-}
-
-function isEditStrategy(value: unknown): value is EditStrategyId {
-	return value === 'critic-markup' || value === 'operations';
 }
 
 function capitalize(value: string) {

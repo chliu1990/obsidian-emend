@@ -1,10 +1,8 @@
 import { TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import type { RequestContext } from '../src/context';
-import {
-	criticMarkupEditStrategy,
-	getEditStrategy,
-} from '../src/edit-strategy';
+import * as editStrategyModule from '../src/edit-strategy';
+import { getEditStrategy } from '../src/edit-strategy';
 import type { NoteWriter } from '../src/note-writer';
 import {
 	compileEditOperations,
@@ -20,7 +18,6 @@ import {
 	SelectionEditRequestCoordinator,
 	type SelectionEditorAdapter,
 } from '../src/selection-editor';
-import { DEFAULT_SETTINGS } from '../src/settings';
 import type {
 	InstructionPromptParts,
 	ProviderConfig,
@@ -298,11 +295,9 @@ describe('operation EditStrategy selection boundaries', () => {
 });
 
 describe('edit strategy factory and prompts', () => {
-	it('keeps CriticMarkup as the default and returns operations only by explicit selection', () => {
-		expect(getEditStrategy(DEFAULT_SETTINGS)).toBe(criticMarkupEditStrategy);
-		expect(getEditStrategy({ ...DEFAULT_SETTINGS, editStrategy: 'operations' })).toBe(
-			operationEditStrategy,
-		);
+	it('always returns Operations without a settings argument or CriticMarkup strategy export', () => {
+		expect(getEditStrategy()).toBe(operationEditStrategy);
+		expect(editStrategyModule).not.toHaveProperty('criticMarkupEditStrategy');
 	});
 
 	it.each(['full', 'selection'] as const)(

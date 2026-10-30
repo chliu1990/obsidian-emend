@@ -12,7 +12,7 @@ import {
 	type ReadOnlySubmission,
 } from '../src/request-coordinator';
 import type { RequestContext } from '../src/context';
-import { criticMarkupEditStrategy } from '../src/edit-strategy';
+import { operationEditStrategy } from '../src/operation-edit-strategy';
 import type { NoteWriter } from '../src/note-writer';
 import type {
 	InstructionPromptParts,
@@ -298,7 +298,7 @@ function makeEditCoordinator(
 		loadInstructions,
 		request,
 		writer,
-		editStrategy: criticMarkupEditStrategy,
+		editStrategy: operationEditStrategy,
 	});
 	return { coordinator, loadInstructions, request, writer };
 }
@@ -335,7 +335,7 @@ describe('EditRequestCoordinator', () => {
 			markdown: '[...]\nbounded window\n[...]',
 		});
 		const { coordinator, request } = makeEditCoordinator(
-			editRequest(sourceText),
+			editRequest('[]'),
 			sourceText,
 		);
 
@@ -346,12 +346,14 @@ describe('EditRequestCoordinator', () => {
 		expect(userPrompt).not.toContain('bounded window');
 		expect(userPrompt).not.toContain('[...]');
 		expect(request.mock.calls[0]?.[0].systemPrompt).toContain(
-			'Return the COMPLETE note',
+			'bare JSON array',
 		);
 	});
 
 	it('streams reasoning while buffering the edit privately and writes after completion', async () => {
-		const response = '# Note\n{~~Original~>Edited~~} text';
+		const response = JSON.stringify([
+			{ type: 'replace', target: 'Original', replacement: 'Edited' },
+		]);
 		const request = editRequest(response);
 		const { coordinator, writer } = makeEditCoordinator(request);
 		const submission = makeEditSubmission();
@@ -368,7 +370,7 @@ describe('EditRequestCoordinator', () => {
 		);
 		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
 			submission.context.file,
-			response,
+			'# Note\n{~~Original~>Edited~~} text',
 		);
 		expect(request.mock.invocationCallOrder[0]).toBeLessThan(
 			(writer.write as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0] ??
@@ -379,7 +381,7 @@ describe('EditRequestCoordinator', () => {
 	it('returns an unchanged result and performs no write for a no-op', async () => {
 		const sourceText = '# Note\nOriginal text';
 		const { coordinator, writer } = makeEditCoordinator(
-			editRequest(sourceText),
+			editRequest('[]'),
 			sourceText,
 		);
 
@@ -425,7 +427,9 @@ describe('EditRequestCoordinator', () => {
 
 	it('does not write when the note changed before stream completion', async () => {
 		const { coordinator, writer } = makeEditCoordinator(
-			editRequest('# Note\nOriginal{++ added++} text'),
+			editRequest(JSON.stringify([
+				{ type: 'insert', anchor: 'Original', position: 'after', text: ' added' },
+			])),
 			'# Note\nEdited while waiting',
 		);
 
@@ -438,7 +442,9 @@ describe('EditRequestCoordinator', () => {
 
 	it('does not write when aborted while the post-stream read is pending', async () => {
 		const { coordinator, writer } = makeEditCoordinator(
-			editRequest('# Note\n{~~Original~>Edited~~} text'),
+			editRequest(JSON.stringify([
+				{ type: 'replace', target: 'Original', replacement: 'Edited' },
+			])),
 		);
 		const controller = new AbortController();
 		let finishRead!: (text: string) => void;

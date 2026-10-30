@@ -7,8 +7,6 @@ export type ReasoningEffort = 'low' | 'medium' | 'high';
 
 export type Mode = 'ask' | 'edit' | 'discuss' | 'brainstorm';
 
-export type EditStrategyId = 'critic-markup' | 'operations';
-
 export type EditOperation =
 	| { type: 'insert'; anchor: string; position: 'before' | 'after'; text: string; occurrence?: number }
 	| { type: 'remove'; target: string; occurrence?: number }
@@ -64,7 +62,6 @@ export interface EmendSettings {
 	activeProvider: ProviderId;
 	providers: Record<ProviderId, ProviderConfig>;
 	defaultMode: Mode;
-	editStrategy: EditStrategyId;
 	includeNotePathInContext: boolean;
 	smartSelectionContext: boolean;
 	maxContextCharacters: number;

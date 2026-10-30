@@ -96,30 +96,21 @@ describe('normalizeSettings', () => {
 		});
 	});
 
-	it('defaults to DeepSeek, ask mode, CriticMarkup editing, disabled note-path sharing, and smart selection context', () => {
+	it('defaults to DeepSeek, ask mode, Operations-only editing, disabled note-path sharing, and smart selection context', () => {
 		expect(DEFAULT_SETTINGS.activeProvider).toBe('deepseek');
 		expect(DEFAULT_SETTINGS.defaultMode).toBe('ask');
-		expect(DEFAULT_SETTINGS.editStrategy).toBe('critic-markup');
+		expect(DEFAULT_SETTINGS).not.toHaveProperty('editStrategy');
 		expect(DEFAULT_SETTINGS.includeNotePathInContext).toBe(false);
 		expect(DEFAULT_SETTINGS.smartSelectionContext).toBe(true);
 		expect(DEFAULT_SETTINGS.maxContextCharacters).toBe(12000);
 	});
 
-	it('retains the explicit operation editing opt-in', () => {
-		expect(normalizeSettings({ editStrategy: 'operations' })).toMatchObject({
-			editStrategy: 'operations',
-		});
-		expect(normalizeSettings({ editStrategy: 'critic-markup' })).toMatchObject({
-			editStrategy: 'critic-markup',
-		});
-	});
-
-	it.each([null, 'invalid', 0, false, [], {}])(
-		'normalizes malformed edit strategies to CriticMarkup %#',
+	it.each(['operations', 'critic-markup', null, 'invalid', 0, false, [], {}])(
+		'drops the legacy edit strategy while normalizing persisted value %#',
 		(editStrategy) => {
-			expect(normalizeSettings({ editStrategy })).toMatchObject({
-				editStrategy: 'critic-markup',
-			});
+			const settings = normalizeSettings({ editStrategy });
+			expect(settings).toEqual(DEFAULT_SETTINGS);
+			expect(settings).not.toHaveProperty('editStrategy');
 		},
 	);
 
@@ -168,7 +159,6 @@ describe('normalizeSettings', () => {
 				},
 			},
 			defaultMode: 'discuss',
-			editStrategy: 'operations',
 			includeNotePathInContext: true,
 			smartSelectionContext: false,
 			maxContextCharacters: 24000,

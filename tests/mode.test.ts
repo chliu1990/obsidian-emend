@@ -1,41 +1,12 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
-import { getSelectionSystemPrompt, getSystemPrompt, MODES } from '../src/mode';
+import * as modeModule from '../src/mode';
+import { getSystemPrompt, MODES } from '../src/mode';
 import type {
 	AiMessage,
 	InstructionPromptParts,
 	Mode,
 	ProviderHistoryMessage,
 } from '../src/types';
-
-const criticMarkupExamples = [
-	'{++new text++}',
-	'{--old text--}',
-	'{~~old~>new~~}',
-	'{>>explanation<<}',
-	'{==important text==}',
-];
-
-const preservedMarkdown = [
-	'YAML frontmatter',
-	'links',
-	'tags',
-	'code blocks',
-	'math',
-	'callouts',
-	'footnotes',
-	'existing CriticMarkup',
-];
-
-function expectCriticMarkupRules(prompt: string) {
-	for (const example of criticMarkupExamples) {
-		expect(prompt).toContain(example);
-	}
-	for (const markdown of preservedMarkdown) {
-		expect(prompt).toContain(markdown);
-	}
-	expect(prompt).toContain("note's language");
-	expect(prompt).toContain('no prose or code fence');
-}
 
 describe('mode definitions and message contracts', () => {
 	it('defines exactly four modes with unique IDs, labels, and icons', () => {
@@ -67,7 +38,7 @@ describe('mode definitions and message contracts', () => {
 });
 
 describe('system prompts', () => {
-	it.each<Mode>(['ask', 'discuss', 'brainstorm'])(
+	it.each(['ask', 'discuss', 'brainstorm'] as const)(
 		'forbids note writes in %s mode',
 		(mode) => {
 			const prompt = getSystemPrompt(mode);
@@ -76,19 +47,14 @@ describe('system prompts', () => {
 		},
 	);
 
-	it('requires a complete CriticMarkup document in edit mode', () => {
-		const prompt = getSystemPrompt('edit');
-		expect(prompt).toContain('Return the COMPLETE note');
-		expect(prompt).toContain('Mark every change with CriticMarkup');
-		expectCriticMarkupRules(prompt);
+	it('exposes only read-only modes through the shared system prompt builder', () => {
+		expectTypeOf(getSystemPrompt)
+			.parameter(0)
+			.toEqualTypeOf<'ask' | 'discuss' | 'brainstorm'>();
 	});
 
-	it('requires only the modified selection with the same editing rules', () => {
-		const prompt = getSelectionSystemPrompt();
-		expect(prompt).toContain('Return ONLY the modified selected portion');
-		expect(prompt).toContain('Do not return the full note');
-		expect(prompt).toContain('Mark every change with CriticMarkup');
-		expectCriticMarkupRules(prompt);
+	it('has no model-facing CriticMarkup selection prompt export', () => {
+		expect(modeModule).not.toHaveProperty('getSelectionSystemPrompt');
 	});
 
 	it('appends skills in discovery order before agent instructions', () => {

@@ -236,7 +236,7 @@ export default class EmendPlugin extends Plugin {
 			if (submission.mode === 'edit') {
 				const coordinator = new EditRequestCoordinator({
 					...dependencies,
-					editStrategy: getEditStrategy(this.settings),
+					editStrategy: getEditStrategy(),
 					writer: createVaultNoteWriter(
 						this.app.vault,
 						(file) => this.getTargetMarkdownView()?.file === file,
@@ -266,7 +266,7 @@ export default class EmendPlugin extends Plugin {
 				loadInstructions: () => loadAllInstructions(this.app.vault),
 				request: requestAiResponse,
 				editor,
-				editStrategy: getEditStrategy(this.settings),
+				editStrategy: getEditStrategy(),
 			});
 			return coordinator.submit({
 				snapshot,
