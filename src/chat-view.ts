@@ -7,7 +7,7 @@ import {
 } from 'obsidian';
 import type EmendPlugin from './main';
 import { MODES } from './mode';
-import type { Mode, ProviderHistoryMessage } from './types';
+import type { ChatMessage, Mode, ProviderHistoryMessage } from './types';
 
 export const EMEND_CHAT_VIEW_TYPE = 'emend-chat-view';
 
@@ -18,27 +18,20 @@ const MODE_PLACEHOLDERS: Record<Mode, string> = {
 	brainstorm: 'Brainstorm ideas for the active note...',
 };
 
-interface ChatMessage {
-	id: string;
-	role: 'user' | 'assistant';
-	content: string;
-	reasoning: string;
-	mode: Mode;
-	sourcePath: string;
-	status: 'ready' | 'loading' | 'error' | 'stopped';
-}
-
 export class EmendChatView extends ItemView {
 	private messages: ChatMessage[] = [];
 	private inputEl: HTMLTextAreaElement | null = null;
 	private activeModelEl: HTMLElement | null = null;
 	private isSending = false;
+	private isThreadLoading = false;
 	private selectedMode: Mode;
 	private activeController: AbortController | null = null;
 	private pendingRenderFrame: number | null = null;
 	private pendingMessages = new Set<ChatMessage>();
 	private messageBodyEls = new Map<string, HTMLElement>();
 	private closed = false;
+	private notePath: string | null = null;
+	private noteLoadGeneration = 0;
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -63,10 +56,14 @@ export class EmendChatView extends ItemView {
 	protected async onOpen() {
 		this.closed = false;
 		this.render();
+		await this.refreshTargetNote();
 	}
 
 	protected async onClose() {
 		this.closed = true;
+		this.isThreadLoading = false;
+		this.noteLoadGeneration++;
+		this.notePath = null;
 		this.activeController?.abort();
 		this.cancelPendingRender();
 		this.pendingMessages.clear();
@@ -83,6 +80,46 @@ export class EmendChatView extends ItemView {
 		}
 
 		this.activeModelEl.textContent = this.getActiveModelLabel();
+	}
+
+	async refreshTargetNote() {
+		const notePath = this.plugin.getActiveNotePath();
+		if (notePath === this.notePath) {
+			return;
+		}
+
+		this.notePath = notePath;
+		const generation = ++this.noteLoadGeneration;
+		if (this.isSending) {
+			this.activeController?.abort();
+		}
+		this.messages = [];
+		this.isThreadLoading = notePath !== null;
+		this.render();
+		if (!notePath) {
+			return;
+		}
+
+		try {
+			const messages = await this.plugin.conversationStore.load(notePath);
+			if (
+				this.closed ||
+				generation !== this.noteLoadGeneration ||
+				this.plugin.getActiveNotePath() !== notePath
+			) {
+				return;
+			}
+			this.messages = messages;
+		} catch (error) {
+			if (generation === this.noteLoadGeneration && !this.closed) {
+				new Notice(`Emend: Could not load this chat. ${getErrorMessage(error)}`);
+			}
+		} finally {
+			if (generation === this.noteLoadGeneration && !this.closed) {
+				this.isThreadLoading = false;
+				this.render();
+			}
+		}
 	}
 
 	private render() {
@@ -138,7 +175,7 @@ export class EmendChatView extends ItemView {
 				rows: '4',
 			},
 		});
-		this.inputEl.disabled = this.isSending;
+		this.inputEl.disabled = this.isSending || this.isThreadLoading;
 		this.inputEl.addEventListener('keydown', (event) => {
 			if (event.key === 'Enter' && !event.shiftKey) {
 				event.preventDefault();
@@ -157,6 +194,7 @@ export class EmendChatView extends ItemView {
 				: 'emend-chat-primary-button',
 			text: this.isSending ? 'Stop' : 'Send',
 		});
+		actionButton.disabled = !this.isSending && this.isThreadLoading;
 		actionButton.addEventListener('click', () => {
 			if (this.isSending) {
 				this.activeController?.abort();
@@ -309,7 +347,7 @@ export class EmendChatView extends ItemView {
 
 	private async submitPrompt() {
 		const prompt = this.inputEl?.value.trim() ?? '';
-		if (!prompt || this.isSending) {
+		if (!prompt || this.isSending || this.isThreadLoading) {
 			return;
 		}
 
@@ -324,6 +362,7 @@ export class EmendChatView extends ItemView {
 		const history = this.toProviderHistory();
 		const mode = this.selectedMode;
 		const sourcePath = context.file.path;
+		const noteMessages = this.messages;
 		const loadingMessage: ChatMessage = {
 			id: createMessageId(),
 			role: 'assistant',
@@ -332,6 +371,7 @@ export class EmendChatView extends ItemView {
 			mode,
 			sourcePath,
 			status: 'loading',
+			timestamp: Date.now(),
 		};
 		const controller = new AbortController();
 
@@ -343,6 +383,7 @@ export class EmendChatView extends ItemView {
 			mode,
 			sourcePath,
 			status: 'ready',
+			timestamp: Date.now(),
 		});
 		this.messages.push(loadingMessage);
 		this.activeController = controller;
@@ -350,6 +391,11 @@ export class EmendChatView extends ItemView {
 		this.render();
 
 		try {
+			await this.persistMessages(
+				sourcePath,
+				noteMessages.filter((message) => message.status === 'ready'),
+			);
+			controller.signal.throwIfAborted();
 			if (mode === 'edit') {
 				const result = await this.plugin.requestChatCompletion({
 					context,
@@ -368,7 +414,7 @@ export class EmendChatView extends ItemView {
 					? `Edit applied — ${result.changeCount} changes tracked. Review in Track Changes.`
 					: 'No changes were needed.';
 			} else {
-				await this.plugin.requestChatCompletion({
+				const result = await this.plugin.requestChatCompletion({
 					context,
 					mode,
 					prompt,
@@ -385,8 +431,14 @@ export class EmendChatView extends ItemView {
 					},
 					signal: controller.signal,
 				});
+				loadingMessage.usage = result.usage;
 			}
+			controller.signal.throwIfAborted();
 			loadingMessage.status = 'ready';
+			await this.persistMessages(
+				sourcePath,
+				noteMessages.filter((message) => message.status === 'ready'),
+			);
 		} catch (error) {
 			if (controller.signal.aborted || isAbortError(error)) {
 				loadingMessage.status = 'stopped';
@@ -404,6 +456,14 @@ export class EmendChatView extends ItemView {
 			if (!this.closed) {
 				this.render();
 			}
+		}
+	}
+
+	private async persistMessages(notePath: string, messages: ChatMessage[]) {
+		try {
+			await this.plugin.conversationStore.save(notePath, messages);
+		} catch (error) {
+			new Notice(`Emend: Could not save this chat. ${getErrorMessage(error)}`);
 		}
 	}
 

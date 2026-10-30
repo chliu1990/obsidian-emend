@@ -1,5 +1,24 @@
 export class App {}
 
+export class WorkspaceLeaf {}
+
+export class ItemView {
+	app = new App();
+	contentEl = {};
+
+	constructor(_leaf: WorkspaceLeaf) {}
+}
+
+export class MarkdownRenderer {
+	static async render(): Promise<void> {}
+}
+
+export class Notice {
+	constructor(_message?: string) {}
+}
+
+export function setIcon(): void {}
+
 export class TFile {
 	path = '';
 }

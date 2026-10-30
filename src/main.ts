@@ -4,6 +4,7 @@ import {
 	captureRequestContext,
 	type RequestContext,
 } from './context';
+import { ConversationStore } from './conversation-store';
 import { loadAllInstructions } from './instructions-loader';
 import { createVaultNoteWriter, type EditResult } from './note-writer';
 import { requestAiResponse, type StreamResult } from './provider-stream';
@@ -28,10 +29,16 @@ import type { EmendSettings, SelectionSnapshot } from './types';
 
 export default class EmendPlugin extends Plugin {
 	settings!: EmendSettings;
+	conversationStore!: ConversationStore;
 	private lastMarkdownView: MarkdownView | null = null;
 
 	async onload() {
 		await this.loadSettings();
+		this.conversationStore = new ConversationStore(
+			this.app.vault.adapter,
+			this.app.vault.configDir,
+			(message) => new Notice(message),
+		);
 
 		this.registerView(
 			EMEND_CHAT_VIEW_TYPE,
@@ -41,6 +48,13 @@ export default class EmendPlugin extends Plugin {
 		this.registerEvent(
 			this.app.workspace.on('active-leaf-change', () => {
 				this.rememberActiveMarkdownView();
+				for (const leaf of this.app.workspace.getLeavesOfType(
+					EMEND_CHAT_VIEW_TYPE,
+				)) {
+					if (leaf.view instanceof EmendChatView) {
+						void leaf.view.refreshTargetNote();
+					}
+				}
 			}),
 		);
 
@@ -132,6 +146,10 @@ export default class EmendPlugin extends Plugin {
 	getActiveNoteLabel() {
 		const markdownView = this.getTargetMarkdownView();
 		return markdownView?.file?.path ?? 'No Markdown note is open';
+	}
+
+	getActiveNotePath() {
+		return this.getTargetMarkdownView()?.file?.path ?? null;
 	}
 
 	captureChatContext(): RequestContext {

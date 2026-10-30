@@ -1,4 +1,5 @@
 import type { TFile } from 'obsidian';
+import type { ProviderTokenUsage } from './provider-stream';
 
 export type ProviderId = 'deepseek' | 'kimi' | 'custom';
 
@@ -15,6 +16,18 @@ export interface AiMessage {
 export interface ProviderHistoryMessage {
 	role: 'user' | 'assistant';
 	content: string;
+}
+
+export interface ChatMessage {
+	id: string;
+	role: 'user' | 'assistant';
+	content: string;
+	reasoning: string;
+	mode: Mode;
+	sourcePath: string;
+	status: 'ready' | 'loading' | 'error' | 'stopped';
+	timestamp: number;
+	usage?: ProviderTokenUsage;
 }
 
 export interface SelectionSnapshot {

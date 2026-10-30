@@ -11,6 +11,7 @@ Emend is an Obsidian plugin for context-aware, streamed AI chat and guarded Crit
 - Immediate edit confirmations, with annotated documents and selections kept out of chat history. Unchanged responses do not write; valid comment-only edits may write with zero text changes.
 - Track Changes as the only edit-review surface. Emend has no Apply/Reject or in-plugin diff UI.
 - Per-session mode controls, mode badges and placeholders, model labels, response copying, and Stop for an in-flight request.
+- Versioned per-note conversation persistence with atomic local writes, rapid-note-switch protection, and safe recovery of malformed thread files.
 - Markdown responses rendered with the captured note as the source path, including links and Obsidian-supported math. Reasoning is shown separately in a closed details section.
 - Bounded note context centered on the selection or caret for read-only modes, optional note-path sharing, and a configurable context character limit. Selection editing bounds only the surrounding context and never truncates the selection; full-note Edit always sends the complete note.
 - Vault-root `AGENTS.md` instructions and directly referenced skills loaded for each request.
@@ -24,13 +25,15 @@ Emend is an Obsidian plugin for context-aware, streamed AI chat and guarded Crit
 5. In Edit mode, review the validated CriticMarkup written to the note with the Track Changes plugin. Chat reports only the result summary. If the note or target changes while the response is pending, Emend applies nothing.
 6. To edit only part of a note, select nonempty text and run **Modify selected text with AI** from the Command Palette. Enter an instruction and select **Modify selection**. Cancel or close the modal to abort a pending request.
 7. Review the selection's CriticMarkup in Track Changes, or use Cmd/Ctrl+Z to undo its single native editor replacement. Invalid, aborted, stale, or target-switched requests replace nothing.
-8. Change the selected chat mode at any time when no request is running. Switching notes does not reset the session's selected mode.
+8. Change the selected chat mode at any time when no request is running. Switching notes loads that note's saved thread without resetting the session's selected mode. Reloading Obsidian restores saved conversations.
 
 Emend uses the new `emend` plugin ID and does not migrate Lapis Lazuli settings.
 
 ## Privacy
 
-Emend makes no background AI requests. Read-only modes send bounded note content; full-note Edit sends the complete note regardless of the context limit. Modify Selection sends the complete selected text plus bounded before/after context, even when the selection itself exceeds that limit. The prompt, recent ready chat messages for chat requests, vault-root `AGENTS.md`, and directly referenced skill instructions are also sent to the selected provider. API keys and settings are stored locally through Obsidian's plugin data mechanism. The vault and note path are sent only when **Include note path** is enabled.
+Emend makes no background AI requests. Note content is sent only when you explicitly submit a chat or selection-edit action. Read-only modes send bounded note content; full-note Edit sends the complete note regardless of the context limit. Modify Selection sends the complete selected text plus bounded before/after context, even when the selection itself exceeds that limit. The prompt, recent ready chat messages for chat requests, vault-root `AGENTS.md`, and directly referenced skill instructions are also sent to the selected provider. API keys and settings are stored locally through Obsidian's plugin data mechanism. The vault and note path are sent only when **Include note path** is enabled.
+
+Ready user and assistant messages are saved locally under `<configDir>/emend/chats/`, with SHA-256 note-path keys and bounded readable filenames. Saving a thread sends nothing to a provider. Loading, stopped, and error messages, API keys, note snapshots, request bodies, and buffered edit responses are not persisted; Edit history keeps only concise result summaries. A malformed thread is left untouched when read and copied to a single `.corrupt` backup before the next save replaces it. Unsupported schema versions are not overwritten. Deleting a note does not automatically delete its stored thread or corrupt backup.
 
 Only full-note Edit and explicit Modify Selection have note-writing paths. They write validated CriticMarkup immediately after completion and target/source checks; Track Changes provides subsequent review.
 

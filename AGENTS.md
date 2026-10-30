@@ -46,8 +46,9 @@ npm test
 
 | Path | Responsibility |
 | --- | --- |
-| `src/main.ts` | Plugin lifecycle and orchestration: settings, chat and selection-command registration, target-view tracking, context capture, and mode-specific coordinator/writer construction. |
-| `src/chat-view.ts` | Right-sidebar `ItemView`, per-session mode, in-memory chat state, streamed Markdown/reasoning rendering, edit summaries, composer, Stop, copy action, and submission flow. |
+| `src/main.ts` | Plugin lifecycle and orchestration: settings, conversation-store construction, chat and selection-command registration, target-view tracking, note-switch loading, context capture, and mode-specific coordinator/writer construction. |
+| `src/chat-view.ts` | Right-sidebar `ItemView`, per-session mode, generation-guarded per-note chat state, streamed Markdown/reasoning rendering, edit summaries, composer, Stop, copy action, ready-message persistence, and submission flow. |
+| `src/conversation-store.ts` | Versioned per-note thread schema, SHA-256 storage paths, DataAdapter persistence, atomic writes, corruption backup, unsupported-version protection, and per-note write serialization. |
 | `src/context.ts` | Synchronous note snapshots and bounded caret/selection-centered Markdown windows with exact omission markers. |
 | `src/request-coordinator.ts` | Writer-free Ask/Discuss/Brainstorm submission and the separate Edit coordinator with full-source prompting, private buffering, reasoning forwarding, validation, and application. |
 | `src/note-writer.ts` | The only full-note AI application path: no-op handling, current-source and active-target stale checks, final permission check, and the `vault.read`/`vault.modify` adapter. |
@@ -78,14 +79,22 @@ Read-only requests include bounded Markdown context. Notes within the configured
 
 ### Streamed chat and guarded editing
 
-1. `chat-view.ts` initializes one in-memory mode from `defaultMode` per view session. Switching notes does not reset the selected mode. Ask, Edit, Discuss, and Brainstorm use their Stage 03 icons, badges, and placeholders.
-2. Submission captures context and up to the last eight ready chat messages. Duplicate submissions are disabled while a request is active.
+1. `chat-view.ts` initializes one mode from `defaultMode` per view session. Switching notes does not reset the selected mode. Ask, Edit, Discuss, and Brainstorm use their Stage 03 icons, badges, and placeholders.
+2. Submission captures context and up to the last eight ready chat messages. Duplicate submissions are disabled while a request or thread load is active.
 3. `ReadOnlyRequestCoordinator` loads current vault instructions on every request, builds the selected read-only prompt with skills before agent instructions, and calls `requestAiResponse`. Its dependencies and submission contract contain no note writer.
 4. Only `EditRequestCoordinator` receives a writer. It uses the full-note CriticMarkup prompt, forwards reasoning while privately buffering content until provider completion, rejects aborts, validates against captured source through Stage 07, and delegates to `applyPreparedEdit`.
 5. `applyPreparedEdit` returns without reading or writing for read-only modes and unchanged responses. For a changed Edit response it re-reads the captured file, immediately rechecks the request abort signal, requires both exact source equality and the same active target, checks `canWriteToNote(mode)` immediately before writing, and calls `vault.modify` exactly once. The stale error is `The note changed while Emend was responding. No edits were applied.`
 6. Read-only content streams as Markdown through Obsidian `MarkdownRenderer` with the captured file path as source path; streaming renders are throttled to one animation frame and pending frames are cancelled on close. Reasoning is plain text in a closed `details` element. Model output is never assigned with `innerHTML`.
 7. Edit responses are never rendered into chat. Success stores only `Edit applied — N changes tracked. Review in Track Changes.` as assistant history; unchanged responses store `No changes were needed.` Valid comment-only edits may apply with zero text changes.
-8. Stop aborts the active request. Success, provider errors, validation errors, stale errors, and aborts all clear loading state. Stopped partial responses and errors are excluded from later ready-message history. Chat history is in memory, not persisted.
+8. Stop aborts the active request. Success, provider errors, validation errors, stale errors, and aborts all clear loading state. Stopped partial responses and errors are excluded from later ready-message history and local persistence.
+
+### Conversation persistence
+
+1. `ConversationStore` uses schema version 1 and stores threads under `<configDir>/emend/chats/`. Each filename combines a short sanitized basename with the full SHA-256 hash of the exact note path, remains bounded, and never embeds raw `../` path components. Hashing uses browser `crypto.subtle`; persistence uses Obsidian's vault `DataAdapter`, not Node APIs.
+2. Only ready user/assistant messages are serialized, including mode, reasoning, source path, timestamp, and optional token usage. Loading, stopped, and error messages, API keys, note snapshots, request bodies, and buffered full edit responses are not persisted. Edit entries contain only concise result summaries.
+3. Saves stage a temp file and rename it into place. If the host refuses rename-over-existing, the store uses Obsidian's atomic `DataAdapter.process` replacement and removes the temp file. Writes are serialized per note and snapshot messages at invocation. Loads wait for already-queued writes to that note.
+4. Malformed loads leave the original untouched and issue a non-secret warning. The next save writes the malformed bytes to one reusable `.corrupt` backup before atomically replacing the thread. Any unsupported schema version is left untouched and rejects saves instead of being silently overwritten.
+5. The chat loads the captured target note and saves after the ready user and completed assistant transitions. Generation checks prevent stale async loads from replacing a newly selected note's messages; switching notes aborts the active request and does not reset the per-view mode. Deleting a note does not delete its thread.
 
 ### Guarded selection editing
 
@@ -101,7 +110,7 @@ The legacy JSON answer/edit protocol, accumulating adapters, inline suggestion c
 
 DeepSeek, Kimi, and custom providers all use one OpenAI-compatible streaming chat-completion transport in `provider-stream.ts`. Each provider has an editable HTTP(S) base URL, API key, model, and reasoning-effort setting. Requests use browser `fetch` with `stream: true`, `temperature: 0.3`, the configured `reasoning_effort`, and at most the last eight history messages. Base URLs are trimmed of trailing slashes before `/chat/completions` is appended. Content and reasoning deltas are emitted separately, with optional final token usage and a done event. Provider errors include HTTP status and available provider details without credentials. There is no `requestUrl`, Gemini/Claude transport, provider-specific HTTP implementation, fallback, or retry. `stream_options` is deferred to Stage 14.
 
-Settings are loaded with `loadData()`, normalized against defaults, and saved with `saveData()`. Per-provider configuration, active provider, default mode, note-path inclusion, and context size are stored locally in Obsidian plugin data. Chat threads and stopped/error states are not saved there.
+Settings are loaded with `loadData()`, normalized against defaults, and saved with `saveData()`. Per-provider configuration, active provider, default mode, note-path inclusion, and context size are stored locally in Obsidian plugin data. Ready chat threads use the separate versioned conversation store; stopped/error states are not persisted.
 
 ## Coding conventions
 
@@ -138,6 +147,7 @@ Use only the ignored `test_vault/` and a local OpenAI-compatible SSE mock with C
 - Apply single-line and multiline Modify Selection edits; inspect complete untruncated selections, bounded surrounding context, native undo, and Track Changes markup.
 - Reject invalid output, stale source edits, and target-note switches without writes. Stop streams and trigger provider errors without partial writes or duplicate submissions.
 - Verify unchanged responses do not write, valid comment-only edits may write with zero text changes, sequential edits preserve old markup, and chat history stores summaries rather than annotated documents.
+- Verify separate two-note threads, restoration after an actual Obsidian reload, rapid-note-switch load guards, atomic replacement, malformed-file preservation and `.corrupt` backup, unsupported-version refusal, and sanitized stored data without credentials, request bodies, snapshots, loading/error messages, or full edit payloads. Deleting a note leaves its thread in place.
 - Inspect mock requests for complete uncapped source in Edit, complete selections even above the context budget, bounded read-only and selection-surrounding context, eight-message chat history, current instruction/skill ordering, and note-path omission/inclusion according to the privacy setting.
 - Verify Markdown, links, math, folded reasoning, copy, mode badges/placeholders, model label, per-session mode retention, and close/unload cleanup.
 - Exercise desktop streaming behavior when changing provider transport or APIs. Mobile support is not declared while `isDesktopOnly` is `true`.
@@ -147,10 +157,11 @@ Selection editing must preserve native `editor.replaceRange` undo and must not r
 ## Security and privacy
 
 - API keys are secrets stored in Obsidian's local plugin data. Never commit `data.json`, print keys, or include them in logs and error messages. Manual mock credentials must remain dummy values in ignored vault data.
-- Read-only requests send bounded note content. Full-note Edit sends the complete note regardless of the context limit. Modify Selection sends the complete selection plus bounded surrounding context, never a truncated selection. Prompts, recent ready chat history for chat requests, vault-root `AGENTS.md`, and directly referenced skills are sent to the selected provider when the user submits. There are no background AI requests.
+- Read-only requests send bounded note content. Full-note Edit sends the complete note regardless of the context limit. Modify Selection sends the complete selection plus bounded surrounding context, never a truncated selection. Prompts, recent ready chat history for chat requests, vault-root `AGENTS.md`, and directly referenced skills are sent to the selected provider when the user submits. There are no background AI requests; local thread saves perform no networking.
+- Ready chats remain local under `<configDir>/emend/chats/`. Do not persist credentials, request bodies, note snapshots, loading/error/stopped messages, or full edit responses. Deleting a note does not automatically delete its thread. Preserve malformed data and never overwrite unsupported schema versions.
 - The vault/note path is sent only when **Include note path** is enabled.
 - Ask/Discuss/Brainstorm have no note writer. Only the full-note Edit coordinator receives the guarded vault writer; selection coordination receives only the guarded native editor adapter. Both write validated CriticMarkup immediately after completion and stale checks. Do not add writes outside these permission-gated paths or revive automatic legacy JSON edits.
-- Do not add telemetry, remote code execution, automatic plugin downloads, or unrelated network calls. Keep current file access within the vault and limited to the active note plus declared instructions/skills.
+- Do not add telemetry, remote code execution, automatic plugin downloads, or unrelated network calls. Keep current file access within the vault and limited to the active note, its local conversation thread, and declared instructions/skills.
 - Preserve clear provider error handling without exposing request headers or credentials.
 
 ## Versioning and deployment
