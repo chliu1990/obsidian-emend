@@ -46,8 +46,9 @@ npm test
 
 | Path | Responsibility |
 | --- | --- |
-| `src/main.ts` | Plugin lifecycle and orchestration: settings, conversation-store construction, chat and selection-command registration, target-view tracking, note-switch loading, context capture, shared per-note pending isolation, and mode-specific coordinator/writer construction. |
-| `src/chat-view.ts` | Right-sidebar `ItemView`, per-session mode, generation-guarded per-note chat state, streamed Markdown/reasoning rendering, edit summaries, composer, Stop, copy action, ready-message persistence, and submission flow. |
+| `src/main.ts` | Plugin lifecycle and orchestration: settings, conversation-store construction, chat/mode/selection-command registration, target-view tracking, note-switch loading, context capture, shared per-note pending isolation, and mode-specific coordinator/writer construction. |
+| `src/chat-view.ts` | Right-sidebar `ItemView`, per-session mode, generation-guarded per-note chat state, streamed Markdown/reasoning rendering, edit summaries, draft-preserving composer and mode controls, Stop, copy action, ready-message persistence, and submission flow. |
+| `src/chat-shortcuts.ts` | Pure composer and mode shortcut matching for Enter, platform Mod, Shift, and modifier-conflict guards. |
 | `src/conversation-store.ts` | Versioned per-note thread schema, SHA-256 storage paths, DataAdapter persistence, atomic writes, corruption backup, unsupported-version protection, and per-note write serialization. |
 | `src/context.ts` | Synchronous note snapshots and bounded caret/selection-centered Markdown windows with exact omission markers. |
 | `src/request-coordinator.ts` | Writer-free Ask/Discuss/Brainstorm submission and the separate Edit coordinator with full-source prompting, private buffering, reasoning forwarding, validation, and application. |
@@ -88,7 +89,7 @@ The pending path is deleted in `finally` only after the coordinator settles on s
 
 ### Streamed chat and guarded editing
 
-1. `chat-view.ts` initializes one mode from `defaultMode` per view session. Switching notes does not reset the selected mode. Ask, Edit, Discuss, and Brainstorm use their Stage 03 icons, badges, and placeholders.
+1. `chat-view.ts` initializes one mode from `defaultMode` per view session. Switching notes does not reset the selected mode. Ask, Edit, Discuss, and Brainstorm use their Stage 03 icons, badges, and placeholders. Enter and Mod+Enter submit through the normal path, with Mod+Enter registered on the view's Obsidian `Scope` and restricted to the live composer so the window keymap cannot swallow it. Shift+Enter remains a newline, and disabled/loading controls reject shortcut submission. The `emend:switch-to-ask-mode` and `emend:switch-to-edit-mode` commands use default Mod+Shift+A/E hotkeys, open/focus chat, preserve the composer draft, and only change the next-request mode; they never submit, request, write, or abort a pending submission.
 2. Submission captures context and up to the last eight ready chat messages. Duplicate submissions are disabled while a request or thread load is active. The Fix grammar, Make concise, and Add examples buttons above the composer select Edit and call this same submission path exactly once with their mapped prompts; they are disabled without a note thread and during loading or sending. They have no separate provider, history, persistence, pending, or writer path.
 3. `ReadOnlyRequestCoordinator` loads current vault instructions on every request, builds the selected read-only prompt with skills before agent instructions, and calls `requestAiResponse`. Its dependencies and submission contract contain no note writer.
 4. Only `EditRequestCoordinator` receives a writer. It uses the full-note CriticMarkup prompt, forwards reasoning while privately buffering content until provider completion, rejects aborts, validates against captured source through Stage 07, and delegates to `applyPreparedEdit`.
@@ -129,7 +130,7 @@ Settings are loaded with `loadData()`, normalized against defaults, and saved wi
 - Register views, editor extensions, workspace events, commands, and other disposable resources through Obsidian's registration helpers so unload/reload cleans them up. Abort active chat and selection requests and cancel pending renders when their views close.
 - Use the streaming `fetch` transport in `provider-stream.ts` for provider networking. Do not reintroduce `requestUrl`, a second HTTP stack, provider-specific transports, or silent retries. Preserve response validation and useful credential-safe error propagation.
 - Use Obsidian CSS variables and the `emend-` CSS prefix for current UI. Update CSS classes and selectors together.
-- Current public identifiers are plugin ID `emend`, view type `emend-chat-view`, chat command ID `emend:open-chat`, and selection command ID `emend:modify-selected-text`. Keep renames consistent and deliberate.
+- Current public identifiers are plugin ID `emend`, view type `emend-chat-view`, chat command ID `emend:open-chat`, mode command IDs `emend:switch-to-ask-mode` / `emend:switch-to-edit-mode`, and selection command ID `emend:modify-selected-text`. Keep renames consistent and deliberate.
 - Keep startup work limited and avoid unnecessary vault scans or background AI requests. Desktop-only APIs are permitted by the manifest, but current provider streaming needs only standard browser APIs.
 
 ## Testing instructions
@@ -160,6 +161,7 @@ Use only the ignored `test_vault/` and a local OpenAI-compatible SSE mock with C
 - Verify separate two-note threads, restoration after an actual Obsidian reload, rapid-note-switch load guards, atomic replacement, malformed-file preservation and `.corrupt` backup, unsupported-version refusal, and sanitized stored data without credentials, request bodies, snapshots, loading/error messages, or full edit payloads. Deleting a note leaves its thread in place.
 - Inspect mock requests for complete uncapped source in Edit, complete selections even above the context budget, bounded read-only and selection-surrounding context, eight-message chat history, current instruction/skill ordering, and note-path omission/inclusion according to the privacy setting.
 - Verify Markdown, links, math, folded reasoning, copy, mode badges/placeholders, model label, per-session mode retention, and close/unload cleanup.
+- Verify Enter and Cmd/Ctrl+Enter send, Shift+Enter inserts a newline, Cmd/Ctrl+Shift+A/E and their Command Palette entries preserve drafts and switch only the next-request mode without requests or writes, and disabled/pending composers cannot shortcut-submit. Exercise the platform UI mapping available for manual testing and record any unexercised Ctrl platform honestly.
 - Exercise desktop streaming behavior when changing provider transport or APIs. Mobile support is not declared while `isDesktopOnly` is `true`.
 
 Selection editing must preserve native `editor.replaceRange` undo and must not revive legacy JSON, inline, `vault.modify`, or in-plugin diff flows.

@@ -25,7 +25,7 @@ import {
 	EmendSettingTab,
 	normalizeSettings,
 } from './settings';
-import type { EmendSettings, SelectionSnapshot } from './types';
+import type { EmendSettings, Mode, SelectionSnapshot } from './types';
 
 export default class EmendPlugin extends Plugin {
 	settings!: EmendSettings;
@@ -73,6 +73,28 @@ export default class EmendPlugin extends Plugin {
 			name: 'Open AI chat',
 			callback: () => {
 				void this.activateChatView();
+			},
+		});
+
+		this.addCommand({
+			// eslint-disable-next-line obsidianmd/commands/no-plugin-id-in-command-id -- Required Stage 13 public identifier.
+			id: 'emend:switch-to-ask-mode',
+			name: 'Switch to ask mode',
+			// eslint-disable-next-line obsidianmd/commands/no-default-hotkeys -- Required Stage 13 shortcut.
+			hotkeys: [{ modifiers: ['Mod', 'Shift'], key: 'A' }],
+			callback: () => {
+				void this.activateChatMode('ask');
+			},
+		});
+
+		this.addCommand({
+			// eslint-disable-next-line obsidianmd/commands/no-plugin-id-in-command-id -- Required Stage 13 public identifier.
+			id: 'emend:switch-to-edit-mode',
+			name: 'Switch to edit mode',
+			// eslint-disable-next-line obsidianmd/commands/no-default-hotkeys -- Required Stage 13 shortcut.
+			hotkeys: [{ modifiers: ['Mod', 'Shift'], key: 'E' }],
+			callback: () => {
+				void this.activateChatMode('edit');
 			},
 		});
 
@@ -146,6 +168,18 @@ export default class EmendPlugin extends Plugin {
 			active: true,
 		});
 		this.app.workspace.setActiveLeaf(leaf, { focus: true });
+	}
+
+	private async activateChatMode(mode: Mode) {
+		await this.activateChatView();
+		for (const leaf of this.app.workspace.getLeavesOfType(
+			EMEND_CHAT_VIEW_TYPE,
+		)) {
+			if (leaf.view instanceof EmendChatView) {
+				leaf.view.setMode(mode);
+				return;
+			}
+		}
 	}
 
 	getActiveNoteLabel() {

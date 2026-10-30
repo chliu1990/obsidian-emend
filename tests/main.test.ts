@@ -217,3 +217,88 @@ describe('EmendPlugin workspace conversation events', () => {
 		).toEqual(['A saved']);
 	});
 });
+
+describe('EmendPlugin mode keyboard commands', () => {
+	interface RegisteredCommand {
+		id: string;
+		hotkeys?: Array<{ modifiers: string[]; key: string }>;
+		callback?: () => void;
+	}
+
+	async function createCommandHarness() {
+		const commands: RegisteredCommand[] = [];
+		const setMode = vi.fn();
+		const view = Object.create(EmendChatView.prototype) as EmendChatView;
+		Object.assign(view, { setMode });
+		const leaf = { view };
+		const activateChatView = vi.fn().mockResolvedValue(undefined);
+		const requestChatCompletion = vi.fn();
+		const requestSelectionEdit = vi.fn();
+		const modify = vi.fn();
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, {
+			app: {
+				vault: {
+					adapter: new MemoryAdapter(),
+					configDir: '.test-config',
+					modify,
+				},
+				workspace: {
+					on: () => ({}),
+					getLeavesOfType: () => [leaf],
+				},
+			},
+			loadSettings: vi.fn().mockResolvedValue(undefined),
+			registerView: vi.fn(),
+			registerEvent: vi.fn(),
+			rememberActiveMarkdownView: vi.fn(),
+			addRibbonIcon: vi.fn(),
+			addCommand: vi.fn((command: RegisteredCommand) => commands.push(command)),
+			addSettingTab: vi.fn(),
+			activateChatView,
+			requestChatCompletion,
+			requestSelectionEdit,
+		});
+		await plugin.onload();
+		return {
+			commands,
+			setMode,
+			activateChatView,
+			requestChatCompletion,
+			requestSelectionEdit,
+			modify,
+		};
+	}
+
+	it('registers Ask and Edit commands with platform Mod default hotkeys', async () => {
+		const { commands } = await createCommandHarness();
+
+		expect(commands.find((command) => command.id === 'emend:switch-to-ask-mode')).toMatchObject({
+			hotkeys: [{ modifiers: ['Mod', 'Shift'], key: 'A' }],
+		});
+		expect(commands.find((command) => command.id === 'emend:switch-to-edit-mode')).toMatchObject({
+			hotkeys: [{ modifiers: ['Mod', 'Shift'], key: 'E' }],
+		});
+	});
+
+	it('opens chat and switches mode without submitting, requesting, or writing', async () => {
+		const {
+			commands,
+			setMode,
+			activateChatView,
+			requestChatCompletion,
+			requestSelectionEdit,
+			modify,
+		} = await createCommandHarness();
+
+		commands.find((command) => command.id === 'emend:switch-to-ask-mode')?.callback?.();
+		commands.find((command) => command.id === 'emend:switch-to-edit-mode')?.callback?.();
+		await vi.waitFor(() => expect(setMode).toHaveBeenCalledTimes(2));
+
+		expect(activateChatView).toHaveBeenCalledTimes(2);
+		expect(setMode.mock.calls).toEqual([['ask'], ['edit']]);
+		expect(requestChatCompletion).not.toHaveBeenCalled();
+		expect(requestSelectionEdit).not.toHaveBeenCalled();
+		expect(modify).not.toHaveBeenCalled();
+	});
+});

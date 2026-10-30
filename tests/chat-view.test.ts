@@ -1,10 +1,18 @@
+import { Scope } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
+import type { ShortcutEvent } from '../src/chat-shortcuts';
 import { EmendChatView } from '../src/chat-view';
-import type { ChatMessage } from '../src/types';
+import type { ChatMessage, Mode } from '../src/types';
 
 const viewPrototype = EmendChatView.prototype as unknown as {
 	refreshTargetNote(this: unknown): Promise<void>;
 	submitPrompt(this: unknown): Promise<void>;
+	handleComposerKeydown(
+		this: unknown,
+		event: ShortcutEvent & { preventDefault(): void },
+	): void;
+	setMode(this: unknown, mode: Mode): void;
+	registerComposerScope(this: unknown): void;
 	onClose(this: unknown): Promise<void>;
 };
 
@@ -163,5 +171,166 @@ describe('EmendChatView conversation saving', () => {
 			totalTokens: 4,
 		});
 		expect(context.messages.every((item) => item.timestamp > 0)).toBe(true);
+	});
+});
+
+describe('EmendChatView keyboard shortcuts', () => {
+	function keyboardEvent(overrides: Partial<ShortcutEvent> = {}) {
+		return {
+			key: 'Enter',
+			metaKey: false,
+			ctrlKey: false,
+			shiftKey: false,
+			altKey: false,
+			preventDefault: vi.fn(),
+			...overrides,
+		};
+	}
+
+	it.each([{}, { metaKey: true }, { ctrlKey: true }])(
+		'submits and prevents the default for Enter and Mod+Enter: %o',
+		(modifiers) => {
+			const context = {
+				isSending: false,
+				isThreadLoading: false,
+				submitPrompt: vi.fn().mockResolvedValue(undefined),
+			};
+			const event = keyboardEvent(modifiers);
+
+			viewPrototype.handleComposerKeydown.call(context, event);
+
+			expect(event.preventDefault).toHaveBeenCalledOnce();
+			expect(context.submitPrompt).toHaveBeenCalledOnce();
+		},
+	);
+
+	it('leaves Shift+Enter to the textarea for a newline', () => {
+		const context = {
+			isSending: false,
+			isThreadLoading: false,
+			submitPrompt: vi.fn(),
+		};
+		const event = keyboardEvent({ shiftKey: true });
+
+		viewPrototype.handleComposerKeydown.call(context, event);
+
+		expect(event.preventDefault).not.toHaveBeenCalled();
+		expect(context.submitPrompt).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		{ isSending: true, isThreadLoading: false },
+		{ isSending: false, isThreadLoading: true },
+	])('does not submit through a shortcut while controls are unavailable: %o', (state) => {
+		const context = { ...state, submitPrompt: vi.fn() };
+		const event = keyboardEvent({ metaKey: true });
+
+		viewPrototype.handleComposerKeydown.call(context, event);
+
+		expect(context.submitPrompt).not.toHaveBeenCalled();
+	});
+
+	it('ignores modified-key conflicts in the real key handler', () => {
+		const context = {
+			isSending: false,
+			isThreadLoading: false,
+			submitPrompt: vi.fn(),
+		};
+		const event = keyboardEvent({ metaKey: true, shiftKey: true });
+
+		viewPrototype.handleComposerKeydown.call(context, event);
+
+		expect(event.preventDefault).not.toHaveBeenCalled();
+		expect(context.submitPrompt).not.toHaveBeenCalled();
+	});
+
+	it('shows a newly selected mode immediately and preserves the draft without aborting', () => {
+		const context = {
+			selectedMode: 'ask' as Mode,
+			inputEl: { value: 'Keep this draft' } as { value: string } | null,
+			isSending: true,
+			activeController: { abort: vi.fn() },
+			render: vi.fn(() => {
+				context.inputEl = { value: '' };
+			}),
+		};
+
+		viewPrototype.setMode.call(context, 'edit');
+
+		expect(context.selectedMode).toBe('edit');
+		expect(context.inputEl?.value).toBe('Keep this draft');
+		expect(context.render).toHaveBeenCalledOnce();
+		expect(context.activeController.abort).not.toHaveBeenCalled();
+	});
+
+	it('changes only the next request mode while a submission is pending', async () => {
+		const pending = deferred<{ content: string; reasoning: string }>();
+		const requestChatCompletion = vi.fn((_submission: { mode: Mode }) => pending.promise);
+		const context = {
+			inputEl: { value: 'First prompt' } as { value: string } | null,
+			isSending: false,
+			isThreadLoading: false,
+			selectedMode: 'ask' as Mode,
+			messages: [] as ChatMessage[],
+			plugin: {
+				captureChatContext: () => ({ file: { path: 'Note.md' } }),
+				requestChatCompletion,
+			},
+			toProviderHistory: () => [],
+			persistMessages: vi.fn().mockResolvedValue(undefined),
+			render: vi.fn(),
+			scheduleMessageRender: vi.fn(),
+			closed: false,
+			activeController: null as AbortController | null,
+		};
+
+		const submission = viewPrototype.submitPrompt.call(context);
+		await vi.waitFor(() => expect(requestChatCompletion).toHaveBeenCalledOnce());
+		const controller = context.activeController;
+		if (!controller) {
+			throw new Error('Request controller missing.');
+		}
+		const abort = vi.spyOn(controller, 'abort');
+		context.inputEl = { value: 'Next prompt' };
+
+		viewPrototype.setMode.call(context, 'edit');
+
+		expect(requestChatCompletion.mock.calls[0]?.[0].mode).toBe('ask');
+		expect(context.selectedMode).toBe('edit');
+		expect(context.inputEl.value).toBe('Next prompt');
+		expect(abort).not.toHaveBeenCalled();
+		pending.resolve({ content: 'Answer', reasoning: '' });
+		await submission;
+	});
+
+	it('registers Mod+Enter on the Obsidian view scope only for the composer', () => {
+		const parent = new Scope();
+		const context = {
+			app: { scope: parent },
+			scope: null as Scope | null,
+			inputEl: { value: 'Prompt' },
+			handleComposerKeydown: vi.fn(),
+		};
+
+		viewPrototype.registerComposerScope.call(context);
+
+		expect(context.scope).toBeInstanceOf(Scope);
+		const scope = context.scope as unknown as {
+			keys: Array<{
+				modifiers: string[] | null;
+				key: string | null;
+				func(event: KeyboardEvent): unknown;
+			}>;
+		};
+		const registration = scope.keys[0];
+		expect(registration).toMatchObject({ modifiers: ['Mod'], key: 'Enter' });
+		if (!registration) {
+			throw new Error('Composer scope registration missing.');
+		}
+		const composerEvent = { target: context.inputEl } as unknown as KeyboardEvent;
+		expect(registration.func(composerEvent)).toBe(false);
+		expect(context.handleComposerKeydown).toHaveBeenCalledWith(composerEvent);
+		expect(registration.func({ target: {} } as unknown as KeyboardEvent)).toBeUndefined();
+		expect(context.handleComposerKeydown).toHaveBeenCalledOnce();
 	});
 });

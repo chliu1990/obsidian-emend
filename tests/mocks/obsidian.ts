@@ -44,3 +44,33 @@ export class PluginSettingTab {
 export class Setting {
 	constructor(_containerEl: unknown) {}
 }
+
+export class Scope {
+	readonly keys: Array<{
+		modifiers: string[] | null;
+		key: string | null;
+		func: (event: KeyboardEvent) => unknown;
+		scope: Scope;
+	}> = [];
+
+	constructor(readonly parent?: Scope) {}
+
+	register(
+		modifiers: string[] | null,
+		key: string | null,
+		func: (event: KeyboardEvent) => unknown,
+	) {
+		const handler = { modifiers, key, func, scope: this };
+		this.keys.push(handler);
+		return handler;
+	}
+
+	unregister(handler: { scope: Scope }) {
+		const index = this.keys.indexOf(
+			handler as (typeof this.keys)[number],
+		);
+		if (index >= 0) {
+			this.keys.splice(index, 1);
+		}
+	}
+}

@@ -2,10 +2,12 @@ import {
 	ItemView,
 	MarkdownRenderer,
 	Notice,
+	Scope,
 	setIcon,
 	WorkspaceLeaf,
 } from 'obsidian';
 import type EmendPlugin from './main';
+import { getComposerShortcut } from './chat-shortcuts';
 import { MODES } from './mode';
 import {
 	areQuickActionsDisabled,
@@ -60,6 +62,7 @@ export class EmendChatView extends ItemView {
 
 	protected async onOpen() {
 		this.closed = false;
+		this.registerComposerScope();
 		this.render();
 		await this.refreshTargetNote();
 	}
@@ -85,6 +88,15 @@ export class EmendChatView extends ItemView {
 		}
 
 		this.activeModelEl.textContent = this.getActiveModelLabel();
+	}
+
+	setMode(mode: Mode) {
+		const draft = this.inputEl?.value ?? '';
+		this.selectedMode = mode;
+		this.render();
+		if (this.inputEl) {
+			this.inputEl.value = draft;
+		}
 	}
 
 	async refreshTargetNote() {
@@ -158,8 +170,7 @@ export class EmendChatView extends ItemView {
 			button.createSpan({ text: mode.label });
 			button.disabled = this.isSending;
 			button.addEventListener('click', () => {
-				this.selectedMode = mode.id;
-				this.render();
+				this.setMode(mode.id);
 			});
 		}
 
@@ -200,10 +211,7 @@ export class EmendChatView extends ItemView {
 		});
 		this.inputEl.disabled = this.isSending || this.isThreadLoading;
 		this.inputEl.addEventListener('keydown', (event) => {
-			if (event.key === 'Enter' && !event.shiftKey) {
-				event.preventDefault();
-				void this.submitPrompt();
-			}
+			this.handleComposerKeydown(event);
 		});
 
 		const actionsEl = composerEl.createDiv('emend-chat-composer-actions');
@@ -365,6 +373,28 @@ export class EmendChatView extends ItemView {
 			const view = this.contentEl.ownerDocument.defaultView ?? window;
 			view.cancelAnimationFrame(this.pendingRenderFrame);
 			this.pendingRenderFrame = null;
+		}
+	}
+
+	private registerComposerScope() {
+		this.scope = new Scope(this.app.scope);
+		this.scope.register(['Mod'], 'Enter', (event) => {
+			if (event.target !== this.inputEl) {
+				return;
+			}
+			this.handleComposerKeydown(event);
+			return false;
+		});
+	}
+
+	private handleComposerKeydown(event: KeyboardEvent) {
+		const shortcut = getComposerShortcut(event, {
+			isSending: this.isSending,
+			isThreadLoading: this.isThreadLoading,
+		});
+		if (shortcut === 'send') {
+			event.preventDefault();
+			void this.submitPrompt();
 		}
 	}
 
