@@ -46,7 +46,7 @@ npm test
 
 | Path | Responsibility |
 | --- | --- |
-| `src/main.ts` | Plugin lifecycle and orchestration: settings, conversation-store construction, chat and selection-command registration, target-view tracking, note-switch loading, context capture, and mode-specific coordinator/writer construction. |
+| `src/main.ts` | Plugin lifecycle and orchestration: settings, conversation-store construction, chat and selection-command registration, target-view tracking, note-switch loading, context capture, shared per-note pending isolation, and mode-specific coordinator/writer construction. |
 | `src/chat-view.ts` | Right-sidebar `ItemView`, per-session mode, generation-guarded per-note chat state, streamed Markdown/reasoning rendering, edit summaries, composer, Stop, copy action, ready-message persistence, and submission flow. |
 | `src/conversation-store.ts` | Versioned per-note thread schema, SHA-256 storage paths, DataAdapter persistence, atomic writes, corruption backup, unsupported-version protection, and per-note write serialization. |
 | `src/context.ts` | Synchronous note snapshots and bounded caret/selection-centered Markdown windows with exact omission markers. |
@@ -76,6 +76,14 @@ Keep new feature logic in focused modules rather than adding unrelated responsib
 `main.ts` targets the active Markdown view when available. If focus is in the chat sidebar, it uses the last active still-open Markdown view, then falls back to another open Markdown view. `captureChatContext()` synchronously captures the target `TFile`, full source text, selection offsets, note label, optional vault-qualified path, and bounded Markdown before instruction reads or networking.
 
 Read-only requests include bounded Markdown context. Notes within the configured character limit are sent whole; longer notes are windowed around the selection or caret, with `[...]` markers at omitted edges and unused budget redistributed toward available text. The default limit is 12,000 characters and the settings UI enforces a minimum of 1,000. Full-note Edit ignores the bounded `markdown` window and always sends `sourceText`. Modify Selection sends the complete selection plus bounded before/after context within the same limit; an oversized selection is sent whole with no surrounding context. Vault name and note path are opt-in and disabled by default.
+
+### Sequential edits and per-note request isolation
+
+`main.ts` owns one pending-path registry shared by every chat mode and Modify Selection. After synchronous target capture and nonempty prompt validation, `withNoteRequest()` acquires the captured note path before instruction reads or networking. A second request for that path rejects with exactly `Wait for the current Emend request to finish.`; different note paths can proceed independently. The single chat view also disables its own duplicate UI submissions while sending.
+
+The submission captures mode and source before awaiting. Each sequential Edit therefore uses the latest complete annotated note as its source, preserves earlier Track Changes tokens, and sends only ready user prompts plus concise applied-edit summaries as assistant history. Full annotated responses remain private and are never persisted.
+
+The pending path is deleted in `finally` only after the coordinator settles on success, provider error, validation error, stale failure, or abort. Stop, chat close/note-switch aborts, and selection cancel/close therefore permit a retry without weakening the existing post-await abort, exact-source, active-target, or permission checks. A pending old-note request remains keyed to its captured path and cannot apply to a newly active note.
 
 ### Streamed chat and guarded editing
 
@@ -146,7 +154,8 @@ Use only the ignored `test_vault/` and a local OpenAI-compatible SSE mock with C
 - Apply insertion, deletion, substitution, comment, and highlight edits in Edit mode; inspect actual resulting Markdown and Track Changes review behavior.
 - Apply single-line and multiline Modify Selection edits; inspect complete untruncated selections, bounded surrounding context, native undo, and Track Changes markup.
 - Reject invalid output, stale source edits, and target-note switches without writes. Stop streams and trigger provider errors without partial writes or duplicate submissions.
-- Verify unchanged responses do not write, valid comment-only edits may write with zero text changes, sequential edits preserve old markup, and chat history stores summaries rather than annotated documents.
+- Verify unchanged responses do not write, valid comment-only edits may write with zero text changes, three sequential edits use each prior annotated source and preserve old markup, and second/third request history stores only concise summaries rather than annotated documents.
+- Verify full-note chat and Modify Selection share the same pending-path rejection, different notes remain independent, target switches cannot write, and Stop/provider/validation/stale failures all permit a successful retry.
 - Verify separate two-note threads, restoration after an actual Obsidian reload, rapid-note-switch load guards, atomic replacement, malformed-file preservation and `.corrupt` backup, unsupported-version refusal, and sanitized stored data without credentials, request bodies, snapshots, loading/error messages, or full edit payloads. Deleting a note leaves its thread in place.
 - Inspect mock requests for complete uncapped source in Edit, complete selections even above the context budget, bounded read-only and selection-surrounding context, eight-message chat history, current instruction/skill ordering, and note-path omission/inclusion according to the privacy setting.
 - Verify Markdown, links, math, folded reasoning, copy, mode badges/placeholders, model label, per-session mode retention, and close/unload cleanup.

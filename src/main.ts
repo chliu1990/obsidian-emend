@@ -31,6 +31,7 @@ export default class EmendPlugin extends Plugin {
 	settings!: EmendSettings;
 	conversationStore!: ConversationStore;
 	private lastMarkdownView: MarkdownView | null = null;
+	private pendingNotePaths: Set<string> | undefined;
 
 	async onload() {
 		await this.loadSettings();
@@ -179,24 +180,30 @@ export default class EmendPlugin extends Plugin {
 	async requestChatCompletion(
 		submission: ReadOnlySubmission | EditSubmission,
 	): Promise<StreamResult | EditResult> {
-		const dependencies = {
-			provider: this.settings.providers[this.settings.activeProvider],
-			loadInstructions: () => loadAllInstructions(this.app.vault),
-			request: requestAiResponse,
-		};
-		if (submission.mode === 'edit') {
-			const coordinator = new EditRequestCoordinator({
-				...dependencies,
-				writer: createVaultNoteWriter(
-					this.app.vault,
-					(file) => this.getTargetMarkdownView()?.file === file,
-				),
-			});
-			return coordinator.submit(submission);
+		if (!submission.prompt.trim()) {
+			throw new Error('Enter a prompt first.');
 		}
 
-		const coordinator = new ReadOnlyRequestCoordinator(dependencies);
-		return coordinator.submit(submission);
+		return this.withNoteRequest(submission.context.file.path, async () => {
+			const dependencies = {
+				provider: this.settings.providers[this.settings.activeProvider],
+				loadInstructions: () => loadAllInstructions(this.app.vault),
+				request: requestAiResponse,
+			};
+			if (submission.mode === 'edit') {
+				const coordinator = new EditRequestCoordinator({
+					...dependencies,
+					writer: createVaultNoteWriter(
+						this.app.vault,
+						(file) => this.getTargetMarkdownView()?.file === file,
+					),
+				});
+				return coordinator.submit(submission);
+			}
+
+			const coordinator = new ReadOnlyRequestCoordinator(dependencies);
+			return coordinator.submit(submission);
+		});
 	}
 
 	async requestSelectionEdit(
@@ -205,25 +212,48 @@ export default class EmendPlugin extends Plugin {
 		signal: AbortSignal,
 		editor: ReturnType<typeof createSelectionEditorAdapter>,
 	): Promise<EditResult> {
-		const coordinator = new SelectionEditRequestCoordinator({
-			provider: this.settings.providers[this.settings.activeProvider],
-			loadInstructions: () => loadAllInstructions(this.app.vault),
-			request: requestAiResponse,
-			editor,
+		if (!prompt.trim()) {
+			throw new Error('Enter a prompt first.');
+		}
+
+		return this.withNoteRequest(snapshot.file.path, async () => {
+			const coordinator = new SelectionEditRequestCoordinator({
+				provider: this.settings.providers[this.settings.activeProvider],
+				loadInstructions: () => loadAllInstructions(this.app.vault),
+				request: requestAiResponse,
+				editor,
+			});
+			return coordinator.submit({
+				snapshot,
+				prompt,
+				maxContextCharacters: Math.max(
+					1000,
+					this.settings.maxContextCharacters ||
+						DEFAULT_SETTINGS.maxContextCharacters,
+				),
+				notePath: this.settings.includeNotePathInContext
+					? `${this.app.vault.getName()}/${snapshot.file.path}`
+					: undefined,
+				signal,
+			});
 		});
-		return coordinator.submit({
-			snapshot,
-			prompt,
-			maxContextCharacters: Math.max(
-				1000,
-				this.settings.maxContextCharacters ||
-					DEFAULT_SETTINGS.maxContextCharacters,
-			),
-			notePath: this.settings.includeNotePathInContext
-				? `${this.app.vault.getName()}/${snapshot.file.path}`
-				: undefined,
-			signal,
-		});
+	}
+
+	private async withNoteRequest<T>(
+		notePath: string,
+		request: () => Promise<T>,
+	): Promise<T> {
+		const pendingNotePaths = (this.pendingNotePaths ??= new Set());
+		if (pendingNotePaths.has(notePath)) {
+			throw new Error('Wait for the current Emend request to finish.');
+		}
+
+		pendingNotePaths.add(notePath);
+		try {
+			return await request();
+		} finally {
+			pendingNotePaths.delete(notePath);
+		}
 	}
 
 	private getActiveMarkdownView() {

@@ -9,6 +9,7 @@ Emend is an Obsidian plugin for context-aware, streamed AI chat and guarded Crit
 - Guarded full-note Edit mode: the complete note is buffered privately, validated as CriticMarkup, checked against the captured file and target, and written once with `vault.modify` when the response completes.
 - Explicit **Modify selected text with AI**: the complete selection and bounded surrounding context are sent after an instruction is submitted. The validated annotated selection replaces only the captured editor range with native undo support.
 - Immediate edit confirmations, with annotated documents and selections kept out of chat history. Unchanged responses do not write; valid comment-only edits may write with zero text changes.
+- Sequential multi-turn edits use the latest annotated note while preserving earlier Track Changes markup. A shared per-note pending guard prevents full-note, read-only chat, and selection requests from racing; different notes remain independent.
 - Track Changes as the only edit-review surface. Emend has no Apply/Reject or in-plugin diff UI.
 - Per-session mode controls, mode badges and placeholders, model labels, response copying, and Stop for an in-flight request.
 - Versioned per-note conversation persistence with atomic local writes, rapid-note-switch protection, and safe recovery of malformed thread files.
@@ -22,7 +23,7 @@ Emend is an Obsidian plugin for context-aware, streamed AI chat and guarded Crit
 2. In Emend settings, choose a provider and enter its API key, HTTP(S) base URL, and model. DeepSeek and Kimi have editable presets; a custom provider requires an OpenAI-compatible base URL.
 3. Open **AI chat** from the ribbon or Command Palette. Choose Ask, Discuss, Brainstorm, or Edit, enter a prompt, and select **Send**.
 4. Watch chat responses and folded reasoning stream. Use **Copy** for completed content or **Stop** to abort the request.
-5. In Edit mode, review the validated CriticMarkup written to the note with the Track Changes plugin. Chat reports only the result summary. If the note or target changes while the response is pending, Emend applies nothing.
+5. In Edit mode, review the validated CriticMarkup written to the note with the Track Changes plugin. Chat reports only the result summary. Follow-up edits start from the latest annotated note and retain earlier markup. If the note or target changes while a response is pending, Emend applies nothing. A second request for that note reports `Wait for the current Emend request to finish.`; Stop, errors, and completion release the note for retry. The single chat view still submits one UI request at a time.
 6. To edit only part of a note, select nonempty text and run **Modify selected text with AI** from the Command Palette. Enter an instruction and select **Modify selection**. Cancel or close the modal to abort a pending request.
 7. Review the selection's CriticMarkup in Track Changes, or use Cmd/Ctrl+Z to undo its single native editor replacement. Invalid, aborted, stale, or target-switched requests replace nothing.
 8. Change the selected chat mode at any time when no request is running. Switching notes loads that note's saved thread without resetting the session's selected mode. Reloading Obsidian restores saved conversations.
