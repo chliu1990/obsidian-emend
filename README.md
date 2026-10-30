@@ -62,3 +62,7 @@ npm run build
 ```
 
 The plugin is desktop-only because its OpenAI-compatible transport uses browser `fetch` with Server-Sent Events. It does not use Obsidian's `requestUrl` or a provider-specific fallback transport.
+
+## Vibecoding credit
+
+This project was driven by vibecoding with **Kimi K3.1 Pro** using **Kimi Code**.
