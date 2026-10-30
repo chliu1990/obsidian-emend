@@ -42,3 +42,7 @@ Move DeepSeek, Kimi, and custom-provider API keys out of plaintext plugin data a
 - Settings inputs remain password-masked and use the public plugin helpers. Missing-key validation still lives in `provider-stream.ts`; no error or notice logs a credential.
 - Current `README.md`, `QUICK_START.md`, `INSTALLATION.md`, `AGENTS.md`, and `IMPLEMENTATION_PLAN.md` describe SecretStorage, sanitized plugin data, and removal implications. Historical records remain unchanged.
 - No generated bundle, vault/profile content, result log, dummy plugin data, credential, or other ignored file is intended for git. Independent task-review approval, if required by the parent workflow, remains separate from this self-review.
+
+## Implementation-run CI evidence
+
+Implementation commit `42344f2f7f6574bc34a223f19143e70dbeb65e5c` was pushed on `feat/emend-rewrite`. Gitea push run 101 at http://127.0.0.1:19705/cliu/obsidian-emend/actions/runs/101 and job 123 completed with conclusion **success** on `emend-macos-docker` from 16:08:59Z through 16:09:34Z. Run, job, and log details were retrieved through `tea api`. Checkout reached `HEAD is now at 42344f2`; clean `npm ci` installed 351 packages, lint passed, all **421 tests in 22 files** passed, and the production build succeeded.
