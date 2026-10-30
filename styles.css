@@ -163,6 +163,19 @@
 	user-select: text;
 }
 
+.emend-chat-quick-actions {
+	display: flex;
+	flex: 0 0 auto;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.emend-chat-quick-action {
+	border-radius: 4px;
+	font-size: var(--font-ui-smaller);
+	padding: 4px 8px;
+}
+
 .emend-chat-composer {
 	flex: 0 0 auto;
 	border-top: 1px solid var(--background-modifier-border);

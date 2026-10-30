@@ -7,6 +7,11 @@ import {
 } from 'obsidian';
 import type EmendPlugin from './main';
 import { MODES } from './mode';
+import {
+	areQuickActionsDisabled,
+	QUICK_ACTIONS,
+	type QuickAction,
+} from './quick-actions';
 import type { ChatMessage, Mode, ProviderHistoryMessage } from './types';
 
 export const EMEND_CHAT_VIEW_TYPE = 'emend-chat-view';
@@ -165,6 +170,24 @@ export class EmendChatView extends ItemView {
 			for (const message of this.messages) {
 				this.renderMessage(messagesEl, message);
 			}
+		}
+
+		const quickActionsEl = contentEl.createDiv('emend-chat-quick-actions');
+		const quickActionsDisabled = areQuickActionsDisabled({
+			notePath: this.notePath,
+			isSending: this.isSending,
+			isThreadLoading: this.isThreadLoading,
+		});
+		for (const action of QUICK_ACTIONS) {
+			const button = quickActionsEl.createEl('button', {
+				cls: 'emend-chat-quick-action',
+				text: action.label,
+				attr: { 'data-action-id': action.id },
+			});
+			button.disabled = quickActionsDisabled;
+			button.addEventListener('click', () => {
+				void this.submitQuickAction(action);
+			});
 		}
 
 		const composerEl = contentEl.createDiv('emend-chat-composer');
@@ -345,8 +368,19 @@ export class EmendChatView extends ItemView {
 		}
 	}
 
-	private async submitPrompt() {
-		const prompt = this.inputEl?.value.trim() ?? '';
+	private async submitQuickAction(action: QuickAction) {
+		if (areQuickActionsDisabled({
+			notePath: this.notePath,
+			isSending: this.isSending,
+			isThreadLoading: this.isThreadLoading,
+		})) {
+			return;
+		}
+		this.selectedMode = action.mode;
+		await this.submitPrompt(action.prompt);
+	}
+
+	private async submitPrompt(prompt = this.inputEl?.value.trim() ?? '') {
 		if (!prompt || this.isSending || this.isThreadLoading) {
 			return;
 		}

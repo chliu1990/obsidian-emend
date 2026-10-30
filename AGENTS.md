@@ -58,6 +58,7 @@ npm test
 | `src/provider-stream.ts` | OpenAI-compatible streaming `fetch` transport, SSE parsing, content/reasoning/usage events, and provider error handling. |
 | `src/instructions-loader.ts` | Vault-root `AGENTS.md` loading and safe, directly referenced skill discovery. |
 | `src/mode.ts` / `src/permissions.ts` | Mode catalog, mode-specific system prompts, and deterministic note-write permission contracts. |
+| `src/quick-actions.ts` | Stable quick-action IDs, labels, deterministic Edit prompts, and shared availability rules. |
 | `src/settings.ts` | Provider catalog, defaults, persisted-data normalization, and the settings tab. |
 | `src/types.ts` | Shared provider, mode, message, reasoning-effort, instruction, selection snapshot, and persisted settings types. |
 | `styles.css` | Streamed chat styles using the `emend-` prefix and Obsidian CSS variables. |
@@ -88,7 +89,7 @@ The pending path is deleted in `finally` only after the coordinator settles on s
 ### Streamed chat and guarded editing
 
 1. `chat-view.ts` initializes one mode from `defaultMode` per view session. Switching notes does not reset the selected mode. Ask, Edit, Discuss, and Brainstorm use their Stage 03 icons, badges, and placeholders.
-2. Submission captures context and up to the last eight ready chat messages. Duplicate submissions are disabled while a request or thread load is active.
+2. Submission captures context and up to the last eight ready chat messages. Duplicate submissions are disabled while a request or thread load is active. The Fix grammar, Make concise, and Add examples buttons above the composer select Edit and call this same submission path exactly once with their mapped prompts; they are disabled without a note thread and during loading or sending. They have no separate provider, history, persistence, pending, or writer path.
 3. `ReadOnlyRequestCoordinator` loads current vault instructions on every request, builds the selected read-only prompt with skills before agent instructions, and calls `requestAiResponse`. Its dependencies and submission contract contain no note writer.
 4. Only `EditRequestCoordinator` receives a writer. It uses the full-note CriticMarkup prompt, forwards reasoning while privately buffering content until provider completion, rejects aborts, validates against captured source through Stage 07, and delegates to `applyPreparedEdit`.
 5. `applyPreparedEdit` returns without reading or writing for read-only modes and unchanged responses. For a changed Edit response it re-reads the captured file, immediately rechecks the request abort signal, requires both exact source equality and the same active target, checks `canWriteToNote(mode)` immediately before writing, and calls `vault.modify` exactly once. The stale error is `The note changed while Emend was responding. No edits were applied.`
