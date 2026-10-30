@@ -1,5 +1,5 @@
 import type { MarkdownView } from 'obsidian';
-import { criticMarkupEditStrategy, type EditPreparation } from './edit-strategy';
+import type { EditPreparation, EditStrategy } from './edit-strategy';
 import type { EditResult } from './note-writer';
 import { canWriteToNote } from './permissions';
 import type { requestAiResponse } from './provider-stream';
@@ -30,6 +30,7 @@ interface SelectionEditRequestCoordinatorDependencies {
 	loadInstructions(): Promise<InstructionPromptParts>;
 	request: typeof requestAiResponse;
 	editor: SelectionEditorAdapter;
+	editStrategy: EditStrategy;
 }
 
 export interface SelectionEditSubmission {
@@ -152,7 +153,7 @@ export class SelectionEditRequestCoordinator {
 		await this.dependencies.request(
 			{
 				provider: this.dependencies.provider,
-				systemPrompt: criticMarkupEditStrategy.getSelectionPrompt(instructions),
+				systemPrompt: this.dependencies.editStrategy.getSelectionPrompt(instructions),
 				userPrompt: buildSelectionUserPrompt(submission),
 				history: [],
 			},
@@ -167,7 +168,7 @@ export class SelectionEditRequestCoordinator {
 		);
 		submission.signal.throwIfAborted();
 
-		const prepared = criticMarkupEditStrategy.prepareEdit(
+		const prepared = this.dependencies.editStrategy.prepareEdit(
 			submission.snapshot.selectedText,
 			response,
 		);

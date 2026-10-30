@@ -5,6 +5,7 @@ import {
 	type RequestContext,
 } from './context';
 import { ConversationStore } from './conversation-store';
+import { getEditStrategy } from './edit-strategy';
 import { loadAllInstructions } from './instructions-loader';
 import { createVaultNoteWriter, type EditResult } from './note-writer';
 import { requestAiResponse } from './provider-stream';
@@ -231,6 +232,7 @@ export default class EmendPlugin extends Plugin {
 			if (submission.mode === 'edit') {
 				const coordinator = new EditRequestCoordinator({
 					...dependencies,
+					editStrategy: getEditStrategy(this.settings),
 					writer: createVaultNoteWriter(
 						this.app.vault,
 						(file) => this.getTargetMarkdownView()?.file === file,
@@ -260,6 +262,7 @@ export default class EmendPlugin extends Plugin {
 				loadInstructions: () => loadAllInstructions(this.app.vault),
 				request: requestAiResponse,
 				editor,
+				editStrategy: getEditStrategy(this.settings),
 			});
 			return coordinator.submit({
 				snapshot,

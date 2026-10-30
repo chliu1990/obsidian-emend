@@ -1,6 +1,11 @@
 import { prepareCriticMarkupEdit } from './critic-markup';
 import { getSelectionSystemPrompt, getSystemPrompt } from './mode';
-import type { InstructionPromptParts } from './types';
+import { operationEditStrategy } from './operation-edit-strategy';
+import type {
+	EditStrategyId,
+	EmendSettings,
+	InstructionPromptParts,
+} from './types';
 
 export interface EditPreparation {
 	annotatedMarkdown: string;
@@ -8,7 +13,7 @@ export interface EditPreparation {
 }
 
 export interface EditStrategy {
-	id: string;
+	id: EditStrategyId;
 	getFullNotePrompt(instructions?: InstructionPromptParts): string;
 	getSelectionPrompt(instructions?: InstructionPromptParts): string;
 	prepareEdit(original: string, response: string): EditPreparation;
@@ -20,3 +25,11 @@ export const criticMarkupEditStrategy: EditStrategy = {
 	getSelectionPrompt: (instructions) => getSelectionSystemPrompt(instructions),
 	prepareEdit: prepareCriticMarkupEdit,
 };
+
+export function getEditStrategy(
+	settings: Pick<EmendSettings, 'editStrategy'>,
+): EditStrategy {
+	return settings.editStrategy === 'operations'
+		? operationEditStrategy
+		: criticMarkupEditStrategy;
+}

@@ -1,5 +1,5 @@
 import type { RequestContext } from './context';
-import { criticMarkupEditStrategy } from './edit-strategy';
+import type { EditStrategy } from './edit-strategy';
 import { getSystemPrompt } from './mode';
 import {
 	applyPreparedEdit,
@@ -53,6 +53,7 @@ interface ReadOnlyRequestCoordinatorDependencies {
 interface EditRequestCoordinatorDependencies
 	extends ReadOnlyRequestCoordinatorDependencies {
 	writer: NoteWriter;
+	editStrategy: EditStrategy;
 }
 
 export interface ChatStreamResult extends Omit<StreamResult, 'usage'> {
@@ -103,7 +104,7 @@ export class EditRequestCoordinator {
 		let response = '';
 		const request = {
 			provider: this.dependencies.provider,
-			systemPrompt: criticMarkupEditStrategy.getFullNotePrompt(instructions),
+			systemPrompt: this.dependencies.editStrategy.getFullNotePrompt(instructions),
 			userPrompt: buildUserPrompt(
 				submission.context,
 				submission.prompt,
@@ -126,7 +127,7 @@ export class EditRequestCoordinator {
 		);
 		submission.signal.throwIfAborted();
 
-		const prepared = criticMarkupEditStrategy.prepareEdit(
+		const prepared = this.dependencies.editStrategy.prepareEdit(
 			submission.context.sourceText,
 			response,
 		);

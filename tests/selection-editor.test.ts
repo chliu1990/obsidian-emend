@@ -1,6 +1,9 @@
 import { TFile, type MarkdownView } from 'obsidian';
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
-import type { EditPreparation } from '../src/edit-strategy';
+import {
+	criticMarkupEditStrategy,
+	type EditPreparation,
+} from '../src/edit-strategy';
 import type {
 	AiProviderRequest,
 	StreamEvent,
@@ -402,6 +405,7 @@ function makeSelectionCoordinator(
 		loadInstructions,
 		request,
 		editor: adapter,
+		editStrategy: criticMarkupEditStrategy,
 	});
 	return { adapter, coordinator, loadInstructions, request };
 }

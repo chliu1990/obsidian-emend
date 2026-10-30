@@ -12,6 +12,7 @@ import {
 	type ReadOnlySubmission,
 } from '../src/request-coordinator';
 import type { RequestContext } from '../src/context';
+import { criticMarkupEditStrategy } from '../src/edit-strategy';
 import type { NoteWriter } from '../src/note-writer';
 import type {
 	InstructionPromptParts,
@@ -297,6 +298,7 @@ function makeEditCoordinator(
 		loadInstructions,
 		request,
 		writer,
+		editStrategy: criticMarkupEditStrategy,
 	});
 	return { coordinator, loadInstructions, request, writer };
 }

@@ -50,13 +50,32 @@ describe('normalizeSettings', () => {
 		});
 	});
 
-	it('defaults to DeepSeek, ask mode, disabled note-path sharing, and smart selection context', () => {
+	it('defaults to DeepSeek, ask mode, CriticMarkup editing, disabled note-path sharing, and smart selection context', () => {
 		expect(DEFAULT_SETTINGS.activeProvider).toBe('deepseek');
 		expect(DEFAULT_SETTINGS.defaultMode).toBe('ask');
+		expect(DEFAULT_SETTINGS.editStrategy).toBe('critic-markup');
 		expect(DEFAULT_SETTINGS.includeNotePathInContext).toBe(false);
 		expect(DEFAULT_SETTINGS.smartSelectionContext).toBe(true);
 		expect(DEFAULT_SETTINGS.maxContextCharacters).toBe(12000);
 	});
+
+	it('retains the explicit operation editing opt-in', () => {
+		expect(normalizeSettings({ editStrategy: 'operations' })).toMatchObject({
+			editStrategy: 'operations',
+		});
+		expect(normalizeSettings({ editStrategy: 'critic-markup' })).toMatchObject({
+			editStrategy: 'critic-markup',
+		});
+	});
+
+	it.each([null, 'invalid', 0, false, [], {}])(
+		'normalizes malformed edit strategies to CriticMarkup %#',
+		(editStrategy) => {
+			expect(normalizeSettings({ editStrategy })).toMatchObject({
+				editStrategy: 'critic-markup',
+			});
+		},
+	);
 
 	it('retains an explicit smart selection context opt-out', () => {
 		expect(normalizeSettings({ smartSelectionContext: false })).toMatchObject({
@@ -103,6 +122,7 @@ describe('normalizeSettings', () => {
 				},
 			},
 			defaultMode: 'discuss',
+			editStrategy: 'operations',
 			includeNotePathInContext: true,
 			smartSelectionContext: false,
 			maxContextCharacters: 24000,

@@ -46,7 +46,7 @@ ${CRITIC_MARKUP_RULES}`;
 	return appendInstructions(prompt, instructions);
 }
 
-function appendInstructions(
+export function appendInstructions(
 	prompt: string,
 	instructions?: InstructionPromptParts,
 ): string {
