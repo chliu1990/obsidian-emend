@@ -97,7 +97,9 @@ Reload Obsidian. Provider settings and saved conversations remain local to the v
 1. Disable **Emend** under **Settings → Community plugins**.
 2. Remove `<Vault>/.obsidian/plugins/emend/` from the vault.
 
-Disabling Emend preserves its settings and chats. Removing `<Vault>/.obsidian/plugins/emend/` removes its `data.json` and non-secret provider settings, but API keys live separately in Obsidian SecretStorage. Clear each provider's API key in Emend settings before removal if you also want to remove its stored credential. Saved conversations remain under `<Vault>/.obsidian/emend/`; remove that directory separately if you want to delete them. Do not share either location.
+Disabling Emend preserves its settings and chats. Removing `<Vault>/.obsidian/plugins/emend/` removes its `data.json` and non-secret provider settings, but API keys live separately in Obsidian SecretStorage under `emend-api-key-deepseek`, `emend-api-key-kimi`, and `emend-api-key-custom`. Clear each provider's API key in Emend settings before removal if you also want to remove its stored credential; uninstalling the plugin folder alone does not clear those secrets. Saved conversations remain under `<Vault>/.obsidian/emend/`; remove that directory separately if you want to delete them. Do not share either location.
+
+Current editing always uses validated JSON Operations compiled into CriticMarkup for Track Changes; there is no strategy setting to migrate or select. DeepSeek and Kimi presets remain editable. Deferred context-management and web-search designs are linked from the [README](README.md#documentation) and are not installed features.
 
 ## Troubleshooting
 
