@@ -45,17 +45,21 @@ export default class EmendPlugin extends Plugin {
 			(leaf) => new EmendChatView(leaf, this),
 		);
 		this.rememberActiveMarkdownView();
-		this.registerEvent(
-			this.app.workspace.on('active-leaf-change', () => {
-				this.rememberActiveMarkdownView();
-				for (const leaf of this.app.workspace.getLeavesOfType(
-					EMEND_CHAT_VIEW_TYPE,
-				)) {
-					if (leaf.view instanceof EmendChatView) {
-						void leaf.view.refreshTargetNote();
-					}
+		const refreshChatTargetNotes = () => {
+			this.rememberActiveMarkdownView();
+			for (const leaf of this.app.workspace.getLeavesOfType(
+				EMEND_CHAT_VIEW_TYPE,
+			)) {
+				if (leaf.view instanceof EmendChatView) {
+					void leaf.view.refreshTargetNote();
 				}
-			}),
+			}
+		};
+		this.registerEvent(
+			this.app.workspace.on('active-leaf-change', refreshChatTargetNotes),
+		);
+		this.registerEvent(
+			this.app.workspace.on('file-open', refreshChatTargetNotes),
 		);
 
 		this.addRibbonIcon('messages-square', 'Open AI chat', () => {

@@ -1,5 +1,11 @@
 export class App {}
 
+export class Plugin {}
+
+export class MarkdownView {}
+
+export class Modal {}
+
 export class WorkspaceLeaf {}
 
 export class ItemView {
