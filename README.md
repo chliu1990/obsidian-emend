@@ -22,6 +22,11 @@ Emend is a desktop Obsidian plugin for context-aware, streamed AI chat and guard
 - Bounded note context centered on the selection or caret for read-only modes, optional note-path sharing, and a configurable context character limit. Selection editing bounds only the surrounding context and never truncates the selection; full-note Edit always sends the complete note.
 - Vault-root `AGENTS.md` instructions and directly referenced skills loaded for each request.
 
+## Documentation
+
+- [Installation guide](INSTALLATION.md) — build from source, install into a vault, update, remove, and troubleshoot Emend.
+- [Quick start](QUICK_START.md) — configure a provider and test chat, Track Changes editing, selection editing, persistence, and skills.
+
 ## Setup and usage
 
 1. Use desktop Obsidian 1.11.4 or newer and install/enable the Track Changes plugin for edit review. For manual installation, copy `main.js`, `manifest.json`, and `styles.css` into `<Vault>/.obsidian/plugins/emend/`, then enable **Emend** under **Settings → Community plugins**. Mobile is not supported.
