@@ -4,9 +4,9 @@
 
 This repository contains an Obsidian community plugin written in TypeScript and bundled with esbuild. The plugin provides context-aware, streamed AI chat for Markdown notes in explicit modes, guarded full-note editing in Edit mode, and guarded selected-text replacement. Editing defaults to CriticMarkup documents and offers an opt-in validated operation protocol that compiles into the same Track Changes path.
 
-The repository is in an architecture transition:
+The repository contains the completed Emend rewrite:
 
-- The **current implementation and release identity are Emend**. `manifest.json` uses plugin ID `emend`, name `Emend`, and version `1.0.2`; `package.json` is named `emend` at the same version. This is a clean plugin ID with no Lapis Lazuli data migration.
+- The **current implementation and release identity are Emend**. `manifest.json` uses plugin ID `emend` and name `Emend`; `package.json`, `manifest.json`, `package-lock.json`, and `versions.json` carry consistent release metadata. This is a clean plugin ID with no Lapis Lazuli data migration.
 - Ask, Discuss, and Brainstorm modes, instruction/skill loading, and streamed chat are wired into the current runtime. These paths have no note writer.
 - Edit mode sends the complete captured note and privately buffers the response. The selected strategy validates a CriticMarkup document or atomically validates/compiles closed JSON operations, then Stage 07 revalidates the resulting markup before stale source/target guards and one `vault.modify` write. Track Changes is the only review surface.
 - Modify Selection captures exact offsets before opening its instruction modal, sends the complete selection with default smart structural context or an exact Stage 09 symmetric opt-out, validates only the annotated selection, and replaces only the captured range through `editor.replaceRange` for native undo. Operation targets cannot address text outside that selection.

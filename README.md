@@ -1,6 +1,6 @@
 # Emend
 
-Emend is an Obsidian plugin for context-aware, streamed AI chat and guarded CriticMarkup editing of Markdown notes. It is based on Lapis Lazuli AI Assistant by Taha Yiğit Melek and is being rewritten in stages. See [CREDITS.md](CREDITS.md) for attribution.
+Emend is a desktop Obsidian plugin for context-aware, streamed AI chat and guarded CriticMarkup editing of Markdown notes. It is based on Lapis Lazuli AI Assistant by Taha Yiğit Melek and has been rewritten around explicit modes, validated edits, and Track Changes review. See [CREDITS.md](CREDITS.md) for attribution.
 
 ## Current features
 
@@ -24,7 +24,7 @@ Emend is an Obsidian plugin for context-aware, streamed AI chat and guarded Crit
 
 ## Setup and usage
 
-1. Install the plugin as `emend` on desktop Obsidian and enable **Emend** under **Settings → Community plugins**.
+1. Use desktop Obsidian 1.11.4 or newer and install/enable the Track Changes plugin for edit review. For manual installation, copy `main.js`, `manifest.json`, and `styles.css` into `<Vault>/.obsidian/plugins/emend/`, then enable **Emend** under **Settings → Community plugins**. Mobile is not supported.
 2. In Emend settings, choose a provider and enter its API key, HTTP(S) base URL, and model. DeepSeek and Kimi have editable presets; a custom provider requires an OpenAI-compatible base URL. **Request token usage** is enabled by default for DeepSeek/Kimi and disabled for custom providers. Disable it if a provider rejects `stream_options`; Emend reports the error and does not retry automatically.
 3. Open **AI chat** from the ribbon or Command Palette. Choose Ask, Discuss, Brainstorm, or Edit, enter a prompt, and select **Send**. Press **Enter** or **Cmd+Enter** on macOS (**Ctrl+Enter** on Windows/Linux) to send; **Shift+Enter** inserts a newline without sending.
 4. Press **Cmd+Shift+A** or **Cmd+Shift+E** on macOS (**Ctrl+Shift+A/E** on Windows/Linux), or run **Switch to ask mode** / **Switch to edit mode** from the Command Palette. These commands open or focus chat, show the selected mode, and preserve the current draft without submitting, making a provider request, or writing the note. A mode change during a pending request applies only to the next request.

@@ -1,6 +1,6 @@
 # Emend rewrite roadmap
 
-The rewrite proceeds in 17 stages. Each stage record must contain **Goal**, **Plan**, **Implementation details**, and **Verification results**, with actual command and CI evidence.
+Stages 1–16 are implemented and reviewed. Stage 17 performs final release-candidate validation. Each stage record contains **Goal**, **Plan**, **Implementation details**, and **Verification results**, with actual command and CI evidence. The complete real-Obsidian release matrix is recorded in [Manual verification](manual-verification.md).
 
 1. [Testing and CI](01-testing-and-ci.md) — establish Vitest, the Obsidian mock, Gitea Actions, and the stage documentation convention.
 2. [Emend identity and settings](02-emend-identity-settings.md) — migrate the plugin identity and normalize the Emend settings model.

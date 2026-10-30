@@ -1,9 +1,9 @@
 {
 	"id": "emend",
 	"name": "Emend",
-	"version": "1.0.2",
+	"version": "2.0.0",
 	"minAppVersion": "1.11.4",
-	"description": "Context-aware AI chat and edit previews for Markdown notes with DeepSeek, Kimi, and custom OpenAI-compatible providers.",
+	"description": "Context-aware streamed AI chat and guarded Track Changes editing for Markdown notes.",
 	"author": "Taha Yiğit Melek",
 	"authorUrl": "https://github.com/tahayigitmelek",
 	"isDesktopOnly": true
