@@ -1,4 +1,4 @@
-import { MarkdownView, Plugin } from 'obsidian';
+import { MarkdownView, Notice, Plugin } from 'obsidian';
 import { EMEND_CHAT_VIEW_TYPE, EmendChatView } from './chat-view';
 import {
 	captureRequestContext,
@@ -14,11 +14,17 @@ import {
 	type ReadOnlySubmission,
 } from './request-coordinator';
 import {
+	captureSelectionSnapshot,
+	createSelectionEditorAdapter,
+	SelectionEditRequestCoordinator,
+} from './selection-editor';
+import { SelectionModal } from './selection-modal';
+import {
 	DEFAULT_SETTINGS,
 	EmendSettingTab,
 	normalizeSettings,
 } from './settings';
-import type { EmendSettings } from './types';
+import type { EmendSettings, SelectionSnapshot } from './types';
 
 export default class EmendPlugin extends Plugin {
 	settings!: EmendSettings;
@@ -48,6 +54,34 @@ export default class EmendPlugin extends Plugin {
 			name: 'Open AI chat',
 			callback: () => {
 				void this.activateChatView();
+			},
+		});
+
+		this.addCommand({
+			// eslint-disable-next-line obsidianmd/commands/no-plugin-id-in-command-id -- Required Stage 09 public identifier.
+			id: 'emend:modify-selected-text',
+			name: 'Modify selected text with AI',
+			editorCheckCallback: (checking, editor, view) => {
+				if (!(view instanceof MarkdownView) || !editor.getSelection()) {
+					return false;
+				}
+				if (checking) {
+					return true;
+				}
+
+				try {
+					const snapshot = captureSelectionSnapshot(view);
+					const editor = createSelectionEditorAdapter(
+						view,
+						(candidate) => this.getTargetMarkdownView() === candidate,
+					);
+					new SelectionModal(this.app, (prompt, signal) =>
+						this.requestSelectionEdit(snapshot, prompt, signal, editor),
+					).open();
+				} catch (error) {
+					new Notice(`Emend: ${getErrorMessage(error)}`);
+				}
+				return true;
 			},
 		});
 
@@ -143,6 +177,33 @@ export default class EmendPlugin extends Plugin {
 		return coordinator.submit(submission);
 	}
 
+	async requestSelectionEdit(
+		snapshot: SelectionSnapshot,
+		prompt: string,
+		signal: AbortSignal,
+		editor: ReturnType<typeof createSelectionEditorAdapter>,
+	): Promise<EditResult> {
+		const coordinator = new SelectionEditRequestCoordinator({
+			provider: this.settings.providers[this.settings.activeProvider],
+			loadInstructions: () => loadAllInstructions(this.app.vault),
+			request: requestAiResponse,
+			editor,
+		});
+		return coordinator.submit({
+			snapshot,
+			prompt,
+			maxContextCharacters: Math.max(
+				1000,
+				this.settings.maxContextCharacters ||
+					DEFAULT_SETTINGS.maxContextCharacters,
+			),
+			notePath: this.settings.includeNotePathInContext
+				? `${this.app.vault.getName()}/${snapshot.file.path}`
+				: undefined,
+			signal,
+		});
+	}
+
 	private getActiveMarkdownView() {
 		return this.app.workspace.getActiveViewOfType(MarkdownView);
 	}
@@ -186,4 +247,8 @@ export default class EmendPlugin extends Plugin {
 
 		return isOpen;
 	}
+}
+
+function getErrorMessage(error: unknown) {
+	return error instanceof Error ? error.message : String(error);
 }

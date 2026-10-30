@@ -2,14 +2,15 @@
 
 ## Project overview
 
-This repository contains an Obsidian community plugin written in TypeScript and bundled with esbuild. The plugin provides context-aware, streamed AI chat for Markdown notes in explicit modes and guarded full-note CriticMarkup editing in Edit mode.
+This repository contains an Obsidian community plugin written in TypeScript and bundled with esbuild. The plugin provides context-aware, streamed AI chat for Markdown notes in explicit modes, guarded full-note CriticMarkup editing in Edit mode, and guarded selected-text replacement.
 
 The repository is in an architecture transition:
 
 - The **current implementation and release identity are Emend**. `manifest.json` uses plugin ID `emend`, name `Emend`, and version `1.0.2`; `package.json` is named `emend` at the same version. This is a clean plugin ID with no Lapis Lazuli data migration.
 - Ask, Discuss, and Brainstorm modes, instruction/skill loading, and streamed chat are wired into the current runtime. These paths have no note writer.
 - Edit mode sends the complete captured note, buffers and validates the CriticMarkup response, guards against stale source or target changes, and writes once through `vault.modify`. Track Changes is the only review surface.
-- The dormant diff module, editor extension, callbacks, styles, and CodeMirror dependencies are removed. Selection-only editing remains pending for Stage 09.
+- Modify Selection captures exact offsets before opening its instruction modal, sends the complete selection with bounded surrounding context, validates the complete annotated selection, and replaces only that range through `editor.replaceRange` for native undo.
+- The dormant diff module, editor extension, callbacks, styles, and CodeMirror dependencies are removed.
 
 The manifest requires Obsidian `1.11.4` or newer and sets `isDesktopOnly` to `true`. The streaming provider transport uses desktop browser `fetch` and Server-Sent Events; mobile support is not currently declared.
 
@@ -45,17 +46,19 @@ npm test
 
 | Path | Responsibility |
 | --- | --- |
-| `src/main.ts` | Plugin lifecycle and orchestration: settings, chat registration, target-view tracking, context capture, and mode-specific coordinator/writer construction. |
+| `src/main.ts` | Plugin lifecycle and orchestration: settings, chat and selection-command registration, target-view tracking, context capture, and mode-specific coordinator/writer construction. |
 | `src/chat-view.ts` | Right-sidebar `ItemView`, per-session mode, in-memory chat state, streamed Markdown/reasoning rendering, edit summaries, composer, Stop, copy action, and submission flow. |
 | `src/context.ts` | Synchronous note snapshots and bounded caret/selection-centered Markdown windows with exact omission markers. |
 | `src/request-coordinator.ts` | Writer-free Ask/Discuss/Brainstorm submission and the separate Edit coordinator with full-source prompting, private buffering, reasoning forwarding, validation, and application. |
 | `src/note-writer.ts` | The only full-note AI application path: no-op handling, current-source and active-target stale checks, final permission check, and the `vault.read`/`vault.modify` adapter. |
+| `src/selection-editor.ts` | Exact selection snapshots, untruncated selection plus bounded before/after prompting, selection coordination, stale/target/abort guards, and the native editor-range adapter. |
+| `src/selection-modal.ts` | Explicit selection-instruction submission, cancellation/abort, and result/error notices without rendering annotated output as chat. |
 | `src/critic-markup.ts` / `src/edit-strategy.ts` | CriticMarkup parsing, reject-view and sequential-markup validation, edit preparation, and the editing-strategy boundary. |
 | `src/provider-stream.ts` | OpenAI-compatible streaming `fetch` transport, SSE parsing, content/reasoning/usage events, and provider error handling. |
 | `src/instructions-loader.ts` | Vault-root `AGENTS.md` loading and safe, directly referenced skill discovery. |
 | `src/mode.ts` / `src/permissions.ts` | Mode catalog, mode-specific system prompts, and deterministic note-write permission contracts. |
 | `src/settings.ts` | Provider catalog, defaults, persisted-data normalization, and the settings tab. |
-| `src/types.ts` | Shared provider, mode, message, reasoning-effort, instruction, and persisted settings types. |
+| `src/types.ts` | Shared provider, mode, message, reasoning-effort, instruction, selection snapshot, and persisted settings types. |
 | `styles.css` | Streamed chat styles using the `emend-` prefix and Obsidian CSS variables. |
 | `esbuild.config.mjs` | Development/watch and production bundle configuration. |
 | `eslint.config.mts` | ESLint flat configuration and typed linting. |
@@ -71,7 +74,7 @@ Keep new feature logic in focused modules rather than adding unrelated responsib
 
 `main.ts` targets the active Markdown view when available. If focus is in the chat sidebar, it uses the last active still-open Markdown view, then falls back to another open Markdown view. `captureChatContext()` synchronously captures the target `TFile`, full source text, selection offsets, note label, optional vault-qualified path, and bounded Markdown before instruction reads or networking.
 
-Read-only requests include bounded Markdown context. Notes within the configured character limit are sent whole; longer notes are windowed around the selection or caret, with `[...]` markers at omitted edges and unused budget redistributed toward available text. The default limit is 12,000 characters and the settings UI enforces a minimum of 1,000. Edit ignores the bounded `markdown` window and always sends `sourceText`, the complete captured note. Vault name and note path are opt-in and disabled by default.
+Read-only requests include bounded Markdown context. Notes within the configured character limit are sent whole; longer notes are windowed around the selection or caret, with `[...]` markers at omitted edges and unused budget redistributed toward available text. The default limit is 12,000 characters and the settings UI enforces a minimum of 1,000. Full-note Edit ignores the bounded `markdown` window and always sends `sourceText`. Modify Selection sends the complete selection plus bounded before/after context within the same limit; an oversized selection is sent whole with no surrounding context. Vault name and note path are opt-in and disabled by default.
 
 ### Streamed chat and guarded editing
 
@@ -84,7 +87,15 @@ Read-only requests include bounded Markdown context. Notes within the configured
 7. Edit responses are never rendered into chat. Success stores only `Edit applied — N changes tracked. Review in Track Changes.` as assistant history; unchanged responses store `No changes were needed.` Valid comment-only edits may apply with zero text changes.
 8. Stop aborts the active request. Success, provider errors, validation errors, stale errors, and aborts all clear loading state. Stopped partial responses and errors are excluded from later ready-message history. Chat history is in memory, not persisted.
 
-The legacy JSON answer/edit protocol, accumulating adapters, inline suggestion command/extension/module, inline styles, dormant diff UI, and in-plugin Apply/Reject flow are removed. Track Changes provides the only CriticMarkup review UI. Selection-only editing is not implemented yet.
+### Guarded selection editing
+
+1. The `emend:modify-selected-text` editor command is available only for a nonempty Markdown selection. It synchronously captures `SelectionSnapshot { file, fullText, selectedText, from, to }` and the source-view adapter before opening the instruction modal. The serializable snapshot contains no editor or view.
+2. Opening the modal makes no request. An explicit nonempty instruction loads current instructions/skills, uses the Stage 03 selection prompt and Stage 05 streaming transport with no chat history, and privately buffers the annotated selection rather than rendering it as a chat answer.
+3. Stage 07 validates the complete response against the captured selection. The response is merged into captured full text for no-op handling; unchanged responses do not read or replace.
+4. Before replacement, the current editor value must equal captured full text, the captured view must still reference the captured file and be the current target, and the signal and `canWriteToNote('edit')` checks must pass. One `editor.replaceRange` at captured offsets performs the only write, preserving native Obsidian undo. Selection edits never call `vault.modify`; stale source/target uses the same stale error as full-note editing.
+5. Cancel/Stop and modal close abort pending requests. Provider, validation, abort, and stale failures replace nothing. Track Changes remains the only review UI, and smart paragraph expansion remains Stage 15.
+
+The legacy JSON answer/edit protocol, accumulating adapters, inline suggestion command/extension/module, inline styles, dormant diff UI, and in-plugin Apply/Reject flow are removed. Track Changes provides the only CriticMarkup review UI.
 
 ### Providers and settings
 
@@ -97,10 +108,10 @@ Settings are loaded with `loadData()`, normalized against defaults, and saved wi
 - Follow the existing TypeScript style: tabs for indentation, single quotes, semicolons, trailing commas where used, and `async`/`await` for asynchronous work.
 - Keep strictness intact. `tsconfig.json` enables `strict`, `noImplicitReturns`, `noFallthroughCasesInSwitch`, `noUncheckedIndexedAccess`, `isolatedModules`, and consistent file-name casing. Handle possibly missing indexed values rather than suppressing these checks.
 - Use Obsidian DOM helpers and `MarkdownRenderer`; keep user-facing copy short and in sentence case. Use the correct window's animation-frame APIs for popout compatibility and never inject model output with `innerHTML`.
-- Register views, editor extensions, workspace events, commands, and other disposable resources through Obsidian's registration helpers so unload/reload cleans them up. Abort active chat requests and cancel pending renders when the view closes.
+- Register views, editor extensions, workspace events, commands, and other disposable resources through Obsidian's registration helpers so unload/reload cleans them up. Abort active chat and selection requests and cancel pending renders when their views close.
 - Use the streaming `fetch` transport in `provider-stream.ts` for provider networking. Do not reintroduce `requestUrl`, a second HTTP stack, provider-specific transports, or silent retries. Preserve response validation and useful credential-safe error propagation.
 - Use Obsidian CSS variables and the `emend-` CSS prefix for current UI. Update CSS classes and selectors together.
-- Current public identifiers are plugin ID `emend`, view type `emend-chat-view`, and chat command ID `emend:open-chat`. Keep renames consistent and deliberate.
+- Current public identifiers are plugin ID `emend`, view type `emend-chat-view`, chat command ID `emend:open-chat`, and selection command ID `emend:modify-selected-text`. Keep renames consistent and deliberate.
 - Keep startup work limited and avoid unnecessary vault scans or background AI requests. Desktop-only APIs are permitted by the manifest, but current provider streaming needs only standard browser APIs.
 
 ## Testing instructions
@@ -124,20 +135,21 @@ Use only the ignored `test_vault/` and a local OpenAI-compatible SSE mock with C
 
 - Stream Ask, Discuss, and Brainstorm responses and verify that only chat changes; the note remains byte-for-byte unchanged.
 - Apply insertion, deletion, substitution, comment, and highlight edits in Edit mode; inspect actual resulting Markdown and Track Changes review behavior.
+- Apply single-line and multiline Modify Selection edits; inspect complete untruncated selections, bounded surrounding context, native undo, and Track Changes markup.
 - Reject invalid output, stale source edits, and target-note switches without writes. Stop streams and trigger provider errors without partial writes or duplicate submissions.
 - Verify unchanged responses do not write, valid comment-only edits may write with zero text changes, sequential edits preserve old markup, and chat history stores summaries rather than annotated documents.
-- Inspect mock requests for complete uncapped source in Edit, bounded read-only context, eight-message history, current instruction/skill ordering, and note-path omission/inclusion according to the privacy setting.
+- Inspect mock requests for complete uncapped source in Edit, complete selections even above the context budget, bounded read-only and selection-surrounding context, eight-message chat history, current instruction/skill ordering, and note-path omission/inclusion according to the privacy setting.
 - Verify Markdown, links, math, folded reasoning, copy, mode badges/placeholders, model label, per-session mode retention, and close/unload cleanup.
 - Exercise desktop streaming behavior when changing provider transport or APIs. Mobile support is not declared while `isDesktopOnly` is `true`.
 
-Stage 09 must add selection editing without reviving the legacy JSON, inline, or in-plugin diff flows.
+Selection editing must preserve native `editor.replaceRange` undo and must not revive legacy JSON, inline, `vault.modify`, or in-plugin diff flows.
 
 ## Security and privacy
 
 - API keys are secrets stored in Obsidian's local plugin data. Never commit `data.json`, print keys, or include them in logs and error messages. Manual mock credentials must remain dummy values in ignored vault data.
-- Read-only requests send bounded note content. Explicit Edit actions send the complete note regardless of the context limit. Prompts, recent ready chat history, vault-root `AGENTS.md`, and directly referenced skills are sent to the selected provider when the user submits chat. There are no background AI requests.
+- Read-only requests send bounded note content. Full-note Edit sends the complete note regardless of the context limit. Modify Selection sends the complete selection plus bounded surrounding context, never a truncated selection. Prompts, recent ready chat history for chat requests, vault-root `AGENTS.md`, and directly referenced skills are sent to the selected provider when the user submits. There are no background AI requests.
 - The vault/note path is sent only when **Include note path** is enabled.
-- Ask/Discuss/Brainstorm have no note writer. Only the Edit coordinator receives the guarded writer, which writes validated CriticMarkup immediately after completion and stale checks. Do not add writes outside this permission-gated path or revive automatic legacy JSON edits.
+- Ask/Discuss/Brainstorm have no note writer. Only the full-note Edit coordinator receives the guarded vault writer; selection coordination receives only the guarded native editor adapter. Both write validated CriticMarkup immediately after completion and stale checks. Do not add writes outside these permission-gated paths or revive automatic legacy JSON edits.
 - Do not add telemetry, remote code execution, automatic plugin downloads, or unrelated network calls. Keep current file access within the vault and limited to the active note plus declared instructions/skills.
 - Preserve clear provider error handling without exposing request headers or credentials.
 

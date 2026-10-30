@@ -1,3 +1,5 @@
+import type { TFile } from 'obsidian';
+
 export type ProviderId = 'deepseek' | 'kimi' | 'custom';
 
 export type ReasoningEffort = 'low' | 'medium' | 'high';
@@ -13,6 +15,14 @@ export interface AiMessage {
 export interface ProviderHistoryMessage {
 	role: 'user' | 'assistant';
 	content: string;
+}
+
+export interface SelectionSnapshot {
+	file: TFile;
+	fullText: string;
+	selectedText: string;
+	from: number;
+	to: number;
 }
 
 export interface InstructionPromptParts {
