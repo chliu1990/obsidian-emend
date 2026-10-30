@@ -134,6 +134,35 @@ describe('applyPreparedEdit', () => {
 		expect(writer.write).not.toHaveBeenCalled();
 	});
 
+	it('does not write when aborted while the current-text read is pending', async () => {
+		const context = makeContext();
+		const { writer } = makeWriter();
+		const controller = new AbortController();
+		let finishRead!: (text: string) => void;
+		writer.readCurrentText = vi.fn(
+			() =>
+				new Promise<string>((resolve) => {
+					finishRead = resolve;
+				}),
+		);
+
+		const application = applyPreparedEdit(
+			'edit',
+			context,
+			{
+				annotatedMarkdown: '# Note\n{~~Original~>Edited~~} text',
+				changeCount: 1,
+			},
+			writer,
+			controller.signal,
+		);
+		controller.abort();
+		finishRead(context.sourceText);
+
+		await expect(application).rejects.toMatchObject({ name: 'AbortError' });
+		expect(writer.write).not.toHaveBeenCalled();
+	});
+
 	it.each(['ask', 'discuss', 'brainstorm'] as const)(
 		'never reads or writes annotated text in %s mode',
 		async (mode: Mode) => {

@@ -376,4 +376,31 @@ describe('EditRequestCoordinator', () => {
 
 		expect(writer.write).not.toHaveBeenCalled();
 	});
+
+	it('does not write when aborted while the post-stream read is pending', async () => {
+		const { coordinator, writer } = makeEditCoordinator(
+			editRequest('# Note\n{~~Original~>Edited~~} text'),
+		);
+		const controller = new AbortController();
+		let finishRead!: (text: string) => void;
+		let markReadStarted!: () => void;
+		const readStarted = new Promise<void>((resolve) => {
+			markReadStarted = resolve;
+		});
+		writer.readCurrentText = vi.fn(() => {
+			markReadStarted();
+			return new Promise<string>((resolve) => {
+				finishRead = resolve;
+			});
+		});
+
+		const submission = makeEditSubmission({ signal: controller.signal });
+		const pending = coordinator.submit(submission);
+		await readStarted;
+		controller.abort();
+		finishRead(submission.context.sourceText);
+
+		await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+		expect(writer.write).not.toHaveBeenCalled();
+	});
 });

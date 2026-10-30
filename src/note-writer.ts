@@ -34,12 +34,14 @@ export async function applyPreparedEdit(
 	snapshot: RequestContext,
 	prepared: EditPreparation,
 	writer: NoteWriter,
+	signal?: AbortSignal,
 ): Promise<EditResult> {
 	if (!canWriteToNote(mode) || prepared.annotatedMarkdown === snapshot.sourceText) {
 		return { applied: false, changeCount: 0 };
 	}
 
 	const currentText = await writer.readCurrentText(snapshot.file);
+	signal?.throwIfAborted();
 	if (
 		currentText !== snapshot.sourceText ||
 		!writer.isTargetCurrent(snapshot.file)

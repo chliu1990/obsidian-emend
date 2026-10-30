@@ -122,6 +122,7 @@ export class EditRequestCoordinator {
 			submission.context,
 			prepared,
 			this.dependencies.writer,
+			submission.signal,
 		);
 	}
 }
