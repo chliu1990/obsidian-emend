@@ -50,3 +50,15 @@ Document actionable context-management and web-search designs without implementi
 ## Implementation-run CI evidence
 
 Implementation commit `0a8333bbb59abbafb9d9a413695f1e911986ae93` was pushed on `feat/emend-rewrite`. Gitea push run 105 at http://127.0.0.1:19705/cliu/obsidian-emend/actions/runs/105 and job 127 completed with conclusion **success** on `emend-macos-docker` from 16:32:49Z through 16:33:12Z. Run, job, and log details were retrieved through `tea api`. Checkout reached `HEAD is now at 0a8333b`; clean `npm ci` installed 351 packages, lint passed, all **421 tests in 22 files** passed, and the production build succeeded.
+
+## Final-review hardening fixes
+
+Based at `3981e912d1dd4f3efcc52b933d075e0d611fad94`, the final review produced one small runtime/test fix wave without changing feature scope:
+
+- `src/main.ts` now trims each legacy plaintext key before deciding whether to write it to SecretStorage. A whitespace-only persisted field is still cleared and sanitized settings are still saved, but an existing valid secret is no longer overwritten with an empty string. `tests/secret-storage.test.ts` covers the existing-secret, in-memory, and persisted-data behavior.
+- `src/selection-modal.ts` retains its Cancel button and restores `disabled = false` plus `textContent = 'Cancel'` when the owned request settles after Stop. `tests/selection-modal.test.ts` uses a deferred quick-action request to verify abort, the transient `Stopping...` state, and settled controls.
+- `tests/chat-view.test.ts` now explicitly proves immediate plain-text loading does not call `MarkdownRenderer.render`. No chat rendering implementation changed.
+
+Focused TDD evidence: the SecretStorage regression first failed because the existing secret became `''`, then passed with all **7 tests** in its file; the deferred Stop regression first failed because Cancel remained disabled, then passed with all **6 tests** in its file. The combined focused run passed **36 tests in 3 files**.
+
+Final local gate: `npm test && npm run lint && npm run build && git diff --check` passed with **423 tests in 22 files**, no ESLint findings, successful strict TypeScript checking and production esbuild, and no whitespace errors. An earlier full-gate attempt caught a zero-argument test-mock tuple at strict TypeScript checking; the mock was typed to the real callback signature before the successful rerun. This fix wave adds no provider transport, note-writing path, setting, protocol, or deferred feature and was verified through automated tests rather than a new real-Obsidian smoke run.

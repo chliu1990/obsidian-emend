@@ -99,6 +99,24 @@ describe('SecretStorage API keys', () => {
 		expectSanitized(harness.getPersisted());
 	});
 
+	it('preserves an existing secret when a whitespace-only legacy key is sanitized', async () => {
+		const persisted = structuredClone(DEFAULT_SETTINGS);
+		persisted.providers.deepseek.apiKey = ' \t\n ';
+		const secretStorage = new MemorySecretStorage();
+		secretStorage.setSecret(SECRET_IDS.deepseek, 'dummy-existing-secret');
+		const harness = makePlugin(persisted, secretStorage);
+
+		await harness.plugin.loadSettings();
+
+		expect(secretStorage.getSecret(SECRET_IDS.deepseek)).toBe(
+			'dummy-existing-secret',
+		);
+		expect(harness.plugin.getApiKey('deepseek')).toBe('dummy-existing-secret');
+		expectSanitized(harness.plugin.settings);
+		expect(harness.saved).toHaveLength(1);
+		expectSanitized(harness.getPersisted());
+	});
+
 	it('serializes a deep sanitized clone on every save regardless of caller state', async () => {
 		const harness = makePlugin(structuredClone(DEFAULT_SETTINGS));
 		await harness.plugin.loadSettings();

@@ -151,7 +151,10 @@ export default class EmendPlugin extends Plugin {
 		for (const providerId of ['deepseek', 'kimi', 'custom'] as const) {
 			const provider = this.settings.providers[providerId];
 			if (provider.apiKey) {
-				storage.setApiKey(providerId, provider.apiKey.trim());
+				const legacyApiKey = provider.apiKey.trim();
+				if (legacyApiKey) {
+					storage.setApiKey(providerId, legacyApiKey);
+				}
 				provider.apiKey = '';
 				migrated = true;
 			}

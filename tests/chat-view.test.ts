@@ -374,7 +374,7 @@ describe('EmendChatView presentation', () => {
 
 	it('shows loading content immediately without waiting for Markdown rendering', () => {
 		const pendingRender = deferred<void>();
-		vi.spyOn(MarkdownRenderer, 'render').mockReturnValue(pendingRender.promise);
+		const render = vi.spyOn(MarkdownRenderer, 'render').mockReturnValue(pendingRender.promise);
 		const body = new FakeElement();
 		Object.assign(body, {
 			empty: vi.fn(() => {
@@ -401,6 +401,7 @@ describe('EmendChatView presentation', () => {
 		expect(
 			body.children.map((child) => child.textContent).join(''),
 		).toContain('First streamed chunk');
+		expect(render).not.toHaveBeenCalled();
 	});
 });
 

@@ -5,6 +5,7 @@ import { QUICK_ACTIONS } from './quick-actions';
 export class SelectionModal extends Modal {
 	private inputEl: HTMLTextAreaElement | null = null;
 	private submitButton: HTMLButtonElement | null = null;
+	private cancelButton: HTMLButtonElement | null = null;
 	private quickActionButtons: HTMLButtonElement[] = [];
 	private activeController: AbortController | null = null;
 
@@ -53,10 +54,11 @@ export class SelectionModal extends Modal {
 		});
 
 		const actionsEl = this.contentEl.createDiv('emend-chat-composer-actions');
-		const cancelButton = actionsEl.createEl('button', {
+		this.cancelButton = actionsEl.createEl('button', {
 			cls: 'emend-chat-secondary-button',
 			text: 'Cancel',
 		});
+		const cancelButton = this.cancelButton;
 		cancelButton.addEventListener('click', () => {
 			if (this.activeController) {
 				this.activeController.abort();
@@ -81,6 +83,7 @@ export class SelectionModal extends Modal {
 		this.activeController = null;
 		this.inputEl = null;
 		this.submitButton = null;
+		this.cancelButton = null;
 		this.quickActionButtons = [];
 		this.contentEl.empty();
 	}
@@ -128,6 +131,10 @@ export class SelectionModal extends Modal {
 			if (this.activeController === controller) {
 				this.activeController = null;
 				this.setPending(false);
+				if (this.cancelButton) {
+					this.cancelButton.disabled = false;
+					this.cancelButton.textContent = 'Cancel';
+				}
 			}
 		}
 	}

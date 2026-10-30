@@ -176,6 +176,32 @@ describe('SelectionModal quick actions', () => {
 		},
 	);
 
+	it('restores Cancel after a stopped quick-action request settles', async () => {
+		const response = deferred<EditResult>();
+		const submitSelection = vi.fn((_prompt: string, _signal: AbortSignal) => response.promise);
+		const { contentEl, input, quickActions } = openModal(submitSelection);
+		const cancelButton = findElements(contentEl, (element) =>
+			element.className.split(' ').includes('emend-chat-secondary-button')
+		)[0];
+		expect(cancelButton).toBeDefined();
+
+		findAction(contentEl, QUICK_ACTIONS[0].id)?.click();
+		cancelButton?.click();
+
+		expect(submitSelection.mock.calls[0]?.[1].aborted).toBe(true);
+		expect(cancelButton?.disabled).toBe(true);
+		expect(cancelButton?.textContent).toBe('Stopping...');
+
+		response.resolve({ applied: false, changeCount: 0 });
+
+		await vi.waitFor(() => {
+			expect(cancelButton?.disabled).toBe(false);
+			expect(quickActions.every((item) => !item.disabled)).toBe(true);
+			expect(input?.disabled).toBe(false);
+		});
+		expect(cancelButton?.textContent).toBe('Cancel');
+	});
+
 	it.each(['provider', 'validation'] as const)(
 		'does not replace the selection after a quick-action %s failure',
 		async (failure) => {
