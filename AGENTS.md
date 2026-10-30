@@ -70,7 +70,7 @@ npm test
 | `eslint.config.mts` | ESLint flat configuration and typed linting. |
 | `manifest.json` / `versions.json` | Obsidian release metadata and plugin-version-to-minimum-app-version mapping. |
 | `version-bump.mjs` | npm version hook that synchronizes release metadata. |
-| `IMPLEMENTATION_PLAN.md` | Proposed Emend rewrite, not a complete description of current behavior. |
+| `IMPLEMENTATION_PLAN.md` | Implemented-status architecture contract and index to the numbered stage records; current behavior and release evidence are linked from it. |
 
 Keep new feature logic in focused modules rather than adding unrelated responsibilities to an already large module. Preserve the separation between context capture, request coordination, provider transport, note writing, UI, and plugin orchestration.
 
@@ -194,6 +194,6 @@ npm version <patch|minor|major>
 
 updates `package.json` through npm and invokes the `version` script, which copies `npm_package_version` into `manifest.json`, adds the version and current `minAppVersion` to `versions.json` if absent, and stages those two metadata files. Review the resulting changes rather than editing the files inconsistently.
 
-For a release, run a production build and publish `main.js`, `manifest.json`, and `styles.css` as individual assets. The GitHub release tag should exactly match the manifest version, without a leading `v`. Keep `minAppVersion` and the `versions.json` mapping accurate when adopting newer Obsidian APIs.
+For a release, run a production build and publish `main.js`, `manifest.json`, and `styles.css` as individual assets on the repository's Gitea host (matching `origin`). The Gitea release tag should exactly match the manifest version, without a leading `v`. Keep `minAppVersion` and the `versions.json` mapping accurate when adopting newer Obsidian APIs.
 
 Gitea Actions runs lint, tests, and the production build through `.gitea/workflows/ci.yaml`. The unique `emend-macos` label targets the repository's `emend-macos-docker` runner; verify that runner is online before treating a pushed check as actionable. Releases remain manual.
