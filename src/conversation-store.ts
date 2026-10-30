@@ -226,11 +226,14 @@ function isTokenUsage(value: unknown) {
 	return (
 		isRecord(value) &&
 		typeof value.promptTokens === 'number' &&
-		Number.isFinite(value.promptTokens) &&
+		Number.isInteger(value.promptTokens) &&
+		value.promptTokens >= 0 &&
 		typeof value.completionTokens === 'number' &&
-		Number.isFinite(value.completionTokens) &&
+		Number.isInteger(value.completionTokens) &&
+		value.completionTokens >= 0 &&
 		typeof value.totalTokens === 'number' &&
-		Number.isFinite(value.totalTokens) &&
+		Number.isInteger(value.totalTokens) &&
+		value.totalTokens >= 0 &&
 		(value.source === undefined ||
 			value.source === 'provider' ||
 			value.source === 'estimated')

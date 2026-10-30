@@ -105,24 +105,34 @@ export async function requestAiResponse(
 			}
 		};
 
-		while (true) {
-			const { done, value } = await reader.read();
-			if (done) {
-				break;
+		let receivedDone = false;
+		try {
+			while (!receivedDone) {
+				const { done, value } = await reader.read();
+				if (done) {
+					break;
+				}
+				const events = parser.push(value);
+				receivedDone = events.some((event) => event.type === 'done');
+				emit(events);
 			}
-			emit(parser.push(value));
-		}
-		emit(parser.finish());
+			if (!receivedDone) {
+				emit(parser.finish());
+			}
 
-		if (!content && !reasoning) {
-			throw new Error('No text was found in the provider response.');
-		}
+			if (!content && !reasoning) {
+				throw new Error('No text was found in the provider response.');
+			}
 
-		const result: StreamResult = { content, reasoning };
-		if (usage) {
-			result.usage = usage;
+			const result: StreamResult = { content, reasoning };
+			if (usage) {
+				result.usage = usage;
+			}
+			return result;
+		} finally {
+			await reader.cancel().catch(() => undefined);
+			reader.releaseLock();
 		}
-		return result;
 	} catch (error) {
 		if (signal.aborted || (isRecord(error) && error.name === 'AbortError')) {
 			throw error;

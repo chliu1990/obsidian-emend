@@ -319,6 +319,41 @@ describe('requestAiResponse', () => {
 		]);
 	});
 
+	it('resolves and cancels the reader at the done sentinel without waiting for EOF', async () => {
+		const cancel = vi.fn();
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(bytes(
+					'data: {"choices":[{"delta":{"content":"complete"}}]}\n\n' +
+					'data: [DONE]\n\n',
+				));
+			},
+			cancel,
+		});
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(stream)));
+		let timeout: ReturnType<typeof setTimeout> | undefined;
+
+		try {
+			const result = await Promise.race([
+				requestAiResponse(
+					makeRequest(),
+					{ onEvent: vi.fn() },
+					new AbortController().signal,
+				),
+				new Promise<never>((_resolve, reject) => {
+					// eslint-disable-next-line obsidianmd/prefer-window-timers -- Vitest runs in Node without a window.
+					timeout = setTimeout(() => reject(new Error('Request waited for EOF.')), 250);
+				}),
+			]);
+
+			expect(result).toEqual({ content: 'complete', reasoning: '' });
+			expect(cancel).toHaveBeenCalledOnce();
+		} finally {
+			// eslint-disable-next-line obsidianmd/prefer-window-timers -- Vitest runs in Node without a window.
+			clearTimeout(timeout);
+		}
+	});
+
 	it('propagates abort errors without retrying', async () => {
 		const abortError = new DOMException('Aborted', 'AbortError');
 		const fetchMock = vi.fn().mockRejectedValue(abortError);

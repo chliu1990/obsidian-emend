@@ -353,6 +353,45 @@ function operationRequest(response: string) {
 }
 
 describe('operation strategy coordinator integration', () => {
+	it.each(['toString', 'constructor', '__proto__'])(
+		'rejects inherited operation type %s with controlled validation and no write',
+		async (type) => {
+			const file = new TFile();
+			file.path = 'note.md';
+			const sourceText = 'Alpha beta';
+			const context: RequestContext = {
+				file,
+				sourceText,
+				markdown: sourceText,
+				selection: { from: 0, to: 0 },
+				noteLabel: 'note.md',
+			};
+			const writer: NoteWriter = {
+				readCurrentText: vi.fn(async () => sourceText),
+				write: vi.fn(async () => undefined),
+				isTargetCurrent: vi.fn(() => true),
+			};
+			const coordinator = new EditRequestCoordinator({
+				provider,
+				loadInstructions: async () => ({ skillTexts: new Map() }),
+				request: operationRequest(JSON.stringify([{ type, target: 'beta' }])),
+				writer,
+				editStrategy: operationEditStrategy,
+			});
+
+			await expect(coordinator.submit({
+				context,
+				mode: 'edit',
+				prompt: 'Attempt an inherited operation type.',
+				history: [],
+				callbacks: { onReasoning: vi.fn() },
+				signal: new AbortController().signal,
+			})).rejects.toThrow('Operation 1 has an unknown type or malformed value.');
+			expect(writer.readCurrentText).not.toHaveBeenCalled();
+			expect(writer.write).not.toHaveBeenCalled();
+		},
+	);
+
 	it('uses the selected strategy prompt and guarded full-note writer', async () => {
 		const file = new TFile();
 		file.path = 'note.md';

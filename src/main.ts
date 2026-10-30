@@ -119,9 +119,11 @@ export default class EmendPlugin extends Plugin {
 						view,
 						(candidate) => this.getTargetMarkdownView() === candidate,
 					);
-					new SelectionModal(this.app, (prompt, signal) =>
+					const modal = new SelectionModal(this.app, (prompt, signal) =>
 						this.requestSelectionEdit(snapshot, prompt, signal, editor),
-					).open();
+					);
+					this.register(() => modal.close());
+					modal.open();
 				} catch (error) {
 					new Notice(`Emend: ${getErrorMessage(error)}`);
 				}

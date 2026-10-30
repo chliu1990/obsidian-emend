@@ -202,6 +202,27 @@ describe('ConversationStore schema', () => {
 		expect(await store.load('Note.md')).toEqual([readyMessage()]);
 	});
 
+	it.each([
+		['negative', { promptTokens: -1, completionTokens: 4, totalTokens: 3 }],
+		['fractional', { promptTokens: 10.5, completionTokens: 4, totalTokens: 14.5 }],
+		['incomplete', { promptTokens: 10, completionTokens: 4 }],
+		['non-numeric', { promptTokens: '10', completionTokens: 4, totalTokens: 14 }],
+	])('filters persisted %s usage instead of loading it', async (_label, usage) => {
+		const adapter = new MemoryAdapter();
+		const { store } = makeStore(adapter);
+		await store.save('Note.md', [readyMessage()]);
+		const path = threadPath(adapter);
+		adapter.files.set(
+			path,
+			JSON.stringify({
+				version: 1,
+				messages: [{ ...readyMessage(), usage }],
+			}),
+		);
+
+		expect(await store.load('Note.md')).toEqual([]);
+	});
+
 	it('loads legacy provider usage without a source as provider-reported', async () => {
 		const adapter = new MemoryAdapter();
 		const { store } = makeStore(adapter);

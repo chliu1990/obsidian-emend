@@ -116,7 +116,11 @@ export function compileEditOperations(original: string, response: string): strin
 }
 
 function parseOperation(value: unknown, index: number): EditOperation {
-	if (!isRecord(value) || typeof value.type !== 'string' || !(value.type in OPERATION_FIELDS)) {
+	if (
+		!isRecord(value) ||
+		typeof value.type !== 'string' ||
+		!Object.prototype.hasOwnProperty.call(OPERATION_FIELDS, value.type)
+	) {
 		throw new Error(`Operation ${index + 1} has an unknown type or malformed value.`);
 	}
 	const type = value.type as EditOperation['type'];

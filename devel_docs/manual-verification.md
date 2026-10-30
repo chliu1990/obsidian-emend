@@ -55,4 +55,11 @@
 
 ## Platform limits
 
-Exact Obsidian 1.11.4, Windows/Linux Ctrl-key UI behavior, mobile behavior, and physical non-macOS platforms were not available and are not claimed. Ctrl matching is covered by unit tests. Mobile remains unsupported while `isDesktopOnly` is `true`. All available release-matrix checks passed; the three previously recorded minor review items remain deferred to the whole-branch fix wave and did not block verification.
+Exact Obsidian 1.11.4, Windows/Linux Ctrl-key UI behavior, mobile behavior, and physical non-macOS platforms were not available and are not claimed. Ctrl matching is covered by unit tests. Mobile remains unsupported while `isDesktopOnly` is `true`. All available release-matrix checks passed; the three minor review items were deferred at the time of that matrix, and their final-review resolution is recorded below.
+
+## Final-review selection-unload check
+
+- Environment: the final production Emend bundle in ignored `test_vault/stage17_vault`, isolated profile `.emend-test-profile-17`, real Obsidian 1.11.7 on macOS, CDP 9232, and a CORS-enabled loopback OpenAI-compatible SSE mock on `http://127.0.0.1:8798/v1` with dummy credentials. No real account, real key, paid provider call, or other vault was used.
+- Actual command: `node test_vault/cdp-eval-17.mjs test_vault/final-review-selection-unload.js`. The script opened `FinalReviewUnload17.md`, selected `TARGET`, executed Obsidian's registered selection command, submitted `Replace after unload.` through the real modal, waited until the mock received the provider request, disabled Emend, released the delayed `{~~TARGET~>UNLOAD_MUST_NOT_APPLY~~}` response and `[DONE]`, then re-enabled Emend.
+- Exact result: `executed: true`, `pendingBeforeUnload: true`, modal count 1 before unload and 0 after, `replaceCalls: 0`, editor and persisted Markdown both exactly `Select TARGET only.\n`, `pendingCountAfterRelease: 0`, `pluginReenabled: true`, and `pendingCountAfterReenable: 0`. Mock status confirmed `requestReceived: true`, `responseReleased: true`, and `requestClosed: true`.
+- Evidence is retained in ignored `test_vault/final-review-selection-unload-results.json`; the fixture remains unchanged. The isolated Obsidian and mock processes were stopped after verification.
