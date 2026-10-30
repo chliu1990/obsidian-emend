@@ -66,14 +66,16 @@ export default class EmendPlugin extends Plugin {
 			this.app.workspace.on('file-open', refreshChatTargetNotes),
 		);
 
-		this.addRibbonIcon('messages-square', 'Open AI chat', () => {
+		// eslint-disable-next-line obsidianmd/ui/sentence-case -- Required Stage 18 public label.
+		this.addRibbonIcon('messages-square', 'Open Emend chat', () => {
 			void this.activateChatView();
 		});
 
 		this.addCommand({
 			// eslint-disable-next-line obsidianmd/commands/no-plugin-id-in-command-id -- Required Stage 02 public identifier.
 			id: 'emend:open-chat',
-			name: 'Open AI chat',
+			// eslint-disable-next-line obsidianmd/commands/no-plugin-name-in-command-name, obsidianmd/ui/sentence-case -- Required Stage 18 public label.
+			name: 'Open Emend chat',
 			callback: () => {
 				void this.activateChatView();
 			},

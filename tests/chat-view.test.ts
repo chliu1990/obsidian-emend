@@ -1,8 +1,27 @@
-import { Scope } from 'obsidian';
-import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { MarkdownRenderer, Scope } from 'obsidian';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ShortcutEvent } from '../src/chat-shortcuts';
 import { EmendChatView } from '../src/chat-view';
 import type { ChatMessage, Mode } from '../src/types';
+
+function getCssRule(selector: string): string {
+	const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+	const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	return css.match(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`))?.[1] ?? '';
+}
+
+describe('EmendChatView mode button hover styles', () => {
+	it('keeps text readable on distinct non-active and active hover backgrounds', () => {
+		const nonActive = getCssRule('.emend-chat-mode-button:hover');
+		const active = getCssRule('.emend-chat-mode-button.is-active:hover');
+
+		expect(nonActive).toContain('background: var(--background-modifier-hover);');
+		expect(nonActive).toContain('color: var(--text-normal);');
+		expect(active).toContain('background: var(--interactive-accent-hover);');
+		expect(active).toContain('color: var(--text-normal);');
+	});
+});
 
 const viewPrototype = EmendChatView.prototype as unknown as {
 	refreshTargetNote(this: unknown): Promise<void>;
@@ -14,6 +33,8 @@ const viewPrototype = EmendChatView.prototype as unknown as {
 	setMode(this: unknown, mode: Mode): void;
 	registerComposerScope(this: unknown): void;
 	renderMessage(this: unknown, containerEl: HTMLElement, message: ChatMessage): void;
+	renderMessageBody(this: unknown, message: ChatMessage): void;
+	getDisplayText(this: unknown): string;
 	onClose(this: unknown): Promise<void>;
 };
 
@@ -339,6 +360,47 @@ describe('EmendChatView keyboard shortcuts', () => {
 		expect(context.handleComposerKeydown).toHaveBeenCalledWith(composerEvent);
 		expect(registration.func({ target: {} } as unknown as KeyboardEvent)).toBeUndefined();
 		expect(context.handleComposerKeydown).toHaveBeenCalledOnce();
+	});
+});
+
+describe('EmendChatView presentation', () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it('uses the Emend display name', () => {
+		expect(viewPrototype.getDisplayText.call({})).toBe('Emend');
+	});
+
+	it('shows loading content immediately without waiting for Markdown rendering', () => {
+		const pendingRender = deferred<void>();
+		vi.spyOn(MarkdownRenderer, 'render').mockReturnValue(pendingRender.promise);
+		const body = new FakeElement();
+		Object.assign(body, {
+			empty: vi.fn(() => {
+				body.children.length = 0;
+				body.textContent = '';
+			}),
+			ownerDocument: {
+				createElement: () => new FakeElement(),
+			},
+		});
+		const context = {
+			closed: false,
+			messageBodyEls: new Map<string, HTMLElement>([
+				['streaming', body as unknown as HTMLElement],
+			]),
+		};
+
+		viewPrototype.renderMessageBody.call(context, {
+			...message('streaming', 'Note.md'),
+			content: 'First streamed chunk',
+			status: 'loading',
+		});
+
+		expect(
+			body.children.map((child) => child.textContent).join(''),
+		).toContain('First streamed chunk');
 	});
 });
 

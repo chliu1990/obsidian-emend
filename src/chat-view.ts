@@ -54,7 +54,7 @@ export class EmendChatView extends ItemView {
 	}
 
 	getDisplayText() {
-		return 'AI chat';
+		return 'Emend';
 	}
 
 	getIcon() {
@@ -151,7 +151,7 @@ export class EmendChatView extends ItemView {
 		const headerEl = contentEl.createDiv('emend-chat-header');
 		headerEl.createDiv({
 			cls: 'emend-chat-title',
-			text: 'AI chat',
+			text: 'Emend',
 		});
 		headerEl.createDiv({
 			cls: 'emend-chat-context',
@@ -329,7 +329,7 @@ export class EmendChatView extends ItemView {
 			return;
 		}
 
-		if (message.role === 'user' || message.status === 'error') {
+		if (message.role === 'user' || message.status === 'error' || message.status === 'loading') {
 			bodyEl.createDiv({
 				cls: 'emend-chat-message-content',
 				text: message.content,

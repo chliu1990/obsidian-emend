@@ -48,7 +48,7 @@ API keys are stored locally in Obsidian plugin data. Do not use a real key in sc
 ## 3. Test read-only chat
 
 1. Open the test note.
-2. Select the Emend ribbon icon or run **Open AI chat** from the Command Palette.
+2. Select the Emend ribbon icon or run **Open Emend chat** from the Command Palette.
 3. Select **Ask** and send:
 
    ```text

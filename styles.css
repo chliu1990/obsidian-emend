@@ -50,9 +50,19 @@
 	font-size: var(--font-ui-smaller);
 }
 
+.emend-chat-mode-button:hover {
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+}
+
 .emend-chat-mode-button.is-active {
 	background: var(--interactive-accent);
 	color: var(--text-on-accent);
+}
+
+.emend-chat-mode-button.is-active:hover {
+	background: var(--interactive-accent-hover);
+	color: var(--text-normal);
 }
 
 .emend-chat-mode-button svg {
