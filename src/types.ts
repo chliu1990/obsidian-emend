@@ -57,5 +57,6 @@ export interface EmendSettings {
 	providers: Record<ProviderId, ProviderConfig>;
 	defaultMode: Mode;
 	includeNotePathInContext: boolean;
+	smartSelectionContext: boolean;
 	maxContextCharacters: number;
 }

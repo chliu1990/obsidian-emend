@@ -3,6 +3,7 @@ import { criticMarkupEditStrategy, type EditPreparation } from './edit-strategy'
 import type { EditResult } from './note-writer';
 import { canWriteToNote } from './permissions';
 import type { requestAiResponse } from './provider-stream';
+import { buildSmartSelectionContext } from './selection-context';
 import type {
 	InstructionPromptParts,
 	Mode,
@@ -13,7 +14,7 @@ import type {
 const STALE_NOTE_ERROR =
 	'The note changed while Emend was responding. No edits were applied.';
 
-export interface SelectionContext {
+interface SymmetricSelectionContext {
 	before: string;
 	after: string;
 }
@@ -35,6 +36,7 @@ export interface SelectionEditSubmission {
 	snapshot: SelectionSnapshot;
 	prompt: string;
 	maxContextCharacters: number;
+	smartSelectionContext: boolean;
 	notePath?: string;
 	signal: AbortSignal;
 }
@@ -62,7 +64,7 @@ export function captureSelectionSnapshot(
 export function getSelectionContext(
 	snapshot: SelectionSnapshot,
 	maxCharacters: number,
-): SelectionContext {
+): SymmetricSelectionContext {
 	if (snapshot.fullText.length <= maxCharacters) {
 		return {
 			before: snapshot.fullText.slice(0, snapshot.from),
@@ -181,21 +183,32 @@ export class SelectionEditRequestCoordinator {
 
 function buildSelectionUserPrompt(submission: SelectionEditSubmission): string {
 	const { snapshot } = submission;
-	const context = getSelectionContext(snapshot, submission.maxContextCharacters);
 	const parts: string[] = [];
 	const notePath = submission.notePath?.trim();
 	if (notePath) {
 		parts.push('Active note path:', notePath, '');
 	}
-	parts.push(
-		`Selected text:\n${snapshot.selectedText}`,
-		'',
-		`Context before:\n${context.before}`,
-		'',
-		`Context after:\n${context.after}`,
-		'',
-		'User message:',
-		submission.prompt,
-	);
+	parts.push(`Selected text:\n${snapshot.selectedText}`, '');
+	if (submission.smartSelectionContext) {
+		const context = buildSmartSelectionContext(
+			snapshot.fullText,
+			snapshot.from,
+			snapshot.to,
+			submission.maxContextCharacters,
+		);
+		parts.push(`Context:\n${context.contextText}`, '');
+	} else {
+		const context = getSelectionContext(
+			snapshot,
+			submission.maxContextCharacters,
+		);
+		parts.push(
+			`Context before:\n${context.before}`,
+			'',
+			`Context after:\n${context.after}`,
+			'',
+		);
+	}
+	parts.push('User message:', submission.prompt);
 	return parts.join('\n');
 }

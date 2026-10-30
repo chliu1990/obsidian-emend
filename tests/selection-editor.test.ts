@@ -414,6 +414,7 @@ function makeSelectionSubmission(
 		snapshot,
 		prompt: 'Improve this selection.',
 		maxContextCharacters: 20,
+		smartSelectionContext: true,
 		signal: new AbortController().signal,
 		...overrides,
 	};
@@ -446,7 +447,7 @@ describe('SelectionEditRequestCoordinator', () => {
 		}
 	});
 
-	it('sends the entire selection with bounded surrounding context and no history', async () => {
+	it('restores Stage 09 symmetric context when smart context is disabled', async () => {
 		const sourceText = '0123456789'.repeat(10);
 		const snapshot = makeSnapshot(sourceText, sourceText.slice(40, 50), 40);
 		const { coordinator, request } = makeSelectionCoordinator(
@@ -457,6 +458,7 @@ describe('SelectionEditRequestCoordinator', () => {
 		await coordinator.submit(
 			makeSelectionSubmission(snapshot, {
 				notePath: 'Vault/folder/note.md',
+				smartSelectionContext: false,
 			}),
 		);
 
@@ -466,9 +468,37 @@ describe('SelectionEditRequestCoordinator', () => {
 		expect(userPrompt).toContain(`Selected text:\n${snapshot.selectedText}`);
 		expect(userPrompt).toContain(`Context before:\n${sourceText.slice(35, 40)}`);
 		expect(userPrompt).toContain(`Context after:\n${sourceText.slice(50, 55)}`);
+		expect(userPrompt).not.toContain('Context:\n');
 		expect(userPrompt).toContain('Improve this selection.');
 		expect(userPrompt).not.toContain(sourceText);
 		expect(providerRequest?.history).toEqual([]);
+	});
+
+	it('sends full-paragraph smart context while replacing only the exact target', async () => {
+		const paragraph = 'A long sentence with beta and more words.';
+		const sourceText = `Before paragraph.\n\n${paragraph}\n\nAfter paragraph.`;
+		const snapshot = makeSnapshot(sourceText, 'beta');
+		const { adapter, coordinator, request } = makeSelectionCoordinator(
+			selectionRequest('{~~beta~>delta~~}'),
+			snapshot,
+		);
+
+		await coordinator.submit(
+			makeSelectionSubmission(snapshot, {
+				maxContextCharacters: paragraph.length,
+			}),
+		);
+
+		const userPrompt = request.mock.calls[0]?.[0].userPrompt ?? '';
+		expect(userPrompt).toContain(`Selected text:\nbeta`);
+		expect(userPrompt).toContain(`Context:\n[...]\n${paragraph}\n[...]`);
+		expect(userPrompt).not.toContain('Context before:');
+		expect(userPrompt).not.toContain(sourceText);
+		expect(adapter.replaceRange).toHaveBeenCalledExactlyOnceWith(
+			'{~~beta~>delta~~}',
+			snapshot.from,
+			snapshot.to,
+		);
 	});
 
 	it('never truncates an oversized selection in the provider request', async () => {
@@ -481,7 +511,10 @@ describe('SelectionEditRequestCoordinator', () => {
 		);
 
 		await coordinator.submit(
-			makeSelectionSubmission(snapshot, { maxContextCharacters: 20 }),
+			makeSelectionSubmission(snapshot, {
+				maxContextCharacters: 20,
+				smartSelectionContext: false,
+			}),
 		);
 
 		const userPrompt = request.mock.calls[0]?.[0].userPrompt ?? '';

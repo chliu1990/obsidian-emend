@@ -269,6 +269,7 @@ export default class EmendPlugin extends Plugin {
 					this.settings.maxContextCharacters ||
 						DEFAULT_SETTINGS.maxContextCharacters,
 				),
+				smartSelectionContext: this.settings.smartSelectionContext,
 				notePath: this.settings.includeNotePathInContext
 					? `${this.app.vault.getName()}/${snapshot.file.path}`
 					: undefined,

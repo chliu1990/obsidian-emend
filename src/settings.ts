@@ -62,6 +62,7 @@ export const DEFAULT_SETTINGS: EmendSettings = {
 	},
 	defaultMode: 'ask',
 	includeNotePathInContext: false,
+	smartSelectionContext: true,
 	maxContextCharacters: 12000,
 };
 
@@ -96,6 +97,10 @@ export function normalizeSettings(data: unknown): EmendSettings {
 			typeof root.includeNotePathInContext === 'boolean'
 				? root.includeNotePathInContext
 				: DEFAULT_SETTINGS.includeNotePathInContext,
+		smartSelectionContext:
+			typeof root.smartSelectionContext === 'boolean'
+				? root.smartSelectionContext
+				: DEFAULT_SETTINGS.smartSelectionContext,
 		maxContextCharacters: normalizeContextLimit(root.maxContextCharacters),
 	};
 }
@@ -272,6 +277,18 @@ export class EmendSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.includeNotePathInContext)
 					.onChange(async (value) => {
 						this.plugin.settings.includeNotePathInContext = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName('Smart selection context')
+			.setDesc('Expand selection requests to containing and adjacent paragraphs without changing the edit target.')
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.smartSelectionContext)
+					.onChange(async (value) => {
+						this.plugin.settings.smartSelectionContext = value;
 						await this.plugin.saveSettings();
 					}),
 			);

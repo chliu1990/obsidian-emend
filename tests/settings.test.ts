@@ -50,12 +50,28 @@ describe('normalizeSettings', () => {
 		});
 	});
 
-	it('defaults to DeepSeek, ask mode, and disabled note-path sharing', () => {
+	it('defaults to DeepSeek, ask mode, disabled note-path sharing, and smart selection context', () => {
 		expect(DEFAULT_SETTINGS.activeProvider).toBe('deepseek');
 		expect(DEFAULT_SETTINGS.defaultMode).toBe('ask');
 		expect(DEFAULT_SETTINGS.includeNotePathInContext).toBe(false);
+		expect(DEFAULT_SETTINGS.smartSelectionContext).toBe(true);
 		expect(DEFAULT_SETTINGS.maxContextCharacters).toBe(12000);
 	});
+
+	it('retains an explicit smart selection context opt-out', () => {
+		expect(normalizeSettings({ smartSelectionContext: false })).toMatchObject({
+			smartSelectionContext: false,
+		});
+	});
+
+	it.each([null, 'false', 0, [], {}])(
+		'normalizes malformed smart selection context values to true %#',
+		(smartSelectionContext) => {
+			expect(normalizeSettings({ smartSelectionContext })).toMatchObject({
+				smartSelectionContext: true,
+			});
+		},
+	);
 
 	it('retains valid user-entered settings for every provider', () => {
 		const data = {
@@ -88,6 +104,7 @@ describe('normalizeSettings', () => {
 			},
 			defaultMode: 'discuss',
 			includeNotePathInContext: true,
+			smartSelectionContext: false,
 			maxContextCharacters: 24000,
 		};
 
