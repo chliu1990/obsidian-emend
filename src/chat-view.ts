@@ -7,18 +7,13 @@ import {
 } from 'obsidian';
 import type EmendPlugin from './main';
 import { MODES } from './mode';
-import type { ReadOnlyMode } from './request-coordinator';
-import type { ProviderHistoryMessage } from './types';
+import type { Mode, ProviderHistoryMessage } from './types';
 
 export const EMEND_CHAT_VIEW_TYPE = 'emend-chat-view';
 
-const READ_ONLY_MODES = MODES.filter(
-	(mode): mode is (typeof MODES)[number] & { id: ReadOnlyMode } =>
-		mode.id !== 'edit',
-);
-
-const MODE_PLACEHOLDERS: Record<ReadOnlyMode, string> = {
+const MODE_PLACEHOLDERS: Record<Mode, string> = {
 	ask: 'Ask about the active note...',
+	edit: 'Edit the complete note with CriticMarkup...',
 	discuss: 'Discuss an idea in the active note...',
 	brainstorm: 'Brainstorm ideas for the active note...',
 };
@@ -28,7 +23,7 @@ interface ChatMessage {
 	role: 'user' | 'assistant';
 	content: string;
 	reasoning: string;
-	mode: ReadOnlyMode;
+	mode: Mode;
 	sourcePath: string;
 	status: 'ready' | 'loading' | 'error' | 'stopped';
 }
@@ -38,7 +33,7 @@ export class EmendChatView extends ItemView {
 	private inputEl: HTMLTextAreaElement | null = null;
 	private activeModelEl: HTMLElement | null = null;
 	private isSending = false;
-	private selectedMode: ReadOnlyMode;
+	private selectedMode: Mode;
 	private activeController: AbortController | null = null;
 	private pendingRenderFrame: number | null = null;
 	private pendingMessages = new Set<ChatMessage>();
@@ -50,10 +45,7 @@ export class EmendChatView extends ItemView {
 		private readonly plugin: EmendPlugin,
 	) {
 		super(leaf);
-		this.selectedMode =
-			plugin.settings.defaultMode === 'edit'
-				? 'ask'
-				: plugin.settings.defaultMode;
+		this.selectedMode = plugin.settings.defaultMode;
 	}
 
 	getViewType() {
@@ -112,7 +104,7 @@ export class EmendChatView extends ItemView {
 		});
 
 		const modeSelectorEl = contentEl.createDiv('emend-chat-mode-selector');
-		for (const mode of READ_ONLY_MODES) {
+		for (const mode of MODES) {
 			const button = modeSelectorEl.createEl('button', {
 				cls: `emend-chat-mode-button${this.selectedMode === mode.id ? ' is-active' : ''}`,
 				attr: {
@@ -184,7 +176,7 @@ export class EmendChatView extends ItemView {
 		});
 		emptyEl.createDiv({
 			cls: 'emend-chat-empty-body',
-			text: 'Ask, discuss, or brainstorm without changing the note. Responses stream here as Markdown.',
+			text: 'Ask, discuss, or brainstorm in chat. Edit applies validated CriticMarkup for review in Track Changes.',
 		});
 	}
 
@@ -358,23 +350,42 @@ export class EmendChatView extends ItemView {
 		this.render();
 
 		try {
-			await this.plugin.requestChatCompletion({
-				context,
-				mode,
-				prompt,
-				history,
-				callbacks: {
-					onContent: (text) => {
-						loadingMessage.content += text;
-						this.scheduleMessageRender(loadingMessage);
+			if (mode === 'edit') {
+				const result = await this.plugin.requestChatCompletion({
+					context,
+					mode,
+					prompt,
+					history,
+					callbacks: {
+						onReasoning: (text) => {
+							loadingMessage.reasoning += text;
+							this.scheduleMessageRender(loadingMessage);
+						},
 					},
-					onReasoning: (text) => {
-						loadingMessage.reasoning += text;
-						this.scheduleMessageRender(loadingMessage);
+					signal: controller.signal,
+				});
+				loadingMessage.content = result.applied
+					? `Edit applied — ${result.changeCount} changes tracked. Review in Track Changes.`
+					: 'No changes were needed.';
+			} else {
+				await this.plugin.requestChatCompletion({
+					context,
+					mode,
+					prompt,
+					history,
+					callbacks: {
+						onContent: (text) => {
+							loadingMessage.content += text;
+							this.scheduleMessageRender(loadingMessage);
+						},
+						onReasoning: (text) => {
+							loadingMessage.reasoning += text;
+							this.scheduleMessageRender(loadingMessage);
+						},
 					},
-				},
-				signal: controller.signal,
-			});
+					signal: controller.signal,
+				});
+			}
 			loadingMessage.status = 'ready';
 		} catch (error) {
 			if (controller.signal.aborted || isAbortError(error)) {
@@ -415,7 +426,7 @@ export class EmendChatView extends ItemView {
 	}
 }
 
-function getModeLabel(mode: ReadOnlyMode) {
+function getModeLabel(mode: Mode) {
 	return MODES.find((candidate) => candidate.id === mode)?.label ?? mode;
 }
 

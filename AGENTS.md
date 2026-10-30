@@ -2,13 +2,14 @@
 
 ## Project overview
 
-This repository contains an Obsidian community plugin written in TypeScript and bundled with esbuild. The plugin provides context-aware, streamed AI chat for Markdown notes in explicit read-only modes.
+This repository contains an Obsidian community plugin written in TypeScript and bundled with esbuild. The plugin provides context-aware, streamed AI chat for Markdown notes in explicit modes and guarded full-note CriticMarkup editing in Edit mode.
 
 The repository is in an architecture transition:
 
 - The **current implementation and release identity are Emend**. `manifest.json` uses plugin ID `emend`, name `Emend`, and version `1.0.2`; `package.json` is named `emend` at the same version. This is a clean plugin ID with no Lapis Lazuli data migration.
 - Ask, Discuss, and Brainstorm modes, instruction/skill loading, and streamed chat are wired into the current runtime. These paths have no note writer.
-- Guarded Edit mode, CriticMarkup editing, Track Changes integration, and active diff review remain pending. `src/document-diff-preview.ts` is dormant until Stage 08; do not describe its write behavior as a current chat feature or remove it early.
+- Edit mode sends the complete captured note, buffers and validates the CriticMarkup response, guards against stale source or target changes, and writes once through `vault.modify`. Track Changes is the only review surface.
+- The dormant diff module, editor extension, callbacks, styles, and CodeMirror dependencies are removed. Selection-only editing remains pending for Stage 09.
 
 The manifest requires Obsidian `1.11.4` or newer and sets `isDesktopOnly` to `true`. The streaming provider transport uses desktop browser `fetch` and Server-Sent Events; mobile support is not currently declared.
 
@@ -16,7 +17,6 @@ The manifest requires Obsidian `1.11.4` or newer and sets `isDesktopOnly` to `tr
 
 - TypeScript with strict compiler checks; source files are under `src/`.
 - Obsidian API for plugin lifecycle, workspace views, Markdown rendering, settings, vault access, and notices; browser `fetch` and Server-Sent Events for provider streaming.
-- CodeMirror 6 (`@codemirror/state` and `@codemirror/view`) for the dormant editor diff extension, state fields, decorations, and review widgets.
 - esbuild bundles `src/main.ts` into a CommonJS `main.js` at the repository root, targeting ES2021.
 - Obsidian, Electron, CodeMirror/Lezer modules, and Node built-ins are external to the bundle and supplied by the host. Other runtime code must be bundled; do not add unbundled runtime dependencies.
 - Development builds include inline source maps and are unminified. Production builds are minified and have no source map.
@@ -45,24 +45,25 @@ npm test
 
 | Path | Responsibility |
 | --- | --- |
-| `src/main.ts` | Plugin lifecycle and orchestration: settings, chat registration, target-view tracking, context capture, coordinator construction, and dormant diff accept/reject callbacks. |
-| `src/chat-view.ts` | Right-sidebar `ItemView`, per-session read-only mode, in-memory chat state, streamed Markdown/reasoning rendering, composer, Stop, copy action, and submission flow. |
+| `src/main.ts` | Plugin lifecycle and orchestration: settings, chat registration, target-view tracking, context capture, and mode-specific coordinator/writer construction. |
+| `src/chat-view.ts` | Right-sidebar `ItemView`, per-session mode, in-memory chat state, streamed Markdown/reasoning rendering, edit summaries, composer, Stop, copy action, and submission flow. |
 | `src/context.ts` | Synchronous note snapshots and bounded caret/selection-centered Markdown windows with exact omission markers. |
-| `src/request-coordinator.ts` | Writer-free Ask/Discuss/Brainstorm submission, per-request instruction loading, mode prompts, bounded history, and stream callback forwarding. |
+| `src/request-coordinator.ts` | Writer-free Ask/Discuss/Brainstorm submission and the separate Edit coordinator with full-source prompting, private buffering, reasoning forwarding, validation, and application. |
+| `src/note-writer.ts` | The only full-note AI application path: no-op handling, current-source and active-target stale checks, final permission check, and the `vault.read`/`vault.modify` adapter. |
+| `src/critic-markup.ts` / `src/edit-strategy.ts` | CriticMarkup parsing, reject-view and sequential-markup validation, edit preparation, and the editing-strategy boundary. |
 | `src/provider-stream.ts` | OpenAI-compatible streaming `fetch` transport, SSE parsing, content/reasoning/usage events, and provider error handling. |
 | `src/instructions-loader.ts` | Vault-root `AGENTS.md` loading and safe, directly referenced skill discovery. |
 | `src/mode.ts` / `src/permissions.ts` | Mode catalog, mode-specific system prompts, and deterministic note-write permission contracts. |
 | `src/settings.ts` | Provider catalog, defaults, persisted-data normalization, and the settings tab. |
 | `src/types.ts` | Shared provider, mode, message, reasoning-effort, instruction, and persisted settings types. |
-| `src/document-diff-preview.ts` | Dormant line-based LCS diff generation, hunk application/rejection, CodeMirror state field, and diff/review widgets; keep until Stage 08. |
-| `styles.css` | Streamed chat and dormant diff styles using the `emend-` prefix and Obsidian CSS variables. |
+| `styles.css` | Streamed chat styles using the `emend-` prefix and Obsidian CSS variables. |
 | `esbuild.config.mjs` | Development/watch and production bundle configuration. |
 | `eslint.config.mts` | ESLint flat configuration and typed linting. |
 | `manifest.json` / `versions.json` | Obsidian release metadata and plugin-version-to-minimum-app-version mapping. |
 | `version-bump.mjs` | npm version hook that synchronizes release metadata. |
 | `IMPLEMENTATION_PLAN.md` | Proposed Emend rewrite, not a complete description of current behavior. |
 
-Keep new feature logic in focused modules rather than adding unrelated responsibilities to an already large module. Preserve the separation between context capture, request coordination, provider transport, editor state, UI, and plugin orchestration.
+Keep new feature logic in focused modules rather than adding unrelated responsibilities to an already large module. Preserve the separation between context capture, request coordination, provider transport, note writing, UI, and plugin orchestration.
 
 ## Current runtime architecture
 
@@ -70,17 +71,20 @@ Keep new feature logic in focused modules rather than adding unrelated responsib
 
 `main.ts` targets the active Markdown view when available. If focus is in the chat sidebar, it uses the last active still-open Markdown view, then falls back to another open Markdown view. `captureChatContext()` synchronously captures the target `TFile`, full source text, selection offsets, note label, optional vault-qualified path, and bounded Markdown before instruction reads or networking.
 
-Requests include bounded Markdown context. Notes within the configured character limit are sent whole; longer notes are windowed around the selection or caret, with `[...]` markers at omitted edges and unused budget redistributed toward available text. The default limit is 12,000 characters and the settings UI enforces a minimum of 1,000. Vault name and note path are opt-in and disabled by default.
+Read-only requests include bounded Markdown context. Notes within the configured character limit are sent whole; longer notes are windowed around the selection or caret, with `[...]` markers at omitted edges and unused budget redistributed toward available text. The default limit is 12,000 characters and the settings UI enforces a minimum of 1,000. Edit ignores the bounded `markdown` window and always sends `sourceText`, the complete captured note. Vault name and note path are opt-in and disabled by default.
 
-### Streamed read-only chat
+### Streamed chat and guarded editing
 
-1. `chat-view.ts` initializes one in-memory mode from `defaultMode` per view session, falling back to Ask if Edit was saved. Switching notes does not reset the selected mode. Only Ask, Discuss, and Brainstorm are rendered.
+1. `chat-view.ts` initializes one in-memory mode from `defaultMode` per view session. Switching notes does not reset the selected mode. Ask, Edit, Discuss, and Brainstorm use their Stage 03 icons, badges, and placeholders.
 2. Submission captures context and up to the last eight ready chat messages. Duplicate submissions are disabled while a request is active.
-3. `ReadOnlyRequestCoordinator` loads current vault instructions on every request, builds the selected Stage 03 mode prompt with skills before agent instructions, and calls `requestAiResponse`. Its dependencies and submission contract contain no note writer.
-4. Content and reasoning deltas stream through separate callbacks. Assistant Markdown renders through Obsidian `MarkdownRenderer` with the captured file path as source path; streaming renders are throttled to one animation frame and pending frames are cancelled on close. Reasoning is plain text in a closed `details` element. Model output is never assigned with `innerHTML`.
-5. Stop aborts the active request. Success, provider errors, and aborts all clear loading state. Stopped partial responses and errors are excluded from later ready-message history. Chat history is in memory, not persisted.
+3. `ReadOnlyRequestCoordinator` loads current vault instructions on every request, builds the selected read-only prompt with skills before agent instructions, and calls `requestAiResponse`. Its dependencies and submission contract contain no note writer.
+4. Only `EditRequestCoordinator` receives a writer. It uses the full-note CriticMarkup prompt, forwards reasoning while privately buffering content until provider completion, rejects aborts, validates against captured source through Stage 07, and delegates to `applyPreparedEdit`.
+5. `applyPreparedEdit` returns without reading or writing for read-only modes and unchanged responses. For a changed Edit response it re-reads the captured file, requires both exact source equality and the same active target, checks `canWriteToNote(mode)` immediately before writing, and calls `vault.modify` exactly once. The stale error is `The note changed while Emend was responding. No edits were applied.`
+6. Read-only content streams as Markdown through Obsidian `MarkdownRenderer` with the captured file path as source path; streaming renders are throttled to one animation frame and pending frames are cancelled on close. Reasoning is plain text in a closed `details` element. Model output is never assigned with `innerHTML`.
+7. Edit responses are never rendered into chat. Success stores only `Edit applied — N changes tracked. Review in Track Changes.` as assistant history; unchanged responses store `No changes were needed.` Valid comment-only edits may apply with zero text changes.
+8. Stop aborts the active request. Success, provider errors, validation errors, stale errors, and aborts all clear loading state. Stopped partial responses and errors are excluded from later ready-message history. Chat history is in memory, not persisted.
 
-The legacy JSON answer/edit protocol, accumulating adapters, inline suggestion command/extension/module, and inline styles are removed. Chat has no active edit or diff-preview creation path. The dormant diff module still contains a quadratic full-LCS implementation; preserve it knowingly until the editing stages replace or remove that behavior.
+The legacy JSON answer/edit protocol, accumulating adapters, inline suggestion command/extension/module, inline styles, dormant diff UI, and in-plugin Apply/Reject flow are removed. Track Changes provides the only CriticMarkup review UI. Selection-only editing is not implemented yet.
 
 ### Providers and settings
 
@@ -116,23 +120,24 @@ These checks do not exercise Obsidian, CodeMirror interaction, or real provider 
 <Vault>/.obsidian/plugins/emend/
 ```
 
-For Stage 06, use only the ignored `test_vault/` and a local OpenAI-compatible SSE mock with CORS and dummy credentials. Never use real accounts/keys or modify other vaults. Relevant scenarios include:
+Use only the ignored `test_vault/` and a local OpenAI-compatible SSE mock with CORS and dummy credentials. Never use real accounts/keys or modify other vaults. Relevant scenarios include:
 
 - Stream Ask, Discuss, and Brainstorm responses and verify that only chat changes; the note remains byte-for-byte unchanged.
-- Verify Markdown, internal/external links, inline and display math, folded reasoning, copy, mode badges/placeholders, model label, and per-session mode retention across note switches.
-- Stop a slow stream, trigger a provider error, and confirm loading clears without partial writes or duplicate submissions.
-- Inspect mock requests for bounded `[...]` context, selection/caret positioning, eight-message history, current instruction/skill ordering, and note-path omission/inclusion according to the privacy setting.
-- Close/reopen the chat and reload/unload the plugin; check abort cleanup and that views, commands, and editor extensions do not duplicate or leak.
+- Apply insertion, deletion, substitution, comment, and highlight edits in Edit mode; inspect actual resulting Markdown and Track Changes review behavior.
+- Reject invalid output, stale source edits, and target-note switches without writes. Stop streams and trigger provider errors without partial writes or duplicate submissions.
+- Verify unchanged responses do not write, valid comment-only edits may write with zero text changes, sequential edits preserve old markup, and chat history stores summaries rather than annotated documents.
+- Inspect mock requests for complete uncapped source in Edit, bounded read-only context, eight-message history, current instruction/skill ordering, and note-path omission/inclusion according to the privacy setting.
+- Verify Markdown, links, math, folded reasoning, copy, mode badges/placeholders, model label, per-session mode retention, and close/unload cleanup.
 - Exercise desktop streaming behavior when changing provider transport or APIs. Mobile support is not declared while `isDesktopOnly` is `true`.
 
-Later editing stages must add explicit mode write gating, CriticMarkup output, selection edits, and Track Changes tests rather than reviving the legacy JSON or inline flows.
+Stage 09 must add selection editing without reviving the legacy JSON, inline, or in-plugin diff flows.
 
 ## Security and privacy
 
 - API keys are secrets stored in Obsidian's local plugin data. Never commit `data.json`, print keys, or include them in logs and error messages. Manual mock credentials must remain dummy values in ignored vault data.
-- Bounded note content, prompts, recent ready chat history, vault-root `AGENTS.md`, and directly referenced skills are sent to the selected provider when the user submits chat. There are no background AI requests.
+- Read-only requests send bounded note content. Explicit Edit actions send the complete note regardless of the context limit. Prompts, recent ready chat history, vault-root `AGENTS.md`, and directly referenced skills are sent to the selected provider when the user submits chat. There are no background AI requests.
 - The vault/note path is sent only when **Include note path** is enabled.
-- Current Ask/Discuss/Brainstorm chat has no note writer. Do not add writes outside the later permission-gated editing stages or revive automatic legacy JSON edits.
+- Ask/Discuss/Brainstorm have no note writer. Only the Edit coordinator receives the guarded writer, which writes validated CriticMarkup immediately after completion and stale checks. Do not add writes outside this permission-gated path or revive automatic legacy JSON edits.
 - Do not add telemetry, remote code execution, automatic plugin downloads, or unrelated network calls. Keep current file access within the vault and limited to the active note plus declared instructions/skills.
 - Preserve clear provider error handling without exposing request headers or credentials.
 

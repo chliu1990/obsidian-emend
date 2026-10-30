@@ -1,25 +1,16 @@
 import { MarkdownView, Plugin } from 'obsidian';
-import type { EditorView } from '@codemirror/view';
 import { EMEND_CHAT_VIEW_TYPE, EmendChatView } from './chat-view';
 import {
 	captureRequestContext,
 	type RequestContext,
 } from './context';
-import {
-	applyHunkToMarkdown,
-	applyHunksToMarkdown,
-	clearDocumentDiffPreviewEffect,
-	createDocumentDiffPreviewExtension,
-	DocumentDiffHunk,
-	DocumentDiffPreview,
-	getRemainingHunksAfterAccept,
-	getRemainingHunksAfterReject,
-	setDocumentDiffPreviewEffect,
-} from './document-diff-preview';
 import { loadAllInstructions } from './instructions-loader';
-import { requestAiResponse } from './provider-stream';
+import { createVaultNoteWriter, type EditResult } from './note-writer';
+import { requestAiResponse, type StreamResult } from './provider-stream';
 import {
+	EditRequestCoordinator,
 	ReadOnlyRequestCoordinator,
+	type EditSubmission,
 	type ReadOnlySubmission,
 } from './request-coordinator';
 import {
@@ -44,19 +35,6 @@ export default class EmendPlugin extends Plugin {
 		this.registerEvent(
 			this.app.workspace.on('active-leaf-change', () => {
 				this.rememberActiveMarkdownView();
-			}),
-		);
-
-		this.registerEditorExtension(
-			createDocumentDiffPreviewExtension({
-				acceptPreview: (preview, view) =>
-					this.acceptDocumentDiffPreview(preview, view),
-				rejectPreview: (preview, view) =>
-					this.rejectDocumentDiffPreview(preview, view),
-				acceptHunk: (preview, hunk, view) =>
-					this.acceptDocumentDiffHunk(preview, hunk, view),
-				rejectHunk: (preview, hunk, view) =>
-					this.rejectDocumentDiffHunk(preview, hunk, view),
 			}),
 		);
 
@@ -138,96 +116,31 @@ export default class EmendPlugin extends Plugin {
 		});
 	}
 
-	async requestChatCompletion(submission: ReadOnlySubmission) {
-		const coordinator = new ReadOnlyRequestCoordinator({
+	async requestChatCompletion(
+		submission: ReadOnlySubmission,
+	): Promise<StreamResult>;
+	async requestChatCompletion(submission: EditSubmission): Promise<EditResult>;
+	async requestChatCompletion(
+		submission: ReadOnlySubmission | EditSubmission,
+	): Promise<StreamResult | EditResult> {
+		const dependencies = {
 			provider: this.settings.providers[this.settings.activeProvider],
 			loadInstructions: () => loadAllInstructions(this.app.vault),
 			request: requestAiResponse,
-		});
+		};
+		if (submission.mode === 'edit') {
+			const coordinator = new EditRequestCoordinator({
+				...dependencies,
+				writer: createVaultNoteWriter(
+					this.app.vault,
+					(file) => this.getTargetMarkdownView()?.file === file,
+				),
+			});
+			return coordinator.submit(submission);
+		}
+
+		const coordinator = new ReadOnlyRequestCoordinator(dependencies);
 		return coordinator.submit(submission);
-	}
-
-	private acceptDocumentDiffPreview(
-		preview: DocumentDiffPreview,
-		view: EditorView,
-	) {
-		const updatedMarkdown = applyHunksToMarkdown(
-			view.state.doc.toString(),
-			preview.changes,
-		);
-
-		view.dispatch({
-			changes: {
-				from: 0,
-				to: view.state.doc.length,
-				insert: updatedMarkdown,
-			},
-			effects: clearDocumentDiffPreviewEffect.of(preview.id),
-			scrollIntoView: true,
-		});
-	}
-
-	private rejectDocumentDiffPreview(
-		preview: DocumentDiffPreview,
-		view: EditorView,
-	) {
-		view.dispatch({
-			effects: clearDocumentDiffPreviewEffect.of(preview.id),
-		});
-	}
-
-	private acceptDocumentDiffHunk(
-		preview: DocumentDiffPreview,
-		hunk: DocumentDiffHunk,
-		view: EditorView,
-	) {
-		const updatedMarkdown = applyHunkToMarkdown(
-			view.state.doc.toString(),
-			hunk,
-		);
-		const remainingHunks = getRemainingHunksAfterAccept(
-			preview.changes,
-			hunk,
-		);
-
-		view.dispatch({
-			changes: {
-				from: 0,
-				to: view.state.doc.length,
-				insert: updatedMarkdown,
-			},
-			effects:
-				remainingHunks.length > 0
-					? setDocumentDiffPreviewEffect.of({
-							...preview,
-							originalMarkdown: updatedMarkdown,
-							changes: remainingHunks,
-						})
-					: clearDocumentDiffPreviewEffect.of(preview.id),
-			scrollIntoView: true,
-		});
-	}
-
-	private rejectDocumentDiffHunk(
-		preview: DocumentDiffPreview,
-		hunk: DocumentDiffHunk,
-		view: EditorView,
-	) {
-		const remainingHunks = getRemainingHunksAfterReject(
-			preview.changes,
-			hunk,
-		);
-
-		view.dispatch({
-			effects:
-				remainingHunks.length > 0
-					? setDocumentDiffPreviewEffect.of({
-							...preview,
-							originalMarkdown: view.state.doc.toString(),
-							changes: remainingHunks,
-						})
-					: clearDocumentDiffPreviewEffect.of(preview.id),
-		});
 	}
 
 	private getActiveMarkdownView() {

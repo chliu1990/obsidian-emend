@@ -14,10 +14,6 @@
 	},
 	"keywords": [],
 	"license": "MIT",
-	"dependencies": {
-		"@codemirror/state": "6.5.0",
-		"@codemirror/view": "6.38.6"
-	},
 	"devDependencies": {
 		"@eslint/js": "^9.39.4",
 		"@types/node": "^22.15.17",

@@ -6,10 +6,13 @@ import type {
 	StreamResult,
 } from '../src/provider-stream';
 import {
+	EditRequestCoordinator,
 	ReadOnlyRequestCoordinator,
+	type EditSubmission,
 	type ReadOnlySubmission,
 } from '../src/request-coordinator';
 import type { RequestContext } from '../src/context';
+import type { NoteWriter } from '../src/note-writer';
 import type {
 	InstructionPromptParts,
 	ProviderConfig,
@@ -207,4 +210,170 @@ describe('ReadOnlyRequestCoordinator', () => {
 			expect(submission.callbacks.onReasoning).not.toHaveBeenCalled();
 		},
 	);
+});
+
+function editRequest(
+	response: string,
+	reasoning = 'Editing the complete note.',
+) {
+	return vi.fn(
+		async (
+			_request: AiProviderRequest,
+			callbacks: { onEvent(event: StreamEvent): void },
+			_signal: AbortSignal,
+		): Promise<StreamResult> => {
+			if (reasoning) {
+				callbacks.onEvent({ type: 'reasoning', text: reasoning });
+			}
+			for (const chunk of response.match(/.{1,5}/gs) ?? []) {
+				callbacks.onEvent({ type: 'content', text: chunk });
+			}
+			return { content: response, reasoning };
+		},
+	);
+}
+
+function makeEditCoordinator(
+	request: ReturnType<typeof editRequest>,
+	currentText = '# Note\nOriginal text',
+) {
+	const writer: NoteWriter = {
+		readCurrentText: vi.fn(async () => currentText),
+		write: vi.fn(async () => undefined),
+		isTargetCurrent: vi.fn(() => true),
+	};
+	const loadInstructions = vi.fn(async () => ({ skillTexts: new Map() }));
+	const coordinator = new EditRequestCoordinator({
+		provider,
+		loadInstructions,
+		request,
+		writer,
+	});
+	return { coordinator, loadInstructions, request, writer };
+}
+
+function makeEditSubmission(
+	overrides: Partial<EditSubmission> = {},
+): EditSubmission {
+	return {
+		context: makeContext(),
+		mode: 'edit',
+		prompt: 'Improve this note.',
+		history: [],
+		callbacks: { onReasoning: vi.fn() },
+		signal: new AbortController().signal,
+		...overrides,
+	};
+}
+
+describe('EditRequestCoordinator', () => {
+	it('accepts only Edit and owns the writer dependency', () => {
+		type Mode = EditSubmission['mode'];
+		type Dependencies = ConstructorParameters<
+			typeof EditRequestCoordinator
+		>[0];
+
+		expectTypeOf<Mode>().toEqualTypeOf<'edit'>();
+		expectTypeOf<Dependencies>().toHaveProperty('writer');
+	});
+
+	it('always sends the complete captured source instead of bounded context', async () => {
+		const sourceText = 'START\n' + 'long note content\n'.repeat(100) + 'END';
+		const context = makeContext({
+			sourceText,
+			markdown: '[...]\nbounded window\n[...]',
+		});
+		const { coordinator, request } = makeEditCoordinator(
+			editRequest(sourceText),
+			sourceText,
+		);
+
+		await coordinator.submit(makeEditSubmission({ context }));
+
+		const userPrompt = request.mock.calls[0]?.[0].userPrompt ?? '';
+		expect(userPrompt).toContain(sourceText);
+		expect(userPrompt).not.toContain('bounded window');
+		expect(userPrompt).not.toContain('[...]');
+		expect(request.mock.calls[0]?.[0].systemPrompt).toContain(
+			'Return the COMPLETE note',
+		);
+	});
+
+	it('streams reasoning while buffering the edit privately and writes after completion', async () => {
+		const response = '# Note\n{~~Original~>Edited~~} text';
+		const request = editRequest(response);
+		const { coordinator, writer } = makeEditCoordinator(request);
+		const submission = makeEditSubmission();
+
+		const result = await coordinator.submit(submission);
+
+		expect(result).toEqual({ applied: true, changeCount: 1 });
+		expect(submission.callbacks.onReasoning).toHaveBeenCalledExactlyOnceWith(
+			'Editing the complete note.',
+		);
+		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
+			submission.context.file,
+			response,
+		);
+		expect(request.mock.invocationCallOrder[0]).toBeLessThan(
+			(writer.write as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0] ??
+				0,
+		);
+	});
+
+	it('returns an unchanged result and performs no write for a no-op', async () => {
+		const sourceText = '# Note\nOriginal text';
+		const { coordinator, writer } = makeEditCoordinator(
+			editRequest(sourceText),
+			sourceText,
+		);
+
+		const result = await coordinator.submit(makeEditSubmission());
+
+		expect(result).toEqual({ applied: false, changeCount: 0 });
+		expect(writer.write).not.toHaveBeenCalled();
+	});
+
+	it('rejects invalid output without writing', async () => {
+		const { coordinator, writer } = makeEditCoordinator(
+			editRequest('Here is my answer instead of the note.'),
+		);
+
+		await expect(coordinator.submit(makeEditSubmission())).rejects.toThrow();
+
+		expect(writer.readCurrentText).not.toHaveBeenCalled();
+		expect(writer.write).not.toHaveBeenCalled();
+	});
+
+	it.each(['provider error', 'abort'])(
+		'does not write after a %s',
+		async (failure) => {
+			const error =
+				failure === 'abort'
+					? new DOMException('Stopped', 'AbortError')
+					: new Error('Provider unavailable');
+			const request = vi.fn(async () => {
+				throw error;
+			});
+			const { coordinator, writer } = makeEditCoordinator(request);
+
+			await expect(coordinator.submit(makeEditSubmission())).rejects.toBe(error);
+
+			expect(writer.readCurrentText).not.toHaveBeenCalled();
+			expect(writer.write).not.toHaveBeenCalled();
+		},
+	);
+
+	it('does not write when the note changed before stream completion', async () => {
+		const { coordinator, writer } = makeEditCoordinator(
+			editRequest('# Note\nOriginal{++ added++} text'),
+			'# Note\nEdited while waiting',
+		);
+
+		await expect(coordinator.submit(makeEditSubmission())).rejects.toThrow(
+			'The note changed while Emend was responding. No edits were applied.',
+		);
+
+		expect(writer.write).not.toHaveBeenCalled();
+	});
 });
