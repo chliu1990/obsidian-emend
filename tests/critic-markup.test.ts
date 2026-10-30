@@ -150,7 +150,7 @@ describe('CriticMarkup edit validation', () => {
 		});
 	});
 
-	it('accepts comments without counting them as text changes', () => {
+	it('accepts a new comment-only token without counting it as a text change', () => {
 		const original = 'Keep this text.';
 		const response = 'Keep {>>A comment only.<<}this text.';
 		expect(prepareCriticMarkupEdit(original, response)).toEqual({
@@ -282,6 +282,22 @@ describe('sequential CriticMarkup edits', () => {
 		const originalWithComments = '{>>First<<}{>>Second<<}Body';
 		const response = '{>>Second<<}{>>First<<}Body';
 		expect(() => prepareCriticMarkupEdit(originalWithComments, response)).toThrow(/original token/i);
+	});
+
+	it('rejects relocating an existing insertion without new markup', () => {
+		const originalWithInsertion = '{++existing++}Body';
+		const response = 'Body{++existing++}';
+		expect(() => prepareCriticMarkupEdit(originalWithInsertion, response)).toThrow(
+			/new markup/i,
+		);
+	});
+
+	it('rejects relocating an existing comment without new markup', () => {
+		const originalWithComment = '{>>existing<<}Body';
+		const response = 'Body{>>existing<<}';
+		expect(() => prepareCriticMarkupEdit(originalWithComment, response)).toThrow(
+			/new markup/i,
+		);
 	});
 
 	it('rejects nesting an old token inside a new token', () => {

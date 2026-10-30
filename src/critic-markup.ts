@@ -138,6 +138,10 @@ export function prepareCriticMarkupEdit(
 		}
 	}
 
+	if (response !== original && originalTokenMatches.size === responseTokens.length) {
+		throw new Error('Changed response must contain new markup.');
+	}
+
 	return { annotatedMarkdown: response, changeCount };
 }
 
