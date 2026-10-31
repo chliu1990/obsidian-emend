@@ -170,6 +170,23 @@ describe('discoverProviderModels', () => {
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 
+	it('sanitizes and bounds non-abort errors when the signal is aborted', async () => {
+		const fetchMock = vi.fn().mockRejectedValue(new Error(
+			`Authorization: Bearer test-api-key ${'x'.repeat(10000)}`,
+		));
+		vi.stubGlobal('fetch', fetchMock);
+		const controller = new AbortController();
+		controller.abort();
+
+		const error = await getError(discoverProviderModels(provider, controller.signal));
+		expect(error.message).toContain('[credential redacted]');
+		expect(error.message.length).toBeLessThanOrEqual(2000);
+		expect(error.message).not.toContain(provider.apiKey);
+		expect(error.message).not.toContain('Bearer');
+		expect(error.message).not.toContain('Authorization');
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+
 	it('propagates abort errors unchanged without retrying', async () => {
 		const abortError = new DOMException('Aborted', 'AbortError');
 		const fetchMock = vi.fn().mockRejectedValue(abortError);

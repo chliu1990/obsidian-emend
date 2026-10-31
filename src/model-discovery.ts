@@ -52,7 +52,7 @@ export async function discoverProviderModels(
 		try {
 			payload = await response.json();
 		} catch (error) {
-			if (signal?.aborted || (isRecord(error) && error.name === 'AbortError')) {
+			if (isRecord(error) && error.name === 'AbortError') {
 				throw error;
 			}
 			throw new Error('The provider returned malformed JSON.');
@@ -76,7 +76,7 @@ export async function discoverProviderModels(
 		if (models.length === 0) throw new Error('The provider returned no usable models.');
 		return models;
 	} catch (error) {
-		if (signal?.aborted || (isRecord(error) && error.name === 'AbortError')) {
+		if (isRecord(error) && error.name === 'AbortError') {
 			throw error;
 		}
 		throw new Error(sanitizeDiscoveryError(error, apiKey));
