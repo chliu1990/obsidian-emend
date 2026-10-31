@@ -20,7 +20,11 @@ export class MarkdownRenderer {
 }
 
 export class Notice {
-	constructor(_message?: string) {}
+	static readonly messages: string[] = [];
+
+	constructor(message?: string) {
+		if (message !== undefined) Notice.messages.push(message);
+	}
 }
 
 export function setIcon(): void {}
@@ -50,9 +54,29 @@ interface TextComponent {
 	onChange(handler: (value: string) => unknown): TextComponent;
 }
 
+interface ButtonComponent {
+	buttonEl: { disabled: boolean };
+	text: string;
+	clickHandler: () => unknown;
+	setButtonText(value: string): ButtonComponent;
+	setDisabled(value: boolean): ButtonComponent;
+	onClick(handler: () => unknown): ButtonComponent;
+}
+
+interface DropdownComponent {
+	options: Record<string, string>;
+	value: string;
+	onChangeHandler: (value: string) => unknown;
+	addOption(value: string, label: string): DropdownComponent;
+	setValue(value: string): DropdownComponent;
+	onChange(handler: (value: string) => unknown): DropdownComponent;
+}
+
 export class Setting {
 	static readonly instances: Setting[] = [];
 	readonly texts: TextComponent[] = [];
+	readonly buttons: ButtonComponent[] = [];
+	readonly dropdowns: DropdownComponent[] = [];
 	readonly nameEl = { createSpan: () => ({}) };
 	name = '';
 
@@ -91,16 +115,48 @@ export class Setting {
 		return this;
 	}
 
-	addDropdown(callback: (dropdown: {
-		addOption(value: string, label: string): unknown;
-		setValue(value: string): unknown;
-		onChange(handler: (value: string) => unknown): unknown;
-	}) => unknown) {
-		const dropdown = {
-			addOption: () => dropdown,
-			setValue: () => dropdown,
-			onChange: () => dropdown,
+	addButton(callback: (button: ButtonComponent) => unknown) {
+		const button: ButtonComponent = {
+			buttonEl: { disabled: false },
+			text: '',
+			clickHandler: () => undefined,
+			setButtonText(value) {
+				this.text = value;
+				return this;
+			},
+			setDisabled(value) {
+				this.buttonEl.disabled = value;
+				return this;
+			},
+			onClick(handler) {
+				this.clickHandler = handler;
+				return this;
+			},
 		};
+		this.buttons.push(button);
+		callback(button);
+		return this;
+	}
+
+	addDropdown(callback: (dropdown: DropdownComponent) => unknown) {
+		const dropdown: DropdownComponent = {
+			options: {},
+			value: '',
+			onChangeHandler: () => undefined,
+			addOption(value, label) {
+				this.options[value] = label;
+				return this;
+			},
+			setValue(value) {
+				this.value = value;
+				return this;
+			},
+			onChange(handler) {
+				this.onChangeHandler = handler;
+				return this;
+			},
+		};
+		this.dropdowns.push(dropdown);
 		callback(dropdown);
 		return this;
 	}
