@@ -49,6 +49,11 @@ export interface InstructionPromptParts {
 	skillTexts: Map<string, string>;
 }
 
+export interface DiscoveredModel {
+	id: string;
+	displayName: string;
+}
+
 export interface ProviderConfig {
 	name: string;
 	baseUrl: string;
