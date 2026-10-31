@@ -1,136 +1,193 @@
-import { Editor, MarkdownView, Notice, Plugin, TFile } from 'obsidian';
-import { EditorView } from '@codemirror/view';
+import { MarkdownView, Notice, Plugin } from 'obsidian';
+import { EMEND_CHAT_VIEW_TYPE, EmendChatView } from './chat-view';
 import {
-	LAPIS_LAZULI_CHAT_VIEW_TYPE,
-	LapisLazuliChatView,
-} from './chat-view';
+	captureRequestContext,
+	type RequestContext,
+} from './context';
+import { ConversationStore } from './conversation-store';
+import { getEditStrategy } from './edit-strategy';
+import { loadAllInstructions } from './instructions-loader';
+import { createVaultNoteWriter, type EditResult } from './note-writer';
+import { requestAiResponse } from './provider-stream';
 import {
-	applyHunkToMarkdown,
-	applyHunksToMarkdown,
-	buildLineDiff,
-	clearDocumentDiffPreviewEffect,
-	createDocumentDiffPreviewExtension,
-	DocumentDiffHunk,
-	DocumentDiffPreview,
-	getRemainingHunksAfterAccept,
-	getRemainingHunksAfterReject,
-	setDocumentDiffPreviewEffect,
-} from './document-diff-preview';
+	EditRequestCoordinator,
+	ReadOnlyRequestCoordinator,
+	type ChatStreamResult,
+	type EditRequestResult,
+	type EditSubmission,
+	type ReadOnlySubmission,
+} from './request-coordinator';
 import {
-	clearInlineSuggestionEffect,
-	createInlineSuggestionExtension,
-	InlineSuggestion,
-	setInlineSuggestionEffect,
-	updateInlineSuggestionEffect,
-} from './inline-suggestions';
+	captureSelectionSnapshot,
+	createSelectionEditorAdapter,
+	SelectionEditRequestCoordinator,
+} from './selection-editor';
+import { SelectionModal } from './selection-modal';
+import { ApiKeyStorage } from './secret-storage';
 import {
 	DEFAULT_SETTINGS,
-	LapisLazuliSettingTab,
-	LapisLazuliSettings,
+	EmendSettingTab,
 	normalizeSettings,
+	sanitizeSettings,
 } from './settings';
-import {
-	AiMessage,
-	AiSuggestionContext,
-	requestAiChatResponse,
-	requestAiSuggestion,
-} from './providers';
+import type {
+	EmendSettings,
+	Mode,
+	ProviderId,
+	SelectionSnapshot,
+} from './types';
 
-interface EditorWithCodeMirror extends Editor {
-	cm?: EditorView;
-}
-
-interface ContextWindow {
-	text: string;
-}
-
-export default class LapisLazuliPlugin extends Plugin {
-	settings!: LapisLazuliSettings;
-	private cancelledSuggestionIds = new Set<string>();
+export default class EmendPlugin extends Plugin {
+	settings!: EmendSettings;
+	conversationStore!: ConversationStore;
+	private apiKeyStorage: ApiKeyStorage | undefined;
 	private lastMarkdownView: MarkdownView | null = null;
+	private pendingNotePaths: Set<string> | undefined;
 
 	async onload() {
 		await this.loadSettings();
+		this.conversationStore = new ConversationStore(
+			this.app.vault.adapter,
+			this.app.vault.configDir,
+			(message) => new Notice(message),
+		);
 
 		this.registerView(
-			LAPIS_LAZULI_CHAT_VIEW_TYPE,
-			(leaf) => new LapisLazuliChatView(leaf, this),
+			EMEND_CHAT_VIEW_TYPE,
+			(leaf) => new EmendChatView(leaf, this),
 		);
 		this.rememberActiveMarkdownView();
+		const refreshChatTargetNotes = () => {
+			this.rememberActiveMarkdownView();
+			for (const leaf of this.app.workspace.getLeavesOfType(
+				EMEND_CHAT_VIEW_TYPE,
+			)) {
+				if (leaf.view instanceof EmendChatView) {
+					void leaf.view.refreshTargetNote();
+				}
+			}
+		};
 		this.registerEvent(
-			this.app.workspace.on('active-leaf-change', () => {
-				this.rememberActiveMarkdownView();
-			}),
+			this.app.workspace.on('active-leaf-change', refreshChatTargetNotes),
+		);
+		this.registerEvent(
+			this.app.workspace.on('file-open', refreshChatTargetNotes),
 		);
 
-		this.registerEditorExtension(
-			[
-				createInlineSuggestionExtension({
-					acceptSuggestion: (suggestion, view) =>
-						this.acceptSuggestion(suggestion, view),
-					rejectSuggestion: (suggestion, view) =>
-						this.rejectSuggestion(suggestion, view),
-				}),
-				createDocumentDiffPreviewExtension({
-					acceptPreview: (preview, view) =>
-						this.acceptDocumentDiffPreview(preview, view),
-					rejectPreview: (preview, view) =>
-						this.rejectDocumentDiffPreview(preview, view),
-					acceptHunk: (preview, hunk, view) =>
-						this.acceptDocumentDiffHunk(preview, hunk, view),
-					rejectHunk: (preview, hunk, view) =>
-						this.rejectDocumentDiffHunk(preview, hunk, view),
-				}),
-			],
-		);
-
-		this.addRibbonIcon('messages-square', 'Open AI chat', () => {
+		// eslint-disable-next-line obsidianmd/ui/sentence-case -- Required Stage 18 public label.
+		this.addRibbonIcon('messages-square', 'Open Emend chat', () => {
 			void this.activateChatView();
 		});
 
 		this.addCommand({
-			id: 'open-chat',
-			name: 'Open AI chat',
+			// eslint-disable-next-line obsidianmd/commands/no-plugin-id-in-command-id -- Required Stage 02 public identifier.
+			id: 'emend:open-chat',
+			// eslint-disable-next-line obsidianmd/commands/no-plugin-name-in-command-name, obsidianmd/ui/sentence-case -- Required Stage 18 public label.
+			name: 'Open Emend chat',
 			callback: () => {
 				void this.activateChatView();
 			},
 		});
 
 		this.addCommand({
-			id: 'generate-inline-ai-suggestion',
-			name: 'Generate inline AI suggestion',
-			editorCheckCallback: (checking, editor, ctx) => {
-				if (!(ctx instanceof MarkdownView)) {
+			// eslint-disable-next-line obsidianmd/commands/no-plugin-id-in-command-id -- Required Stage 13 public identifier.
+			id: 'emend:switch-to-ask-mode',
+			name: 'Switch to ask mode',
+			// eslint-disable-next-line obsidianmd/commands/no-default-hotkeys -- Required Stage 13 shortcut.
+			hotkeys: [{ modifiers: ['Mod', 'Shift'], key: 'A' }],
+			callback: () => {
+				void this.activateChatMode('ask');
+			},
+		});
+
+		this.addCommand({
+			// eslint-disable-next-line obsidianmd/commands/no-plugin-id-in-command-id -- Required Stage 13 public identifier.
+			id: 'emend:switch-to-edit-mode',
+			name: 'Switch to edit mode',
+			// eslint-disable-next-line obsidianmd/commands/no-default-hotkeys -- Required Stage 13 shortcut.
+			hotkeys: [{ modifiers: ['Mod', 'Shift'], key: 'E' }],
+			callback: () => {
+				void this.activateChatMode('edit');
+			},
+		});
+
+		this.addCommand({
+			// eslint-disable-next-line obsidianmd/commands/no-plugin-id-in-command-id -- Required Stage 09 public identifier.
+			id: 'emend:modify-selected-text',
+			name: 'Modify selected text with AI',
+			editorCheckCallback: (checking, editor, view) => {
+				if (!(view instanceof MarkdownView) || !editor.getSelection()) {
 					return false;
 				}
-
-				if (!checking) {
-					void this.generateInlineSuggestion(editor, ctx);
+				if (checking) {
+					return true;
 				}
 
+				try {
+					const snapshot = captureSelectionSnapshot(view);
+					const editor = createSelectionEditorAdapter(
+						view,
+						(candidate) => this.getTargetMarkdownView() === candidate,
+					);
+					const modal = new SelectionModal(this.app, (prompt, signal) =>
+						this.requestSelectionEdit(snapshot, prompt, signal, editor),
+					);
+					this.register(() => modal.close());
+					modal.open();
+				} catch (error) {
+					new Notice(`Emend: ${getErrorMessage(error)}`);
+				}
 				return true;
 			},
 		});
 
-		this.addSettingTab(new LapisLazuliSettingTab(this.app, this));
+		this.addSettingTab(new EmendSettingTab(this.app, this));
 	}
 
 	async loadSettings() {
-		this.settings = normalizeSettings(
-			(await this.loadData()) as Partial<LapisLazuliSettings> | null,
-		);
+		this.settings = normalizeSettings(await this.loadData());
+		const storage = this.getApiKeyStorage();
+		let migrated = false;
+		for (const providerId of ['deepseek', 'kimi', 'custom'] as const) {
+			const provider = this.settings.providers[providerId];
+			if (provider.apiKey) {
+				const legacyApiKey = provider.apiKey.trim();
+				if (legacyApiKey) {
+					storage.setApiKey(providerId, legacyApiKey);
+				}
+				provider.apiKey = '';
+				migrated = true;
+			}
+		}
+		if (migrated) {
+			await this.saveSettings();
+		}
+	}
+
+	getApiKey(providerId: ProviderId) {
+		return this.getApiKeyStorage().getApiKey(providerId);
+	}
+
+	async setApiKey(providerId: ProviderId, value: string) {
+		this.getApiKeyStorage().setApiKey(providerId, value.trim());
+		this.settings.providers[providerId].apiKey = '';
+		await this.saveSettings();
+	}
+
+	private getApiKeyStorage() {
+		return (this.apiKeyStorage ??= new ApiKeyStorage(this.app.secretStorage));
 	}
 
 	async saveSettings() {
-		await this.saveData(this.settings);
+		await this.saveData(sanitizeSettings(this.settings));
 		this.refreshChatModelLabels();
 	}
 
 	private refreshChatModelLabels() {
 		for (const leaf of this.app.workspace.getLeavesOfType(
-			LAPIS_LAZULI_CHAT_VIEW_TYPE,
+			EMEND_CHAT_VIEW_TYPE,
 		)) {
-			if (leaf.view instanceof LapisLazuliChatView) {
+			if (leaf.view instanceof EmendChatView) {
 				leaf.view.refreshActiveModelLabel();
 			}
 		}
@@ -138,12 +195,12 @@ export default class LapisLazuliPlugin extends Plugin {
 
 	async activateChatView() {
 		const existingLeaf = this.app.workspace.getLeavesOfType(
-			LAPIS_LAZULI_CHAT_VIEW_TYPE,
+			EMEND_CHAT_VIEW_TYPE,
 		)[0];
 		const leaf =
 			existingLeaf ??
 			(await this.app.workspace.ensureSideLeaf(
-				LAPIS_LAZULI_CHAT_VIEW_TYPE,
+				EMEND_CHAT_VIEW_TYPE,
 				'right',
 				{
 					active: true,
@@ -152,10 +209,22 @@ export default class LapisLazuliPlugin extends Plugin {
 			));
 
 		await leaf.setViewState({
-			type: LAPIS_LAZULI_CHAT_VIEW_TYPE,
+			type: EMEND_CHAT_VIEW_TYPE,
 			active: true,
 		});
 		this.app.workspace.setActiveLeaf(leaf, { focus: true });
+	}
+
+	private async activateChatMode(mode: Mode) {
+		await this.activateChatView();
+		for (const leaf of this.app.workspace.getLeavesOfType(
+			EMEND_CHAT_VIEW_TYPE,
+		)) {
+			if (leaf.view instanceof EmendChatView) {
+				leaf.view.setMode(mode);
+				return;
+			}
+		}
 	}
 
 	getActiveNoteLabel() {
@@ -163,308 +232,118 @@ export default class LapisLazuliPlugin extends Plugin {
 		return markdownView?.file?.path ?? 'No Markdown note is open';
 	}
 
-	async requestChatCompletion(prompt: string, history: AiMessage[]) {
+	getActiveNotePath() {
+		return this.getTargetMarkdownView()?.file?.path ?? null;
+	}
+
+	captureChatContext(): RequestContext {
 		const markdownView = this.getTargetMarkdownView();
 		if (!markdownView) {
 			throw new Error('Open a Markdown note first.');
 		}
 
-		const editor = markdownView.editor;
-		const from = editor.posToOffset(editor.getCursor('from'));
-		const to = editor.posToOffset(editor.getCursor('to'));
-		const context = await this.buildSuggestionContext(
-			editor,
-			from,
-			to,
-			prompt,
-			markdownView,
-		);
-
-		const response = await requestAiChatResponse(
-			this.settings,
-			context,
-			history,
-		);
-
-		if (response.type === 'edit') {
-			this.showDocumentDiffPreview(markdownView, response.updatedMarkdown);
-		}
-
-		return response;
+		return captureRequestContext(markdownView, {
+			maxCharacters: Math.max(
+				1000,
+				this.settings.maxContextCharacters ||
+					DEFAULT_SETTINGS.maxContextCharacters,
+			),
+			includeNotePath: this.settings.includeNotePathInContext,
+		});
 	}
 
-	private async generateInlineSuggestion(
-		editor: Editor,
-		markdownView: MarkdownView,
-	) {
-		const editorView = getCodeMirrorView(editor);
-		if (!editorView) {
-			new Notice('This only works in the live Markdown editor.');
-			return;
+	async requestChatCompletion(
+		submission: ReadOnlySubmission,
+	): Promise<ChatStreamResult>;
+	async requestChatCompletion(
+		submission: EditSubmission,
+	): Promise<EditRequestResult>;
+	async requestChatCompletion(
+		submission: ReadOnlySubmission | EditSubmission,
+	): Promise<ChatStreamResult | EditRequestResult> {
+		if (!submission.prompt.trim()) {
+			throw new Error('Enter a prompt first.');
 		}
 
-		const activeMarkdownView =
-			this.app.workspace.getActiveViewOfType(MarkdownView);
-		if (activeMarkdownView !== markdownView) {
-			new Notice('This only works on the active note.');
-			return;
-		}
+		return this.withNoteRequest(submission.context.file.path, async () => {
+			const dependencies = {
+				provider: {
+					...this.settings.providers[this.settings.activeProvider],
+					apiKey: this.getApiKey(this.settings.activeProvider),
+				},
+				loadInstructions: () => loadAllInstructions(this.app.vault),
+				request: requestAiResponse,
+			};
+			if (submission.mode === 'edit') {
+				const coordinator = new EditRequestCoordinator({
+					...dependencies,
+					editStrategy: getEditStrategy(),
+					writer: createVaultNoteWriter(
+						this.app.vault,
+						(file) => this.getTargetMarkdownView()?.file === file,
+					),
+				});
+				return coordinator.submit(submission);
+			}
 
-		const fullNote = editor.getValue();
-		const from = editor.posToOffset(editor.getCursor('from'));
-		const to = editor.posToOffset(editor.getCursor('to'));
-		const selectedText = fullNote.slice(from, to);
-		const mode = selectedText.length > 0 ? 'replace' : 'insert';
-		const id = createSuggestionId();
-		const suggestion: InlineSuggestion = {
-			id,
-			from,
-			to,
-			anchor: to,
-			mode,
-			status: 'loading',
-			content: '',
-		};
-
-		editorView.dispatch({
-			effects: setInlineSuggestionEffect.of(suggestion),
+			const coordinator = new ReadOnlyRequestCoordinator(dependencies);
+			return coordinator.submit(submission);
 		});
+	}
 
-		try {
-			const context = await this.buildSuggestionContext(
+	async requestSelectionEdit(
+		snapshot: SelectionSnapshot,
+		prompt: string,
+		signal: AbortSignal,
+		editor: ReturnType<typeof createSelectionEditorAdapter>,
+	): Promise<EditResult> {
+		if (!prompt.trim()) {
+			throw new Error('Enter a prompt first.');
+		}
+
+		return this.withNoteRequest(snapshot.file.path, async () => {
+			const coordinator = new SelectionEditRequestCoordinator({
+				provider: {
+					...this.settings.providers[this.settings.activeProvider],
+					apiKey: this.getApiKey(this.settings.activeProvider),
+				},
+				loadInstructions: () => loadAllInstructions(this.app.vault),
+				request: requestAiResponse,
 				editor,
-				from,
-				to,
-				getInlineUserMessage(selectedText),
-				markdownView,
-			);
-			const content = normalizeAiOutput(
-				await requestAiSuggestion(this.settings, context),
-			);
-
-			if (this.cancelledSuggestionIds.delete(id)) {
-				return;
-			}
-
-			if (!content) {
-				throw new Error('The AI returned an empty response.');
-			}
-
-			editorView.dispatch({
-				effects: updateInlineSuggestionEffect.of({
-					id,
-					status: 'ready',
-					content,
-				}),
+				editStrategy: getEditStrategy(),
 			});
-		} catch (error) {
-			if (this.cancelledSuggestionIds.delete(id)) {
-				return;
-			}
-
-			const message = getErrorMessage(error);
-			editorView.dispatch({
-				effects: updateInlineSuggestionEffect.of({
-					id,
-					status: 'error',
-					message,
-				}),
+			return coordinator.submit({
+				snapshot,
+				prompt,
+				maxContextCharacters: Math.max(
+					1000,
+					this.settings.maxContextCharacters ||
+						DEFAULT_SETTINGS.maxContextCharacters,
+				),
+				smartSelectionContext: this.settings.smartSelectionContext,
+				notePath: this.settings.includeNotePathInContext
+					? `${this.app.vault.getName()}/${snapshot.file.path}`
+					: undefined,
+				signal,
 			});
-			new Notice(`Lapis Lazuli: ${message}`);
-		}
-	}
-
-	private async buildSuggestionContext(
-		editor: Editor,
-		from: number,
-		to: number,
-		userMessage: string,
-		markdownView: MarkdownView,
-	): Promise<AiSuggestionContext> {
-		const fullNote = editor.getValue();
-		const maxContextCharacters = Math.max(
-			1000,
-			this.settings.maxContextCharacters ||
-				DEFAULT_SETTINGS.maxContextCharacters,
-		);
-		const contextWindow = getContextWindow(
-			fullNote,
-			from,
-			to,
-			maxContextCharacters,
-		);
-
-		return {
-			markdown: contextWindow.text,
-			notePath: this.settings.includeNotePathInContext
-				? getNotePathWithVaultName(markdownView)
-				: undefined,
-			userMessage,
-			agentInstructions: await this.loadAgentInstructions(),
-		};
-	}
-
-	private async loadAgentInstructions() {
-		const path = this.settings.agentInstructionsFilePath.trim();
-		if (!path) {
-			return undefined;
-		}
-
-		const file = this.app.vault.getAbstractFileByPath(path);
-		if (!(file instanceof TFile) || file.extension !== 'md') {
-			throw new Error(
-				'The selected agent instructions file was not found. Choose another Markdown file in settings.',
-			);
-		}
-
-		return this.app.vault.cachedRead(file);
-	}
-
-	private acceptSuggestion(suggestion: InlineSuggestion, view: EditorView) {
-		if (suggestion.status !== 'ready') {
-			return;
-		}
-
-		const content = normalizeAiOutput(suggestion.content);
-		if (!content) {
-			this.rejectSuggestion(suggestion, view);
-			return;
-		}
-
-		const docLength = view.state.doc.length;
-		const from = clamp(suggestion.from, 0, docLength);
-		const to = clamp(Math.max(suggestion.to, from), 0, docLength);
-
-		view.dispatch({
-			changes: {
-				from,
-				to,
-				insert: content,
-			},
-			selection: {
-				anchor: from + content.length,
-			},
-			effects: clearInlineSuggestionEffect.of(suggestion.id),
-			scrollIntoView: true,
 		});
 	}
 
-	private rejectSuggestion(suggestion: InlineSuggestion, view: EditorView) {
-		this.cancelledSuggestionIds.add(suggestion.id);
-		view.dispatch({
-			effects: clearInlineSuggestionEffect.of(suggestion.id),
-		});
-	}
-
-	private showDocumentDiffPreview(
-		markdownView: MarkdownView,
-		updatedMarkdown: string,
-	) {
-		const editorView = getCodeMirrorView(markdownView.editor);
-		if (!editorView) {
-			new Notice('This only works in the live Markdown editor.');
-			return;
+	private async withNoteRequest<T>(
+		notePath: string,
+		request: () => Promise<T>,
+	): Promise<T> {
+		const pendingNotePaths = (this.pendingNotePaths ??= new Set());
+		if (pendingNotePaths.has(notePath)) {
+			throw new Error('Wait for the current Emend request to finish.');
 		}
 
-		const originalMarkdown = markdownView.editor.getValue();
-		const changes = buildLineDiff(originalMarkdown, updatedMarkdown);
-		if (changes.length === 0) {
-			new Notice('The proposed edit does not change the note.');
-			return;
+		pendingNotePaths.add(notePath);
+		try {
+			return await request();
+		} finally {
+			pendingNotePaths.delete(notePath);
 		}
-
-		editorView.dispatch({
-			effects: setDocumentDiffPreviewEffect.of({
-				id: createSuggestionId(),
-				originalMarkdown,
-				updatedMarkdown,
-				changes,
-			}),
-			scrollIntoView: true,
-		});
-	}
-
-	private acceptDocumentDiffPreview(
-		preview: DocumentDiffPreview,
-		view: EditorView,
-	) {
-		const updatedMarkdown = applyHunksToMarkdown(
-			view.state.doc.toString(),
-			preview.changes,
-		);
-
-		view.dispatch({
-			changes: {
-				from: 0,
-				to: view.state.doc.length,
-				insert: updatedMarkdown,
-			},
-			effects: clearDocumentDiffPreviewEffect.of(preview.id),
-			scrollIntoView: true,
-		});
-	}
-
-	private rejectDocumentDiffPreview(
-		preview: DocumentDiffPreview,
-		view: EditorView,
-	) {
-		view.dispatch({
-			effects: clearDocumentDiffPreviewEffect.of(preview.id),
-		});
-	}
-
-	private acceptDocumentDiffHunk(
-		preview: DocumentDiffPreview,
-		hunk: DocumentDiffHunk,
-		view: EditorView,
-	) {
-		const updatedMarkdown = applyHunkToMarkdown(
-			view.state.doc.toString(),
-			hunk,
-		);
-		const remainingHunks = getRemainingHunksAfterAccept(
-			preview.changes,
-			hunk,
-		);
-
-		view.dispatch({
-			changes: {
-				from: 0,
-				to: view.state.doc.length,
-				insert: updatedMarkdown,
-			},
-			effects:
-				remainingHunks.length > 0
-					? setDocumentDiffPreviewEffect.of({
-							...preview,
-							originalMarkdown: updatedMarkdown,
-							changes: remainingHunks,
-						})
-					: clearDocumentDiffPreviewEffect.of(preview.id),
-			scrollIntoView: true,
-		});
-	}
-
-	private rejectDocumentDiffHunk(
-		preview: DocumentDiffPreview,
-		hunk: DocumentDiffHunk,
-		view: EditorView,
-	) {
-		const remainingHunks = getRemainingHunksAfterReject(
-			preview.changes,
-			hunk,
-		);
-
-		view.dispatch({
-			effects:
-				remainingHunks.length > 0
-					? setDocumentDiffPreviewEffect.of({
-							...preview,
-							originalMarkdown: view.state.doc.toString(),
-							changes: remainingHunks,
-						})
-					: clearDocumentDiffPreviewEffect.of(preview.id),
-		});
 	}
 
 	private getActiveMarkdownView() {
@@ -510,81 +389,6 @@ export default class LapisLazuliPlugin extends Plugin {
 
 		return isOpen;
 	}
-}
-
-function getCodeMirrorView(editor: Editor): EditorView | null {
-	return (editor as EditorWithCodeMirror).cm ?? null;
-}
-
-function getContextWindow(
-	fullNote: string,
-	from: number,
-	to: number,
-	maxCharacters: number,
-): ContextWindow {
-	if (fullNote.length <= maxCharacters) {
-		return {
-			text: fullNote,
-		};
-	}
-
-	const selectionLength = Math.max(to - from, 0);
-	const remainingCharacters = Math.max(maxCharacters - selectionLength, 0);
-	const beforeBudget = Math.floor(remainingCharacters / 2);
-	const afterBudget = remainingCharacters - beforeBudget;
-
-	let start = Math.max(0, from - beforeBudget);
-	let end = Math.min(fullNote.length, to + afterBudget);
-
-	const unusedBeforeBudget = beforeBudget - (from - start);
-	if (unusedBeforeBudget > 0) {
-		end = Math.min(fullNote.length, end + unusedBeforeBudget);
-	}
-
-	const unusedAfterBudget = afterBudget - (end - to);
-	if (unusedAfterBudget > 0) {
-		start = Math.max(0, start - unusedAfterBudget);
-	}
-
-	const prefix = start > 0 ? '[...]\n' : '';
-	const suffix = end < fullNote.length ? '\n[...]' : '';
-
-	return {
-		text: `${prefix}${fullNote.slice(start, end)}${suffix}`,
-	};
-}
-
-function getInlineUserMessage(selectedText: string) {
-	if (selectedText.trim()) {
-		return [
-			'Rewrite the following selected Markdown text and return only the replacement Markdown:',
-			'',
-			selectedText,
-		].join('\n');
-	}
-
-	return 'Write a concise Markdown addition for the current note and return only the Markdown to insert.';
-}
-
-function getNotePathWithVaultName(markdownView: MarkdownView) {
-	const notePath = markdownView.file?.path;
-	if (!notePath) {
-		return undefined;
-	}
-
-	return `${markdownView.app.vault.getName()}/${notePath}`;
-}
-
-function normalizeAiOutput(content: string) {
-	return content.replace(/^\s+|\s+$/g, '');
-}
-
-function clamp(value: number, min: number, max: number) {
-	return Math.min(Math.max(value, min), max);
-}
-
-function createSuggestionId() {
-	return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function getErrorMessage(error: unknown) {

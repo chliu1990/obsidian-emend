@@ -1,21 +1,20 @@
 {
-	"name": "lapis-lazuli",
-	"version": "1.0.2",
-	"description": "Context-aware inline AI assistance for active Markdown notes in Obsidian.",
+	"name": "emend",
+	"version": "2.0.0",
+	"description": "Context-aware streamed AI chat for Markdown notes in Obsidian.",
+	"author": "Chang Liu and Kimi K3.1 Pro",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
 		"version": "node version-bump.mjs && git add manifest.json versions.json",
-		"lint": "eslint ."
+		"lint": "eslint .",
+		"test": "vitest run",
+		"test:watch": "vitest"
 	},
 	"keywords": [],
 	"license": "MIT",
-	"dependencies": {
-		"@codemirror/state": "6.5.0",
-		"@codemirror/view": "6.38.6"
-	},
 	"devDependencies": {
 		"@eslint/js": "^9.39.4",
 		"@types/node": "^22.15.17",
@@ -26,6 +25,8 @@
 		"jiti": "^2.6.1",
 		"obsidian": "1.13.1",
 		"typescript": "^5.8.3",
-		"typescript-eslint": "^8.59.1"
+		"typescript-eslint": "^8.59.1",
+		"vite": "^7.3.7",
+		"vitest": "^4.1.12"
 	}
 }
