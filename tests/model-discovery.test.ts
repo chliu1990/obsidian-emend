@@ -127,20 +127,18 @@ describe('discoverProviderModels', () => {
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
-	it('bounds and sanitizes HTTP errors without retrying', async () => {
+	it('returns concise HTTP errors without exposing response bodies or retrying', async () => {
+		const sensitiveBody = 'sensitive-provider-response-body';
 		const fetchMock = vi.fn().mockResolvedValue(new Response(
-			`Authorization: Bearer test-api-key ${'x'.repeat(10000)}`,
+			`${sensitiveBody} Authorization: Bearer test-api-key`,
 			{ status: 401 },
 		));
 		vi.stubGlobal('fetch', fetchMock);
 
 		const error = await getError(discoverProviderModels(provider));
-		expect(error.message).toContain('HTTP 401');
-		expect(error.message).toContain('[credential redacted]');
-		expect(error.message.length).toBeLessThanOrEqual(2000);
+		expect(error.message).toBe('Model discovery failed with HTTP 401.');
+		expect(error.message).not.toContain(sensitiveBody);
 		expect(error.message).not.toContain(provider.apiKey);
-		expect(error.message).not.toContain('Bearer');
-		expect(error.message).not.toContain('Authorization');
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 

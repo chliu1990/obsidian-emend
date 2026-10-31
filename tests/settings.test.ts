@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { Notice, Setting } from 'obsidian';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { discoverProviderModels } from '../src/model-discovery';
 import {
 	AI_PROVIDERS,
@@ -390,6 +390,12 @@ function latestModelButton() {
 	return button;
 }
 
+function latestModelText() {
+	const text = latestModelSetting().texts[0];
+	if (!text) throw new Error('Missing custom model text input');
+	return text;
+}
+
 function createDeferred<T>() {
 	let resolve!: (value: T) => void;
 	let reject!: (reason?: unknown) => void;
@@ -411,6 +417,7 @@ function createModelSettingsTab() {
 		getApiKey: vi.fn((providerId: keyof typeof apiKeys) => apiKeys[providerId]),
 		setApiKey: vi.fn(async (providerId: keyof typeof apiKeys, value: string) => {
 			apiKeys[providerId] = value;
+			plugin.settings.providers[providerId].discoveredModels = [];
 		}),
 		saveSettings: vi.fn(async () => undefined),
 	};
@@ -431,6 +438,40 @@ describe('EmendSettingTab model discovery', () => {
 		settingInstances.length = 0;
 		noticeMessages.length = 0;
 		vi.mocked(discoverProviderModels).mockReset();
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('does not expose raw HTTP response bodies in refresh notices', async () => {
+		const actualDiscovery = await vi.importActual<typeof import('../src/model-discovery')>(
+			'../src/model-discovery',
+		);
+		vi.mocked(discoverProviderModels).mockImplementation(
+			actualDiscovery.discoverProviderModels,
+		);
+		const sensitiveBody = 'sensitive-provider-response-body';
+		const fetchMock = vi.fn().mockResolvedValue(new Response(sensitiveBody, {
+			status: 401,
+		}));
+		vi.stubGlobal('fetch', fetchMock);
+		const { plugin, tab } = createModelSettingsTab();
+		plugin.settings.providers.deepseek.discoveredModels = [
+			{ id: 'cached-model', displayName: 'Cached model' },
+		];
+		displaySettings(tab);
+
+		await latestModelButton().clickHandler();
+
+		expect(noticeMessages).toHaveLength(1);
+		expect(noticeMessages[0]).toContain('HTTP 401');
+		expect(noticeMessages[0]).not.toContain(sensitiveBody);
+		expect(plugin.settings.providers.deepseek.discoveredModels).toEqual([
+			{ id: 'cached-model', displayName: 'Cached model' },
+		]);
+		expect(plugin.saveSettings).not.toHaveBeenCalled();
+		expect(fetchMock).toHaveBeenCalledOnce();
 	});
 
 	it('does not discover models on display or provider switching', async () => {
@@ -489,6 +530,7 @@ describe('EmendSettingTab model discovery', () => {
 			__custom__: 'Custom model',
 		});
 		expect(dropdown.value).toBe('local-custom');
+		expect(latestModelText().value).toBe('local-custom');
 		expect(plugin.settings.providers.deepseek.model).toBe('local-custom');
 		expect(plugin.settings.providers.deepseek.discoveredModels).toEqual([
 			{ id: 'model-a', displayName: 'Model A' },
@@ -589,14 +631,19 @@ describe('EmendSettingTab model discovery', () => {
 			await click;
 
 			expect(plugin.settings.providers.deepseek.discoveredModels).toEqual(
-				change === 'base URL'
-					? []
-					: [{ id: 'cached-model', displayName: 'Cached model' }],
+				change === 'provider'
+					? [{ id: 'cached-model', displayName: 'Cached model' }]
+					: [],
 			);
 			expect(plugin.settings.providers.deepseek.model).toBe('local-custom');
 			expect(plugin.saveSettings).toHaveBeenCalledTimes(saveCountAfterChange);
 			expect(noticeMessages).toEqual([]);
 			expect(discoverProviderModels).toHaveBeenCalledOnce();
+			if (change === 'provider') {
+				expect(
+					latestSetting('Kimi model').buttons[0]?.buttonEl.disabled,
+				).toBe(false);
+			}
 		},
 	);
 });

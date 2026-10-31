@@ -42,10 +42,7 @@ export async function discoverProviderModels(
 			signal,
 		});
 		if (!response.ok) {
-			const responseText = await response.text();
-			throw new Error(
-				`Model discovery failed with HTTP ${response.status}.${responseText.trim() ? `\nResponse: ${responseText.trim()}` : ''}`,
-			);
+			throw new Error(`Model discovery failed with HTTP ${response.status}.`);
 		}
 
 		let payload: unknown;
