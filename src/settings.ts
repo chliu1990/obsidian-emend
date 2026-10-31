@@ -1,6 +1,8 @@
-import { App, PluginSettingTab, setIcon, Setting } from 'obsidian';
+import { App, Notice, PluginSettingTab, setIcon, Setting } from 'obsidian';
+import { discoverProviderModels } from './model-discovery';
 import type EmendPlugin from './main';
 import type {
+	DiscoveredModel,
 	EmendSettings,
 	ProviderConfig,
 	ProviderId,
@@ -42,6 +44,7 @@ export const DEFAULT_SETTINGS: EmendSettings = {
 			model: 'deepseek-flash',
 			reasoningEffort: 'high',
 			requestUsage: true,
+			discoveredModels: [],
 		},
 		kimi: {
 			name: 'Kimi',
@@ -50,6 +53,7 @@ export const DEFAULT_SETTINGS: EmendSettings = {
 			model: 'k3.1-pro',
 			reasoningEffort: 'high',
 			requestUsage: true,
+			discoveredModels: [],
 		},
 		custom: {
 			name: 'Custom',
@@ -58,6 +62,7 @@ export const DEFAULT_SETTINGS: EmendSettings = {
 			model: '',
 			reasoningEffort: 'high',
 			requestUsage: false,
+			discoveredModels: [],
 		},
 	},
 	defaultMode: 'ask',
@@ -124,6 +129,8 @@ export function getProviderName(providerId: ProviderId) {
 }
 
 export class EmendSettingTab extends PluginSettingTab {
+	private modelRefreshPending = false;
+
 	constructor(
 		app: App,
 		private readonly plugin: EmendPlugin,
@@ -189,6 +196,7 @@ export class EmendSettingTab extends PluginSettingTab {
 					.setValue(config.baseUrl)
 					.onChange(async (value) => {
 						config.baseUrl = value.trim();
+						config.discoveredModels = [];
 						await this.plugin.saveSettings();
 					}),
 			);
@@ -199,13 +207,20 @@ export class EmendSettingTab extends PluginSettingTab {
 		setIcon(modelSetting.nameEl.createSpan(), 'cpu');
 		modelSetting
 			.addDropdown((dropdown) => {
+				const options = new Map<string, string>();
 				if (provider.defaultModel) {
-					dropdown.addOption(provider.defaultModel, provider.defaultModel);
+					options.set(provider.defaultModel, provider.defaultModel);
 				}
-				if (config.model && config.model !== provider.defaultModel) {
-					dropdown.addOption(config.model, config.model);
+				for (const model of config.discoveredModels) {
+					options.set(model.id, model.displayName);
 				}
-				dropdown.addOption(CUSTOM_MODEL_OPTION, 'Custom model');
+				if (config.model) {
+					options.set(config.model, config.model);
+				}
+				options.set(CUSTOM_MODEL_OPTION, 'Custom model');
+				for (const [value, label] of options) {
+					dropdown.addOption(value, label);
+				}
 				dropdown
 					.setValue(config.model || CUSTOM_MODEL_OPTION)
 					.onChange(async (value) => {
@@ -225,6 +240,16 @@ export class EmendSettingTab extends PluginSettingTab {
 					.onChange(async (value) => {
 						config.model = value.trim();
 						await this.plugin.saveSettings();
+					}),
+			)
+			.addButton((button) =>
+				button
+					.setButtonText('Refresh models')
+					.setDisabled(this.modelRefreshPending)
+					.onClick(async () => {
+						if (this.modelRefreshPending) return;
+						button.setDisabled(true);
+						await this.refreshModels(provider.id);
 					}),
 			);
 
@@ -321,6 +346,40 @@ export class EmendSettingTab extends PluginSettingTab {
 					});
 			});
 	}
+
+	private async refreshModels(providerId: ProviderId) {
+		if (this.modelRefreshPending) return;
+
+		const config = this.plugin.settings.providers[providerId];
+		const providerName = getProviderName(providerId);
+		const baseUrl = config.baseUrl;
+		const apiKey = this.plugin.getApiKey(providerId);
+		this.modelRefreshPending = true;
+		try {
+			const discoveredModels = await discoverProviderModels({
+				name: providerName,
+				baseUrl,
+				apiKey,
+			});
+			if (
+				this.plugin.settings.activeProvider !== providerId ||
+				config.baseUrl !== baseUrl ||
+				this.plugin.getApiKey(providerId) !== apiKey
+			) {
+				return;
+			}
+
+			config.discoveredModels = discoveredModels;
+			await this.plugin.saveSettings();
+			new Notice(`Emend: ${providerName} model list refreshed.`);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			new Notice(`Emend: ${message}`);
+		} finally {
+			this.modelRefreshPending = false;
+			this.renderSettings();
+		}
+	}
 }
 
 function normalizeProviderConfig(
@@ -340,7 +399,27 @@ function normalizeProviderConfig(
 			typeof config.requestUsage === 'boolean'
 				? config.requestUsage
 				: defaults.requestUsage,
+		discoveredModels: normalizeDiscoveredModels(config.discoveredModels),
 	};
+}
+
+function normalizeDiscoveredModels(value: unknown): DiscoveredModel[] {
+	if (!Array.isArray(value)) return [];
+	const models: DiscoveredModel[] = [];
+	const seen = new Set<string>();
+	for (const entry of value) {
+		if (!isRecord(entry) || typeof entry.id !== 'string' || !entry.id.trim()) continue;
+		const id = entry.id.trim();
+		if (seen.has(id)) continue;
+		seen.add(id);
+		models.push({
+			id,
+			displayName: typeof entry.displayName === 'string' && entry.displayName.trim()
+				? entry.displayName.trim()
+				: id,
+		});
+	}
+	return models;
 }
 
 function normalizeContextLimit(value: unknown) {

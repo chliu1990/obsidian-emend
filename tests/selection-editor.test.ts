@@ -32,6 +32,7 @@ const provider: ProviderConfig = {
 	model: 'dummy-model',
 	reasoningEffort: 'low',
 	requestUsage: false,
+	discoveredModels: [],
 };
 
 function markdownFile(path = 'folder/note.md'): TFile {

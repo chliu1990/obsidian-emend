@@ -181,6 +181,7 @@ const provider: ProviderConfig = {
 	model: 'test-model',
 	reasoningEffort: 'medium',
 	requestUsage: true,
+	discoveredModels: [],
 };
 
 function makeRequest(overrides: Partial<AiProviderRequest> = {}): AiProviderRequest {

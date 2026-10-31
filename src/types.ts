@@ -49,6 +49,11 @@ export interface InstructionPromptParts {
 	skillTexts: Map<string, string>;
 }
 
+export interface DiscoveredModel {
+	id: string;
+	displayName: string;
+}
+
 export interface ProviderConfig {
 	name: string;
 	baseUrl: string;
@@ -56,6 +61,7 @@ export interface ProviderConfig {
 	model: string;
 	reasoningEffort: ReasoningEffort;
 	requestUsage: boolean;
+	discoveredModels: DiscoveredModel[];
 }
 
 export interface EmendSettings {

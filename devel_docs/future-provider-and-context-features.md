@@ -1,17 +1,18 @@
 # Deferred feature backlog: provider and context improvements
 
-These are approved future feature requests, not current Emend behavior. Implement each as a separate reviewed change with unit tests, real-Obsidian verification, documentation, and CI evidence.
+Checked items are implemented current behavior. Unchecked items are approved future feature requests, not current Emend behavior. Implement each remaining item as a separate reviewed change with unit tests, real-Obsidian verification, documentation, and CI evidence.
 
 ## 1. Provider model-list discovery
 
-- [ ] Add an explicit **Refresh models** action in provider settings that requests the available model list from the configured provider.
-- [ ] Use provider-specific OpenAI-compatible `GET /models` adapters where supported. Do not assume custom providers expose the same response schema or metadata.
-- [ ] Populate the model dropdown from returned IDs while preserving editable custom model entry and valid persisted overrides.
-- [ ] Use available metadata deliberately: display name, context window, output limit, supported modalities, reasoning efforts, and API capabilities. Do not invent missing metadata.
-- [ ] Resolve credentials only through SecretStorage. Never print keys or include them in logs/errors.
-- [ ] Send discovery only after an explicit user action—never on plugin load, settings open, note open, or a periodic schedule.
-- [ ] Cache only non-secret model metadata and invalidate it when provider, base URL, or credentials/configuration change. Unsupported providers produce a clear error without silently retaining stale results.
-- [ ] Test response validation, malformed/empty lists, duplicates, unsupported providers, HTTP errors, cache invalidation, no background requests, and custom-model preservation.
+- [x] Add an explicit **Refresh models** action in provider settings that requests the available model list from the configured provider.
+- [x] Request the configured provider's OpenAI-compatible `GET /models` endpoint. Custom endpoints that do not support discovery produce a clear error while manual model entry remains available.
+- [x] Populate the model dropdown from returned IDs while preserving editable custom model entry and valid persisted overrides.
+- [x] Use returned display names when available, falling back to the model ID without inventing missing metadata.
+- [ ] Use context-window, output-limit, supported-modality, reasoning-effort, and API-capability metadata deliberately. This capability metadata remains deferred; do not invent missing metadata.
+- [x] Resolve credentials only through SecretStorage. Never print keys or include them in logs/errors.
+- [x] Send discovery only after an explicit user action—never on plugin load, settings open, note open, or a periodic schedule.
+- [x] Cache only non-secret model IDs/display names and invalidate the relevant provider's cache when its base URL or API key changes. Switching the active provider does not trigger discovery or modify another provider's cache; failed discovery preserves the previous valid cache.
+- [x] Test response validation, malformed/empty lists, duplicates, unsupported providers, HTTP errors, cache invalidation, no background requests, and custom-model preservation.
 
 ## 2. Vision models and embedded note content
 
