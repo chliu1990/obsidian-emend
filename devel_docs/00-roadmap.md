@@ -1,5 +1,7 @@
 # Emend rewrite roadmap
 
+For current priorities and the rolling release plan, see the public [ROADMAP.md](../ROADMAP.md). Historical stage records remain below.
+
 Stages 1–22 are implemented and reviewed. Each stage record contains **Goal**, **Plan**, **Implementation details**, and **Verification results**, with actual command and CI evidence. The original real-Obsidian release matrix is recorded in [Manual verification](manual-verification.md), and the hardened release smoke matrix is in [Stage 22](22-release-verification.md). Historical records remain unchanged descriptions of their own stage behavior.
 
 1. [Testing and CI](01-testing-and-ci.md) — establish Vitest, the Obsidian mock, Gitea Actions, and the stage documentation convention.

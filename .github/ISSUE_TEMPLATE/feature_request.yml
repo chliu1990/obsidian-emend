@@ -1,0 +1,29 @@
+name: Feature request
+description: Propose one focused improvement
+title: '[Feature] '
+labels: [feature]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What user problem would this improvement address?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe one independently reviewable behavior and a reasonable PR boundary.
+    validations:
+      required: true
+  - type: textarea
+    id: privacy
+    attributes:
+      label: Privacy and provider impact
+      description: Would this send new content, read more vault files, store data, or change note writes? Include provider/model names but never API keys.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and non-goals
+      description: What related behavior should remain outside this request?

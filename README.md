@@ -99,6 +99,8 @@ See the [privacy and storage details](QUICK_START.md#8-verify-persistence-and-pr
 - [Installation guide](INSTALLATION.md)
 - [Quick start](QUICK_START.md)
 - [Architecture and implementation records](IMPLEMENTATION_PLAN.md)
+- [Roadmap](ROADMAP.md) and [changelog](CHANGELOG.md)
+- [Contributing guide](CONTRIBUTING.md) and [security policy](SECURITY.md)
 - [CI and release workflows](.github/workflows/)
 - [Deferred context-management roadmap](devel_docs/future-context-management.md)
 - [Deferred web-search roadmap](devel_docs/future-web-search.md)

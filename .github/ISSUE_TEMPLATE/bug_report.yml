@@ -1,0 +1,37 @@
+name: Bug report
+description: Report incorrect Emend behavior
+title: '[Bug] '
+labels: [bug]
+body:
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Include the smallest sanitized note/example that reproduces the issue. Do not include API keys or private note content.
+      placeholder: '1. Open a test note...\n2. Select Edit...\n3. Observe...'
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Obsidian and Emend versions
+      placeholder: 'Obsidian 1.11.7 / Emend 2.0.0'
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: Provider and model
+      description: Include provider/model names only, never API keys.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized errors or logs
+      description: Remove credentials, private paths, and personal note content before pasting.

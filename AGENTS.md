@@ -72,6 +72,8 @@ npm test
 | `manifest.json` / `versions.json` | Obsidian release metadata and plugin-version-to-minimum-app-version mapping. |
 | `version-bump.mjs` | npm version hook that synchronizes release metadata. |
 | `IMPLEMENTATION_PLAN.md` | Implemented-status architecture contract and index to the numbered stage records; current behavior and release evidence are linked from it. |
+| `ROADMAP.md` / `CHANGELOG.md` | Current rolling priorities, non-goals, release policy, and shipped-version history. |
+| `CONTRIBUTING.md` / `SECURITY.md` | Focused PR requirements, independent security review boundaries, and private vulnerability reporting. |
 | `devel_docs/22-release-verification.md` | Hardened-release local, real-Obsidian, review, and Gitea CI evidence. |
 | `devel_docs/future-context-management.md` | Deferred-only provider capacity, labeled context accounting/progress, 75% compression threshold, privacy/cost, and safe full-note/selection fallback design. |
 | `devel_docs/future-web-search.md` | Deferred-only provider-specific search capabilities, explicit opt-in, citations, errors, privacy, and test design. |
