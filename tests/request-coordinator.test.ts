@@ -27,6 +27,7 @@ const provider: ProviderConfig = {
 	model: 'dummy-model',
 	reasoningEffort: 'low',
 	requestUsage: true,
+	discoveredModels: [],
 };
 
 function makeContext(overrides: Partial<RequestContext> = {}): RequestContext {
