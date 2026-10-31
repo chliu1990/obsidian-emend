@@ -25,6 +25,8 @@ Emend does not install other plugins automatically.
 
 ## Installation
 
+Emend is distributed through GitHub releases and manual installation. An Obsidian Community Directory submission is not currently planned; see [publication and distribution](devel_docs/publication.md).
+
 See the complete [installation guide](INSTALLATION.md) for build, update, removal, and troubleshooting instructions.
 
 For a source installation, clone this repository and run:

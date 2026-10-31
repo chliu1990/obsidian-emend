@@ -25,6 +25,10 @@ Stages 1–22 are implemented and reviewed. Each stage record contains **Goal**,
 21. [SecretStorage API keys](21-secret-storage.md) — provider credential migration, request resolution, and sanitized persistence.
 22. [Release verification](22-release-verification.md) — deferred roadmap, current guides, final local and real-Obsidian smoke evidence, review, and CI.
 
+## Publication
+
+- [Publication and distribution](publication.md): public GitHub repository, manual installation, release workflow/assets, and the decision not to submit to the Obsidian Community Directory at this time.
+
 ## Deferred roadmap — not implemented
 
 - [Context management](future-context-management.md): per-provider context/output limits, honest estimated versus provider usage, category progress display, a configurable 75% compression threshold, explicit privacy/cost behavior, no silent full-note truncation, and Modify Selection fallback.
