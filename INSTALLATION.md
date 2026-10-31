@@ -9,6 +9,15 @@ Emend is a desktop-only Obsidian plugin. Mobile Obsidian is not supported.
 - Node.js **24** and npm if building from source.
 - A DeepSeek, Kimi, or other OpenAI-compatible provider. You need an API key and an available model. A local OpenAI-compatible endpoint also works when it permits requests from Obsidian.
 
+## Install from the release ZIP
+
+1. Open the [GitHub releases page](https://github.com/chliu1990/obsidian-emend/releases) and download `emend-2.0.0.zip`.
+2. Extract the ZIP into `<Vault>/.obsidian/plugins/`. The archive already contains a top-level `emend/` folder.
+3. Confirm that `main.js`, `manifest.json`, and `styles.css` are directly inside `<Vault>/.obsidian/plugins/emend/`.
+4. Continue with **Enable the plugins** below.
+
+Do not extract into `<Vault>/.obsidian/plugins/emend/`; that would create an incorrect nested `emend/emend/` folder.
+
 ## Build from source
 
 For a new clone of the public repository:

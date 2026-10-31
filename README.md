@@ -29,6 +29,8 @@ Emend is distributed through GitHub releases and manual installation. An Obsidia
 
 See the complete [installation guide](INSTALLATION.md) for build, update, removal, and troubleshooting instructions.
 
+For the simplest installation, download `emend-2.0.0.zip` from the [GitHub releases page](https://github.com/chliu1990/obsidian-emend/releases) and extract it into `<Vault>/.obsidian/plugins/`. The ZIP contains the complete `emend/` plugin folder.
+
 For a source installation, clone this repository and run:
 
 ```bash

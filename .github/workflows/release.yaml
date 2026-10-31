@@ -35,6 +35,14 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+      - name: Package Obsidian plugin
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p package/emend
+          cp main.js manifest.json styles.css package/emend/
+          cd package
+          zip -r "../emend-${RELEASE_VERSION}.zip" emend
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
@@ -46,3 +54,4 @@ jobs:
             main.js
             manifest.json
             styles.css
+            emend-${{ env.RELEASE_VERSION }}.zip
