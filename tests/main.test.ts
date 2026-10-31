@@ -3,7 +3,8 @@ import { EmendChatView } from '../src/chat-view';
 import type { ConversationDataAdapter } from '../src/conversation-store';
 import EmendPlugin from '../src/main';
 import type { ReadOnlySubmission } from '../src/request-coordinator';
-import type { ChatMessage } from '../src/types';
+import { DEFAULT_SETTINGS } from '../src/settings';
+import type { ChatMessage, EmendSettings } from '../src/types';
 
 class MemoryAdapter implements ConversationDataAdapter {
 	readonly files = new Map<string, string>();
@@ -215,6 +216,42 @@ describe('EmendPlugin workspace conversation events', () => {
 		expect(
 			(await plugin.conversationStore.load('A.md')).map((item) => item.id),
 		).toEqual(['A saved']);
+	});
+});
+
+describe('EmendPlugin discovered model cache invalidation', () => {
+	it('clears only the updated provider cache and persists sanitized API keys', async () => {
+		const settings = structuredClone(DEFAULT_SETTINGS);
+		settings.providers.deepseek.discoveredModels = [
+			{ id: 'deepseek-model', displayName: 'DeepSeek model' },
+		];
+		settings.providers.kimi.discoveredModels = [
+			{ id: 'kimi-model', displayName: 'Kimi model' },
+		];
+		const setSecret = vi.fn();
+		const saveData = vi.fn(async (_data: unknown) => undefined);
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, {
+			settings,
+			app: {
+				secretStorage: { setSecret, getSecret: vi.fn(() => null) },
+				workspace: { getLeavesOfType: () => [] },
+			},
+			saveData,
+		});
+
+		await plugin.setApiKey('deepseek', 'new-key');
+
+		expect(plugin.settings.providers.deepseek.discoveredModels).toEqual([]);
+		expect(plugin.settings.providers.kimi.discoveredModels).toEqual([
+			{ id: 'kimi-model', displayName: 'Kimi model' },
+		]);
+		expect(setSecret).toHaveBeenCalledWith('emend-api-key-deepseek', 'new-key');
+		expect(saveData).toHaveBeenCalledOnce();
+		const persisted = saveData.mock.calls[0]?.[0] as EmendSettings | undefined;
+		expect(persisted?.providers.deepseek.apiKey).toBe('');
+		expect(persisted?.providers.kimi.apiKey).toBe('');
+		expect(persisted?.providers.custom.apiKey).toBe('');
 	});
 });
 
