@@ -247,6 +247,8 @@ export class EmendSettingTab extends PluginSettingTab {
 					.setButtonText('Refresh models')
 					.setDisabled(this.modelRefreshPending)
 					.onClick(async () => {
+						if (this.modelRefreshPending) return;
+						button.setDisabled(true);
 						await this.refreshModels(provider.id);
 					}),
 			);

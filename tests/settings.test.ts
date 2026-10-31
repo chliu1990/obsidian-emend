@@ -555,6 +555,7 @@ describe('EmendSettingTab model discovery', () => {
 		const button = latestModelButton();
 
 		const firstClick = button.clickHandler();
+		expect(button.buttonEl.disabled).toBe(true);
 		const secondClick = button.clickHandler();
 		await secondClick;
 
