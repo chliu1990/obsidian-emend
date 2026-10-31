@@ -9,6 +9,24 @@ Emend is a desktop-only Obsidian plugin. Mobile Obsidian is not supported.
 - Node.js **24** and npm if building from source.
 - A DeepSeek, Kimi, or other OpenAI-compatible provider. You need an API key and an available model. A local OpenAI-compatible endpoint also works when it permits requests from Obsidian.
 
+## Install with BRAT
+
+**BRAT — Beta Reviewers Auto-update Tool** installs and updates plugins directly from GitHub releases, which is useful when a plugin is not listed in the Obsidian Community Directory.
+
+1. Open **Settings → Community plugins → Browse**, search for **BRAT — Beta Reviewers Auto-update Tool**, then install and enable it.
+2. Open the BRAT settings and choose **Add beta plugin**.
+3. Enter the Emend repository URL:
+
+   ```text
+   https://github.com/chliu1990/obsidian-emend
+   ```
+
+4. Select the latest release, or choose `2.0.0` if BRAT asks for a specific version.
+5. After BRAT installs Emend, enable **Emend** and **Track Changes** under **Settings → Community plugins**.
+6. Continue with **Enable the plugins** below, then configure a provider in [QUICK_START.md](QUICK_START.md).
+
+For updates, use BRAT’s update check and review the release notes before updating. Provider settings remain in Obsidian SecretStorage and conversations remain in the vault. See the [official BRAT documentation](https://tfthacker.com/BRAT) for more options.
+
 ## Install from the release ZIP
 
 1. Open the [GitHub releases page](https://github.com/chliu1990/obsidian-emend/releases) and download `emend-2.0.0.zip`.

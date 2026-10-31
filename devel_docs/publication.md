@@ -5,7 +5,7 @@
 Emend is distributed through the public GitHub repository and manual installation. There is **no plan to submit Emend to the Obsidian Community Directory** at this time.
 
 - Repository: https://github.com/chliu1990/obsidian-emend
-- Installation: [README](../README.md) and [installation guide](../INSTALLATION.md)
+- Installation: [BRAT](../INSTALLATION.md#install-with-brat) (recommended), [release ZIP](../INSTALLATION.md#install-from-the-release-zip), or [manual source installation](../INSTALLATION.md)
 - Release automation: [GitHub release workflow](../.github/workflows/release.yaml)
 - Release assets: `main.js`, `manifest.json`, `styles.css`, and `emend-2.0.0.zip` (a ready-to-extract `emend/` folder)
 - Release tags must exactly match `manifest.json`, without a leading `v`.
