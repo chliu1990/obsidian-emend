@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
-import { Setting } from 'obsidian';
-import { describe, expect, it, vi } from 'vitest';
+import { Notice, Setting } from 'obsidian';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { discoverProviderModels } from '../src/model-discovery';
 import {
 	AI_PROVIDERS,
 	DEFAULT_SETTINGS,
@@ -8,6 +9,16 @@ import {
 	normalizeSettings,
 } from '../src/settings';
 import type EmendPlugin from '../src/main';
+import type { Setting as MockSetting } from './mocks/obsidian';
+
+vi.mock('../src/model-discovery', () => ({
+	discoverProviderModels: vi.fn(),
+}));
+
+const settingInstances = (
+	Setting as unknown as { readonly instances: MockSetting[] }
+).instances;
+const noticeMessages = (Notice as unknown as { readonly messages: string[] }).messages;
 
 const manifest = JSON.parse(
 	readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'),
@@ -86,6 +97,7 @@ describe('normalizeSettings', () => {
 			model: 'deepseek-flash',
 			reasoningEffort: 'high',
 			requestUsage: true,
+			discoveredModels: [],
 		});
 		expect(DEFAULT_SETTINGS.providers.kimi).toEqual({
 			name: 'Kimi',
@@ -94,6 +106,7 @@ describe('normalizeSettings', () => {
 			model: 'k3.1-pro',
 			reasoningEffort: 'high',
 			requestUsage: true,
+			discoveredModels: [],
 		});
 		expect(DEFAULT_SETTINGS.providers.custom).toEqual({
 			name: 'Custom',
@@ -102,6 +115,7 @@ describe('normalizeSettings', () => {
 			model: '',
 			reasoningEffort: 'high',
 			requestUsage: false,
+			discoveredModels: [],
 		});
 	});
 
@@ -138,6 +152,30 @@ describe('normalizeSettings', () => {
 		},
 	);
 
+	it('normalizes and deduplicates discovered model caches', () => {
+		const settings = normalizeSettings({ providers: { deepseek: {
+			discoveredModels: [
+				{ id: ' model-a ', displayName: ' Model A ' },
+				{ id: 'model-a', displayName: 'Duplicate' },
+				{ id: '', displayName: 'Invalid' },
+				{ id: 'model-b', displayName: '' },
+				null,
+			],
+		} } });
+		expect(settings.providers.deepseek.discoveredModels).toEqual([
+			{ id: 'model-a', displayName: 'Model A' },
+			{ id: 'model-b', displayName: 'model-b' },
+		]);
+		expect(settings.providers.kimi.discoveredModels).toEqual([]);
+	});
+
+	it('drops malformed discovered model caches', () => {
+		for (const discoveredModels of ['invalid', 42, {}, null]) {
+			expect(normalizeSettings({ providers: { kimi: { discoveredModels } } })
+				.providers.kimi.discoveredModels).toEqual([]);
+		}
+	});
+
 	it('retains valid user-entered settings for every provider', () => {
 		const data = {
 			activeProvider: 'custom',
@@ -149,6 +187,7 @@ describe('normalizeSettings', () => {
 					model: 'deepseek-user-model',
 					reasoningEffort: 'low',
 					requestUsage: false,
+					discoveredModels: [],
 				},
 				kimi: {
 					name: 'Kimi',
@@ -157,6 +196,7 @@ describe('normalizeSettings', () => {
 					model: 'kimi-user-model',
 					reasoningEffort: 'medium',
 					requestUsage: true,
+					discoveredModels: [],
 				},
 				custom: {
 					name: 'Custom',
@@ -165,6 +205,7 @@ describe('normalizeSettings', () => {
 					model: 'custom-user-model',
 					reasoningEffort: 'high',
 					requestUsage: true,
+					discoveredModels: [],
 				},
 			},
 			defaultMode: 'discuss',
@@ -277,4 +318,333 @@ describe('EmendSettingTab API keys', () => {
 		);
 		expect(plugin.settings.providers.deepseek.apiKey).toBe('');
 	});
+});
+
+describe('EmendSettingTab discovered model cache invalidation', () => {
+	it('clears only the provider cache when its base URL changes', async () => {
+		const instances = (
+			Setting as unknown as {
+				instances: Array<{
+					name: string;
+					texts: Array<{
+						onChangeHandler(value: string): Promise<void>;
+					}>;
+				}>;
+			}
+		).instances;
+		instances.length = 0;
+		const plugin = {
+			settings: structuredClone(DEFAULT_SETTINGS),
+			getApiKey: vi.fn(() => ''),
+			saveSettings: vi.fn(async () => undefined),
+		};
+		plugin.settings.providers.deepseek.discoveredModels = [
+			{ id: 'deepseek-model', displayName: 'DeepSeek model' },
+		];
+		plugin.settings.providers.kimi.discoveredModels = [
+			{ id: 'kimi-model', displayName: 'Kimi model' },
+		];
+		const tab = new EmendSettingTab(
+			{} as ConstructorParameters<typeof EmendSettingTab>[0],
+			plugin as unknown as EmendPlugin,
+		);
+		Object.assign(tab, { containerEl: { empty: vi.fn() } });
+		(tab as unknown as { display(): void }).display();
+		const text = instances.find(
+			(candidate) => candidate.name === 'DeepSeek base URL',
+		)?.texts[0];
+
+		await text?.onChangeHandler(' https://deepseek.example.test/v1 ');
+
+		expect(plugin.settings.providers.deepseek.baseUrl).toBe(
+			'https://deepseek.example.test/v1',
+		);
+		expect(plugin.settings.providers.deepseek.discoveredModels).toEqual([]);
+		expect(plugin.settings.providers.kimi.discoveredModels).toEqual([
+			{ id: 'kimi-model', displayName: 'Kimi model' },
+		]);
+		expect(plugin.saveSettings).toHaveBeenCalledOnce();
+	});
+});
+
+function latestSetting(name: string) {
+	const matches = settingInstances.filter((setting) => setting.name === name);
+	const setting = matches[matches.length - 1];
+	if (!setting) throw new Error(`Missing setting: ${name}`);
+	return setting;
+}
+
+function latestModelSetting() {
+	return latestSetting('DeepSeek model');
+}
+
+function latestDropdown(name: string) {
+	const dropdown = latestSetting(name).dropdowns[0];
+	if (!dropdown) throw new Error(`Missing dropdown: ${name}`);
+	return dropdown;
+}
+
+function latestModelButton() {
+	const button = latestModelSetting().buttons[0];
+	if (!button) throw new Error('Missing model refresh button');
+	return button;
+}
+
+function latestModelText() {
+	const text = latestModelSetting().texts[0];
+	if (!text) throw new Error('Missing custom model text input');
+	return text;
+}
+
+function createDeferred<T>() {
+	let resolve!: (value: T) => void;
+	let reject!: (reason?: unknown) => void;
+	const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+		resolve = resolvePromise;
+		reject = rejectPromise;
+	});
+	return { promise, resolve, reject };
+}
+
+function createModelSettingsTab() {
+	const apiKeys = {
+		deepseek: 'dummy-key',
+		kimi: 'dummy-key',
+		custom: 'dummy-key',
+	};
+	const plugin = {
+		settings: structuredClone(DEFAULT_SETTINGS),
+		getApiKey: vi.fn((providerId: keyof typeof apiKeys) => apiKeys[providerId]),
+		setApiKey: vi.fn(async (providerId: keyof typeof apiKeys, value: string) => {
+			apiKeys[providerId] = value;
+			plugin.settings.providers[providerId].discoveredModels = [];
+		}),
+		saveSettings: vi.fn(async () => undefined),
+	};
+	const tab = new EmendSettingTab(
+		{} as ConstructorParameters<typeof EmendSettingTab>[0],
+		plugin as unknown as EmendPlugin,
+	);
+	Object.assign(tab, { containerEl: { empty: vi.fn() } });
+	return { plugin, tab };
+}
+
+function displaySettings(tab: EmendSettingTab) {
+	(tab as unknown as { display(): void }).display();
+}
+
+describe('EmendSettingTab model discovery', () => {
+	beforeEach(() => {
+		settingInstances.length = 0;
+		noticeMessages.length = 0;
+		vi.mocked(discoverProviderModels).mockReset();
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('does not expose raw HTTP response bodies in refresh notices', async () => {
+		const actualDiscovery = await vi.importActual<typeof import('../src/model-discovery')>(
+			'../src/model-discovery',
+		);
+		vi.mocked(discoverProviderModels).mockImplementation(
+			actualDiscovery.discoverProviderModels,
+		);
+		const sensitiveBody = 'sensitive-provider-response-body';
+		const fetchMock = vi.fn().mockResolvedValue(new Response(sensitiveBody, {
+			status: 401,
+		}));
+		vi.stubGlobal('fetch', fetchMock);
+		const { plugin, tab } = createModelSettingsTab();
+		plugin.settings.providers.deepseek.discoveredModels = [
+			{ id: 'cached-model', displayName: 'Cached model' },
+		];
+		displaySettings(tab);
+
+		await latestModelButton().clickHandler();
+
+		expect(noticeMessages).toHaveLength(1);
+		expect(noticeMessages[0]).toContain('HTTP 401');
+		expect(noticeMessages[0]).not.toContain(sensitiveBody);
+		expect(plugin.settings.providers.deepseek.discoveredModels).toEqual([
+			{ id: 'cached-model', displayName: 'Cached model' },
+		]);
+		expect(plugin.saveSettings).not.toHaveBeenCalled();
+		expect(fetchMock).toHaveBeenCalledOnce();
+	});
+
+	it('does not discover models on display or provider switching', async () => {
+		const { tab } = createModelSettingsTab();
+
+		displaySettings(tab);
+		expect(discoverProviderModels).not.toHaveBeenCalled();
+		await latestDropdown('Active provider').onChangeHandler('kimi');
+
+		expect(discoverProviderModels).not.toHaveBeenCalled();
+	});
+
+	it('renders preset, cache, current model, and custom options without duplicates', () => {
+		const { plugin, tab } = createModelSettingsTab();
+		plugin.settings.providers.deepseek.model = 'local-custom';
+		plugin.settings.providers.deepseek.discoveredModels = [
+			{ id: 'deepseek-flash', displayName: 'Duplicate preset' },
+			{ id: 'model-a', displayName: 'Model A' },
+			{ id: 'local-custom', displayName: 'Duplicate current' },
+		];
+
+		displaySettings(tab);
+
+		const dropdown = latestDropdown('DeepSeek model');
+		expect(dropdown.options).toEqual({
+			'deepseek-flash': 'Duplicate preset',
+			'model-a': 'Model A',
+			'local-custom': 'local-custom',
+			__custom__: 'Custom model',
+		});
+		expect(Object.keys(dropdown.options)).toEqual([
+			'deepseek-flash',
+			'model-a',
+			'local-custom',
+			'__custom__',
+		]);
+		expect(dropdown.value).toBe('local-custom');
+		expect(discoverProviderModels).not.toHaveBeenCalled();
+	});
+
+	it('refreshes once and preserves the current custom model', async () => {
+		vi.mocked(discoverProviderModels).mockResolvedValue([
+			{ id: 'model-a', displayName: 'Model A' },
+		]);
+		const { plugin, tab } = createModelSettingsTab();
+		plugin.settings.providers.deepseek.model = 'local-custom';
+		displaySettings(tab);
+
+		await latestModelButton().clickHandler();
+
+		const dropdown = latestDropdown('DeepSeek model');
+		expect(dropdown.options).toMatchObject({
+			'deepseek-flash': 'deepseek-flash',
+			'model-a': 'Model A',
+			'local-custom': 'local-custom',
+			__custom__: 'Custom model',
+		});
+		expect(dropdown.value).toBe('local-custom');
+		expect(latestModelText().value).toBe('local-custom');
+		expect(plugin.settings.providers.deepseek.model).toBe('local-custom');
+		expect(plugin.settings.providers.deepseek.discoveredModels).toEqual([
+			{ id: 'model-a', displayName: 'Model A' },
+		]);
+		expect(discoverProviderModels).toHaveBeenCalledOnce();
+		expect(discoverProviderModels).toHaveBeenCalledWith({
+			name: 'DeepSeek',
+			baseUrl: 'https://api.deepseek.com',
+			apiKey: 'dummy-key',
+		});
+		expect(plugin.saveSettings).toHaveBeenCalledOnce();
+		expect(noticeMessages).toHaveLength(1);
+		expect(noticeMessages[0]).not.toContain('dummy-key');
+		expect(latestModelButton().buttonEl.disabled).toBe(false);
+	});
+
+	it('allows only one in-flight refresh click', async () => {
+		const pending = createDeferred<Awaited<ReturnType<typeof discoverProviderModels>>>();
+		vi.mocked(discoverProviderModels).mockReturnValue(pending.promise);
+		const { plugin, tab } = createModelSettingsTab();
+		displaySettings(tab);
+		const button = latestModelButton();
+
+		const firstClick = button.clickHandler();
+		expect(button.buttonEl.disabled).toBe(true);
+		const secondClick = button.clickHandler();
+		await secondClick;
+
+		expect(discoverProviderModels).toHaveBeenCalledOnce();
+		pending.resolve([{ id: 'model-a', displayName: 'Model A' }]);
+		await firstClick;
+		expect(discoverProviderModels).toHaveBeenCalledOnce();
+		expect(plugin.saveSettings).toHaveBeenCalledOnce();
+		expect(latestModelButton().buttonEl.disabled).toBe(false);
+	});
+
+	it.each([
+		{
+			scenario: 'a blank API key',
+			apiKey: '',
+			errorMessage: 'DeepSeek API key is missing.',
+		},
+		{
+			scenario: 'an HTTP failure',
+			apiKey: 'dummy-key',
+			errorMessage: 'Model discovery failed with HTTP 401.',
+		},
+	])('preserves cache and model without saving after $scenario', async ({
+		apiKey,
+		errorMessage,
+	}) => {
+		vi.mocked(discoverProviderModels).mockRejectedValue(new Error(errorMessage));
+		const { plugin, tab } = createModelSettingsTab();
+		plugin.getApiKey.mockReturnValue(apiKey);
+		plugin.settings.providers.deepseek.model = 'local-custom';
+		plugin.settings.providers.deepseek.discoveredModels = [
+			{ id: 'cached-model', displayName: 'Cached model' },
+		];
+		displaySettings(tab);
+
+		await latestModelButton().clickHandler();
+
+		expect(plugin.settings.providers.deepseek.model).toBe('local-custom');
+		expect(plugin.settings.providers.deepseek.discoveredModels).toEqual([
+			{ id: 'cached-model', displayName: 'Cached model' },
+		]);
+		expect(plugin.saveSettings).not.toHaveBeenCalled();
+		expect(noticeMessages).toEqual([`Emend: ${errorMessage}`]);
+		expect(latestModelButton().buttonEl.disabled).toBe(false);
+	});
+
+	it.each(['provider', 'base URL', 'API key'] as const)(
+		'discards a stale result after %s changes',
+		async (change) => {
+			const pending = createDeferred<Awaited<ReturnType<typeof discoverProviderModels>>>();
+			vi.mocked(discoverProviderModels).mockReturnValue(pending.promise);
+			const { plugin, tab } = createModelSettingsTab();
+			plugin.settings.providers.deepseek.model = 'local-custom';
+			plugin.settings.providers.deepseek.discoveredModels = [
+				{ id: 'cached-model', displayName: 'Cached model' },
+			];
+			displaySettings(tab);
+			const click = latestModelButton().clickHandler();
+
+			if (change === 'provider') {
+				await latestDropdown('Active provider').onChangeHandler('kimi');
+			} else if (change === 'base URL') {
+				await latestSetting('DeepSeek base URL').texts[0]?.onChangeHandler(
+					'https://deepseek.example.test/v1',
+				);
+			} else {
+				await latestSetting('DeepSeek API key').texts[0]?.onChangeHandler(
+					'updated-key',
+				);
+			}
+			const saveCountAfterChange = plugin.saveSettings.mock.calls.length;
+
+			pending.resolve([{ id: 'stale-model', displayName: 'Stale model' }]);
+			await click;
+
+			expect(plugin.settings.providers.deepseek.discoveredModels).toEqual(
+				change === 'provider'
+					? [{ id: 'cached-model', displayName: 'Cached model' }]
+					: [],
+			);
+			expect(plugin.settings.providers.deepseek.model).toBe('local-custom');
+			expect(plugin.saveSettings).toHaveBeenCalledTimes(saveCountAfterChange);
+			expect(noticeMessages).toEqual([]);
+			expect(discoverProviderModels).toHaveBeenCalledOnce();
+			if (change === 'provider') {
+				expect(
+					latestSetting('Kimi model').buttons[0]?.buttonEl.disabled,
+				).toBe(false);
+			}
+		},
+	);
 });

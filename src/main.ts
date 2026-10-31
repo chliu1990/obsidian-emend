@@ -171,6 +171,7 @@ export default class EmendPlugin extends Plugin {
 	async setApiKey(providerId: ProviderId, value: string) {
 		this.getApiKeyStorage().setApiKey(providerId, value.trim());
 		this.settings.providers[providerId].apiKey = '';
+		this.settings.providers[providerId].discoveredModels = [];
 		await this.saveSettings();
 	}
 

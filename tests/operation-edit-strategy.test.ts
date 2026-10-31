@@ -335,6 +335,7 @@ const provider: ProviderConfig = {
 	model: 'dummy-model',
 	reasoningEffort: 'low',
 	requestUsage: false,
+	discoveredModels: [],
 };
 
 function operationRequest(response: string) {
