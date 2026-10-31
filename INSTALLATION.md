@@ -11,12 +11,11 @@ Emend is a desktop-only Obsidian plugin. Mobile Obsidian is not supported.
 
 ## Build from source
 
-For a new clone of the current development branch:
+For a new clone of the public repository:
 
 ```bash
-git clone http://127.0.0.1:19705/cliu/obsidian-emend.git
+git clone https://github.com/chliu1990/obsidian-emend.git
 cd obsidian-emend
-git switch feat/emend-rewrite
 npm ci
 npm run build
 ```
@@ -26,7 +25,7 @@ If this repository is already on your machine:
 ```bash
 cd /path/to/obsidian-emend
 git fetch origin
-git switch feat/emend-rewrite
+git switch main
 git pull --ff-only
 npm ci
 npm run build

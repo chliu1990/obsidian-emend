@@ -4,11 +4,14 @@ jobs:
   check:
     runs-on: emend-macos
     container: node:24-bookworm
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Check out repository
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GIT_CONFIG_COUNT: 1
+          GIT_CONFIG_KEY_0: http.extraHeader
+          GIT_CONFIG_VALUE_0: AUTHORIZATION: bearer ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           if [ -z "${GITHUB_TOKEN:-}" ]; then
@@ -17,7 +20,7 @@ jobs:
           fi
           git init
           git remote add origin "http://host.docker.internal:19705/${GITHUB_REPOSITORY}.git"
-          git -c http.extraHeader="Authorization: Bearer ${GITHUB_TOKEN}" fetch --depth 1 origin "${GITHUB_SHA}"
+          git fetch --depth 1 origin "${GITHUB_SHA}"
           git checkout --detach FETCH_HEAD
       - run: node --version && npm --version
       - run: npm ci

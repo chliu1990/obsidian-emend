@@ -1,5 +1,7 @@
 import type { ProviderConfig, ProviderHistoryMessage } from './types';
 
+const MAX_PROVIDER_ERROR_CHARACTERS = 2000;
+
 export interface ProviderTokenUsage {
 	promptTokens: number;
 	completionTokens: number;
@@ -166,6 +168,9 @@ function sanitizeProviderError(error: unknown, apiKey: string) {
 		'[credential redacted]',
 	);
 	message = message.replace(/bearer\s+\S+/gi, '[credential redacted]');
+	if (message.length > MAX_PROVIDER_ERROR_CHARACTERS) {
+		message = `${message.slice(0, MAX_PROVIDER_ERROR_CHARACTERS - 12)}…[truncated]`;
+	}
 	return message || 'The provider request failed.';
 }
 

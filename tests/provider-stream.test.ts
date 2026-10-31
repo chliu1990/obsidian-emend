@@ -400,6 +400,24 @@ describe('requestAiResponse', () => {
 		expect(error.message).not.toContain('Bearer');
 	});
 
+	it('caps oversized provider error responses', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(new Response('x'.repeat(10000), { status: 500 })),
+		);
+
+		const error = await getError(
+			requestAiResponse(
+				makeRequest(),
+				{ onEvent: vi.fn() },
+				new AbortController().signal,
+			),
+		);
+
+		expect(error.message.length).toBeLessThanOrEqual(2000);
+		expect(error.message).toContain('[truncated]');
+	});
+
 	it('surfaces usage-option rejection without an automatic retry', async () => {
 		const fetchMock = vi.fn().mockResolvedValue(
 			new Response(
