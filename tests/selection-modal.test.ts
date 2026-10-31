@@ -140,6 +140,7 @@ const provider: ProviderConfig = {
 	model: 'dummy-model',
 	reasoningEffort: 'low',
 	requestUsage: false,
+	discoveredModels: [],
 };
 
 describe('SelectionModal quick actions', () => {

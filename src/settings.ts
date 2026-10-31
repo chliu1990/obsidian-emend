@@ -1,6 +1,7 @@
 import { App, PluginSettingTab, setIcon, Setting } from 'obsidian';
 import type EmendPlugin from './main';
 import type {
+	DiscoveredModel,
 	EmendSettings,
 	ProviderConfig,
 	ProviderId,
@@ -42,6 +43,7 @@ export const DEFAULT_SETTINGS: EmendSettings = {
 			model: 'deepseek-flash',
 			reasoningEffort: 'high',
 			requestUsage: true,
+			discoveredModels: [],
 		},
 		kimi: {
 			name: 'Kimi',
@@ -50,6 +52,7 @@ export const DEFAULT_SETTINGS: EmendSettings = {
 			model: 'k3.1-pro',
 			reasoningEffort: 'high',
 			requestUsage: true,
+			discoveredModels: [],
 		},
 		custom: {
 			name: 'Custom',
@@ -58,6 +61,7 @@ export const DEFAULT_SETTINGS: EmendSettings = {
 			model: '',
 			reasoningEffort: 'high',
 			requestUsage: false,
+			discoveredModels: [],
 		},
 	},
 	defaultMode: 'ask',
@@ -189,6 +193,7 @@ export class EmendSettingTab extends PluginSettingTab {
 					.setValue(config.baseUrl)
 					.onChange(async (value) => {
 						config.baseUrl = value.trim();
+						config.discoveredModels = [];
 						await this.plugin.saveSettings();
 					}),
 			);
@@ -340,7 +345,27 @@ function normalizeProviderConfig(
 			typeof config.requestUsage === 'boolean'
 				? config.requestUsage
 				: defaults.requestUsage,
+		discoveredModels: normalizeDiscoveredModels(config.discoveredModels),
 	};
+}
+
+function normalizeDiscoveredModels(value: unknown): DiscoveredModel[] {
+	if (!Array.isArray(value)) return [];
+	const models: DiscoveredModel[] = [];
+	const seen = new Set<string>();
+	for (const entry of value) {
+		if (!isRecord(entry) || typeof entry.id !== 'string' || !entry.id.trim()) continue;
+		const id = entry.id.trim();
+		if (seen.has(id)) continue;
+		seen.add(id);
+		models.push({
+			id,
+			displayName: typeof entry.displayName === 'string' && entry.displayName.trim()
+				? entry.displayName.trim()
+				: id,
+		});
+	}
+	return models;
 }
 
 function normalizeContextLimit(value: unknown) {

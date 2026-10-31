@@ -86,6 +86,7 @@ describe('normalizeSettings', () => {
 			model: 'deepseek-flash',
 			reasoningEffort: 'high',
 			requestUsage: true,
+			discoveredModels: [],
 		});
 		expect(DEFAULT_SETTINGS.providers.kimi).toEqual({
 			name: 'Kimi',
@@ -94,6 +95,7 @@ describe('normalizeSettings', () => {
 			model: 'k3.1-pro',
 			reasoningEffort: 'high',
 			requestUsage: true,
+			discoveredModels: [],
 		});
 		expect(DEFAULT_SETTINGS.providers.custom).toEqual({
 			name: 'Custom',
@@ -102,6 +104,7 @@ describe('normalizeSettings', () => {
 			model: '',
 			reasoningEffort: 'high',
 			requestUsage: false,
+			discoveredModels: [],
 		});
 	});
 
@@ -138,6 +141,30 @@ describe('normalizeSettings', () => {
 		},
 	);
 
+	it('normalizes and deduplicates discovered model caches', () => {
+		const settings = normalizeSettings({ providers: { deepseek: {
+			discoveredModels: [
+				{ id: ' model-a ', displayName: ' Model A ' },
+				{ id: 'model-a', displayName: 'Duplicate' },
+				{ id: '', displayName: 'Invalid' },
+				{ id: 'model-b', displayName: '' },
+				null,
+			],
+		} } });
+		expect(settings.providers.deepseek.discoveredModels).toEqual([
+			{ id: 'model-a', displayName: 'Model A' },
+			{ id: 'model-b', displayName: 'model-b' },
+		]);
+		expect(settings.providers.kimi.discoveredModels).toEqual([]);
+	});
+
+	it('drops malformed discovered model caches', () => {
+		for (const discoveredModels of ['invalid', 42, {}, null]) {
+			expect(normalizeSettings({ providers: { kimi: { discoveredModels } } })
+				.providers.kimi.discoveredModels).toEqual([]);
+		}
+	});
+
 	it('retains valid user-entered settings for every provider', () => {
 		const data = {
 			activeProvider: 'custom',
@@ -149,6 +176,7 @@ describe('normalizeSettings', () => {
 					model: 'deepseek-user-model',
 					reasoningEffort: 'low',
 					requestUsage: false,
+					discoveredModels: [],
 				},
 				kimi: {
 					name: 'Kimi',
@@ -157,6 +185,7 @@ describe('normalizeSettings', () => {
 					model: 'kimi-user-model',
 					reasoningEffort: 'medium',
 					requestUsage: true,
+					discoveredModels: [],
 				},
 				custom: {
 					name: 'Custom',
@@ -165,6 +194,7 @@ describe('normalizeSettings', () => {
 					model: 'custom-user-model',
 					reasoningEffort: 'high',
 					requestUsage: true,
+					discoveredModels: [],
 				},
 			},
 			defaultMode: 'discuss',
@@ -276,5 +306,52 @@ describe('EmendSettingTab API keys', () => {
 			'dummy-updated-key',
 		);
 		expect(plugin.settings.providers.deepseek.apiKey).toBe('');
+	});
+});
+
+describe('EmendSettingTab discovered model cache invalidation', () => {
+	it('clears only the provider cache when its base URL changes', async () => {
+		const instances = (
+			Setting as unknown as {
+				instances: Array<{
+					name: string;
+					texts: Array<{
+						onChangeHandler(value: string): Promise<void>;
+					}>;
+				}>;
+			}
+		).instances;
+		instances.length = 0;
+		const plugin = {
+			settings: structuredClone(DEFAULT_SETTINGS),
+			getApiKey: vi.fn(() => ''),
+			saveSettings: vi.fn(async () => undefined),
+		};
+		plugin.settings.providers.deepseek.discoveredModels = [
+			{ id: 'deepseek-model', displayName: 'DeepSeek model' },
+		];
+		plugin.settings.providers.kimi.discoveredModels = [
+			{ id: 'kimi-model', displayName: 'Kimi model' },
+		];
+		const tab = new EmendSettingTab(
+			{} as ConstructorParameters<typeof EmendSettingTab>[0],
+			plugin as unknown as EmendPlugin,
+		);
+		Object.assign(tab, { containerEl: { empty: vi.fn() } });
+		(tab as unknown as { display(): void }).display();
+		const text = instances.find(
+			(candidate) => candidate.name === 'DeepSeek base URL',
+		)?.texts[0];
+
+		await text?.onChangeHandler(' https://deepseek.example.test/v1 ');
+
+		expect(plugin.settings.providers.deepseek.baseUrl).toBe(
+			'https://deepseek.example.test/v1',
+		);
+		expect(plugin.settings.providers.deepseek.discoveredModels).toEqual([]);
+		expect(plugin.settings.providers.kimi.discoveredModels).toEqual([
+			{ id: 'kimi-model', displayName: 'Kimi model' },
+		]);
+		expect(plugin.saveSettings).toHaveBeenCalledOnce();
 	});
 });

@@ -61,6 +61,7 @@ export interface ProviderConfig {
 	model: string;
 	reasoningEffort: ReasoningEffort;
 	requestUsage: boolean;
+	discoveredModels: DiscoveredModel[];
 }
 
 export interface EmendSettings {
