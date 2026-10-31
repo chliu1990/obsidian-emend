@@ -11,7 +11,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GIT_CONFIG_COUNT: 1
           GIT_CONFIG_KEY_0: http.extraHeader
-          GIT_CONFIG_VALUE_0: AUTHORIZATION: bearer ${{ secrets.GITHUB_TOKEN }}
+          GIT_CONFIG_VALUE_0: "AUTHORIZATION: bearer ${{ secrets.GITHUB_TOKEN }}"
         run: |
           set -euo pipefail
           if [ -z "${GITHUB_TOKEN:-}" ]; then
