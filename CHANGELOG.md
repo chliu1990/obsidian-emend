@@ -4,6 +4,17 @@ All notable changes to Emend are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-31
+
+### Added
+
+- Explicit **Refresh models** discovery for DeepSeek, Kimi Code, and custom OpenAI-compatible providers.
+- Persistent per-provider model ID/display-name caches with custom-model preservation and scoped base-URL/API-key invalidation.
+
+### Security
+
+- Discovery occurs only on explicit user action, uses SecretStorage credentials, prevents overlapping/stale updates, and omits raw response bodies from errors.
+
 ## [2.0.0] - 2026-10-31
 
 ### Added
@@ -21,5 +32,6 @@ All notable changes to Emend are documented here. The format follows [Keep a Cha
 - Strict provider error redaction and bounded error output.
 - Validated anchors, ambiguity/overlap rejection, stale-source/target checks, and abort/unload protection for note writes.
 
-[Unreleased]: https://github.com/chliu1990/obsidian-emend/compare/2.0.0...HEAD
+[Unreleased]: https://github.com/chliu1990/obsidian-emend/compare/2.1.0...HEAD
+[2.1.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.1.0
 [2.0.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.0.0
