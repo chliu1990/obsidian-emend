@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - '*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version in x.y.z format
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_VERSION: ${{ github.event.inputs.version || github.ref_name }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Verify release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e "const manifest = require('./manifest.json'); if (!/^\\d+\\.\\d+\\.\\d+$/.test(process.env.RELEASE_VERSION ?? '') || manifest.version !== process.env.RELEASE_VERSION) { throw new Error('Release tag ' + process.env.RELEASE_VERSION + ' must exactly match manifest version ' + manifest.version + '.'); }"
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_VERSION }}
+          name: Emend ${{ env.RELEASE_VERSION }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            main.js
+            manifest.json
+            styles.css

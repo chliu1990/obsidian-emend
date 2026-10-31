@@ -17,11 +17,17 @@ const packageMetadata = JSON.parse(
 ) as Record<string, unknown>;
 
 describe('publication metadata', () => {
-	it('uses the current author without the original author URL', () => {
+	it('uses the current author and public GitHub metadata', () => {
 		expect(manifest.author).toBe('Chang Liu and Kimi K3.1 Pro');
 		expect(packageMetadata.author).toBe(manifest.author);
-		expect(manifest).not.toHaveProperty('authorUrl');
-		expect(packageMetadata).not.toHaveProperty('authorUrl');
+		expect(manifest.authorUrl).toBe('https://github.com/chliu1990');
+		expect(packageMetadata.repository).toEqual({
+			type: 'git',
+			url: 'git+https://github.com/chliu1990/obsidian-emend.git',
+		});
+		expect(packageMetadata.bugs).toEqual({
+			url: 'https://github.com/chliu1990/obsidian-emend/issues',
+		});
 	});
 
 	it('retains version 2.0.0', () => {

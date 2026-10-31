@@ -5,5 +5,6 @@
 	"minAppVersion": "1.11.4",
 	"description": "Context-aware streamed AI chat and guarded Track Changes editing for Markdown notes.",
 	"author": "Chang Liu and Kimi K3.1 Pro",
+	"authorUrl": "https://github.com/chliu1990",
 	"isDesktopOnly": true
 }

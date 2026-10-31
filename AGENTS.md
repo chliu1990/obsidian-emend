@@ -200,6 +200,6 @@ npm version <patch|minor|major>
 
 updates `package.json` through npm and invokes the `version` script, which copies `npm_package_version` into `manifest.json`, adds the version and current `minAppVersion` to `versions.json` if absent, and stages those two metadata files. Review the resulting changes rather than editing the files inconsistently.
 
-For a release, run a production build and publish `main.js`, `manifest.json`, and `styles.css` as individual assets on the repository's Gitea host (matching `origin`). The Gitea release tag should exactly match the manifest version, without a leading `v`. Keep `minAppVersion` and the `versions.json` mapping accurate when adopting newer Obsidian APIs.
+For a release, create or dispatch a tag that exactly matches the manifest version, without a leading `v`. `.github/workflows/release.yaml` verifies the tag against `manifest.json`, runs clean install/lint/tests/build, and publishes `main.js`, `manifest.json`, and `styles.css` as individual GitHub release assets. Keep `minAppVersion` and the `versions.json` mapping accurate when adopting newer Obsidian APIs.
 
-Gitea Actions runs lint, tests, and the production build through `.gitea/workflows/ci.yaml`. The unique `emend-macos` label targets the repository's `emend-macos-docker` runner; verify that runner is online before treating a pushed check as actionable. Releases remain manual.
+GitHub Actions runs lint, tests, and the production build through `.github/workflows/ci.yaml` on `ubuntu-latest` with Node 24. The release workflow uses `softprops/action-gh-release` with repository-scoped `contents: write` permission; CI uses `contents: read`. Verify the relevant GitHub run before publishing or merging.

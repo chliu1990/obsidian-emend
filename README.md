@@ -1,5 +1,7 @@
 # Emend
 
+[![CI](https://github.com/chliu1990/obsidian-emend/actions/workflows/ci.yaml/badge.svg)](https://github.com/chliu1990/obsidian-emend/actions/workflows/ci.yaml)
+
 Emend is a desktop Obsidian plugin for streaming AI chat and safe, reviewable edits to your Markdown notes. It supports DeepSeek, Kimi Code, and custom OpenAI-compatible providers, with **Track Changes** as the review surface for every AI edit.
 
 ## Features
@@ -91,6 +93,7 @@ See the [privacy and storage details](QUICK_START.md#8-verify-persistence-and-pr
 - [Installation guide](INSTALLATION.md)
 - [Quick start](QUICK_START.md)
 - [Architecture and implementation records](IMPLEMENTATION_PLAN.md)
+- [CI and release workflows](.github/workflows/)
 - [Deferred context-management roadmap](devel_docs/future-context-management.md)
 - [Deferred web-search roadmap](devel_docs/future-web-search.md)
 - [Provider and context feature backlog](devel_docs/future-provider-and-context-features.md)
