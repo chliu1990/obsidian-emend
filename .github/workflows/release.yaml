@@ -35,6 +35,8 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+        env:
+          EMEND_RELEASE_BUILD: '1'
       - name: Package Obsidian plugin
         shell: bash
         run: |

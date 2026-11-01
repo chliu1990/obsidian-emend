@@ -1,5 +1,7 @@
 import esbuild from 'esbuild';
 import process from 'process';
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { builtinModules } from 'node:module';
 
 const banner = `/*
@@ -9,8 +11,22 @@ if you want to view the source, please visit the github repository of this plugi
 `;
 
 const prod = process.argv[2] === 'production';
+const manifest = JSON.parse(
+	readFileSync(new URL('manifest.json', import.meta.url), 'utf8'),
+);
+const buildId = process.env.EMEND_RELEASE_BUILD === '1'
+	? manifest.version.trim()
+	: execFileSync('git', ['rev-parse', '--short', 'HEAD'], {
+		encoding: 'utf8',
+	}).trim();
+if (!buildId) {
+	throw new Error('Emend build identity must not be empty.');
+}
 
 const context = await esbuild.context({
+	define: {
+		__EMEND_BUILD_ID__: JSON.stringify(buildId),
+	},
 	banner: {
 		js: banner,
 	},
