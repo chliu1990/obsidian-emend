@@ -4,6 +4,16 @@ All notable changes to Emend are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-11-01
+
+### Added
+
+- Compact accessible `refresh-cw` control for provider model discovery, replacing the wide text button.
+
+### Fixed
+
+- Preserved native 24×24 icon sizing at narrow settings widths and readable nonspinning pending state without changing discovery behavior.
+
 ## [2.2.0] - 2026-11-01
 
 ### Added
@@ -40,7 +50,8 @@ All notable changes to Emend are documented here. The format follows [Keep a Cha
 - Strict provider error redaction and bounded error output.
 - Validated anchors, ambiguity/overlap rejection, stale-source/target checks, and abort/unload protection for note writes.
 
-[Unreleased]: https://github.com/chliu1990/obsidian-emend/compare/2.2.0...HEAD
+[Unreleased]: https://github.com/chliu1990/obsidian-emend/compare/2.3.0...HEAD
+[2.3.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.3.0
 [2.2.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.2.0
 [2.1.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.1.0
 [2.0.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.0.0

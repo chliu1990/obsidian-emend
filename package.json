@@ -1,6 +1,6 @@
 {
 	"name": "emend",
-	"version": "2.2.0",
+	"version": "2.3.0",
 	"description": "Context-aware streamed AI chat for Markdown notes in Obsidian.",
 	"author": "Chang Liu and Kimi K3.1 Pro",
 	"repository": {
