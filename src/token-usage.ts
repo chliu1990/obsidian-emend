@@ -1,3 +1,4 @@
+import { formatProviderHistory } from './provider-history';
 import type {
 	AiProviderRequest,
 	ProviderTokenUsage,
@@ -24,7 +25,10 @@ export function resolveTokenUsage(
 	const promptCharacters =
 		request.systemPrompt.length +
 		request.userPrompt.length +
-		request.history.reduce((sum, message) => sum + message.content.length, 0);
+		formatProviderHistory(request.history).reduce(
+			(sum, message) => sum + message.content.length,
+			0,
+		);
 	const completionCharacters = result.content.length + result.reasoning.length;
 	const promptTokens = estimateTokens(promptCharacters);
 	const completionTokens = estimateTokens(completionCharacters);

@@ -98,6 +98,8 @@ Emend never lets the model rewrite a document directly. It returns a bare JSON a
 
 Full-note Edit always sends the complete note. Modify Selection sends the complete selection plus surrounding context, but replaces only the captured range.
 
+Model history retains each ready message's mode, historical note-write permission, and origin. Local Edit confirmations are labeled as local outcomes, not model responses. These annotations describe earlier requests only: the currently selected mode alone controls note-write access, so an earlier Edit never grants writing to a later Ask, Discuss, or Brainstorm request.
+
 ## Privacy and local data
 
 Emend makes **no background AI requests**. Content is sent only when you explicitly submit a chat or edit action.

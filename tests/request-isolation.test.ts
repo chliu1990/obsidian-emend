@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EmendChatView } from '../src/chat-view';
 import type { RequestContext } from '../src/context';
 import EmendPlugin from '../src/main';
+import { HISTORY_PERMISSION_PROMPT } from '../src/mode';
+import { formatProviderHistory } from '../src/provider-history';
 import {
 	requestAiResponse,
 	type AiProviderRequest,
@@ -308,16 +310,18 @@ describe('sequential full-note edits', () => {
 			responses[1],
 		]);
 		const summary = 'Edit applied — 1 changes tracked. Review in Track Changes.';
+		const editUserAnnotation = '[Historical Edit message. Note writing was permitted for that earlier request only. Origin: user message.]';
+		const editStatusAnnotation = '[Historical Edit message. Note writing was permitted for that earlier request only. Origin: local Emend Edit status, not a model response.]';
 		expect(requests[0]?.history).toEqual([]);
-		expect(requests[1]?.history).toEqual([
-			{ role: 'user', content: 'First edit' },
-			{ role: 'assistant', content: summary },
+		expect(formatProviderHistory(requests[1]?.history ?? [])).toEqual([
+			{ role: 'user', content: `${editUserAnnotation}\nFirst edit` },
+			{ role: 'assistant', content: `${editStatusAnnotation}\n${summary}` },
 		]);
-		expect(requests[2]?.history).toEqual([
-			{ role: 'user', content: 'First edit' },
-			{ role: 'assistant', content: summary },
-			{ role: 'user', content: 'Second edit' },
-			{ role: 'assistant', content: summary },
+		expect(formatProviderHistory(requests[2]?.history ?? [])).toEqual([
+			{ role: 'user', content: `${editUserAnnotation}\nFirst edit` },
+			{ role: 'assistant', content: `${editStatusAnnotation}\n${summary}` },
+			{ role: 'user', content: `${editUserAnnotation}\nSecond edit` },
+			{ role: 'assistant', content: `${editStatusAnnotation}\n${summary}` },
 		]);
 		expect(fixture.getText('Note.md')).toBe(responses[2]);
 		expect(fixture.getText('Note.md')).toContain('{~~beta~>delta~~}');
@@ -333,6 +337,62 @@ describe('sequential full-note edits', () => {
 		expect(
 			savedSnapshots.flat().every((message) => !message.content.includes('{~~')),
 		).toBe(true);
+	});
+
+	it('keeps Edit history annotated and read-only when the next request is Ask', async () => {
+		const fixture = makePluginFixture({ 'Note.md': 'Alpha beta.' });
+		const operations = JSON.stringify([
+			{ type: 'replace', target: 'beta', replacement: 'delta' },
+		]);
+		respondWith(operations);
+		await expect(
+			fixture.plugin.requestChatCompletion(
+				makeEditSubmission(fixture, 'Note.md'),
+			),
+		).resolves.toMatchObject({ applied: true, changeCount: 1 });
+
+		const summary = 'Edit applied — 1 changes tracked. Review in Track Changes.';
+		const history: ProviderHistoryMessage[] = [
+			{ role: 'user', content: 'Edit this note.', mode: 'edit', origin: 'user' },
+			{
+				role: 'assistant',
+				content: summary,
+				mode: 'edit',
+				origin: 'local-edit-status',
+			},
+		];
+		respondWith('Chat answer');
+		await expect(
+			fixture.plugin.requestChatCompletion({
+				...makeReadOnlySubmission(fixture, 'Note.md', history),
+				prompt: 'hello?',
+			}),
+		).resolves.toMatchObject({ content: 'Chat answer' });
+
+		const requests = requestMock.mock.calls.map((call) => call[0]);
+		expect(requests).toHaveLength(2);
+		const askRequest = requests[1];
+		expect(askRequest?.systemPrompt).toContain(
+			'Do not edit, modify, or write to the note. Respond only in chat.',
+		);
+		expect(askRequest?.systemPrompt).toContain(HISTORY_PERMISSION_PROMPT);
+		expect(askRequest?.userPrompt).toContain('User message:\nhello?');
+		expect(formatProviderHistory(askRequest?.history ?? [])).toEqual([
+			{
+				role: 'user',
+				content: '[Historical Edit message. Note writing was permitted for that earlier request only. Origin: user message.]\nEdit this note.',
+			},
+			{
+				role: 'assistant',
+				content: '[Historical Edit message. Note writing was permitted for that earlier request only. Origin: local Emend Edit status, not a model response.]\nEdit applied — 1 changes tracked. Review in Track Changes.',
+			},
+		]);
+		expect(askRequest?.history.map((message) => message.content)).not.toContain(
+			operations,
+		);
+		expect(fixture.writes).toEqual([
+			{ path: 'Note.md', text: 'Alpha {~~beta~>delta~~}.' },
+		]);
 	});
 });
 
@@ -417,7 +477,7 @@ describe('shared per-note request isolation', () => {
 		]));
 		const pendingA = fixture.plugin.requestChatCompletion(
 			makeEditSubmission(fixture, 'A.md', 'Edit A.', [
-				{ role: 'assistant', content: 'A history' },
+				{ role: 'assistant', content: 'A history', mode: 'edit', origin: 'model' },
 			]),
 		);
 		await pendingResponse.started;
@@ -429,7 +489,7 @@ describe('shared per-note request isolation', () => {
 		await expect(
 			fixture.plugin.requestChatCompletion(
 				makeEditSubmission(fixture, 'B.md', 'Edit B.', [
-					{ role: 'assistant', content: 'B history' },
+					{ role: 'assistant', content: 'B history', mode: 'edit', origin: 'model' },
 				]),
 			),
 		).resolves.toMatchObject({ applied: true, changeCount: 1 });
@@ -442,10 +502,10 @@ describe('shared per-note request isolation', () => {
 			{ path: 'B.md', text: 'B{++ applied++} original.' },
 		]);
 		expect(requestMock.mock.calls[0]?.[0].history).toEqual([
-			{ role: 'assistant', content: 'A history' },
+			{ role: 'assistant', content: 'A history', mode: 'edit', origin: 'model' },
 		]);
 		expect(requestMock.mock.calls[1]?.[0].history).toEqual([
-			{ role: 'assistant', content: 'B history' },
+			{ role: 'assistant', content: 'B history', mode: 'edit', origin: 'model' },
 		]);
 		expect(markdownFromRequest(requestMock.mock.calls[0]?.[0])).toBe('A original.');
 		expect(markdownFromRequest(requestMock.mock.calls[1]?.[0])).toBe('B original.');

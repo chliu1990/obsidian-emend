@@ -3,7 +3,7 @@ import { MarkdownRenderer, Scope } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ShortcutEvent } from '../src/chat-shortcuts';
 import { EmendChatView } from '../src/chat-view';
-import type { ChatMessage, Mode } from '../src/types';
+import type { ChatMessage, Mode, ProviderHistoryMessage } from '../src/types';
 
 function getCssRule(selector: string): string {
 	const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
@@ -71,6 +71,7 @@ const viewPrototype = EmendChatView.prototype as unknown as {
 	renderMessageBody(this: unknown, message: ChatMessage): void;
 	getDisplayText(this: unknown): string;
 	onClose(this: unknown): Promise<void>;
+	toProviderHistory(this: unknown): ProviderHistoryMessage[];
 };
 
 function message(id: string, sourcePath: string): ChatMessage {
@@ -93,6 +94,40 @@ function deferred<T>() {
 	});
 	return { promise, resolve };
 }
+
+describe('EmendChatView provider history', () => {
+	it('filters transient entries and preserves metadata in the last eight ready messages', () => {
+		const context = {
+			messages: [
+				{ ...message('old-question', 'Note.md'), role: 'user' as const, content: 'Old question' },
+				{ ...message('old-answer', 'Note.md'), content: 'Old answer' },
+				{ ...message('ask-question', 'Note.md'), role: 'user' as const, content: 'Ask question' },
+				{ ...message('loading', 'Note.md'), status: 'loading' as const, content: 'Partial answer' },
+				{ ...message('edit-question', 'Note.md'), role: 'user' as const, mode: 'edit' as const, content: 'Edit question' },
+				{ ...message('edit-status', 'Note.md'), mode: 'edit' as const, content: 'Edit applied — 2 changes tracked. Review in Track Changes.' },
+				{ ...message('error', 'Note.md'), status: 'error' as const, content: 'Provider error' },
+				{ ...message('ask-answer', 'Note.md'), content: 'Ask answer' },
+				{ ...message('stopped', 'Note.md'), status: 'stopped' as const, content: 'Stopped answer' },
+				{ ...message('discuss-answer', 'Note.md'), mode: 'discuss' as const, content: 'Discuss answer' },
+				{ ...message('brainstorm-question', 'Note.md'), role: 'user' as const, mode: 'brainstorm' as const, content: 'Brainstorm question' },
+				{ ...message('brainstorm-answer', 'Note.md'), mode: 'brainstorm' as const, content: 'Brainstorm answer' },
+				{ ...message('follow-up-question', 'Note.md'), role: 'user' as const, content: 'Follow-up question' },
+				{ ...message('follow-up-answer', 'Note.md'), content: 'Follow-up answer' },
+			],
+		};
+
+		expect(viewPrototype.toProviderHistory.call(context)).toEqual([
+			{ role: 'user', content: 'Edit question', mode: 'edit', origin: 'user' },
+			{ role: 'assistant', content: 'Edit applied — 2 changes tracked. Review in Track Changes.', mode: 'edit', origin: 'local-edit-status' },
+			{ role: 'assistant', content: 'Ask answer', mode: 'ask', origin: 'model' },
+			{ role: 'assistant', content: 'Discuss answer', mode: 'discuss', origin: 'model' },
+			{ role: 'user', content: 'Brainstorm question', mode: 'brainstorm', origin: 'user' },
+			{ role: 'assistant', content: 'Brainstorm answer', mode: 'brainstorm', origin: 'model' },
+			{ role: 'user', content: 'Follow-up question', mode: 'ask', origin: 'user' },
+			{ role: 'assistant', content: 'Follow-up answer', mode: 'ask', origin: 'model' },
+		]);
+	});
+});
 
 describe('EmendChatView conversation loading', () => {
 	it('applies only the latest note load during rapid note switches', async () => {

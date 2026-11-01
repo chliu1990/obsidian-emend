@@ -203,7 +203,7 @@ describe('EmendPlugin workspace conversation events', () => {
 		expect(requestChatCompletion).toHaveBeenCalledOnce();
 		const submission = requestChatCompletion.mock.calls[0]?.[0];
 		expect(submission?.history).toEqual([
-			{ role: 'assistant', content: 'B saved content' },
+			{ role: 'assistant', content: 'B saved content', mode: 'ask', origin: 'model' },
 		]);
 		expect(submission?.context.file.path).toBe('B.md');
 		const bStored = await plugin.conversationStore.load('B.md');

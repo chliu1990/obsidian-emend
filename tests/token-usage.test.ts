@@ -9,8 +9,8 @@ const request: Pick<
 	systemPrompt: '1234',
 	userPrompt: '123456',
 	history: [
-		{ role: 'user', content: '12345' },
-		{ role: 'assistant', content: '' },
+		{ role: 'user', content: '12345', mode: 'ask', origin: 'user' },
+		{ role: 'assistant', content: '', mode: 'ask', origin: 'model' },
 	],
 };
 
@@ -63,11 +63,11 @@ describe('resolveTokenUsage', () => {
 		});
 	});
 
-	it('estimates request and response characters separately, including history and reasoning', () => {
+	it('estimates annotated history and response characters separately', () => {
 		expect(resolveTokenUsage(request, result())).toEqual({
-			promptTokens: 4,
+			promptTokens: 47,
 			completionTokens: 3,
-			totalTokens: 7,
+			totalTokens: 50,
 			source: 'estimated',
 		});
 	});

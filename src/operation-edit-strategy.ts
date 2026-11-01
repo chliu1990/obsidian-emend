@@ -1,6 +1,6 @@
 import { prepareCriticMarkupEdit } from './critic-markup';
 import type { EditStrategy } from './edit-strategy';
-import { appendInstructions } from './mode';
+import { appendInstructions, HISTORY_PERMISSION_PROMPT } from './mode';
 import type { EditOperation, InstructionPromptParts } from './types';
 
 const CRITIC_MARKUP_DELIMITERS = [
@@ -46,7 +46,9 @@ The closed command union is:
 - {"type":"remove","target":"exact original text","occurrence":1}
 - {"type":"replace","target":"exact original text","replacement":"nonempty replacement","occurrence":1}
 - {"type":"comment","target":"exact original text","comment":"nonempty comment","occurrence":1}
-The occurrence field is optional. Omit it only when the anchor or target occurs exactly once; otherwise use a one-based positive integer. Use no other commands or fields. Return [] when no change is needed. Never include CriticMarkup delimiters in operation strings.`;
+The occurrence field is optional. Omit it only when the anchor or target occurs exactly once; otherwise use a one-based positive integer. Use no other commands or fields. Return [] when no change is needed. Never include CriticMarkup delimiters in operation strings.
+
+${HISTORY_PERMISSION_PROMPT}`;
 
 const SELECTION_PROMPT = `You are Emend, an AI editor for a selected portion of an Obsidian note. Return only a bare JSON array of edit operations against the selected portion. Do not return the full note, a rewritten document, prose, Markdown, or a code fence. Every anchor and target must be inside the selection.
 The closed command union is:
