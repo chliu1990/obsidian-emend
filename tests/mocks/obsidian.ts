@@ -57,10 +57,18 @@ interface TextComponent {
 }
 
 interface ButtonComponent {
-	buttonEl: { disabled: boolean };
+	buttonEl: {
+		disabled: boolean;
+		attributes: Record<string, string>;
+		setAttribute(name: string, value: string): void;
+	};
+	icon: string;
+	tooltip: string;
 	text: string;
 	clickHandler: () => unknown;
 	setButtonText(value: string): ButtonComponent;
+	setIcon(value: string): ButtonComponent;
+	setTooltip(value: string): ButtonComponent;
 	setDisabled(value: boolean): ButtonComponent;
 	onClick(handler: () => unknown): ButtonComponent;
 }
@@ -119,11 +127,27 @@ export class Setting {
 
 	addButton(callback: (button: ButtonComponent) => unknown) {
 		const button: ButtonComponent = {
-			buttonEl: { disabled: false },
+			buttonEl: {
+				disabled: false,
+				attributes: {},
+				setAttribute(name, value) {
+					this.attributes[name] = value;
+				},
+			},
+			icon: '',
+			tooltip: '',
 			text: '',
 			clickHandler: () => undefined,
 			setButtonText(value) {
 				this.text = value;
+				return this;
+			},
+			setIcon(value) {
+				this.icon = value;
+				return this;
+			},
+			setTooltip(value) {
+				this.tooltip = value;
 				return this;
 			},
 			setDisabled(value) {

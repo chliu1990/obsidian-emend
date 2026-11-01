@@ -444,6 +444,16 @@ describe('EmendSettingTab model discovery', () => {
 		vi.unstubAllGlobals();
 	});
 
+	it('renders a compact accessible refresh icon without visible text', () => {
+		const { tab } = createModelSettingsTab();
+		displaySettings(tab);
+		const button = latestModelButton();
+		expect(button.icon).toBe('refresh-cw');
+		expect(button.tooltip).toBe('Refresh models');
+		expect(button.buttonEl.attributes['aria-label']).toBe('Refresh models');
+		expect(button.text).toBe('');
+	});
+
 	it('does not expose raw HTTP response bodies in refresh notices', async () => {
 		const actualDiscovery = await vi.importActual<typeof import('../src/model-discovery')>(
 			'../src/model-discovery',
