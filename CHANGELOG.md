@@ -4,6 +4,13 @@ All notable changes to Emend are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-11-01
+
+### Fixed
+
+- Preserved per-message mode, historical permission, and origin in provider history so local Edit confirmations are not confused with model claims.
+- Matched annotation-aware token estimates and standard role/content provider messages while keeping current-mode permissions unchanged.
+
 ## [2.3.0] - 2026-11-01
 
 ### Added
@@ -50,7 +57,8 @@ All notable changes to Emend are documented here. The format follows [Keep a Cha
 - Strict provider error redaction and bounded error output.
 - Validated anchors, ambiguity/overlap rejection, stale-source/target checks, and abort/unload protection for note writes.
 
-[Unreleased]: https://github.com/chliu1990/obsidian-emend/compare/2.3.0...HEAD
+[Unreleased]: https://github.com/chliu1990/obsidian-emend/compare/2.3.1...HEAD
+[2.3.1]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.3.1
 [2.3.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.3.0
 [2.2.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.2.0
 [2.1.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.1.0
