@@ -266,3 +266,106 @@ git commit -m "docs: document header shortcuts and build identity"
 - [ ] **Step 5: Independent review and PR**
 
 Dispatch a fresh reviewer for the complete diff and address confirmed Critical/Important findings through regression-tested fixes. Push `feature/header-shortcuts`, open a PR referencing #14 with behavior/non-goals, build-mode evidence, automated results, and real-Obsidian evidence. Verify the required GitHub `check` with `gh`; do not merge without user approval.
+
+---
+
+### Task 4: Shortcut badges and grouped rows
+
+**Files:**
+- Modify: `src/chat-view.ts`, `styles.css`, `tests/chat-view.test.ts`
+- Modify: `devel_docs/29-header-shortcuts.md`
+- Modify only under ignored `test_vault/`: existing Stage 27 CDP verification helpers.
+
+**Interfaces:**
+- Consumes: existing ordered `getDefaultShortcutLabels()` output.
+- Produces: semantic `<kbd>` key badges with separate action text in two wrapping groups.
+
+- [ ] **Step 1: Write failing CSS regression assertions**
+
+Extend the existing `getCssRule()` tests to require `.emend-chat-shortcuts` with `flex-direction: column;`, `.emend-chat-shortcut-group` with `display: flex;` and `flex-wrap: wrap;`, and `.emend-chat-shortcut kbd` with all of:
+
+```css
+border: 1px solid var(--background-modifier-border);
+background: var(--background-secondary);
+color: var(--text-normal);
+```
+
+Also require `.emend-chat-shortcut` with `display: inline-flex;` and `align-items: center;` so each badge stays paired with its action.
+
+- [ ] **Step 2: Verify the red state**
+
+Run: `npx vitest run tests/chat-view.test.ts`
+
+Expected: FAIL because the grouped-row and `<kbd>` selectors do not exist.
+
+- [ ] **Step 3: Implement grouped semantic badges**
+
+Replace the current single shortcut loop in `chat-view.ts` with:
+
+```ts
+const shortcutsEl = headerEl.createDiv('emend-chat-shortcuts');
+const modeGroupEl = shortcutsEl.createDiv('emend-chat-shortcut-group');
+modeGroupEl.createSpan({
+	cls: 'emend-chat-shortcuts-label',
+	text: 'Default shortcuts',
+});
+const composerGroupEl = shortcutsEl.createDiv('emend-chat-shortcut-group');
+for (const [index, shortcut] of getDefaultShortcutLabels(Platform.isMacOS).entries()) {
+	const groupEl = index < 2 ? modeGroupEl : composerGroupEl;
+	const itemEl = groupEl.createSpan({ cls: 'emend-chat-shortcut' });
+	itemEl.createEl('kbd', { text: shortcut.keys });
+	itemEl.createSpan({ text: shortcut.action });
+}
+```
+
+Keep the note context immediately after these groups. Change `.emend-chat-shortcuts` to a column with `align-items: flex-start` and a 3px gap. Add:
+
+```css
+.emend-chat-shortcut-group {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 8px;
+	min-width: 0;
+}
+
+.emend-chat-shortcut {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	white-space: nowrap;
+}
+
+.emend-chat-shortcut kbd {
+	padding: 0 3px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 3px;
+	background: var(--background-secondary);
+	color: var(--text-normal);
+	font: inherit;
+	line-height: 1.4;
+}
+```
+
+Do not style action text as a badge or change any labels/keybindings.
+
+- [ ] **Step 4: Run focused and full automated checks**
+
+Run: `npx vitest run tests/chat-view.test.ts tests/chat-shortcuts.test.ts && npm test && npm run lint && npm run build && git diff --check`
+
+Expected: all tests PASS, lint/build succeed, and no whitespace errors.
+
+- [ ] **Step 5: Commit the UI refinement**
+
+```bash
+git add src/chat-view.ts styles.css tests/chat-view.test.ts
+git commit -m "fix: distinguish shortcut keys from actions"
+```
+
+- [ ] **Step 6: Repeat real-Obsidian visual verification**
+
+Install the updated untagged build in the isolated Stage 27 vault. Capture normal 420px and narrow 220px screenshots and assert four `<kbd>` elements in order, exact key/action text, two groups, separate action spans, badge background/border/text colors, internal wrapping without horizontal overflow, and unchanged title identity/note context. Use synthetic notes only.
+
+- [ ] **Step 7: Record evidence and update PR #17**
+
+Append the refinement implementation and actual screenshot/DOM results to `devel_docs/29-header-shortcuts.md`, commit `docs: record shortcut badge verification`, push the branch, request focused re-review, and confirm both GitHub checks pass. Do not merge without user approval.
