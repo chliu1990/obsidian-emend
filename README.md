@@ -71,6 +71,21 @@ Open **Settings → Community plugins**, reload plugins, and enable **Emend** an
 
 Follow the guided [quick start](QUICK_START.md) for detailed verification steps, skills, shortcuts, and operation-based editing examples.
 
+## Header shortcuts and build identity
+
+The chat header lists Emend's visible default shortcuts:
+
+| Action | macOS | Windows/Linux |
+| --- | --- | --- |
+| Ask mode | `⌘⇧A Ask` | `Ctrl+Shift+A Ask` |
+| Edit mode | `⌘⇧E Edit` | `Ctrl+Shift+E Edit` |
+| Send | `Enter / ⌘ Enter send` | `Enter / Ctrl+Enter send` |
+| Newline | `Shift Enter newline` | `Shift+Enter newline` |
+
+These labels describe the defaults; they do not change when you remap hotkeys in Obsidian. The **Open Emend chat** command has no default hotkey.
+
+The compact identity beside the **Emend** title shows the manifest version in release builds. Development and other untagged builds show the short Git commit hash instead. Development watch mode captures that hash when it starts, so restart `npm run dev` after a commit to update the displayed identity.
+
 ## Safe editing model
 
 Emend never lets the model rewrite a document directly. It returns a bare JSON array of closed operations against the captured source. Emend then:
