@@ -8,7 +8,7 @@ Tracking issue: https://github.com/chliu1990/obsidian-emend/issues/14
 
 ## Implementation details
 
-- The title row contains the existing **Emend** title and a compact muted build identity. A wrapping muted row below it lists the four default shortcut labels before the active-note context.
+- The title row contains the existing **Emend** title and a compact muted build identity. Two column-stacked, wrapping muted groups below it list the four default shortcut labels before the active-note context.
 - macOS displays `⌘⇧A Ask`, `⌘⇧E Edit`, `Enter / ⌘ Enter send`, and `Shift Enter newline`. Windows/Linux displays `Ctrl+Shift+A Ask`, `Ctrl+Shift+E Edit`, `Enter / Ctrl+Enter send`, and `Shift+Enter newline`. These are static descriptions of Emend's defaults, not dynamically remapped Obsidian hotkeys. **Open Emend chat** has no advertised default hotkey.
 - esbuild injects `__EMEND_BUILD_ID__`. `EMEND_RELEASE_BUILD=1` selects the complete `manifest.json` version; every other build executes `git rev-parse --short HEAD` at build time and rejects an empty identity. No runtime Git, filesystem, Node, network, or repository metadata path is added to the plugin.
 - Development watch captures the short hash when its esbuild context starts. Restart `npm run dev` after a commit to advance the label; dirty files alone do not change it. Ordinary production and untagged CI builds also use the short hash, while the release workflow opts into the validated manifest version.
@@ -96,7 +96,7 @@ Result: **PASS**. `npm ci` installed 351 packages from the committed lockfile. V
 
 ## Shortcut badge refinement
 
-The header now uses two column-stacked wrapping groups beneath the title. The first contains **Default shortcuts**, `⌘⇧A` / **Ask**, and `⌘⇧E` / **Edit**; the second contains `Enter / ⌘ Enter` / **send** and `Shift Enter` / **newline**. Every key is a semantic `<kbd>` badge and every action is a separate unbadged span. Badge padding, border, radius, background, normal text color, inherited font, and line height use the existing Obsidian theme variables. The note context remains immediately after the groups. No label, keybinding, command, request, or note-writing behavior changed.
+The header now uses two column-stacked wrapping groups beneath the title. The first contains **Default shortcuts**, `⌘⇧A` / **Ask**, and `⌘⇧E` / **Edit**; the second contains `Enter / ⌘ Enter` / **send** and `Shift Enter` / **newline**. Every key is a semantic `<kbd>` badge and every action is a separate unbadged span. Badge border, background, and normal text color use existing Obsidian theme variables; padding, radius, and line height use small fixed values, and the font is inherited. The note context remains immediately after the groups. No label, keybinding, command, request, or note-writing behavior changed.
 
 CSS regressions require the column container, wrapping flex groups, inline-flex key/action pairing, and the badge border/background/text declarations. The focused red run failed four assertions because those selectors and the column declaration were absent. After implementation, the focused 52 tests and complete 466-test suite passed, along with ESLint, strict TypeScript/production build, and `git diff --check`.
 
