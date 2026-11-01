@@ -6,6 +6,8 @@ import type {
 	InstructionPromptParts,
 	Mode,
 	ProviderHistoryMessage,
+	ProviderHistoryOrigin,
+	ProviderWireHistoryMessage,
 } from '../src/types';
 
 describe('mode definitions and message contracts', () => {
@@ -29,8 +31,20 @@ describe('mode definitions and message contracts', () => {
 		}>();
 	});
 
-	it('limits provider history to roles and content', () => {
+	it('adds mode and origin to internal provider history', () => {
 		expectTypeOf<ProviderHistoryMessage>().toEqualTypeOf<{
+			role: 'user' | 'assistant';
+			content: string;
+			mode: Mode;
+			origin: ProviderHistoryOrigin;
+		}>();
+		expectTypeOf<ProviderHistoryOrigin>().toEqualTypeOf<
+			'user' | 'model' | 'local-edit-status'
+		>();
+	});
+
+	it('limits wire provider history to roles and content', () => {
+		expectTypeOf<ProviderWireHistoryMessage>().toEqualTypeOf<{
 			role: 'user' | 'assistant';
 			content: string;
 		}>();

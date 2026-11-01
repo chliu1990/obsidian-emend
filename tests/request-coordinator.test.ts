@@ -154,6 +154,8 @@ describe('ReadOnlyRequestCoordinator', () => {
 			(_, index) => ({
 				role: index % 2 === 0 ? 'user' : 'assistant',
 				content: `ready ${index}`,
+				mode: 'ask',
+				origin: index % 2 === 0 ? 'user' : 'model',
 			}),
 		);
 

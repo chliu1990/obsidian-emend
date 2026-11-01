@@ -417,7 +417,7 @@ describe('shared per-note request isolation', () => {
 		]));
 		const pendingA = fixture.plugin.requestChatCompletion(
 			makeEditSubmission(fixture, 'A.md', 'Edit A.', [
-				{ role: 'assistant', content: 'A history' },
+				{ role: 'assistant', content: 'A history', mode: 'edit', origin: 'model' },
 			]),
 		);
 		await pendingResponse.started;
@@ -429,7 +429,7 @@ describe('shared per-note request isolation', () => {
 		await expect(
 			fixture.plugin.requestChatCompletion(
 				makeEditSubmission(fixture, 'B.md', 'Edit B.', [
-					{ role: 'assistant', content: 'B history' },
+					{ role: 'assistant', content: 'B history', mode: 'edit', origin: 'model' },
 				]),
 			),
 		).resolves.toMatchObject({ applied: true, changeCount: 1 });
@@ -442,10 +442,10 @@ describe('shared per-note request isolation', () => {
 			{ path: 'B.md', text: 'B{++ applied++} original.' },
 		]);
 		expect(requestMock.mock.calls[0]?.[0].history).toEqual([
-			{ role: 'assistant', content: 'A history' },
+			{ role: 'assistant', content: 'A history', mode: 'edit', origin: 'model' },
 		]);
 		expect(requestMock.mock.calls[1]?.[0].history).toEqual([
-			{ role: 'assistant', content: 'B history' },
+			{ role: 'assistant', content: 'B history', mode: 'edit', origin: 'model' },
 		]);
 		expect(markdownFromRequest(requestMock.mock.calls[0]?.[0])).toBe('A original.');
 		expect(markdownFromRequest(requestMock.mock.calls[1]?.[0])).toBe('B original.');

@@ -9,8 +9,8 @@ const request: Pick<
 	systemPrompt: '1234',
 	userPrompt: '123456',
 	history: [
-		{ role: 'user', content: '12345' },
-		{ role: 'assistant', content: '' },
+		{ role: 'user', content: '12345', mode: 'ask', origin: 'user' },
+		{ role: 'assistant', content: '', mode: 'ask', origin: 'model' },
 	],
 };
 

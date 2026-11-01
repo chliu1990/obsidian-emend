@@ -230,6 +230,8 @@ describe('requestAiResponse', () => {
 		const history = Array.from({ length: 10 }, (_, index) => ({
 			role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
 			content: `message ${index}`,
+			mode: 'ask' as const,
+			origin: index % 2 === 0 ? ('user' as const) : ('model' as const),
 		}));
 		const controller = new AbortController();
 

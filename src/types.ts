@@ -19,7 +19,16 @@ export interface AiMessage {
 	mode: Mode;
 }
 
+export type ProviderHistoryOrigin = 'user' | 'model' | 'local-edit-status';
+
 export interface ProviderHistoryMessage {
+	role: 'user' | 'assistant';
+	content: string;
+	mode: Mode;
+	origin: ProviderHistoryOrigin;
+}
+
+export interface ProviderWireHistoryMessage {
 	role: 'user' | 'assistant';
 	content: string;
 }
