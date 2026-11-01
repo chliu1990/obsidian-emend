@@ -444,6 +444,17 @@ describe('EmendSettingTab model discovery', () => {
 		vi.unstubAllGlobals();
 	});
 
+	it('renders a compact accessible refresh icon without visible text', () => {
+		const { tab } = createModelSettingsTab();
+		displaySettings(tab);
+		const button = latestModelButton();
+		expect(button.icon).toBe('refresh-cw');
+		expect(button.tooltip).toBe('Refresh models');
+		expect(button.buttonEl.attributes['aria-label']).toBe('Refresh models');
+		expect(button.buttonEl.classList.contains('clickable-icon')).toBe(true);
+		expect(button.text).toBe('');
+	});
+
 	it('does not expose raw HTTP response bodies in refresh notices', async () => {
 		const actualDiscovery = await vi.importActual<typeof import('../src/model-discovery')>(
 			'../src/model-discovery',
@@ -556,6 +567,7 @@ describe('EmendSettingTab model discovery', () => {
 
 		const firstClick = button.clickHandler();
 		expect(button.buttonEl.disabled).toBe(true);
+		expect(button.buttonEl.classList.contains('mod-loading')).toBe(false);
 		const secondClick = button.clickHandler();
 		await secondClick;
 
@@ -617,6 +629,10 @@ describe('EmendSettingTab model discovery', () => {
 
 			if (change === 'provider') {
 				await latestDropdown('Active provider').onChangeHandler('kimi');
+				const rerenderedButton = latestSetting('Kimi model').buttons[0];
+				expect(rerenderedButton?.buttonEl.disabled).toBe(true);
+				expect(rerenderedButton?.buttonEl.classList.contains('clickable-icon')).toBe(true);
+				expect(rerenderedButton?.buttonEl.classList.contains('mod-loading')).toBe(false);
 			} else if (change === 'base URL') {
 				await latestSetting('DeepSeek base URL').texts[0]?.onChangeHandler(
 					'https://deepseek.example.test/v1',

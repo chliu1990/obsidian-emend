@@ -242,16 +242,21 @@ export class EmendSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					}),
 			)
-			.addButton((button) =>
+			.addButton((button) => {
+				button.buttonEl.classList.add('clickable-icon');
+				button.buttonEl.setAttribute('aria-label', 'Refresh models');
 				button
-					.setButtonText('Refresh models')
+					.setIcon('refresh-cw')
+					.setTooltip('Refresh models')
 					.setDisabled(this.modelRefreshPending)
 					.onClick(async () => {
 						if (this.modelRefreshPending) return;
 						button.setDisabled(true);
+						button.buttonEl.classList.remove('mod-loading');
 						await this.refreshModels(provider.id);
-					}),
-			);
+					});
+				button.buttonEl.classList.remove('mod-loading');
+			});
 
 		const reasoningSetting = new Setting(containerEl)
 			.setName('Reasoning effort')

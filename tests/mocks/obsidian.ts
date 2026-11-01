@@ -57,10 +57,23 @@ interface TextComponent {
 }
 
 interface ButtonComponent {
-	buttonEl: { disabled: boolean };
+	buttonEl: {
+		disabled: boolean;
+		attributes: Record<string, string>;
+		classList: {
+			add(name: string): void;
+			remove(name: string): void;
+			contains(name: string): boolean;
+		};
+		setAttribute(name: string, value: string): void;
+	};
+	icon: string;
+	tooltip: string;
 	text: string;
 	clickHandler: () => unknown;
 	setButtonText(value: string): ButtonComponent;
+	setIcon(value: string): ButtonComponent;
+	setTooltip(value: string): ButtonComponent;
 	setDisabled(value: boolean): ButtonComponent;
 	onClick(handler: () => unknown): ButtonComponent;
 }
@@ -118,16 +131,49 @@ export class Setting {
 	}
 
 	addButton(callback: (button: ButtonComponent) => unknown) {
+		const classNames = new Set<string>();
 		const button: ButtonComponent = {
-			buttonEl: { disabled: false },
+			buttonEl: {
+				disabled: false,
+				attributes: {},
+				classList: {
+					add(name) {
+						classNames.add(name);
+					},
+					remove(name) {
+						classNames.delete(name);
+					},
+					contains(name) {
+						return classNames.has(name);
+					},
+				},
+				setAttribute(name, value) {
+					this.attributes[name] = value;
+				},
+			},
+			icon: '',
+			tooltip: '',
 			text: '',
 			clickHandler: () => undefined,
 			setButtonText(value) {
 				this.text = value;
 				return this;
 			},
+			setIcon(value) {
+				this.icon = value;
+				return this;
+			},
+			setTooltip(value) {
+				this.tooltip = value;
+				return this;
+			},
 			setDisabled(value) {
 				this.buttonEl.disabled = value;
+				if (value) {
+					this.buttonEl.classList.add('mod-loading');
+				} else {
+					this.buttonEl.classList.remove('mod-loading');
+				}
 				return this;
 			},
 			onClick(handler) {
