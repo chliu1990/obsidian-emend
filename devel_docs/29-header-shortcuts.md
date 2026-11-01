@@ -93,3 +93,35 @@ Result: **PASS**. `npm ci` installed 351 packages from the committed lockfile. V
 - Small muted text uses Obsidian variables and had 7.2178:1 contrast in the tested theme. Flexible wrapping avoids a fixed header width, while the existing single-line note-label ellipsis prevents long names from widening the sidebar.
 - Verification used no credentials or network provider calls and did not alter either fixture note. Sanitized evidence contains only synthetic note names/content and local layout metadata.
 - Dynamic Obsidian hotkey-manager/remapping integration, new or changed shortcuts, an Open-chat default hotkey, sidebar-tab title changes, settings, provider changes, release-version changes, and unrelated visual redesign remain non-goals. Windows/Linux labels were not manually exercised on this macOS host; their exact pure-helper output is unit-tested.
+
+## Shortcut badge refinement
+
+The header now uses two column-stacked wrapping groups beneath the title. The first contains **Default shortcuts**, `⌘⇧A` / **Ask**, and `⌘⇧E` / **Edit**; the second contains `Enter / ⌘ Enter` / **send** and `Shift Enter` / **newline**. Every key is a semantic `<kbd>` badge and every action is a separate unbadged span. Badge padding, border, radius, background, normal text color, inherited font, and line height use the existing Obsidian theme variables. The note context remains immediately after the groups. No label, keybinding, command, request, or note-writing behavior changed.
+
+CSS regressions require the column container, wrapping flex groups, inline-flex key/action pairing, and the badge border/background/text declarations. The focused red run failed four assertions because those selectors and the column declaration were absent. After implementation, the focused 52 tests and complete 466-test suite passed, along with ESLint, strict TypeScript/production build, and `git diff --check`.
+
+### Real-Obsidian badge verification
+
+The untagged production build at `d19b2cf` was installed into the same ignored `test_vault/stage29_vault` and loaded in a newly started isolated instance using `test_vault/.emend-test-profile-29` and CDP 9339. The environment again reported Obsidian `1.11.7`, Chrome `142.0.7444.265`, and Electron `39.5.1`. Only the two existing synthetic notes were opened. No prompt or provider request was submitted, both notes remained byte-for-byte unchanged, and no real credential, provider, private note, or user profile was accessed.
+
+Actual CDP scenario and assertion commands after installing the bundle and starting the isolated instance:
+
+```bash
+node test_vault/cdp-stage29.mjs "globalThis.stage29ExpectedIdentity='d19b2cf';globalThis.stage29BadgeWidth=420;'Stage 29 badge verification configured'"
+node test_vault/cdp-stage29.mjs test_vault/stage29-badges.js > test_vault/stage29-badges-normal.json
+node test_vault/cdp-stage29.mjs --screenshot test_vault/stage29-badges-normal.png
+node test_vault/cdp-stage29.mjs "globalThis.stage29BadgeWidth=220;'Stage 29 narrow badge width set'"
+node test_vault/cdp-stage29.mjs test_vault/stage29-badges.js > test_vault/stage29-badges-narrow.json
+node test_vault/cdp-stage29.mjs --screenshot test_vault/stage29-badges-narrow.png
+node test_vault/verify-stage29-badges.mjs
+```
+
+Result: **PASS** at both actual chat widths.
+
+1. **Semantic DOM and exact text — PASS.** There were exactly two groups with two shortcut items each. Four direct `<kbd>` children appeared in order as `⌘⇧A`, `⌘⇧E`, `Enter / ⌘ Enter`, and `Shift Enter`; their separate direct action spans were exactly `Ask`, `Edit`, `send`, and `newline`. Each item had exactly `KBD` and `SPAN` children. Action spans had transparent backgrounds and zero-width borders.
+2. **Computed badge styling — PASS.** At both widths every badge had a 1 px solid `rgb(51, 51, 51)` border, `rgb(40, 40, 40)` background, and `rgb(218, 218, 218)` text, matching probes resolved from `--background-modifier-border`, `--background-secondary`, and `--text-normal`. Muted action text remained `rgb(179, 179, 179)`. The container computed to `flex-direction: column`; both groups computed to `display: flex` and `flex-wrap: wrap`.
+3. **Normal and narrow wrapping — PASS.** At 420 px the two groups each occupied one flex line and the shortcut container was 40.59375 px high. At 220 px each group occupied two flex lines and the container was 86.1875 px high. The view, header, title row, shortcut container, both groups, and all four items satisfied `scrollWidth <= clientWidth + 1`; the view/client widths were exactly 420/420 px and 220/220 px.
+4. **Unchanged identity and context — PASS.** Both layouts retained title `Emend`, identity `d19b2cf`, the complete synthetic long-note DOM label immediately after the groups, and context ellipsis. No note request was pending.
+5. **Screenshots — PASS.** `stage29-badges-normal.png` and `stage29-badges-narrow.png` were captured through CDP and visually inspected at full header resolution. They show distinct bordered key badges, separate muted actions, two groups, internal narrow wrapping, and no horizontal overflow.
+
+Only the newly started isolated Obsidian instance was stopped afterward. Pre-existing Obsidian PID 46262 remained running. The CDP helpers, JSON results, verification summary, and screenshots remain ignored under `test_vault/` and are not part of the documentation commit.
