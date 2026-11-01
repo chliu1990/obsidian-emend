@@ -13,9 +13,34 @@
 	padding-bottom: 8px;
 }
 
+.emend-chat-title-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 4px 8px;
+	min-width: 0;
+}
+
 .emend-chat-title {
 	font-size: var(--font-ui-medium);
 	font-weight: 700;
+}
+
+.emend-chat-build {
+	min-width: 0;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+.emend-chat-shortcuts {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 8px;
+	min-width: 0;
+	margin-top: 4px;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
 }
 
 .emend-chat-context {

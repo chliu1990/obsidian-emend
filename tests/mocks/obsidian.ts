@@ -27,6 +27,8 @@ export class Notice {
 	}
 }
 
+export const Platform = { isMacOS: true };
+
 export function setIcon(): void {}
 
 export class TFile {

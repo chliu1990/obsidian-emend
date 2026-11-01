@@ -2,12 +2,14 @@ import {
 	ItemView,
 	MarkdownRenderer,
 	Notice,
+	Platform,
 	Scope,
 	setIcon,
 	WorkspaceLeaf,
 } from 'obsidian';
+import { EMEND_BUILD_ID } from './build-info';
 import type EmendPlugin from './main';
-import { getComposerShortcut } from './chat-shortcuts';
+import { getComposerShortcut, getDefaultShortcutLabels } from './chat-shortcuts';
 import { MODES } from './mode';
 import {
 	areQuickActionsDisabled,
@@ -149,10 +151,20 @@ export class EmendChatView extends ItemView {
 		contentEl.addClass('emend-chat-view');
 
 		const headerEl = contentEl.createDiv('emend-chat-header');
-		headerEl.createDiv({
-			cls: 'emend-chat-title',
-			text: 'Emend',
+		const titleRowEl = headerEl.createDiv('emend-chat-title-row');
+		titleRowEl.createDiv({ cls: 'emend-chat-title', text: 'Emend' });
+		titleRowEl.createSpan({ cls: 'emend-chat-build', text: EMEND_BUILD_ID });
+		const shortcutsEl = headerEl.createDiv('emend-chat-shortcuts');
+		shortcutsEl.createSpan({
+			cls: 'emend-chat-shortcuts-label',
+			text: 'Default shortcuts',
 		});
+		for (const shortcut of getDefaultShortcutLabels(Platform.isMacOS)) {
+			shortcutsEl.createSpan({
+				cls: 'emend-chat-shortcut',
+				text: `${shortcut.keys} ${shortcut.action}`,
+			});
+		}
 		headerEl.createDiv({
 			cls: 'emend-chat-context',
 			text: this.plugin.getActiveNoteLabel(),

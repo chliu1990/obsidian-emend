@@ -23,6 +23,22 @@ describe('EmendChatView mode button hover styles', () => {
 	});
 });
 
+describe('EmendChatView header styles', () => {
+	it('wraps the title and shortcut rows', () => {
+		expect(getCssRule('.emend-chat-title-row')).toContain('flex-wrap: wrap;');
+		expect(getCssRule('.emend-chat-shortcuts')).toContain('flex-wrap: wrap;');
+	});
+
+	it('uses muted text for the build identity and shortcuts', () => {
+		expect(getCssRule('.emend-chat-build')).toContain('color: var(--text-muted);');
+		expect(getCssRule('.emend-chat-shortcuts')).toContain('color: var(--text-muted);');
+	});
+
+	it('retains context ellipsis', () => {
+		expect(getCssRule('.emend-chat-context')).toContain('text-overflow: ellipsis;');
+	});
+});
+
 const viewPrototype = EmendChatView.prototype as unknown as {
 	refreshTargetNote(this: unknown): Promise<void>;
 	submitPrompt(this: unknown): Promise<void>;
