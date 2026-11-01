@@ -310,14 +310,14 @@ describe('sequential full-note edits', () => {
 		const summary = 'Edit applied — 1 changes tracked. Review in Track Changes.';
 		expect(requests[0]?.history).toEqual([]);
 		expect(requests[1]?.history).toEqual([
-			{ role: 'user', content: 'First edit' },
-			{ role: 'assistant', content: summary },
+			{ role: 'user', content: 'First edit', mode: 'edit', origin: 'user' },
+			{ role: 'assistant', content: summary, mode: 'edit', origin: 'local-edit-status' },
 		]);
 		expect(requests[2]?.history).toEqual([
-			{ role: 'user', content: 'First edit' },
-			{ role: 'assistant', content: summary },
-			{ role: 'user', content: 'Second edit' },
-			{ role: 'assistant', content: summary },
+			{ role: 'user', content: 'First edit', mode: 'edit', origin: 'user' },
+			{ role: 'assistant', content: summary, mode: 'edit', origin: 'local-edit-status' },
+			{ role: 'user', content: 'Second edit', mode: 'edit', origin: 'user' },
+			{ role: 'assistant', content: summary, mode: 'edit', origin: 'local-edit-status' },
 		]);
 		expect(fixture.getText('Note.md')).toBe(responses[2]);
 		expect(fixture.getText('Note.md')).toContain('{~~beta~>delta~~}');

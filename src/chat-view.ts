@@ -564,6 +564,10 @@ export class EmendChatView extends ItemView {
 			.map((message) => ({
 				role: message.role,
 				content: message.content,
+				mode: message.mode,
+				origin: message.role === 'user'
+					? 'user'
+					: message.mode === 'edit' ? 'local-edit-status' : 'model',
 			}));
 	}
 
