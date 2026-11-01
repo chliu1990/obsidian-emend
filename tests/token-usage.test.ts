@@ -63,11 +63,11 @@ describe('resolveTokenUsage', () => {
 		});
 	});
 
-	it('estimates request and response characters separately, including history and reasoning', () => {
+	it('estimates annotated history and response characters separately', () => {
 		expect(resolveTokenUsage(request, result())).toEqual({
-			promptTokens: 4,
+			promptTokens: 47,
 			completionTokens: 3,
-			totalTokens: 7,
+			totalTokens: 50,
 			source: 'estimated',
 		});
 	});

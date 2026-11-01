@@ -222,17 +222,33 @@ afterEach(() => {
 });
 
 describe('requestAiResponse', () => {
-	it('constructs the OpenAI-compatible request and trims history to eight messages', async () => {
+	it('constructs annotated wire history and trims it to eight messages', async () => {
 		const fetchMock = mockStream([
 			'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
 			'data: [DONE]\n\n',
 		]);
-		const history = Array.from({ length: 10 }, (_, index) => ({
-			role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
-			content: `message ${index}`,
-			mode: 'ask' as const,
-			origin: index % 2 === 0 ? ('user' as const) : ('model' as const),
-		}));
+		const history: AiProviderRequest['history'] = [
+			{ role: 'user', content: 'message 0', mode: 'ask', origin: 'user' },
+			{ role: 'assistant', content: 'message 1', mode: 'ask', origin: 'model' },
+			{ role: 'user', content: 'message 2', mode: 'discuss', origin: 'user' },
+			{ role: 'assistant', content: 'message 3', mode: 'discuss', origin: 'model' },
+			{ role: 'user', content: 'message 4', mode: 'brainstorm', origin: 'user' },
+			{ role: 'assistant', content: 'message 5', mode: 'brainstorm', origin: 'model' },
+			{ role: 'user', content: 'message 6', mode: 'edit', origin: 'user' },
+			{
+				role: 'assistant',
+				content: 'Edit applied — 1 changes tracked. Review in Track Changes.',
+				mode: 'edit',
+				origin: 'local-edit-status',
+			},
+			{ role: 'user', content: 'message 8', mode: 'ask', origin: 'user' },
+			{
+				role: 'assistant',
+				content: 'Edit applied — 2 changes tracked. Review in Track Changes.',
+				mode: 'edit',
+				origin: 'local-edit-status',
+			},
+		];
 		const controller = new AbortController();
 
 		await requestAiResponse(
@@ -261,7 +277,38 @@ describe('requestAiResponse', () => {
 			model: 'test-model',
 			messages: [
 				{ role: 'system', content: 'System prompt' },
-				...history.slice(-8),
+				{
+					role: 'user',
+					content: '[Historical Discuss message. That earlier request was read-only. Origin: user message.]\nmessage 2',
+				},
+				{
+					role: 'assistant',
+					content: '[Historical Discuss message. That earlier request was read-only. Origin: model response.]\nmessage 3',
+				},
+				{
+					role: 'user',
+					content: '[Historical Brainstorm message. That earlier request was read-only. Origin: user message.]\nmessage 4',
+				},
+				{
+					role: 'assistant',
+					content: '[Historical Brainstorm message. That earlier request was read-only. Origin: model response.]\nmessage 5',
+				},
+				{
+					role: 'user',
+					content: '[Historical Edit message. Note writing was permitted for that earlier request only. Origin: user message.]\nmessage 6',
+				},
+				{
+					role: 'assistant',
+					content: '[Historical Edit message. Note writing was permitted for that earlier request only. Origin: local Emend Edit status, not a model response.]\nEdit applied — 1 changes tracked. Review in Track Changes.',
+				},
+				{
+					role: 'user',
+					content: '[Historical Ask message. That earlier request was read-only. Origin: user message.]\nmessage 8',
+				},
+				{
+					role: 'assistant',
+					content: '[Historical Edit message. Note writing was permitted for that earlier request only. Origin: local Emend Edit status, not a model response.]\nEdit applied — 2 changes tracked. Review in Track Changes.',
+				},
 				{ role: 'user', content: 'Current prompt' },
 			],
 			temperature: 0.3,

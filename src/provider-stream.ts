@@ -1,3 +1,4 @@
+import { formatProviderHistory } from './provider-history';
 import type { ProviderConfig, ProviderHistoryMessage } from './types';
 
 const MAX_PROVIDER_ERROR_CHARACTERS = 2000;
@@ -67,7 +68,7 @@ export async function requestAiResponse(
 				model,
 				messages: [
 					{ role: 'system', content: request.systemPrompt },
-					...request.history.slice(-8),
+					...formatProviderHistory(request.history.slice(-8)),
 					{ role: 'user', content: request.userPrompt },
 				],
 				temperature: 0.3,
