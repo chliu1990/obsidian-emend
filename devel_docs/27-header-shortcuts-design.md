@@ -40,6 +40,12 @@ The labels describe Emend's defaults even if the user remaps Obsidian hotkeys. N
 
 Use small muted text with accessible contrast, flexible wrapping, modest gaps, and no fixed header width. Keep individual key/action labels together where practical. Preserve the active-note label's existing single-line ellipsis and prevent horizontal overflow at narrow sidebar widths. Do not change mode controls, composer behavior, loading state, or request rendering.
 
+### Presentation revision after real-Obsidian feedback
+
+Render each key combination in a semantic `<kbd>` badge and keep its action as separate unhighlighted text. Badges use `var(--background-secondary)`, a subtle `var(--background-modifier-border)` border, `var(--text-normal)`, small padding, and rounded corners; no bright accent color or highlighted action text.
+
+Arrange shortcuts into two flex-wrapping groups: the first contains `Default shortcuts`, Ask, and Edit; the second contains send and newline. Each group wraps internally at narrow widths, allowing additional lines rather than horizontal overflow. Add CSS regression assertions and repeat normal/narrow real-Obsidian visual verification before updating PR #17.
+
 ## Shortcut-label boundary
 
 Add a pure exported helper in `src/chat-shortcuts.ts` that accepts a boolean macOS value and returns ordered key/action label objects. Keeping this helper beside shortcut matching makes the presentation easy to compare with actual defaults and test without DOM rendering.
