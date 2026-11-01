@@ -629,6 +629,10 @@ describe('EmendSettingTab model discovery', () => {
 
 			if (change === 'provider') {
 				await latestDropdown('Active provider').onChangeHandler('kimi');
+				const rerenderedButton = latestSetting('Kimi model').buttons[0];
+				expect(rerenderedButton?.buttonEl.disabled).toBe(true);
+				expect(rerenderedButton?.buttonEl.classList.contains('clickable-icon')).toBe(true);
+				expect(rerenderedButton?.buttonEl.classList.contains('mod-loading')).toBe(false);
 			} else if (change === 'base URL') {
 				await latestSetting('DeepSeek base URL').texts[0]?.onChangeHandler(
 					'https://deepseek.example.test/v1',
