@@ -2,14 +2,15 @@
 
 ## Goal
 
-Document and verify the compact **Refresh models** icon from Task 1 in real Obsidian. Preserve explicit-only model discovery, accessibility, keyboard operation, pending/race behavior, model selection, custom-model availability, and normalized caches. Use only the ignored Stage 23 vault/profile, synthetic note, loopback fixture, and dummy credentials.
+Document and verify the compact **Refresh models** icon in real Obsidian. Preserve explicit-only model discovery, accessibility, keyboard operation, pending/race behavior, model selection, custom-model availability, and normalized caches. Use only the ignored Stage 23 vault/profile, synthetic note, loopback fixture, and dummy credentials.
 
 ## Implementation details
 
-- `README.md` now identifies the compact **Refresh models** icon in **Settings → Emend**. The existing authenticated `GET <base URL>/models`, SecretStorage, no-automatic-discovery, selector/custom-model, persistence/invalidation, and safe-failure explanations are unchanged.
-- Task 1's existing implementation uses the standard `refresh-cw` icon, **Refresh models** tooltip, and matching `aria-label`; this documentation task changed no runtime code, tests, styles, dependencies, release metadata, or generated tracked files.
-- Sanitized CDP evidence, request logs, screenshots, and the verification helper remain ignored under `test_vault/`. The production bundle was copied only into the ignored isolated vault.
-- Overall result: the clean automated gate **passed**. Real-Obsidian behavior and accessibility checks **passed**, but the narrow-layout no-stretch requirement **failed**: the native settings row expanded the button from 40 px to 88.078125 px wide. No runtime fix was attempted in this documentation task.
+- `README.md` identifies the compact **Refresh models** icon in **Settings → Emend**. The authenticated `GET <base URL>/models`, SecretStorage, no-automatic-discovery, selector/custom-model, persistence/invalidation, and safe-failure explanations remain unchanged.
+- The original implementation used a plain native button with `refresh-cw`, the **Refresh models** tooltip, and matching `aria-label`. At narrow widths, Obsidian's active `@container (max-width: 400px)` rule assigned `width: 100%; max-width: 100%` to `.setting-item-control button:not(.clickable-icon)`, inputs, and selects. The 289 px flex bases then shrank together inside the 289 px control, expanding the icon button from its intrinsic 40 px width to 88.078125 px. The viewport `matchMedia('(max-width: 400px)')` query was false; `.vertical-tab-content` was the relevant 400 px `inline-size` container.
+- A live-DOM-only hypothesis test added `clickable-icon` to the existing button without changing source. This exempted it from the container rule and changed the button to 24×24 px at both 400 px and 750 px content widths, with 4 px padding and an unchanged 16×16 px SVG. Evidence is preserved in ignored `test_vault/stage32-css-*.json` and `test_vault/stage32-clickable-icon-*.json`.
+- Runtime commit `de1bf4337e78d27f02383a16ef83b29f7c411000` (`fix: keep refresh icon compact at narrow widths`) applies that single native `clickable-icon` class in `src/settings.ts` and extends the existing settings assertion. This documentation task changed no runtime code, tests, styles, dependencies, release metadata, or generated tracked files.
+- Overall result: the original wide/narrow failure is **fixed and passes at native 24×24 px** in both normal layouts. Accessibility, keyboard activation, duplicate-request guards, success/error completion, model/cache behavior, privacy, and note preservation pass. A separate narrow **pending-state visual failure remains**: disabled `mod-loading` shrinks the button to 14.15625×24 px and its SVG to 6.15625×16 px. The strengthened assertion fails rather than hiding this issue.
 
 ## Automated verification
 
@@ -21,50 +22,43 @@ npm ci && npm test && npm run lint && npm run build && git diff --check
 
 Result: **PASS**. `npm ci` installed 351 packages from the committed lockfile. Vitest passed **24 files and 467 tests**. ESLint completed with no findings, strict TypeScript checking and production esbuild succeeded, and `git diff --check` reported no whitespace errors.
 
-Before installing the isolated verification copy, this command also passed:
-
-```bash
-npm run build && node test_vault/setup-stage23.mjs
-```
+Before installing the isolated fixed verification copy, `npm run build && node test_vault/setup-stage23.mjs` also passed.
 
 ## Real-Obsidian and loopback-fixture evidence
 
 Environment: real Obsidian on macOS reporting `obsidian/1.11.7`, Chrome `142.0.7444.265`, Electron `39.5.1`; CDP 9337; ignored vault `test_vault/stage23_vault`; ignored profile `test_vault/.emend-test-profile-23`; Emend and Track Changes enabled; and the CORS-enabled loopback fixture at `http://127.0.0.1:8801/v1`. Only dummy credentials and synthetic `Stage23.md` were used. No real account, external provider request, private note, user profile, or real credential was accessed.
 
-Final replay commands:
+Final fixed-bundle replay commands:
 
 ```bash
-node test_vault/setup-stage23.mjs
+npm run build && node test_vault/setup-stage23.mjs
 node test_vault/mock-models-23.mjs
 /Applications/Obsidian.app/Contents/MacOS/Obsidian --user-data-dir="$PWD/test_vault/.emend-test-profile-23" --remote-debugging-port=9337
 node test_vault/verify-stage32.mjs
 ```
 
-The verifier completed all scenarios and saved sanitized evidence before its intentional no-stretch assertion failed with `40 !== 88.078125`. It produced `test_vault/stage32-verification.json`, `test_vault/stage32-verifier-output.json`, and wide, narrow, tooltip, focus, and pending PNG screenshots. CDP-only synthetic Enter did not activate the native button and was not counted as Enter evidence. Separate native targeted Enter input was used instead, with synchronous event sampling recorded in `test_vault/stage32-native-enter-before.json`, `test_vault/stage32-native-enter-pending.json`, and `test_vault/stage32-native-enter-completed.json`.
+The verifier retains every layout, accessibility, pending, request-count, cache, privacy, and note-preservation assertion and now additionally requires native 24×24 px buttons and 16×16 px SVGs at wide/narrow widths and during pending. It completed all scenarios and saved evidence before the strengthened pending-width assertion failed with `14.15625 !== 24`. Evidence includes `test_vault/stage32-verification.json`, `test_vault/stage32-strengthened-verifier-output.json`, and current wide, narrow, tooltip, focus, and pending PNG screenshots. Native Enter has separate synchronous event evidence in `test_vault/stage32-native-enter-before.json`, `test_vault/stage32-native-enter-pending.json`, and `test_vault/stage32-native-enter-completed.json`.
 
-### Layout, tooltip, and accessibility
+### Fixed layout, tooltip, and accessibility
 
-1. **Wide layout — PASS except for the separate no-stretch comparison below.** At an actual 1000×760 settings viewport, the button was 40×30 px and the rendered SVG was 16×16 px. The button had empty text content, exactly one SVG, and exactly one `lucide-refresh-cw` icon. It stayed within the control, did not overlap the selector, was not clipped, and caused no horizontal overflow in the setting, control, content, content container, or document. See `stage32-wide.png`.
-2. **Narrow layout — FAIL for button stretching; other checks PASS.** A requested 420 px window was constrained by Obsidian to an actual 600×760 viewport. The setting wrapped without selector/button overlap, clipping, or horizontal scrolling, and the SVG remained 16×16 px inside the button. However, the button became **88.078125×30 px**, compared with 40×30 px at wide width. Its computed style remained `flex: 0 1 auto` with no inline CSS. See `stage32-narrow.png`; this is a genuine runtime layout issue requiring separate runtime review.
-3. **Tooltip and accessible name — PASS.** Actual hover displayed **Refresh models** with `display: block`, `visibility: visible`, and opacity 1. Chrome's accessibility tree reported an unignored, focusable `button` whose accessible name was **Refresh models**. See `stage32-tooltip.png`.
-4. **Keyboard focus — PASS.** The button was the active element, matched `:focus-visible`, and had a visible 3 px box-shadow focus ring. See `stage32-focus.png`.
+1. **Wide normal layout — PASS.** At an actual 1000×760 viewport and 750 px content container, the button was **24×24 px**, the control was 336.921875×30 px, and the SVG was 16×16 px. The button had empty text, exactly one `lucide-refresh-cw` SVG, no selector overlap or clipping, and no horizontal overflow in any checked ancestor or the document. See `stage32-wide.png`.
+2. **Original narrow failure — PASS after the fix.** At the original actual 600×760 viewport and 400 px content container, the button remained **24×24 px**, the control was 289×30 px, and the SVG remained 16×16 px. The previous 88.078125 px expansion is gone. The setting wrapped without overlap, clipping, stretching, or horizontal scrolling. See `stage32-narrow.png`.
+3. **Tooltip and accessibility — PASS.** Actual hover displayed **Refresh models** with `display: block`, `visibility: visible`, and opacity 1. Chrome's accessibility tree reported an unignored, focusable `button` named **Refresh models**. See `stage32-tooltip.png`.
+4. **Keyboard focus — PASS.** The button was active, matched `:focus-visible`, and showed a visible 3 px box-shadow focus ring. See `stage32-focus.png`.
 
 ### Keyboard, pending, and completion behavior
 
-1. **Native Enter — PASS.** Native targeted Enter in the isolated settings window issued a request. Samples in the actual click listener, the following microtask, and 100 ms later all recorded `disabled === true`, the native `disabled` attribute present, the same connected icon, and `animation-name: none` on both button and SVG. Completion cleared pending and restored an enabled button. `manual-model` and the normalized Alpha/Beta cache remained unchanged.
-2. **Space — PASS.** Space activation during a delayed HTTP 503 response immediately disabled the same icon. The button and SVG had no CSS or Web Animations API animation. Completion reenabled the icon and produced the bounded `Emend: Model discovery failed with HTTP 503.` notice.
-3. **Repeated activation — PASS.** Repeated Space/Enter/CDP-click activation during each delayed scripted sequence produced exactly one request per sequence. Native Enter was separately confirmed to issue one request per actual activation; the nonactivating CDP-only Enter events were not treated as evidence.
-4. **Success and error completion — PASS.** Normal success and HTTP 503 failure both finished with an enabled, nonspinning `refresh-cw` icon. Success displayed `Emend: DeepSeek model list refreshed.`; failure preserved the previous valid cache and selection.
+1. **Native Enter activation — PASS; pending dimensions — FAIL.** Native targeted Enter issued one request. The actual click listener, following microtask, and 100 ms sample all recorded native disabled state, one connected `refresh-cw`, no button/SVG animation, and the same pending distortion: **14.15625×24 px button and 6.15625×16 px SVG** with `clickable-icon mod-loading`. Completion restored the enabled 24×24 px button and 16×16 px SVG, with `manual-model` and the normalized cache unchanged.
+2. **Space activation — PASS; pending dimensions — FAIL.** Space issued one delayed HTTP 503 request and immediately disabled the same nonspinning icon. Its pending dimensions were also **14.15625×24 px** and **6.15625×16 px**. The current `stage32-pending.png` visibly shows the compressed icon. Completion reenabled the control and displayed `Emend: Model discovery failed with HTTP 503.`
+3. **Repeated activation — PASS.** Repeated activation during each delayed scripted sequence produced exactly one request per sequence. Both success and error completion restored an enabled, nonspinning icon. Native Enter separately produced exactly one request.
+4. **Success/error and model/cache behavior — PASS.** Success displayed `Emend: DeepSeek model list refreshed.` and retained normalized Alpha/Beta models. HTTP failure preserved the previous valid cache and selection. `manual-model` remained selected despite being absent from the fixture, and **Custom model** remained available. Kimi's cache remained untouched.
 
-### Behavior preservation and privacy
+### Privacy and storage
 
-- The initial cache and request count were empty; opening settings caused no discovery. The selected `manual-model`, which was absent from the fixture response, remained selected, and **Custom model** remained available. Alpha/Beta readable labels and normalized `{ id, displayName }` entries were retained.
-- HTTP failure preserved the valid DeepSeek cache. Kimi's cache remained untouched. Persisted provider `apiKey` fields stayed empty, raw response fields were absent, and notices contained no credentials, authorization text, or response-body canary.
-- The final sanitized request log contained five requests from the scripted and native-Enter checks. Every request was `GET /v1/models`, used an accepted dummy credential, and had no body. No external network request was made.
-- `Stage23.md` remained byte-for-byte unchanged. Only the isolated Obsidian process and loopback mock were stopped afterward; the pre-existing Obsidian process remained running.
+The initial request count and cache were empty; opening settings caused no discovery. Persisted provider `apiKey` fields stayed empty, raw response fields were absent, and notices contained no credentials, authorization text, or response-body canary. The final sanitized log contained three `GET /v1/models` requests from success, HTTP error, and native Enter; every request used an accepted dummy credential and had no body. `Stage23.md` remained byte-for-byte unchanged. Only the isolated Obsidian process and loopback mock were stopped afterward; the pre-existing Obsidian process remained running.
 
 ## Non-goals and follow-up
 
-This task did not change discovery requests, cache normalization/invalidation, provider switching, notices, model metadata, settings controls, release metadata, or runtime code. It did not add spinner animation, custom icon CSS, a new transport, external-provider testing, or real credentials.
+This task did not change discovery requests, cache normalization/invalidation, provider switching, notices, model metadata, release metadata, or runtime code. It did not add spinner animation, custom icon CSS, a new transport, external-provider testing, or real credentials.
 
-The narrow button-width expansion is unresolved and is deliberately reported rather than fixed in this documentation task. Independent review should decide whether a focused runtime follow-up is required before the feature is accepted.
+The original normal-layout root cause is resolved by `de1bf4337e78d27f02383a16ef83b29f7c411000`. The separate narrow pending distortion is unresolved and deliberately retained as a failing strengthened assertion. It needs a focused runtime review before the feature can be considered fully verified.
