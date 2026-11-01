@@ -60,7 +60,7 @@ Open **Settings → Community plugins**, reload plugins, and enable **Emend** an
 
    Emend appends `/chat/completions` to the base URL. Models and URLs remain editable.
 
-   To populate the model selector, click **Settings → Emend → Refresh models**. This explicitly sends an authenticated `GET <base URL>/models` request using the provider's API key from SecretStorage; discovery never runs automatically. Returned model IDs and display names become dropdown options, while the current selection and editable custom-model entry remain available. Discovered lists persist locally, and changing a provider's base URL or API key clears only that provider's list. Custom endpoints that do not support `/models`, HTTP failures, and malformed responses show an error without replacing the previous list.
+   To populate the model selector, click the compact **Refresh models** icon in **Settings → Emend**. This explicitly sends an authenticated `GET <base URL>/models` request using the provider's API key from SecretStorage; discovery never runs automatically. Returned model IDs and display names become dropdown options, while the current selection and editable custom-model entry remain available. Discovered lists persist locally, and changing a provider's base URL or API key clears only that provider's list. Custom endpoints that do not support `/models`, HTTP failures, and malformed responses show an error without replacing the previous list.
 
 2. Open **Emend chat** from the ribbon or Command Palette.
 3. Select **Ask**, **Discuss**, or **Brainstorm** and submit a question. The note stays unchanged.
