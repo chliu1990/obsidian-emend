@@ -567,6 +567,7 @@ describe('EmendSettingTab model discovery', () => {
 
 		const firstClick = button.clickHandler();
 		expect(button.buttonEl.disabled).toBe(true);
+		expect(button.buttonEl.classList.contains('mod-loading')).toBe(false);
 		const secondClick = button.clickHandler();
 		await secondClick;
 

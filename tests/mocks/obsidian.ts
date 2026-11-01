@@ -62,6 +62,7 @@ interface ButtonComponent {
 		attributes: Record<string, string>;
 		classList: {
 			add(name: string): void;
+			remove(name: string): void;
 			contains(name: string): boolean;
 		};
 		setAttribute(name: string, value: string): void;
@@ -139,6 +140,9 @@ export class Setting {
 					add(name) {
 						classNames.add(name);
 					},
+					remove(name) {
+						classNames.delete(name);
+					},
 					contains(name) {
 						return classNames.has(name);
 					},
@@ -165,6 +169,11 @@ export class Setting {
 			},
 			setDisabled(value) {
 				this.buttonEl.disabled = value;
+				if (value) {
+					this.buttonEl.classList.add('mod-loading');
+				} else {
+					this.buttonEl.classList.remove('mod-loading');
+				}
 				return this;
 			},
 			onClick(handler) {

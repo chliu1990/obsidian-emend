@@ -252,8 +252,10 @@ export class EmendSettingTab extends PluginSettingTab {
 					.onClick(async () => {
 						if (this.modelRefreshPending) return;
 						button.setDisabled(true);
+						button.buttonEl.classList.remove('mod-loading');
 						await this.refreshModels(provider.id);
 					});
+				button.buttonEl.classList.remove('mod-loading');
 			});
 
 		const reasoningSetting = new Setting(containerEl)
