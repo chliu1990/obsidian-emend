@@ -155,15 +155,17 @@ export class EmendChatView extends ItemView {
 		titleRowEl.createDiv({ cls: 'emend-chat-title', text: 'Emend' });
 		titleRowEl.createSpan({ cls: 'emend-chat-build', text: EMEND_BUILD_ID });
 		const shortcutsEl = headerEl.createDiv('emend-chat-shortcuts');
-		shortcutsEl.createSpan({
+		const modeGroupEl = shortcutsEl.createDiv('emend-chat-shortcut-group');
+		modeGroupEl.createSpan({
 			cls: 'emend-chat-shortcuts-label',
 			text: 'Default shortcuts',
 		});
-		for (const shortcut of getDefaultShortcutLabels(Platform.isMacOS)) {
-			shortcutsEl.createSpan({
-				cls: 'emend-chat-shortcut',
-				text: `${shortcut.keys} ${shortcut.action}`,
-			});
+		const composerGroupEl = shortcutsEl.createDiv('emend-chat-shortcut-group');
+		for (const [index, shortcut] of getDefaultShortcutLabels(Platform.isMacOS).entries()) {
+			const groupEl = index < 2 ? modeGroupEl : composerGroupEl;
+			const itemEl = groupEl.createSpan({ cls: 'emend-chat-shortcut' });
+			itemEl.createEl('kbd', { text: shortcut.keys });
+			itemEl.createSpan({ text: shortcut.action });
 		}
 		headerEl.createDiv({
 			cls: 'emend-chat-context',
