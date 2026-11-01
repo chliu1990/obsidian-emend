@@ -1,7 +1,7 @@
 {
 	"id": "emend",
 	"name": "Emend",
-	"version": "2.1.0",
+	"version": "2.2.0",
 	"minAppVersion": "1.11.4",
 	"description": "Context-aware streamed AI chat and guarded Track Changes editing for Markdown notes.",
 	"author": "Chang Liu and Kimi K3.1 Pro",

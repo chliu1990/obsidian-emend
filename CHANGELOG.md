@@ -4,6 +4,14 @@ All notable changes to Emend are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-11-01
+
+### Added
+
+- Chat-header display of default Ask/Edit/send/newline shortcuts with platform-aware labels and distinct key badges.
+- Build identity beside the Emend title: manifest version for release builds and short commit hash for untagged builds.
+- Responsive shortcut groups and build-time identity injection with explicit release-workflow selection.
+
 ## [2.1.0] - 2026-10-31
 
 ### Added
@@ -32,6 +40,7 @@ All notable changes to Emend are documented here. The format follows [Keep a Cha
 - Strict provider error redaction and bounded error output.
 - Validated anchors, ambiguity/overlap rejection, stale-source/target checks, and abort/unload protection for note writes.
 
-[Unreleased]: https://github.com/chliu1990/obsidian-emend/compare/2.1.0...HEAD
+[Unreleased]: https://github.com/chliu1990/obsidian-emend/compare/2.2.0...HEAD
+[2.2.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.2.0
 [2.1.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.1.0
 [2.0.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.0.0
