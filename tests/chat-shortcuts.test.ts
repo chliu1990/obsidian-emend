@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	getComposerShortcut,
+	getDefaultShortcutLabels,
 	getModeShortcut,
 	type ShortcutEvent,
 } from '../src/chat-shortcuts';
@@ -79,5 +80,25 @@ describe('mode shortcuts', () => {
 		{ key: 'x', metaKey: true, shiftKey: true },
 	])('ignores missing, conflicting, or unrelated mode modifiers: %o', (modifiers) => {
 		expect(getModeShortcut(shortcutEvent(modifiers))).toBeNull();
+	});
+});
+
+describe('default shortcut labels', () => {
+	it('labels all default shortcuts for macOS', () => {
+		expect(getDefaultShortcutLabels(true)).toEqual([
+			{ keys: '⌘⇧A', action: 'Ask' },
+			{ keys: '⌘⇧E', action: 'Edit' },
+			{ keys: 'Enter / ⌘ Enter', action: 'send' },
+			{ keys: 'Shift Enter', action: 'newline' },
+		]);
+	});
+
+	it('labels all default shortcuts for Windows and Linux', () => {
+		expect(getDefaultShortcutLabels(false)).toEqual([
+			{ keys: 'Ctrl+Shift+A', action: 'Ask' },
+			{ keys: 'Ctrl+Shift+E', action: 'Edit' },
+			{ keys: 'Enter / Ctrl+Enter', action: 'send' },
+			{ keys: 'Shift+Enter', action: 'newline' },
+		]);
 	});
 });

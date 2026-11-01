@@ -23,6 +23,41 @@ describe('EmendChatView mode button hover styles', () => {
 	});
 });
 
+describe('EmendChatView header styles', () => {
+	it('stacks shortcut groups below the wrapping title row', () => {
+		expect(getCssRule('.emend-chat-title-row')).toContain('flex-wrap: wrap;');
+		expect(getCssRule('.emend-chat-shortcuts')).toContain('flex-direction: column;');
+	});
+
+	it('wraps shortcut items within each group', () => {
+		const group = getCssRule('.emend-chat-shortcut-group');
+		expect(group).toContain('display: flex;');
+		expect(group).toContain('flex-wrap: wrap;');
+	});
+
+	it('keeps each key badge paired with its action', () => {
+		const shortcut = getCssRule('.emend-chat-shortcut');
+		expect(shortcut).toContain('display: inline-flex;');
+		expect(shortcut).toContain('align-items: center;');
+	});
+
+	it('distinguishes key badges from action text', () => {
+		const badge = getCssRule('.emend-chat-shortcut kbd');
+		expect(badge).toContain('border: 1px solid var(--background-modifier-border);');
+		expect(badge).toContain('background: var(--background-secondary);');
+		expect(badge).toContain('color: var(--text-normal);');
+	});
+
+	it('uses muted text for the build identity and shortcuts', () => {
+		expect(getCssRule('.emend-chat-build')).toContain('color: var(--text-muted);');
+		expect(getCssRule('.emend-chat-shortcuts')).toContain('color: var(--text-muted);');
+	});
+
+	it('retains context ellipsis', () => {
+		expect(getCssRule('.emend-chat-context')).toContain('text-overflow: ellipsis;');
+	});
+});
+
 const viewPrototype = EmendChatView.prototype as unknown as {
 	refreshTargetNote(this: unknown): Promise<void>;
 	submitPrompt(this: unknown): Promise<void>;

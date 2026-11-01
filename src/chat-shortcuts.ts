@@ -13,6 +13,20 @@ export interface ComposerShortcutState {
 	isThreadLoading: boolean;
 }
 
+export interface ShortcutLabel {
+	keys: string;
+	action: string;
+}
+
+export function getDefaultShortcutLabels(isMacOS: boolean): ShortcutLabel[] {
+	return [
+		{ keys: isMacOS ? '⌘⇧A' : 'Ctrl+Shift+A', action: 'Ask' },
+		{ keys: isMacOS ? '⌘⇧E' : 'Ctrl+Shift+E', action: 'Edit' },
+		{ keys: isMacOS ? 'Enter / ⌘ Enter' : 'Enter / Ctrl+Enter', action: 'send' },
+		{ keys: isMacOS ? 'Shift Enter' : 'Shift+Enter', action: 'newline' },
+	];
+}
+
 export function getComposerShortcut(
 	event: ShortcutEvent,
 	state: ComposerShortcutState = { isSending: false, isThreadLoading: false },
