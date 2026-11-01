@@ -60,6 +60,10 @@ interface ButtonComponent {
 	buttonEl: {
 		disabled: boolean;
 		attributes: Record<string, string>;
+		classList: {
+			add(name: string): void;
+			contains(name: string): boolean;
+		};
 		setAttribute(name: string, value: string): void;
 	};
 	icon: string;
@@ -126,10 +130,19 @@ export class Setting {
 	}
 
 	addButton(callback: (button: ButtonComponent) => unknown) {
+		const classNames = new Set<string>();
 		const button: ButtonComponent = {
 			buttonEl: {
 				disabled: false,
 				attributes: {},
+				classList: {
+					add(name) {
+						classNames.add(name);
+					},
+					contains(name) {
+						return classNames.has(name);
+					},
+				},
 				setAttribute(name, value) {
 					this.attributes[name] = value;
 				},

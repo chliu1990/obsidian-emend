@@ -451,6 +451,7 @@ describe('EmendSettingTab model discovery', () => {
 		expect(button.icon).toBe('refresh-cw');
 		expect(button.tooltip).toBe('Refresh models');
 		expect(button.buttonEl.attributes['aria-label']).toBe('Refresh models');
+		expect(button.buttonEl.classList.contains('clickable-icon')).toBe(true);
 		expect(button.text).toBe('');
 	});
 

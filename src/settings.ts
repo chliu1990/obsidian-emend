@@ -243,6 +243,7 @@ export class EmendSettingTab extends PluginSettingTab {
 					}),
 			)
 			.addButton((button) => {
+				button.buttonEl.classList.add('clickable-icon');
 				button.buttonEl.setAttribute('aria-label', 'Refresh models');
 				button
 					.setIcon('refresh-cw')
