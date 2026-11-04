@@ -1,4 +1,5 @@
-import { MarkdownView, Notice, Plugin } from 'obsidian';
+import { MarkdownView, Notice, Plugin, TFile } from 'obsidian';
+import { AdditionalNotesStore } from './additional-notes-store';
 import { EMEND_CHAT_VIEW_TYPE, EmendChatView } from './chat-view';
 import {
 	captureRequestContext,
@@ -40,6 +41,7 @@ import type {
 export default class EmendPlugin extends Plugin {
 	settings!: EmendSettings;
 	conversationStore!: ConversationStore;
+	additionalNotesStore!: AdditionalNotesStore;
 	private apiKeyStorage: ApiKeyStorage | undefined;
 	private lastMarkdownView: MarkdownView | null = null;
 	private pendingNotePaths: Set<string> | undefined;
@@ -51,6 +53,7 @@ export default class EmendPlugin extends Plugin {
 			this.app.vault.configDir,
 			(message) => new Notice(message),
 		);
+		this.additionalNotesStore = new AdditionalNotesStore();
 
 		this.registerView(
 			EMEND_CHAT_VIEW_TYPE,
@@ -73,6 +76,22 @@ export default class EmendPlugin extends Plugin {
 		this.registerEvent(
 			this.app.workspace.on('file-open', refreshChatTargetNotes),
 		);
+		if (typeof this.app.vault.on === 'function') {
+			this.registerEvent(
+				this.app.vault.on('rename', (file, oldPath) => {
+					if (file instanceof TFile) {
+						this.additionalNotesStore.rename(oldPath, file.path);
+					}
+				}),
+			);
+			this.registerEvent(
+				this.app.vault.on('delete', (file) => {
+					if (file instanceof TFile) {
+						this.additionalNotesStore.removeDeleted(file.path);
+					}
+				}),
+			);
+		}
 
 		// eslint-disable-next-line obsidianmd/ui/sentence-case -- Required Stage 18 public label.
 		this.addRibbonIcon('messages-square', 'Open Emend chat', () => {
