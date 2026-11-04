@@ -140,6 +140,7 @@ describe('EmendPlugin workspace conversation events', () => {
 			activeController: null,
 			closed: false,
 			inputEl: { value: '' },
+			drafts: new Map<string, string>(),
 			render: vi.fn(),
 			scheduleMessageRender: vi.fn(),
 		});
@@ -415,6 +416,24 @@ describe('EmendPlugin additional-note lifecycle', () => {
 		handlers.get('delete')?.(renamedFile);
 		expect(plugin.additionalNotesStore.list('A.md')).toEqual([]);
 		expect(plugin.additionalNotesStore.list('D.md')).toEqual([]);
+
+		plugin.additionalNotesStore.add('A.md', 'Ephemeral.md');
+		const reloadedPlugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(reloadedPlugin, {
+			app: plugin.app,
+			loadSettings: vi.fn().mockResolvedValue(undefined),
+			registerView: vi.fn(),
+			registerEvent: vi.fn(),
+			rememberActiveMarkdownView: vi.fn(),
+			addRibbonIcon: vi.fn(),
+			addCommand: vi.fn(),
+			addSettingTab: vi.fn(),
+			requestChatCompletion,
+			requestSelectionEdit,
+		});
+		await reloadedPlugin.onload();
+		expect(reloadedPlugin.additionalNotesStore).not.toBe(plugin.additionalNotesStore);
+		expect(reloadedPlugin.additionalNotesStore.list('A.md')).toEqual([]);
 
 		expect(read).not.toHaveBeenCalled();
 		expect(getMarkdownFiles).not.toHaveBeenCalled();
