@@ -386,6 +386,7 @@ describe('operation strategy coordinator integration', () => {
 			};
 			const coordinator = new EditRequestCoordinator({
 				provider,
+				loadAdditionalNotes: async () => [],
 				loadInstructions: async () => ({ skillTexts: new Map() }),
 				request: operationRequest(JSON.stringify([{ type, target: 'beta' }])),
 				writer,
@@ -397,6 +398,7 @@ describe('operation strategy coordinator integration', () => {
 				mode: 'edit',
 				prompt: 'Attempt an inherited operation type.',
 				history: [],
+				additionalNotePaths: [],
 				callbacks: { onReasoning: vi.fn() },
 				signal: new AbortController().signal,
 			})).rejects.toThrow('Operation 1 has an unknown type or malformed value.');
@@ -427,6 +429,7 @@ describe('operation strategy coordinator integration', () => {
 		const request = operationRequest(response);
 		const coordinator = new EditRequestCoordinator({
 			provider,
+			loadAdditionalNotes: async () => [],
 			loadInstructions: async () => ({ skillTexts: new Map() }),
 			request,
 			writer,
@@ -438,6 +441,7 @@ describe('operation strategy coordinator integration', () => {
 			mode: 'edit',
 			prompt: 'Replace beta.',
 			history: [],
+			additionalNotePaths: [],
 			callbacks: { onReasoning: vi.fn() },
 			signal: new AbortController().signal,
 		})).resolves.toMatchObject({ applied: true, changeCount: 1 });
@@ -463,6 +467,7 @@ describe('operation strategy coordinator integration', () => {
 		};
 		const coordinator = new SelectionEditRequestCoordinator({
 			provider,
+			loadAdditionalNotes: async () => [],
 			loadInstructions: async () => ({ skillTexts: new Map() }),
 			request: operationRequest(JSON.stringify([
 				{ type: 'replace', target: 'Alpha', replacement: 'Changed' },
@@ -476,6 +481,7 @@ describe('operation strategy coordinator integration', () => {
 			prompt: 'Change Alpha.',
 			maxContextCharacters: 1000,
 			smartSelectionContext: true,
+			additionalNotePaths: [],
 			signal: new AbortController().signal,
 		})).rejects.toThrow(/not found|match/i);
 		expect(editor.readCurrentText).not.toHaveBeenCalled();
@@ -503,6 +509,7 @@ describe('operation strategy coordinator integration', () => {
 		]));
 		const coordinator = new SelectionEditRequestCoordinator({
 			provider,
+			loadAdditionalNotes: async () => [],
 			loadInstructions: async () => ({ skillTexts: new Map() }),
 			request,
 			editor,
@@ -514,6 +521,7 @@ describe('operation strategy coordinator integration', () => {
 			prompt: 'Comment on beta.',
 			maxContextCharacters: 1000,
 			smartSelectionContext: true,
+			additionalNotePaths: [],
 			signal: new AbortController().signal,
 		})).resolves.toEqual({ applied: true, changeCount: 0 });
 		expect(request.mock.calls[0]?.[0].systemPrompt).toContain('inside the selection');

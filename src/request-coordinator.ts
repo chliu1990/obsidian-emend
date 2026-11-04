@@ -50,17 +50,9 @@ export interface EditSubmission {
 	signal: AbortSignal;
 }
 
-type ReadOnlySubmissionInput = Omit<ReadOnlySubmission, 'additionalNotePaths'> & {
-	additionalNotePaths?: readonly string[];
-};
-
-type EditSubmissionInput = Omit<EditSubmission, 'additionalNotePaths'> & {
-	additionalNotePaths?: readonly string[];
-};
-
 interface ReadOnlyRequestCoordinatorDependencies {
 	provider: ProviderConfig;
-	loadAdditionalNotes?(
+	loadAdditionalNotes(
 		paths: readonly string[],
 		activeNotePath: string,
 		signal: AbortSignal,
@@ -88,14 +80,12 @@ export class ReadOnlyRequestCoordinator {
 		private readonly dependencies: ReadOnlyRequestCoordinatorDependencies,
 	) {}
 
-	async submit(submission: ReadOnlySubmissionInput): Promise<ChatStreamResult> {
-		const additionalNotes = submission.additionalNotePaths === undefined
-			? []
-			: (await this.dependencies.loadAdditionalNotes?.(
-				submission.additionalNotePaths,
-				submission.context.file.path,
-				submission.signal,
-			)) ?? [];
+	async submit(submission: ReadOnlySubmission): Promise<ChatStreamResult> {
+		const additionalNotes = await this.dependencies.loadAdditionalNotes(
+			submission.additionalNotePaths,
+			submission.context.file.path,
+			submission.signal,
+		);
 		const instructions = await this.dependencies.loadInstructions();
 		const request = {
 			provider: this.dependencies.provider,
@@ -129,14 +119,12 @@ export class EditRequestCoordinator {
 		private readonly dependencies: EditRequestCoordinatorDependencies,
 	) {}
 
-	async submit(submission: EditSubmissionInput): Promise<EditRequestResult> {
-		const additionalNotes = submission.additionalNotePaths === undefined
-			? []
-			: (await this.dependencies.loadAdditionalNotes?.(
-				submission.additionalNotePaths,
-				submission.context.file.path,
-				submission.signal,
-			)) ?? [];
+	async submit(submission: EditSubmission): Promise<EditRequestResult> {
+		const additionalNotes = await this.dependencies.loadAdditionalNotes(
+			submission.additionalNotePaths,
+			submission.context.file.path,
+			submission.signal,
+		);
 		const instructions = await this.dependencies.loadInstructions();
 		let response = '';
 		const request = {

@@ -228,6 +228,7 @@ describe('SelectionModal quick actions', () => {
 				: vi.fn(async () => ({ content: 'not json', reasoning: '' }));
 			const coordinator = new SelectionEditRequestCoordinator({
 				provider,
+				loadAdditionalNotes: async () => [],
 				loadInstructions: async () => ({ skillTexts: new Map() }),
 				request,
 				editor,
@@ -239,6 +240,7 @@ describe('SelectionModal quick actions', () => {
 					prompt,
 					maxContextCharacters: 1000,
 					smartSelectionContext: true,
+					additionalNotePaths: [],
 					signal,
 				})
 			);

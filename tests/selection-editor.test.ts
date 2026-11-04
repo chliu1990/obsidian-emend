@@ -439,6 +439,16 @@ describe('SelectionEditRequestCoordinator', () => {
 		{ type: 'replace', target: 'beta', replacement: 'delta' },
 	]);
 
+	it('requires an additional-note loader in its dependencies', () => {
+		type Dependencies = ConstructorParameters<
+			typeof SelectionEditRequestCoordinator
+		>[0];
+
+		expectTypeOf<Dependencies['loadAdditionalNotes']>().toEqualTypeOf<
+			Required<Dependencies>['loadAdditionalNotes']
+		>();
+	});
+
 	it('loads current instructions and uses the operation selection prompt', async () => {
 		const snapshot = makeSnapshot();
 		const instructions: InstructionPromptParts = {

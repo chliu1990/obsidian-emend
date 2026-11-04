@@ -31,7 +31,7 @@ export interface SelectionEditorAdapter {
 
 interface SelectionEditRequestCoordinatorDependencies {
 	provider: ProviderConfig;
-	loadAdditionalNotes?(
+	loadAdditionalNotes(
 		paths: readonly string[],
 		activeNotePath: string,
 		signal: AbortSignal,
@@ -51,13 +51,6 @@ export interface SelectionEditSubmission {
 	notePath?: string;
 	signal: AbortSignal;
 }
-
-type SelectionEditSubmissionInput = Omit<
-	SelectionEditSubmission,
-	'additionalNotePaths'
-> & {
-	additionalNotePaths?: readonly string[];
-};
 
 export function captureSelectionSnapshot(
 	markdownView: MarkdownView,
@@ -164,14 +157,12 @@ export class SelectionEditRequestCoordinator {
 		private readonly dependencies: SelectionEditRequestCoordinatorDependencies,
 	) {}
 
-	async submit(submission: SelectionEditSubmissionInput): Promise<EditResult> {
-		const additionalNotes = submission.additionalNotePaths === undefined
-			? []
-			: (await this.dependencies.loadAdditionalNotes?.(
-				submission.additionalNotePaths,
-				submission.snapshot.file.path,
-				submission.signal,
-			)) ?? [];
+	async submit(submission: SelectionEditSubmission): Promise<EditResult> {
+		const additionalNotes = await this.dependencies.loadAdditionalNotes(
+			submission.additionalNotePaths,
+			submission.snapshot.file.path,
+			submission.signal,
+		);
 		const instructions = await this.dependencies.loadInstructions();
 		let response = '';
 		await this.dependencies.request(
@@ -207,7 +198,7 @@ export class SelectionEditRequestCoordinator {
 }
 
 function buildSelectionUserPrompt(
-	submission: SelectionEditSubmissionInput,
+	submission: SelectionEditSubmission,
 	additionalNotes: readonly AdditionalNoteSnapshot[],
 ): string {
 	const { snapshot } = submission;

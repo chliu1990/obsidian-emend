@@ -126,6 +126,9 @@ describe('ReadOnlyRequestCoordinator', () => {
 
 		expectTypeOf<Dependencies>().not.toHaveProperty('writer');
 		expectTypeOf<Dependencies>().not.toHaveProperty('noteWriter');
+		expectTypeOf<Dependencies['loadAdditionalNotes']>().toEqualTypeOf<
+			Required<Dependencies>['loadAdditionalNotes']
+		>();
 		expectTypeOf<Mode>().toEqualTypeOf<'ask' | 'discuss' | 'brainstorm'>();
 	});
 
