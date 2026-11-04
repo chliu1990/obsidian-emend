@@ -406,6 +406,82 @@ describe('EmendChatView additional notes', () => {
 		);
 		expect(quickActions.every((button) => button.disabled)).toBe(true);
 	});
+
+	it('clears an A → B → A restored draft during and after its submission', async () => {
+		let activePath = 'A.md';
+		const response = deferred<{ content: string; reasoning: string }>();
+		const additionalNotesStore = new AdditionalNotesStore();
+		const requestChatCompletion = vi.fn(
+			(_submission: { additionalNotePaths: readonly string[] }) => response.promise,
+		);
+		const contentEl = new FakeElement();
+		const context = {
+			app: {},
+			contentEl,
+			plugin: {
+				getActiveNotePath: () => activePath,
+				getActiveNoteLabel: () => activePath,
+				captureChatContext: () => ({ file: { path: activePath } }),
+				conversationStore: { load: vi.fn(async () => []) },
+				additionalNotesStore,
+				requestChatCompletion,
+				settings: {
+					activeProvider: 'custom',
+					providers: { custom: { name: 'Local', model: 'Test model' } },
+				},
+			},
+			notePath: null as string | null,
+			noteLoadGeneration: 0,
+			messages: [] as ChatMessage[],
+			selectedMode: 'ask' as Mode,
+			isThreadLoading: false,
+			isSending: false,
+			activeController: null,
+			closed: false,
+			inputEl: null as FakeElement | null,
+			drafts: new Map<string, string>(),
+			additionalNotesControl: null,
+			pendingMessages: new Set<ChatMessage>(),
+			messageBodyEls: new Map<string, HTMLElement>(),
+			activeModelEl: null,
+			cancelPendingRender: vi.fn(),
+			persistMessages: vi.fn(async () => undefined),
+			scheduleMessageRender: vi.fn(),
+		};
+		Object.setPrototypeOf(context, EmendChatView.prototype);
+		Object.assign(context, {
+			render: () => viewPrototype.render.call(context),
+		});
+
+		await viewPrototype.refreshTargetNote.call(context);
+		if (!context.inputEl) {
+			throw new Error('A composer missing.');
+		}
+		context.inputEl.value = 'Restore and send';
+		activePath = 'B.md';
+		await viewPrototype.refreshTargetNote.call(context);
+		if (!context.inputEl) {
+			throw new Error('B composer missing.');
+		}
+		context.inputEl.value = 'Keep B draft';
+		activePath = 'A.md';
+		await viewPrototype.refreshTargetNote.call(context);
+		expect(context.inputEl?.value).toBe('Restore and send');
+
+		const submission = viewPrototype.submitPrompt.call(context);
+
+		await vi.waitFor(() => expect(requestChatCompletion).toHaveBeenCalledOnce());
+		expect(context.isSending).toBe(true);
+		expect(context.inputEl?.disabled).toBe(true);
+		expect(context.inputEl?.value).toBe('');
+		expect(context.drafts.get('B.md')).toBe('Keep B draft');
+		response.resolve({ content: 'Answer', reasoning: '' });
+		await submission;
+		expect(context.isSending).toBe(false);
+		expect(context.inputEl?.disabled).toBe(false);
+		expect(context.inputEl?.value).toBe('');
+		expect(context.drafts.get('B.md')).toBe('Keep B draft');
+	});
 });
 
 describe('EmendChatView keyboard shortcuts', () => {

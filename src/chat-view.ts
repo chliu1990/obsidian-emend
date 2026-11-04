@@ -488,6 +488,7 @@ export class EmendChatView extends ItemView {
 		};
 		const controller = new AbortController();
 
+		this.drafts?.delete(sourcePath);
 		this.messages.push({
 			id: createMessageId(),
 			role: 'user',
