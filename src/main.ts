@@ -1,4 +1,5 @@
 import { MarkdownView, Notice, Plugin, TFile } from 'obsidian';
+import { captureAdditionalNotes } from './additional-notes-context';
 import { AdditionalNotesStore } from './additional-notes-store';
 import { EMEND_CHAT_VIEW_TYPE, EmendChatView } from './chat-view';
 import {
@@ -37,6 +38,14 @@ import type {
 	ProviderId,
 	SelectionSnapshot,
 } from './types';
+
+type ReadOnlyMainSubmission = Omit<ReadOnlySubmission, 'additionalNotePaths'> & {
+	additionalNotePaths?: readonly string[];
+};
+
+type EditMainSubmission = Omit<EditSubmission, 'additionalNotePaths'> & {
+	additionalNotePaths?: readonly string[];
+};
 
 export default class EmendPlugin extends Plugin {
 	settings!: EmendSettings;
@@ -273,13 +282,13 @@ export default class EmendPlugin extends Plugin {
 	}
 
 	async requestChatCompletion(
-		submission: ReadOnlySubmission,
+		submission: ReadOnlyMainSubmission,
 	): Promise<ChatStreamResult>;
 	async requestChatCompletion(
-		submission: EditSubmission,
+		submission: EditMainSubmission,
 	): Promise<EditRequestResult>;
 	async requestChatCompletion(
-		submission: ReadOnlySubmission | EditSubmission,
+		submission: ReadOnlyMainSubmission | EditMainSubmission,
 	): Promise<ChatStreamResult | EditRequestResult> {
 		if (!submission.prompt.trim()) {
 			throw new Error('Enter a prompt first.');
@@ -291,6 +300,11 @@ export default class EmendPlugin extends Plugin {
 					...this.settings.providers[this.settings.activeProvider],
 					apiKey: this.getApiKey(this.settings.activeProvider),
 				},
+				loadAdditionalNotes: (
+					paths: readonly string[],
+					activeNotePath: string,
+					signal: AbortSignal,
+				) => this.loadAdditionalNotes(paths, activeNotePath, signal),
 				loadInstructions: () => loadAllInstructions(this.app.vault),
 				request: requestAiResponse,
 			};
@@ -303,11 +317,17 @@ export default class EmendPlugin extends Plugin {
 						(file) => this.getTargetMarkdownView()?.file === file,
 					),
 				});
-				return coordinator.submit(submission);
+				return coordinator.submit({
+					...submission,
+					additionalNotePaths: submission.additionalNotePaths ?? [],
+				});
 			}
 
 			const coordinator = new ReadOnlyRequestCoordinator(dependencies);
-			return coordinator.submit(submission);
+			return coordinator.submit({
+				...submission,
+				additionalNotePaths: submission.additionalNotePaths ?? [],
+			});
 		});
 	}
 
@@ -316,6 +336,7 @@ export default class EmendPlugin extends Plugin {
 		prompt: string,
 		signal: AbortSignal,
 		editor: ReturnType<typeof createSelectionEditorAdapter>,
+		additionalNotePaths: readonly string[] = [],
 	): Promise<EditResult> {
 		if (!prompt.trim()) {
 			throw new Error('Enter a prompt first.');
@@ -327,6 +348,11 @@ export default class EmendPlugin extends Plugin {
 					...this.settings.providers[this.settings.activeProvider],
 					apiKey: this.getApiKey(this.settings.activeProvider),
 				},
+				loadAdditionalNotes: (
+					paths: readonly string[],
+					activeNotePath: string,
+					requestSignal: AbortSignal,
+				) => this.loadAdditionalNotes(paths, activeNotePath, requestSignal),
 				loadInstructions: () => loadAllInstructions(this.app.vault),
 				request: requestAiResponse,
 				editor,
@@ -341,11 +367,30 @@ export default class EmendPlugin extends Plugin {
 						DEFAULT_SETTINGS.maxContextCharacters,
 				),
 				smartSelectionContext: this.settings.smartSelectionContext,
+				additionalNotePaths,
 				notePath: this.settings.includeNotePathInContext
 					? `${this.app.vault.getName()}/${snapshot.file.path}`
 					: undefined,
 				signal,
 			});
+		});
+	}
+
+	private loadAdditionalNotes(
+		paths: readonly string[],
+		activeNotePath: string,
+		signal: AbortSignal,
+	) {
+		return captureAdditionalNotes(this.app.vault, {
+			paths,
+			activeNotePath,
+			signal,
+			includeNotePath: this.settings.includeNotePathInContext,
+			maxCharacters: Math.max(
+				1000,
+				this.settings.maxContextCharacters ||
+					DEFAULT_SETTINGS.maxContextCharacters,
+			),
 		});
 	}
 

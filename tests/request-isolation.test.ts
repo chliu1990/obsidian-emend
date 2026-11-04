@@ -77,7 +77,7 @@ function makePluginFixture(initialTexts: Record<string, string>) {
 					writes.push({ path: file.path, text });
 					texts.set(file.path, text);
 				}),
-				getAbstractFileByPath: () => null,
+				getAbstractFileByPath: (path: string) => files.get(path) ?? null,
 				getName: () => 'Test vault',
 			},
 		},
@@ -141,12 +141,14 @@ function makeEditSubmission(
 	prompt = 'Edit this note.',
 	history: ProviderHistoryMessage[] = [],
 	signal = new AbortController().signal,
+	additionalNotePaths: readonly string[] = [],
 ): EditSubmission {
 	return {
 		context: fixture.makeContext(path),
 		mode: 'edit',
 		prompt,
 		history,
+		additionalNotePaths,
 		callbacks: { onReasoning: vi.fn() },
 		signal,
 	};
@@ -156,12 +158,14 @@ function makeReadOnlySubmission(
 	fixture: PluginFixture,
 	path: string,
 	history: ProviderHistoryMessage[] = [],
+	additionalNotePaths: readonly string[] = [],
 ): ReadOnlySubmission {
 	return {
 		context: fixture.makeContext(path),
 		mode: 'ask',
 		prompt: 'Answer in chat.',
 		history,
+		additionalNotePaths,
 		callbacks: { onContent: vi.fn(), onReasoning: vi.fn() },
 		signal: new AbortController().signal,
 	};
@@ -552,4 +556,118 @@ describe('shared per-note request isolation', () => {
 			).resolves.toMatchObject({ content: 'Retry answer' });
 		},
 	);
+});
+
+describe('additional-note request integration', () => {
+	it.each([false, true])(
+		'applies includeNotePathInContext=%s to captured additional notes',
+		async (includeNotePath) => {
+			const fixture = makePluginFixture({
+				'Note.md': 'Active text.',
+				'Reference.md': 'Additional only.',
+			});
+			fixture.plugin.settings.includeNotePathInContext = includeNotePath;
+			respondWith('Chat answer');
+
+			await expect(
+				fixture.plugin.requestChatCompletion(
+					makeReadOnlySubmission(fixture, 'Note.md', [], ['Reference.md']),
+				),
+			).resolves.toMatchObject({ content: 'Chat answer' });
+
+			const userPrompt = requestMock.mock.calls[0]?.[0].userPrompt ?? '';
+			expect(userPrompt).toContain('## Additional note 1');
+			expect(userPrompt).toContain('Additional only.');
+			expect(userPrompt.indexOf('Active note Markdown:')).toBeLessThan(
+				userPrompt.indexOf('## Additional note 1'),
+			);
+			expect(userPrompt.indexOf('## Additional note 1')).toBeLessThan(
+				userPrompt.indexOf('User message:'),
+			);
+			if (includeNotePath) {
+				expect(userPrompt).toContain('Path: Test vault/Reference.md');
+			} else {
+				expect(userPrompt).not.toContain('Reference.md');
+			}
+			expect(fixture.getText('Reference.md')).toBe('Additional only.');
+			expect(fixture.writes).toEqual([]);
+		},
+	);
+
+	it('releases the active pending path after missing additional-note context', async () => {
+		const fixture = makePluginFixture({ 'Note.md': 'Active text.' });
+
+		await expect(
+			fixture.plugin.requestChatCompletion(
+				makeReadOnlySubmission(fixture, 'Note.md', [], ['Missing.md']),
+			),
+		).rejects.toThrow(
+			'Additional note not found: Missing.md. Remove it and retry.',
+		);
+		expect(requestMock).not.toHaveBeenCalled();
+		expect(fixture.writes).toEqual([]);
+
+		respondWith('Retry answer');
+		await expect(
+			fixture.plugin.requestChatCompletion(
+				makeReadOnlySubmission(fixture, 'Note.md'),
+			),
+		).resolves.toMatchObject({ content: 'Retry answer' });
+		expect(requestMock).toHaveBeenCalledOnce();
+	});
+
+	it('rejects a full-note Operation targeted only at an additional note without writes', async () => {
+		const fixture = makePluginFixture({
+			'Note.md': 'Active text.',
+			'Reference.md': 'Additional only.',
+		});
+		respondWith(JSON.stringify([
+			{ type: 'replace', target: 'Additional only', replacement: 'Changed' },
+		]));
+
+		await expect(
+			fixture.plugin.requestChatCompletion(
+				makeEditSubmission(
+					fixture,
+					'Note.md',
+					'Edit the additional note.',
+					[],
+					new AbortController().signal,
+					['Reference.md'],
+				),
+			),
+		).rejects.toThrow(/not found|match/i);
+
+		expect(requestMock).toHaveBeenCalledOnce();
+		expect(fixture.writes).toEqual([]);
+		expect(fixture.getText('Note.md')).toBe('Active text.');
+		expect(fixture.getText('Reference.md')).toBe('Additional only.');
+	});
+
+	it('rejects a selection Operation targeted only at an additional note without replacement', async () => {
+		const fixture = makePluginFixture({
+			'Note.md': 'Alpha beta.',
+			'Reference.md': 'Additional only.',
+		});
+		const selection = makeSelection(fixture, 'Note.md', 'beta');
+		respondWith(JSON.stringify([
+			{ type: 'replace', target: 'Additional only', replacement: 'Changed' },
+		]));
+
+		await expect(
+			fixture.plugin.requestSelectionEdit(
+				selection.snapshot,
+				'Edit the additional note.',
+				new AbortController().signal,
+				selection.editor,
+				['Reference.md'],
+			),
+		).rejects.toThrow(/not found|match/i);
+
+		expect(requestMock).toHaveBeenCalledOnce();
+		expect(selection.editor.replaceRange).not.toHaveBeenCalled();
+		expect(fixture.writes).toEqual([]);
+		expect(fixture.getText('Note.md')).toBe('Alpha beta.');
+		expect(fixture.getText('Reference.md')).toBe('Additional only.');
+	});
 });

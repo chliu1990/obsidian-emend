@@ -1,4 +1,8 @@
 import type { MarkdownView } from 'obsidian';
+import {
+	formatAdditionalNotesPrompt,
+	type AdditionalNoteSnapshot,
+} from './additional-notes-context';
 import type { EditPreparation, EditStrategy } from './edit-strategy';
 import type { EditResult } from './note-writer';
 import { canWriteToNote } from './permissions';
@@ -27,6 +31,11 @@ export interface SelectionEditorAdapter {
 
 interface SelectionEditRequestCoordinatorDependencies {
 	provider: ProviderConfig;
+	loadAdditionalNotes?(
+		paths: readonly string[],
+		activeNotePath: string,
+		signal: AbortSignal,
+	): Promise<AdditionalNoteSnapshot[]>;
 	loadInstructions(): Promise<InstructionPromptParts>;
 	request: typeof requestAiResponse;
 	editor: SelectionEditorAdapter;
@@ -38,9 +47,17 @@ export interface SelectionEditSubmission {
 	prompt: string;
 	maxContextCharacters: number;
 	smartSelectionContext: boolean;
+	additionalNotePaths: readonly string[];
 	notePath?: string;
 	signal: AbortSignal;
 }
+
+type SelectionEditSubmissionInput = Omit<
+	SelectionEditSubmission,
+	'additionalNotePaths'
+> & {
+	additionalNotePaths?: readonly string[];
+};
 
 export function captureSelectionSnapshot(
 	markdownView: MarkdownView,
@@ -147,14 +164,21 @@ export class SelectionEditRequestCoordinator {
 		private readonly dependencies: SelectionEditRequestCoordinatorDependencies,
 	) {}
 
-	async submit(submission: SelectionEditSubmission): Promise<EditResult> {
+	async submit(submission: SelectionEditSubmissionInput): Promise<EditResult> {
+		const additionalNotes = submission.additionalNotePaths === undefined
+			? []
+			: (await this.dependencies.loadAdditionalNotes?.(
+				submission.additionalNotePaths,
+				submission.snapshot.file.path,
+				submission.signal,
+			)) ?? [];
 		const instructions = await this.dependencies.loadInstructions();
 		let response = '';
 		await this.dependencies.request(
 			{
 				provider: this.dependencies.provider,
 				systemPrompt: this.dependencies.editStrategy.getSelectionPrompt(instructions),
-				userPrompt: buildSelectionUserPrompt(submission),
+				userPrompt: buildSelectionUserPrompt(submission, additionalNotes),
 				history: [],
 			},
 			{
@@ -182,7 +206,10 @@ export class SelectionEditRequestCoordinator {
 	}
 }
 
-function buildSelectionUserPrompt(submission: SelectionEditSubmission): string {
+function buildSelectionUserPrompt(
+	submission: SelectionEditSubmissionInput,
+	additionalNotes: readonly AdditionalNoteSnapshot[],
+): string {
 	const { snapshot } = submission;
 	const parts: string[] = [];
 	const notePath = submission.notePath?.trim();
@@ -209,6 +236,10 @@ function buildSelectionUserPrompt(submission: SelectionEditSubmission): string {
 			`Context after:\n${context.after}`,
 			'',
 		);
+	}
+	const additionalNotesPrompt = formatAdditionalNotesPrompt(additionalNotes);
+	if (additionalNotesPrompt) {
+		parts.push(additionalNotesPrompt, '');
 	}
 	parts.push('User message:', submission.prompt);
 	return parts.join('\n');

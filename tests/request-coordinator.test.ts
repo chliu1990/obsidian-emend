@@ -1,10 +1,12 @@
 import { TFile } from 'obsidian';
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
+import type { AdditionalNoteSnapshot } from '../src/additional-notes-context';
 import type {
 	AiProviderRequest,
 	StreamEvent,
 	StreamResult,
 } from '../src/provider-stream';
+import { QUICK_ACTIONS } from '../src/quick-actions';
 import {
 	EditRequestCoordinator,
 	ReadOnlyRequestCoordinator,
@@ -43,6 +45,18 @@ function makeContext(overrides: Partial<RequestContext> = {}): RequestContext {
 	};
 }
 
+function makeAdditionalNote(
+	overrides: Partial<AdditionalNoteSnapshot> = {},
+): AdditionalNoteSnapshot {
+	return {
+		sourcePath: 'Reference.md',
+		markdown: 'Additional only.',
+		sourceCharacters: 16,
+		includedCharacters: 16,
+		...overrides,
+	};
+}
+
 function successfulRequest(
 	events: StreamEvent[] = [
 		{ type: 'content', text: 'Streamed answer' },
@@ -63,17 +77,29 @@ function successfulRequest(
 	);
 }
 
+function makeAdditionalNotesLoader() {
+	return vi.fn(
+		async (
+			_paths: readonly string[],
+			_activeNotePath: string,
+			_signal: AbortSignal,
+		): Promise<AdditionalNoteSnapshot[]> => [],
+	);
+}
+
 function makeCoordinator(
 	request = successfulRequest(),
 	instructions: InstructionPromptParts = { skillTexts: new Map() },
 ) {
 	const loadInstructions = vi.fn(async () => instructions);
+	const loadAdditionalNotes = makeAdditionalNotesLoader();
 	const coordinator = new ReadOnlyRequestCoordinator({
 		provider,
+		loadAdditionalNotes,
 		loadInstructions,
 		request,
 	});
-	return { coordinator, loadInstructions, request };
+	return { coordinator, loadAdditionalNotes, loadInstructions, request };
 }
 
 function makeSubmission(
@@ -84,6 +110,7 @@ function makeSubmission(
 		mode: 'ask',
 		prompt: 'What does this note say?',
 		history: [],
+		additionalNotePaths: [],
 		callbacks: { onContent: vi.fn(), onReasoning: vi.fn() },
 		signal: new AbortController().signal,
 		...overrides,
@@ -263,6 +290,119 @@ describe('ReadOnlyRequestCoordinator', () => {
 			expect(submission.callbacks.onReasoning).not.toHaveBeenCalled();
 		},
 	);
+	it.each(['ask', 'discuss', 'brainstorm'] as const)(
+		'loads exact additional-note paths before instructions and labels them for %s',
+		async (mode) => {
+			const order: string[] = [];
+			const request = vi.fn(async (
+				_request: AiProviderRequest,
+			): Promise<StreamResult> => {
+				order.push('request');
+				return { content: 'Answer', reasoning: '' };
+			});
+			const { coordinator, loadAdditionalNotes, loadInstructions } =
+				makeCoordinator(request);
+			loadAdditionalNotes.mockImplementation(async () => {
+				order.push('additional notes');
+				return [
+					makeAdditionalNote({ providerPath: 'Vault/Reference.md' }),
+					makeAdditionalNote({
+						sourcePath: 'Second.md',
+						markdown: 'Second additional note.',
+					}),
+				];
+			});
+			loadInstructions.mockImplementation(async () => {
+				order.push('instructions');
+				return { skillTexts: new Map() };
+			});
+			const additionalNotePaths = ['Reference.md', 'Second.md'];
+			const submission = makeSubmission({ mode, additionalNotePaths });
+
+			await coordinator.submit(submission);
+
+			expect(loadAdditionalNotes).toHaveBeenCalledExactlyOnceWith(
+				additionalNotePaths,
+				'folder/note.md',
+				submission.signal,
+			);
+			expect(order).toEqual(['additional notes', 'instructions', 'request']);
+			const userPrompt = request.mock.calls[0]?.[0].userPrompt ?? '';
+			const activeContextIndex = userPrompt.indexOf('Active note Markdown:');
+			const firstAdditionalIndex = userPrompt.indexOf('## Additional note 1');
+			const secondAdditionalIndex = userPrompt.indexOf('## Additional note 2');
+			const userMessageIndex = userPrompt.indexOf('User message:');
+			expect(activeContextIndex).toBeGreaterThanOrEqual(0);
+			expect(firstAdditionalIndex).toBeGreaterThan(activeContextIndex);
+			expect(secondAdditionalIndex).toBeGreaterThan(firstAdditionalIndex);
+			expect(userMessageIndex).toBeGreaterThan(secondAdditionalIndex);
+			expect(userPrompt).toContain('Path: Vault/Reference.md');
+			expect(userPrompt).toContain('Additional only.');
+			expect(userPrompt).toContain('Second additional note.');
+			expect(userPrompt).not.toContain('Path: Second.md');
+		},
+	);
+
+	it('omits the additional-note section for an empty path selection', async () => {
+		const { coordinator, loadAdditionalNotes, request } = makeCoordinator();
+		const submission = makeSubmission({ additionalNotePaths: [] });
+
+		await coordinator.submit(submission);
+
+		expect(loadAdditionalNotes).toHaveBeenCalledExactlyOnceWith(
+			[],
+			'folder/note.md',
+			submission.signal,
+		);
+		expect(request.mock.calls[0]?.[0].userPrompt).not.toContain(
+			'## Additional note',
+		);
+	});
+
+	it('estimates usage from the exact prompt augmented with additional notes', async () => {
+		const { coordinator, loadAdditionalNotes, request } = makeCoordinator();
+		loadAdditionalNotes.mockResolvedValue([makeAdditionalNote()]);
+
+		const result = await coordinator.submit(
+			makeSubmission({ additionalNotePaths: ['Reference.md'] }),
+		);
+
+		const expectedUserPrompt = [
+			'Active note Markdown:',
+			'```markdown',
+			'# Note\nOriginal text',
+			'```',
+			'',
+			'## Additional note 1',
+			'Additional notes are read-only context and are not edit targets.',
+			'',
+			'```markdown',
+			'Additional only.',
+			'```',
+			'',
+			'User message:',
+			'What does this note say?',
+		].join('\n');
+		const requestArg = request.mock.calls[0]?.[0];
+		if (!requestArg) {
+			throw new Error('Provider request missing.');
+		}
+		expect(requestArg.userPrompt).toBe(expectedUserPrompt);
+		const promptTokens = Math.max(
+			1,
+			Math.ceil((requestArg.systemPrompt.length + expectedUserPrompt.length) / 4),
+		);
+		const completionTokens = Math.max(
+			1,
+			Math.ceil((result.content.length + result.reasoning.length) / 4),
+		);
+		expect(result.usage).toEqual({
+			promptTokens,
+			completionTokens,
+			totalTokens: promptTokens + completionTokens,
+			source: 'estimated',
+		});
+	});
 });
 
 function editRequest(
@@ -296,14 +436,16 @@ function makeEditCoordinator(
 		isTargetCurrent: vi.fn(() => true),
 	};
 	const loadInstructions = vi.fn(async () => ({ skillTexts: new Map() }));
+	const loadAdditionalNotes = makeAdditionalNotesLoader();
 	const coordinator = new EditRequestCoordinator({
 		provider,
+		loadAdditionalNotes,
 		loadInstructions,
 		request,
 		writer,
 		editStrategy: operationEditStrategy,
 	});
-	return { coordinator, loadInstructions, request, writer };
+	return { coordinator, loadAdditionalNotes, loadInstructions, request, writer };
 }
 
 function makeEditSubmission(
@@ -314,6 +456,7 @@ function makeEditSubmission(
 		mode: 'edit',
 		prompt: 'Improve this note.',
 		history: [],
+		additionalNotePaths: [],
 		callbacks: { onReasoning: vi.fn() },
 		signal: new AbortController().signal,
 		...overrides,
@@ -353,6 +496,52 @@ describe('EditRequestCoordinator', () => {
 		);
 	});
 
+	it.each(QUICK_ACTIONS)(
+		'$id uses the same additional-note loading and prompt path',
+		async (action) => {
+			const order: string[] = [];
+			const request = editRequest('[]');
+			const { coordinator, loadAdditionalNotes, loadInstructions } =
+				makeEditCoordinator(request);
+			loadAdditionalNotes.mockImplementation(async () => {
+				order.push('additional notes');
+				return [makeAdditionalNote()];
+			});
+			loadInstructions.mockImplementation(async () => {
+				order.push('instructions');
+				return { skillTexts: new Map() };
+			});
+			const originalRequest = request.getMockImplementation();
+			request.mockImplementation(async (...args) => {
+				order.push('request');
+				return originalRequest?.(...args) ?? { content: '[]', reasoning: '' };
+			});
+			const additionalNotePaths = ['Reference.md'];
+			const submission = makeEditSubmission({
+				prompt: action.prompt,
+				additionalNotePaths,
+			});
+
+			await coordinator.submit(submission);
+
+			expect(loadAdditionalNotes).toHaveBeenCalledExactlyOnceWith(
+				additionalNotePaths,
+				'folder/note.md',
+				submission.signal,
+			);
+			expect(order).toEqual(['additional notes', 'instructions', 'request']);
+			const userPrompt = request.mock.calls[0]?.[0].userPrompt ?? '';
+			expect(userPrompt.indexOf('Active note Markdown:')).toBeLessThan(
+				userPrompt.indexOf('## Additional note 1'),
+			);
+			expect(userPrompt.indexOf('## Additional note 1')).toBeLessThan(
+				userPrompt.indexOf('User message:'),
+			);
+			expect(userPrompt).toContain('Additional only.');
+			expect(userPrompt).toContain(`User message:\n${action.prompt}`);
+		},
+	);
+
 	it('streams reasoning while buffering the edit privately and writes after completion', async () => {
 		const response = JSON.stringify([
 			{ type: 'replace', target: 'Original', replacement: 'Edited' },
@@ -379,6 +568,52 @@ describe('EditRequestCoordinator', () => {
 			(writer.write as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0] ??
 				0,
 		);
+	});
+
+	it('rejects an Operation target found only in an additional note without writing', async () => {
+		const additionalNote = makeAdditionalNote();
+		const originalAdditionalMarkdown = additionalNote.markdown;
+		const request = editRequest(JSON.stringify([
+			{ type: 'replace', target: 'Additional only', replacement: 'Changed' },
+		]));
+		const { coordinator, loadAdditionalNotes, writer } =
+			makeEditCoordinator(request);
+		loadAdditionalNotes.mockResolvedValue([additionalNote]);
+		const submission = makeEditSubmission({
+			additionalNotePaths: ['Reference.md'],
+		});
+
+		await expect(coordinator.submit(submission)).rejects.toThrow(/not found|match/i);
+
+		expect(request).toHaveBeenCalledOnce();
+		expect(writer.readCurrentText).not.toHaveBeenCalled();
+		expect(writer.write).not.toHaveBeenCalled();
+		expect(submission.context.sourceText).toBe('# Note\nOriginal text');
+		expect(additionalNote.markdown).toBe(originalAdditionalMarkdown);
+	});
+
+	it('applies an active-note insertion without changing additional-note text', async () => {
+		const additionalNote = makeAdditionalNote();
+		const request = editRequest(JSON.stringify([
+			{ type: 'insert', anchor: 'Original', position: 'after', text: ' changed' },
+		]));
+		const { coordinator, loadAdditionalNotes, writer } =
+			makeEditCoordinator(request);
+		loadAdditionalNotes.mockResolvedValue([additionalNote]);
+		const submission = makeEditSubmission({
+			additionalNotePaths: ['Reference.md'],
+		});
+
+		await expect(coordinator.submit(submission)).resolves.toMatchObject({
+			applied: true,
+			changeCount: 1,
+		});
+
+		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
+			submission.context.file,
+			'# Note\nOriginal{++ changed++} text',
+		);
+		expect(additionalNote.markdown).toBe('Additional only.');
 	});
 
 	it('returns an unchanged result and performs no write for a no-op', async () => {
