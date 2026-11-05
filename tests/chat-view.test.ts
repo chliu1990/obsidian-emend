@@ -129,6 +129,20 @@ describe('EmendChatView provider history', () => {
 			{ role: 'assistant', content: 'Follow-up answer', mode: 'ask', origin: 'model' },
 		]);
 	});
+
+	it('keeps retrieved sources with their historical answer so source IDs remain unambiguous', () => {
+		const context = {
+			messages: [{
+				...message('researched-answer', 'Note.md'),
+				content: 'Historical answer [S1]',
+				webSources: [{ id: 'S1', title: 'Original source', url: 'https://example.test/original' }],
+			}],
+		};
+
+		expect(viewPrototype.toProviderHistory.call(context)[0]?.content).toBe(
+			'Historical answer [S1]\n\n### Sources\n- [S1] [Original source](https://example.test/original)',
+		);
+	});
 });
 
 describe('EmendChatView conversation loading', () => {

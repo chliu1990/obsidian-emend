@@ -695,7 +695,9 @@ export class EmendChatView extends ItemView {
 			.slice(-8)
 			.map((message) => ({
 				role: message.role,
-				content: message.content,
+				content: message.role === 'assistant'
+					? formatChatMessageForCopy(message)
+					: message.content,
 				mode: message.mode,
 				origin: message.role === 'user'
 					? 'user'
