@@ -6,8 +6,7 @@ Features have no fixed deadlines. Each independently reviewable behavior gets it
 
 ## Now
 
-- Maintain Emend 2.0.0 with bug fixes, security updates, documentation, and provider compatibility.
-- Provider model-list discovery through an explicit **Refresh models** action. No background discovery requests.
+- Maintain Emend 2.4.0 with bug fixes, security updates, documentation, and provider compatibility.
 - Additional-note context is current behavior: explicit per-target selections, visible paths, session-only lifetime, bounded read-only snapshots, and consistent path privacy. See [Stage 35](devel_docs/35-additional-notes-context.md).
 
 ## Next
@@ -18,6 +17,14 @@ Features have no fixed deadlines. Each independently reviewable behavior gets it
 
 ## Later
 
+- **File structures and automatic TOCs:** an explicit mode or action for bounded, read-only file-structure/title discovery and TOC generation, without background vault scans or writes to discovered files.
+- **Linked-document context toggle:** default-off inclusion of outgoing and/or reverse-linked documents with visible paths, deduplication, bounded read-only snapshots, and consistent path privacy.
+- **Folder-based document selection:** explicit folder scopes for opening/including documents, with clear recursion rules, bounded results, and no new write path.
+- **Easier selected-text editing ([#24](https://github.com/chliu1990/obsidian-emend/issues/24)):** a direct composer checkbox for selection edits that defaults appropriately when text is selected and reuses the existing guarded path.
+- **Minimal edit ranges ([#23](https://github.com/chliu1990/obsidian-emend/issues/23)):** prompt and/or deterministic post-processing improvements that keep small modifications small in Track Changes without weakening Operations validation.
+- **Permission-grouped modes ([#25](https://github.com/chliu1990/obsidian-emend/issues/25)):** evaluate read-only, file-modify, and file-create groups without weakening current permission checks or independent feature PR boundaries.
+- **Bilingual full-note translation ([#12](https://github.com/chliu1990/obsidian-emend/issues/12)):** an explicit language-pair action that creates one suffixed Markdown file, preserves the source, and has safe collision/stale/abort behavior.
+- **Same-device API-key sharing research ([#13](https://github.com/chliu1990/obsidian-emend/issues/13)):** default-off OS-backed encrypted sharing with migration confirmation and no plaintext or cross-device claims.
 - **Online search:** one provider-specific adapter with opt-in controls and verifiable citations. Other providers require their own implementations and reviews.
 - Additional multimodal file types and provider-specific capabilities.
 - Broader community and contributor workflows when maintenance capacity allows.
@@ -35,6 +42,7 @@ Features have no fixed deadlines. Each independently reviewable behavior gets it
 - [Context management](devel_docs/future-context-management.md)
 - [Web search](devel_docs/future-web-search.md)
 - [Provider and context improvements](devel_docs/future-provider-and-context-features.md)
+- [Discovery and workflow improvements](devel_docs/future-discovery-and-workflows.md)
 - [Publication and distribution](devel_docs/publication.md)
 
 These designs guide future work but do not commit the project to every feature. See [CHANGELOG.md](CHANGELOG.md) for shipped behavior and [CONTRIBUTING.md](CONTRIBUTING.md) for the PR process.

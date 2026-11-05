@@ -37,5 +37,6 @@ Stages 1–22 are implemented and reviewed. Each stage record contains **Goal**,
 - [Context management](future-context-management.md): per-provider context/output limits, honest estimated versus provider usage, category progress display, a configurable 75% compression threshold, explicit privacy/cost behavior, no silent full-note truncation, and Modify Selection fallback.
 - [Web search](future-web-search.md): provider-specific capability detection and schemas, explicit opt-in, citations, errors, privacy, and tests, with no background searches or universal-schema assumption.
 - [Provider and context improvements](future-provider-and-context-features.md): completed explicit provider model-list discovery and additional-note context, plus deferred vision support for embedded note images and provider capability metadata.
+- [Discovery and workflow improvements](future-discovery-and-workflows.md): deferred file-structure/title TOCs, linked-document and folder context, selection workflow/range improvements, permission groups, translation, and same-device API-key research.
 
 Unchecked designs authorize no current runtime behavior. Their implementation requires separate reviewed changes and verification. Checked items refer to implemented behavior and their verification records.

@@ -4,6 +4,18 @@ All notable changes to Emend are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-11-05
+
+### Added
+
+- Explicit additional-note pickers in chat and Modify Selection with visible paths, remove/clear controls, and per-target selections for the current plugin session.
+- Bounded read-only additional-note snapshots with fair combined source budgets, exact omission markers, and consistent note-path privacy.
+- Live target rename handling, deleted/missing-note safeguards, picker owner cleanup, and prompt fences that preserve embedded Markdown code fences.
+
+### Security
+
+- Kept additional notes outside every write path; context-only anchors fail validation while full-note and selection Operations still apply only to their captured targets.
+
 ## [2.3.1] - 2026-11-01
 
 ### Fixed
@@ -57,7 +69,8 @@ All notable changes to Emend are documented here. The format follows [Keep a Cha
 - Strict provider error redaction and bounded error output.
 - Validated anchors, ambiguity/overlap rejection, stale-source/target checks, and abort/unload protection for note writes.
 
-[Unreleased]: https://github.com/chliu1990/obsidian-emend/compare/2.3.1...HEAD
+[Unreleased]: https://github.com/chliu1990/obsidian-emend/compare/2.4.0...HEAD
+[2.4.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.4.0
 [2.3.1]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.3.1
 [2.3.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.3.0
 [2.2.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.2.0
