@@ -742,7 +742,9 @@ describe('ReadOnlyRequestCoordinator web routing', () => {
 			request: ordinaryRequest,
 			webSearch: { submit: webSubmit },
 		});
-		const reviewCalls = vi.fn(async (calls) => calls);
+		const reviewCalls = vi.fn(async (
+			calls: Parameters<WebSearchRunOptions['reviewCalls']>[0],
+		) => calls);
 		const onActivity = vi.fn();
 
 		const result = await coordinator.submit(makeSubmission({

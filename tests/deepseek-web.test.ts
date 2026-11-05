@@ -193,7 +193,8 @@ describe('DeepSeekWebSearchCoordinator', () => {
 			toolRound([{ id: 'call-1', name: 'web_search', arguments: '{"query":"intermediate"}' }], 'Do not show this'),
 			finalRound('Terminal answer', 'Reasoning'),
 		]);
-		const runOptions = options();
+		const onEvent = vi.fn();
+		const runOptions = options({ callbacks: { onEvent } });
 
 		const result = await coordinator.submit(aiRequest(), runOptions);
 
@@ -201,8 +202,8 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		expect(result.reasoning).toBe('Reasoning');
 		expect(result.sources).toHaveLength(1);
 		expect(result.rounds).toHaveLength(2);
-		expect(runOptions.callbacks.onEvent).toHaveBeenCalledWith({ type: 'content', text: 'Terminal answer' });
-		expect(runOptions.callbacks.onEvent).not.toHaveBeenCalledWith({ type: 'content', text: 'Do not show this' });
+		expect(onEvent).toHaveBeenCalledWith({ type: 'content', text: 'Terminal answer' });
+		expect(onEvent).not.toHaveBeenCalledWith({ type: 'content', text: 'Do not show this' });
 		expect(request.mock.calls[0]?.[0].tools?.map((tool) => tool.function.name)).toEqual([
 			'web_search',
 			'web_fetch',

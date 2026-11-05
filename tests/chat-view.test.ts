@@ -3,7 +3,7 @@ import { MarkdownRenderer, Scope } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AdditionalNotesStore } from '../src/additional-notes-store';
 import type { ShortcutEvent } from '../src/chat-shortcuts';
-import { EmendChatView } from '../src/chat-view';
+import { EmendChatView, formatChatMessageForCopy } from '../src/chat-view';
 import type { ChatMessage, Mode, ProviderHistoryMessage } from '../src/types';
 
 function getCssRule(selector: string): string {
@@ -856,5 +856,117 @@ describe('EmendChatView token usage footer', () => {
 		});
 
 		expect(findUsageFooter(container)).toBeUndefined();
+	});
+});
+
+
+describe('EmendChatView web research', () => {
+	it('captures Auto options, activity, user badge metadata, and returned sources', async () => {
+		const requestChatCompletion = vi.fn(async (submission: {
+			webSearch?: { onActivity(activity: { status: string; label: string }): void };
+			callbacks: { onContent(text: string): void };
+		}) => {
+			submission.webSearch?.onActivity({ status: 'pending', label: 'Searching: Emend' });
+			submission.callbacks.onContent('Answer [S1]');
+			return {
+				content: 'Answer [S1]',
+				reasoning: '',
+				sources: [{ id: 'S1', title: 'Actual source', url: 'https://example.test/source', snippet: 'Evidence' }],
+				usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4, source: 'provider' as const },
+			};
+		});
+		const context = {
+			inputEl: { value: 'Research' },
+			isSending: false,
+			isThreadLoading: false,
+			selectedMode: 'ask' as const,
+			webSearchMode: 'auto' as const,
+			messages: [] as ChatMessage[],
+			plugin: {
+				settings: { maxWebToolCalls: 6 },
+				captureChatContext: () => ({ file: { path: 'Note.md' } }),
+				additionalNotesStore: new AdditionalNotesStore(),
+				requestChatCompletion,
+			},
+			toProviderHistory: () => [],
+			persistMessages: vi.fn(async () => undefined),
+			render: vi.fn(),
+			scheduleMessageRender: vi.fn(),
+			closed: false,
+			activeController: null,
+			webReviewModal: null,
+		};
+
+		await viewPrototype.submitPrompt.call(context);
+
+		const submission = requestChatCompletion.mock.calls[0]?.[0];
+		expect(submission).toMatchObject({ webSearch: { mode: 'auto', maxToolCalls: 6 } });
+		expect(context.messages[0]?.webSearchMode).toBe('auto');
+		expect(context.messages[1]?.webSources).toEqual([
+			{ id: 'S1', title: 'Actual source', url: 'https://example.test/source', snippet: 'Evidence' },
+		]);
+		expect(context.messages[1]?.webActivity).toBe('Searching: Emend');
+	});
+
+	it('does not submit web options in Edit even when Auto is selected', async () => {
+		const requestChatCompletion = vi.fn(async (_submission: unknown) => ({
+			applied: false,
+			usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4, source: 'provider' as const },
+		}));
+		const context = {
+			inputEl: { value: 'Edit note' },
+			isSending: false,
+			isThreadLoading: false,
+			selectedMode: 'edit' as const,
+			webSearchMode: 'auto' as const,
+			messages: [] as ChatMessage[],
+			plugin: {
+				settings: { maxWebToolCalls: 6 },
+				captureChatContext: () => ({ file: { path: 'Note.md' } }),
+				additionalNotesStore: new AdditionalNotesStore(),
+				requestChatCompletion,
+			},
+			toProviderHistory: () => [],
+			persistMessages: vi.fn(async () => undefined),
+			render: vi.fn(),
+			scheduleMessageRender: vi.fn(),
+			closed: false,
+			activeController: null,
+		};
+
+		await viewPrototype.submitPrompt.call(context);
+
+		expect(requestChatCompletion.mock.calls[0]?.[0]).not.toHaveProperty('webSearch');
+		expect(context.messages[0]?.webSearchMode).toBeUndefined();
+	});
+
+	it('renders only retrieved source links and the Review/Auto badge', () => {
+		const container = renderForFooter({
+			...message('answer', 'Note.md'),
+			webSources: [{ id: 'S1', title: 'Actual source', url: 'https://example.test/source', snippet: 'Evidence' }],
+		});
+		const user = renderForFooter({
+			...message('question', 'Note.md'),
+			role: 'user',
+			webSearchMode: 'review',
+		});
+
+		const anchors = findElements(container, (element) => element.tagName === 'a');
+		expect(anchors).toHaveLength(1);
+		expect(anchors[0]?.attributes.href).toBe('https://example.test/source');
+		expect(textOf(container)).toContain('Evidence');
+		expect(textOf(user)).toContain('Web: Review');
+	});
+
+	it('copies actual citations without treating model-written links as retrieved sources', () => {
+		const copied = formatChatMessageForCopy({
+			...message('answer', 'Note.md'),
+			content: 'Answer [S1] with [unverified](https://unverified.test)',
+			webSources: [{ id: 'S1', title: 'Actual source', url: 'https://example.test/source' }],
+		});
+
+		expect(copied).toContain('https://example.test/source');
+		expect(copied).toContain('https://unverified.test');
+		expect(copied.match(/### Sources/g)).toHaveLength(1);
 	});
 });

@@ -3,7 +3,6 @@ import {
 	requestAiResponse,
 	sanitizeProviderError,
 	type AiProviderRequest,
-	type ProviderContinuationMessage,
 	type ProviderToolCall,
 	type ProviderToolDefinition,
 } from './provider-stream';

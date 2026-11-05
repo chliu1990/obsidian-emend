@@ -19,8 +19,16 @@ import {
 } from './quick-actions';
 import { formatTokenUsage } from './token-usage';
 import type { ChatMessage, Mode, ProviderHistoryMessage } from './types';
+import { WebSearchModal } from './web-search-modal';
+import type {
+	WebSearchActivity,
+	WebSearchMode,
+	WebSource,
+	WebToolCall,
+} from './web-search';
 
 export const EMEND_CHAT_VIEW_TYPE = 'emend-chat-view';
+export const WEB_SEARCH_DISCLOSURE = 'DeepSeek may generate search queries and fetch URLs from note context. Review asks before each batch; Auto runs directly. Successful search/fetch calls may be billed separately.';
 
 const MODE_PLACEHOLDERS: Record<Mode, string> = {
 	ask: 'Ask about the active note...',
@@ -36,6 +44,8 @@ export class EmendChatView extends ItemView {
 	private isSending = false;
 	private isThreadLoading = false;
 	private selectedMode: Mode;
+	private webSearchMode: WebSearchMode = 'off';
+	private webReviewModal: WebSearchModal | null = null;
 	private activeController: AbortController | null = null;
 	private pendingRenderFrame: number | null = null;
 	private pendingMessages = new Set<ChatMessage>();
@@ -79,6 +89,8 @@ export class EmendChatView extends ItemView {
 		this.noteLoadGeneration++;
 		this.notePath = null;
 		this.activeController?.abort();
+		this.webReviewModal?.close();
+		this.webReviewModal = null;
 		this.cancelPendingRender();
 		this.pendingMessages.clear();
 		this.messageBodyEls.clear();
@@ -252,6 +264,32 @@ export class EmendChatView extends ItemView {
 		});
 
 		const actionsEl = composerEl.createDiv('emend-chat-composer-actions');
+		const webLabelEl = actionsEl.createEl('label', { cls: 'emend-chat-web-mode' });
+		webLabelEl.createSpan({ text: 'Web' });
+		const webSelectEl = webLabelEl.createEl('select', {
+			attr: { 'aria-label': 'Web search mode' },
+		});
+		for (const [value, label] of [
+			['off', 'Off'],
+			['review', 'Review'],
+			['auto', 'Auto'],
+		] as const) {
+			webSelectEl.createEl('option', { text: label, attr: { value } });
+		}
+		webSelectEl.value = this.webSearchMode ?? 'off';
+		webSelectEl.disabled = this.isSending || this.isThreadLoading || this.selectedMode === 'edit';
+		webSelectEl.addEventListener('change', () => {
+			const value = webSelectEl.value;
+			if (value !== 'off' && value !== 'review' && value !== 'auto') {
+				return;
+			}
+			const draft = this.inputEl?.value ?? '';
+			this.webSearchMode = value;
+			this.render();
+			if (this.inputEl) {
+				this.inputEl.value = draft;
+			}
+		});
 		this.activeModelEl = actionsEl.createDiv({
 			cls: 'emend-chat-active-model',
 			text: this.getActiveModelLabel(),
@@ -272,6 +310,12 @@ export class EmendChatView extends ItemView {
 				void this.submitPrompt();
 			}
 		});
+		if ((this.webSearchMode ?? 'off') !== 'off' && this.selectedMode !== 'edit') {
+			composerEl.createDiv({
+				cls: 'emend-chat-web-disclosure',
+				text: WEB_SEARCH_DISCLOSURE,
+			});
+		}
 	}
 
 	private renderEmptyState(containerEl: HTMLElement) {
@@ -300,6 +344,12 @@ export class EmendChatView extends ItemView {
 			cls: 'emend-chat-mode-badge',
 			text: getModeLabel(message.mode),
 		});
+		if (message.webSearchMode) {
+			labelsEl.createDiv({
+				cls: 'emend-chat-mode-badge',
+				text: `Web: ${message.webSearchMode === 'review' ? 'Review' : 'Auto'}`,
+			});
+		}
 		if (message.status === 'stopped') {
 			labelsEl.createDiv({
 				cls: 'emend-chat-mode-badge',
@@ -317,13 +367,16 @@ export class EmendChatView extends ItemView {
 				text: 'Copy',
 			});
 			copyButton.addEventListener('click', () => {
-				void copyToClipboard(message.content);
+				void copyToClipboard(formatChatMessageForCopy(message));
 			});
 		}
 
 		const bodyEl = messageEl.createDiv('emend-chat-message-body');
 		this.messageBodyEls.set(message.id, bodyEl);
 		this.renderMessageBody(message);
+		if (message.role === 'assistant' && message.status === 'ready') {
+			renderWebSources(messageEl, message.webSources);
+		}
 		if (
 			message.role === 'assistant' &&
 			message.status === 'ready' &&
@@ -342,6 +395,13 @@ export class EmendChatView extends ItemView {
 			return;
 		}
 		bodyEl.empty();
+
+		if (message.status === 'loading' && message.webActivity) {
+			bodyEl.createDiv({
+				cls: 'emend-chat-web-activity',
+				text: message.webActivity,
+			});
+		}
 
 		if (message.reasoning) {
 			const detailsEl = bodyEl.createEl('details', {
@@ -472,6 +532,9 @@ export class EmendChatView extends ItemView {
 
 		const history = this.toProviderHistory();
 		const mode = this.selectedMode;
+		const webSearchMode: WebSearchMode = mode === 'edit'
+			? 'off'
+			: this.webSearchMode ?? 'off';
 		const sourcePath = context.file.path;
 		const additionalNotePaths =
 			this.plugin.additionalNotesStore?.list(sourcePath) ?? [];
@@ -498,6 +561,7 @@ export class EmendChatView extends ItemView {
 			sourcePath,
 			status: 'ready',
 			timestamp: Date.now(),
+			...(webSearchMode !== 'off' ? { webSearchMode } : {}),
 		});
 		this.messages.push(loadingMessage);
 		this.activeController = controller;
@@ -547,8 +611,23 @@ export class EmendChatView extends ItemView {
 						},
 					},
 					signal: controller.signal,
+					...(webSearchMode !== 'off'
+						? {
+							webSearch: {
+								mode: webSearchMode,
+								maxToolCalls: this.plugin.settings.maxWebToolCalls,
+								reviewCalls: (calls: readonly WebToolCall[]) =>
+									this.reviewWebCalls(calls, controller.signal),
+								onActivity: (activity: WebSearchActivity) => {
+									loadingMessage.webActivity = activity.label;
+									this.scheduleMessageRender(loadingMessage);
+								},
+							},
+						}
+						: {}),
 				});
 				loadingMessage.usage = result.usage;
+				loadingMessage.webSources = result.sources;
 			}
 			controller.signal.throwIfAborted();
 			loadingMessage.status = 'ready';
@@ -574,6 +653,32 @@ export class EmendChatView extends ItemView {
 				this.render();
 			}
 		}
+	}
+
+	private reviewWebCalls(
+		calls: readonly WebToolCall[],
+		signal: AbortSignal,
+	): Promise<readonly WebToolCall[]> {
+		return new Promise((resolve, reject) => {
+			const modal = new WebSearchModal(
+				this.app,
+				calls,
+				(value) => {
+					this.webReviewModal = null;
+					resolve(value);
+				},
+				(error: unknown) => {
+					this.webReviewModal = null;
+					reject(error instanceof Error ? error : new Error(String(error)));
+				},
+				() => this.activeController?.abort(),
+			);
+			this.webReviewModal = modal;
+			signal.addEventListener('abort', () => {
+				modal.close();
+			}, { once: true });
+			modal.open();
+		});
 	}
 
 	private async persistMessages(notePath: string, messages: ChatMessage[]) {
@@ -604,6 +709,38 @@ export class EmendChatView extends ItemView {
 		];
 		const model = provider.model.trim();
 		return model ? `${provider.name} · ${model}` : provider.name;
+	}
+}
+
+export function formatChatMessageForCopy(message: ChatMessage) {
+	const sources = message.webSources ?? [];
+	if (sources.length === 0) {
+		return message.content;
+	}
+	const sourceList = sources.map((source) =>
+		`- [${source.id}] [${source.title}](${source.url})`
+	).join('\n');
+	return `${message.content}\n\n### Sources\n${sourceList}`;
+}
+
+function renderWebSources(containerEl: HTMLElement, sources: WebSource[] | undefined) {
+	if (!sources?.length) {
+		return;
+	}
+	const detailsEl = containerEl.createEl('details', { cls: 'emend-chat-web-sources' });
+	detailsEl.open = false;
+	detailsEl.createEl('summary', { text: `Sources (${sources.length})` });
+	for (const source of sources) {
+		const itemEl = detailsEl.createDiv('emend-chat-web-source');
+		const anchorEl = itemEl.createEl('a', {
+			text: `[${source.id}] ${source.title}`,
+			attr: { href: source.url },
+		});
+		anchorEl.target = '_blank';
+		anchorEl.rel = 'noopener noreferrer';
+		if (source.snippet) {
+			itemEl.createDiv({ cls: 'emend-chat-web-source-snippet', text: source.snippet });
+		}
 	}
 }
 
