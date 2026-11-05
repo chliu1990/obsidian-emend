@@ -575,15 +575,20 @@ describe('requestAiResponse', () => {
 
 	it('assembles fragmented streamed tool calls by index without emitting their arguments as content', async () => {
 		mockStream([
-			'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-search","type":"function","function":{"name":"web_search","arguments":"{\\"query\\":\\"Deep"}}]}}]}\n\n',
-			'data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call-fetch","type":"function","function":{"name":"web_fetch","arguments":"{\\"url\\":\\"https://example.test/"}}]}}]}\n\n',
-			'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"Seek\\"}"}},{"index":1,"function":{"arguments":"page\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n',
+			'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-","type":"function","function":{"name":"web_","arguments":"{\\"query\\":\\"Deep"}}]}}]}\n\n',
+			'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"search","function":{"name":"search"}},{"index":1,"id":"call-","type":"function","function":{"name":"web_","arguments":"{\\"url\\":\\"https://example.test/"}}]}}]}\n\n',
+			'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"Seek\\"}"}},{"index":1,"id":"fetch","function":{"name":"fetch","arguments":"page\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n',
 			'data: [DONE]\n\n',
 		]);
 		const events: StreamEvent[] = [];
 
 		const result = await requestAiResponse(
-			makeRequest(),
+			makeRequest({
+				tools: [{
+					type: 'function',
+					function: { name: 'web_search', description: 'Search', parameters: {} },
+				}],
+			}),
 			{ onEvent: (event) => events.push(event) },
 			new AbortController().signal,
 		);
@@ -609,6 +614,17 @@ describe('requestAiResponse', () => {
 		await expect(
 			requestAiResponse(makeRequest(), { onEvent: vi.fn() }, new AbortController().signal),
 		).rejects.toThrow('malformed tool call');
+	});
+
+	it('preserves the empty-response error for an undeclared tool-only response', async () => {
+		mockStream([
+			'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"web_search","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}\n\n',
+			'data: [DONE]\n\n',
+		]);
+
+		await expect(
+			requestAiResponse(makeRequest(), { onEvent: vi.fn() }, new AbortController().signal),
+		).rejects.toThrow('No text was found in the provider response.');
 	});
 
 	it('serializes tool declarations and assistant/tool continuation messages', async () => {

@@ -156,7 +156,11 @@ export async function requestAiResponse(
 			}
 
 			const round = parser.getRoundState();
-			if (!content && !reasoning && round.toolCalls.length === 0) {
+			if (
+				!content &&
+				!reasoning &&
+				(round.toolCalls.length === 0 || !request.tools?.length)
+			) {
 				throw new Error('No text was found in the provider response.');
 			}
 
@@ -396,18 +400,12 @@ function captureToolCallPart(
 	}
 	const index = value.index as number;
 	const part = parts.get(index) ?? { id: '', name: '', arguments: '' };
-	if (typeof value.id === 'string' && value.id) {
-		if (part.id && part.id !== value.id) {
-			throw new Error('The provider returned a malformed tool call.');
-		}
-		part.id = value.id;
+	if (typeof value.id === 'string' && value.id && part.id !== value.id) {
+		part.id += value.id;
 	}
 	const fn = isRecord(value.function) ? value.function : undefined;
-	if (typeof fn?.name === 'string' && fn.name) {
-		if (part.name && part.name !== fn.name) {
-			throw new Error('The provider returned a malformed tool call.');
-		}
-		part.name = fn.name;
+	if (typeof fn?.name === 'string' && fn.name && part.name !== fn.name) {
+		part.name += fn.name;
 	}
 	if (typeof fn?.arguments === 'string') {
 		part.arguments += fn.arguments;
