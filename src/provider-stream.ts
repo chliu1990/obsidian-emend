@@ -204,7 +204,7 @@ function formatContinuationMessages(messages: ProviderContinuationMessage[]) {
 	});
 }
 
-function formatHttpProviderError(status: number, responseText: string) {
+export function formatHttpProviderError(status: number, responseText: string) {
 	const details = [`API request failed with HTTP ${status}.`];
 	let payload: unknown;
 	try {
@@ -221,7 +221,7 @@ function formatHttpProviderError(status: number, responseText: string) {
 	return details.join('\n');
 }
 
-function sanitizeProviderError(error: unknown, apiKey: string) {
+export function sanitizeProviderError(error: unknown, apiKey: string) {
 	let message = error instanceof Error ? error.message : String(error);
 	message = message.split(apiKey).join('[redacted]');
 	message = message.replace(

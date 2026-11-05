@@ -80,4 +80,5 @@ export interface EmendSettings {
 	includeNotePathInContext: boolean;
 	smartSelectionContext: boolean;
 	maxContextCharacters: number;
+	maxWebToolCalls: number;
 }

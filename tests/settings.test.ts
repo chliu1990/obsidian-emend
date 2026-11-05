@@ -212,6 +212,7 @@ describe('normalizeSettings', () => {
 			includeNotePathInContext: true,
 			smartSelectionContext: false,
 			maxContextCharacters: 24000,
+			maxWebToolCalls: 12,
 		};
 
 		expect(normalizeSettings(data)).toEqual(data);
@@ -246,6 +247,15 @@ describe('normalizeSettings', () => {
 		expect(normalizeSettings({ maxContextCharacters: 24000 }).maxContextCharacters).toBe(24000);
 		expect(normalizeSettings({ maxContextCharacters: Number.NaN }).maxContextCharacters).toBe(12000);
 		expect(normalizeSettings({ maxContextCharacters: Number.POSITIVE_INFINITY }).maxContextCharacters).toBe(12000);
+	});
+
+	it('defaults and bounds the web tool call limit', () => {
+		expect(DEFAULT_SETTINGS.maxWebToolCalls).toBe(8);
+		expect(normalizeSettings({ maxWebToolCalls: 0 }).maxWebToolCalls).toBe(1);
+		expect(normalizeSettings({ maxWebToolCalls: 12.9 }).maxWebToolCalls).toBe(12);
+		expect(normalizeSettings({ maxWebToolCalls: 99 }).maxWebToolCalls).toBe(20);
+		expect(normalizeSettings({ maxWebToolCalls: '8' }).maxWebToolCalls).toBe(8);
+		expect(normalizeSettings({ maxWebToolCalls: Number.NaN }).maxWebToolCalls).toBe(8);
 	});
 
 	it('does not retain legacy providers or instruction-file settings', () => {
