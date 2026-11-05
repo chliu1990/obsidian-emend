@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Implementation is present on `feature/deepseek-online-search`, with focused automated tests and local mocks covering the transport, retrieval loop, coordination, UI, settings, and schema migration. This record describes the implemented behavior; it does not claim real-Obsidian or real-provider verification.
+Implementation is complete on `feature/deepseek-online-search`, with focused automated tests and real-Obsidian loopback verification covering the transport, retrieval loop, coordination, UI, settings, and schema migration. No real-provider or paid verification was performed or required.
 
 The feature adds opt-in web research to Ask, Discuss, and Brainstorm for the DeepSeek preset with `deepseek-flash` or `deepseek-v4-pro`. It does not add search to Edit, quick actions, or Modify Selection, and it does not implement Kimi/custom adapters. Unsupported providers/models produce a clear error and never silently fall back to ordinary unsearched chat.
 
@@ -32,4 +32,44 @@ Conversation schema 2 persists only the ready user's Review/Auto badge and ready
 
 `provider-stream.ts` adds standard streamed function-call parsing and continuation messages without changing ordinary requests. `web-search.ts` owns shared web types and validation; `deepseek-web.ts` owns provider retrieval and the bounded loop; `web-search-modal.ts` owns editable batch review. Read-only coordination routes supported submissions without gaining a writer. Chat UI owns the Off/Review/Auto control, disclosure, activity, and source rendering, and conversation storage explicitly whitelists citation metadata.
 
-Real-Obsidian verification remains to be performed with the isolated `test_vault` and local OpenAI-compatible chat/search/fetch mocks using CORS and dummy credentials. Any separately authorized real-provider smoke verification must use only the maintainer-provided temporary key already entered in the isolated vault's SecretStorage; the key must never be read through shell tools, printed, copied into source, or included in evidence.
+## Verification evidence
+
+- Date: 2026-11-06, Asia/Shanghai.
+- Runtime: official Obsidian 1.15.0 AppImage, isolated Xvfb `:99`, CDP port `19222`, synthetic vault/configuration under ignored `test_vault/emend-web-verify/`.
+- Provider: CORS loopback chat/search/fetch mock at `127.0.0.1:8765`, fragmented SSE tool calls, dummy SecretStorage credential. No real account/key, external/paid call, private note, or pre-existing vault/profile was used.
+- Result: **17/17 real-Obsidian scenarios and 57 UI/runtime assertions passed**, plus **21 mock smoke assertions**. No final failures or unexercised requested matrix items remained.
+- Evidence: `test_vault/emend-web-verify/evidence/summary.json`, 24 screenshots, sanitized request logs, persistence audit, and mock smoke output. Reproduction: `node test_vault/emend-web-verify/verify.mjs` after starting the isolated runtime through that script.
+
+The matrix covered:
+
+1. Off streaming with no advertised tools or retrieval and unchanged note bytes.
+2. Review displaying the generated query, executing its edited form, and rendering the actual source.
+3. Review cancellation preventing the entire batch and any ready response.
+4. Auto performing two sequential searches across rounds plus fetch, continuing tool results, and rendering two deduplicated sources with first-seen titles.
+5. A model-chosen zero-tool answer with no retrieval or Sources section.
+6. Ready content and citations surviving actual application reload.
+7. Default limit 8 rejecting a nine-call batch before any call and producing no ready partial response.
+8. Search HTTP 503 producing no ready response, followed by a successful fresh retry.
+9. Stop producing only a stopped non-ready response, followed by a successful retry.
+10. Unsupported custom provider producing zero requests and no unsearched fallback.
+11. Edit disabling Web, advertising no tools, making no retrieval, and applying the expected tracked change.
+12. Quick action advertising no tools, making no retrieval, and applying the expected tracked change.
+13. Schema-2 persistence and transient-data audit across all synthetic threads.
+14. Modify Selection advertising no tools, making no retrieval, replacing only the captured range, and preserving native undo/redo.
+15. Target-note switching aborting a pending stream before retrieval, leaving both notes unchanged, and permitting a successful retry.
+16. Explicit fetch truncation to 12,000 content characters plus `[...]`, and malformed credentialed citation URLs being discarded before safe UI rendering.
+17. Review/Auto disclosure, live activity, actual Copy with only actual sources, provider/estimated usage labels, and a 240px composer without horizontal overflow.
+
+The final audit covered **19 sanitized scenario logs and 36 request entries**, with zero header/credential leaks. All **15 persisted chat threads** used schema 2. Generated queries, tool arguments/results, request bodies, web activity, stopped/error content, unsafe URLs, oversized retrieved content, and dummy credentials were absent; only ready Web badges and citation metadata remained.
+
+An independent whole-branch code/security review found no Critical issues and two Important transport issues. Regression tests now prove fragmented tool-call IDs/names assemble correctly and undeclared tool-only Off responses retain the empty-response error. Both fixes passed RED→GREEN verification and the full suite. The review's Minor items are deferred and recorded in the implementation ledger, not hidden in release claims.
+
+## Clean local gate
+
+Run from the repository root:
+
+```bash
+npm ci && npm test && npm run lint && npm run build && git diff --check
+```
+
+Result: locked install succeeded; **31 Vitest files and 602 tests passed**; ESLint reported no findings; strict TypeScript and production esbuild succeeded; `git diff --check` reported no whitespace errors. No real-provider smoke was run. All owned mock, Xvfb, and Obsidian processes were stopped after verification.

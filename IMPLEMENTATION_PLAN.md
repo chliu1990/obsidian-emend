@@ -47,7 +47,7 @@ Deferred context-management and discovery work is specified separately in [futur
 21. [SecretStorage API keys](devel_docs/21-secret-storage.md) — provider credential migration, request resolution, and sanitized settings persistence.
 22. [Release verification](devel_docs/22-release-verification.md) — deferred roadmap, current guides, hardened-release smoke matrix, reviews, and final CI evidence.
 35. [Additional notes as context](devel_docs/35-additional-notes-context.md) — explicit per-target session selections, bounded read-only snapshots, path privacy, guarded edit integration, clean-gate evidence, and real-Obsidian picker/chat/selection-modal verification.
-36. [DeepSeek online search](devel_docs/36-deepseek-online-search.md) — DeepSeek-only read-only Off/Review/Auto controls, bounded multi-round search/fetch, citations and schema 2, focused automated/local-mock coverage, and real-Obsidian verification still pending.
+36. [DeepSeek online search](devel_docs/36-deepseek-online-search.md) — DeepSeek-only read-only Off/Review/Auto controls, bounded multi-round search/fetch, citations and schema 2, focused automated coverage, and 17-scenario real-Obsidian loopback verification.
 
 ## Verification and release process
 

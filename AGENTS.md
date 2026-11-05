@@ -184,7 +184,7 @@ These checks do not exercise Obsidian, CodeMirror interaction, or real provider 
 <Vault>/.obsidian/plugins/emend/
 ```
 
-Use only the ignored `test_vault/` and local OpenAI-compatible SSE chat plus DeepSeek Search/Fetch JSON mocks with CORS and dummy credentials. Never use real accounts/keys or modify other vaults. Stage 36 has focused automated/local-mock coverage, but real-Obsidian and real-provider web-search verification are not yet recorded; the scenarios below are instructions, not completed evidence. Relevant scenarios include:
+Use only the ignored `test_vault/` and local OpenAI-compatible SSE chat plus DeepSeek Search/Fetch JSON mocks with CORS and dummy credentials. Never use real accounts/keys or modify other vaults. Stage 36 records focused automated and real-Obsidian loopback evidence; real-provider verification was not performed. Relevant scenarios include:
 
 - Stream Ask, Discuss, and Brainstorm responses and verify that only chat changes; the note remains byte-for-byte unchanged.
 - Exercise **Web: Off / Review / Auto** with both supported DeepSeek models. Verify Off/control changes/note switches/thread loads cause no retrieval, Review edits and validates every batch and Cancel/Stop aborts, Auto skips only review, multi-round batches execute sequentially, terminal no-tool content is the answer, and all read-only responses leave note bytes unchanged. Verify zero-call model answers do not claim retrieval.
