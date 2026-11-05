@@ -80,8 +80,9 @@ npm test
 | `devel_docs/22-release-verification.md` | Hardened-release local, real-Obsidian, review, and Gitea CI evidence. |
 | `devel_docs/future-context-management.md` | Deferred-only provider capacity, labeled context accounting/progress, 75% compression threshold, privacy/cost, and safe full-note/selection fallback design. |
 | `devel_docs/future-web-search.md` | Deferred-only provider-specific search capabilities, explicit opt-in, citations, errors, privacy, and test design. |
+| `devel_docs/future-discovery-and-workflows.md` | Deferred-only structure/title TOCs, linked/folder context, selection workflow/range improvements, permission groups, translation, and same-device API-key research. |
 
-The two `future-` documents are not current behavior and must not be treated as implementation approval. Current Emend has no context-compression/progress-bar feature or online-search/tool transport.
+The `future-` documents are not current behavior and must not be treated as implementation approval. Current Emend has no context-compression/progress-bar feature, online-search/tool transport, discovery/TOC mode, linked/folder automatic context, translation workflow, or cross-vault credential sharing.
 
 Keep new feature logic in focused modules rather than adding unrelated responsibilities to an already large module. Preserve the separation between context capture, request coordination, provider transport, note writing, UI, and plugin orchestration.
 

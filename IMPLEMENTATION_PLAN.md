@@ -6,7 +6,7 @@ Stages 1–22 of the Emend rewrite are implemented and reviewed. This file is an
 
 Current behavior is documented in [README.md](README.md) and [AGENTS.md](AGENTS.md). The original real-Obsidian release matrix is in [devel_docs/manual-verification.md](devel_docs/manual-verification.md); release-candidate results and CI evidence are in [devel_docs/17-release-candidate.md](devel_docs/17-release-candidate.md), and the hardened release smoke matrix is in [devel_docs/22-release-verification.md](devel_docs/22-release-verification.md). Historical records retain the behavior and evidence from their own stages.
 
-Deferred, unimplemented work is specified separately in [future-context-management.md](devel_docs/future-context-management.md) and [future-web-search.md](devel_docs/future-web-search.md). Those documents do not change current request, context, privacy, or provider behavior.
+Deferred, unimplemented work is specified separately in [future-context-management.md](devel_docs/future-context-management.md), [future-web-search.md](devel_docs/future-web-search.md), and [future-discovery-and-workflows.md](devel_docs/future-discovery-and-workflows.md). Those documents do not change current request, context, privacy, or provider behavior.
 
 ## Architecture contract
 
