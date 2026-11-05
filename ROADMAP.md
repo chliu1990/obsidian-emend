@@ -8,13 +8,13 @@ Features have no fixed deadlines. Each independently reviewable behavior gets it
 
 - Maintain Emend 2.0.0 with bug fixes, security updates, documentation, and provider compatibility.
 - Provider model-list discovery through an explicit **Refresh models** action. No background discovery requests.
+- Additional-note context is current behavior: explicit per-target selections, visible paths, session-only lifetime, bounded read-only snapshots, and consistent path privacy. See [Stage 35](devel_docs/35-additional-notes-context.md).
 
 ## Next
 
-1. **Additional notes as context:** user-selected, read-only notes with deduplication and clear privacy display.
-2. **Vision inputs:** embedded vault images with strict provider, file-type, size, and capability checks, starting with one provider/model family.
-3. **Context accounting:** per-provider capacity/output reserve and labelled category estimates, without compression.
-4. **Automatic context compression:** separate, default-off behavior using the accounting work, with explicit privacy/cost disclosure and safe edit fallbacks.
+1. **Vision inputs:** embedded vault images with strict provider, file-type, size, and capability checks, starting with one provider/model family.
+2. **Context accounting:** per-provider capacity/output reserve and labelled category estimates, without compression.
+3. **Automatic context compression:** separate, default-off behavior using the accounting work, with explicit privacy/cost disclosure and safe edit fallbacks.
 
 ## Later
 

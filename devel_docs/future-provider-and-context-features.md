@@ -1,6 +1,6 @@
 # Deferred feature backlog: provider and context improvements
 
-Checked items are implemented current behavior. Unchecked items are approved future feature requests, not current Emend behavior. Implement each remaining item as a separate reviewed change with unit tests, real-Obsidian verification, documentation, and CI evidence.
+Checked items are implemented current behavior with their required verification. Unchecked items are approved future requests or implemented behavior whose required verification is explicitly incomplete. Implement each remaining item as a separate reviewed change with unit tests, real-Obsidian verification, documentation, and CI evidence.
 
 ## 1. Provider model-list discovery
 
@@ -27,15 +27,16 @@ Checked items are implemented current behavior. Unchecked items are approved fut
 
 ## 3. Include other notes in request context
 
-- [ ] Add a note picker that lets the user explicitly include additional vault notes in a chat or selection request.
-- [ ] Show included note paths and provide remove/clear controls. Preserve the selection per chat session without globally sharing it across notes unless the user chooses that behavior.
-- [ ] Keep the active note as the edit target. Included notes are read-only context and must never gain a write path.
-- [ ] Deduplicate the active note and repeated selections. Do not automatically include backlinks, outgoing links, tags, or entire folders.
-- [ ] Bound each included note and the combined context using the current context rules, with clear omission markers. Never claim the provider saw omitted content.
-- [ ] Label each included note separately in the assembled prompt and preserve frontmatter, links, code blocks, and math. Future token-accounting work must show included-note cost separately.
-- [ ] Disclose included paths/content before submission and send them only after the explicit request. Note-path inclusion settings must also apply consistently to these notes.
-- [ ] Handle renamed/deleted/missing notes, stale captures, large files, duplicate references, and switching the active note without leaking context into another conversation.
-- [ ] Test selection/deduplication, prompt boundaries, size limits, missing/renamed notes, no-write guarantees, privacy, reload behavior, and interaction with context compression when that roadmap item is implemented.
+- [x] Add a note picker that lets the user explicitly include additional vault notes in a chat or selection request. Real picker selection and active/repeated-path filtering were verified in isolated Obsidian under Xvfb. See [Stage 35](35-additional-notes-context.md).
+- [x] Show included note paths and provide remove/clear controls. Preserve the selection per chat session without globally sharing it across notes unless the user chooses that behavior.
+- [x] Keep the active note as the edit target. Included notes are read-only context and must never gain a write path.
+- [x] Deduplicate the active note and repeated selections. Do not automatically include backlinks, outgoing links, tags, or entire folders.
+- [x] Bound each included note and the combined context using the current context rules, with clear omission markers. Never claim the provider saw omitted content.
+- [x] Label each included note separately in the assembled prompt and preserve frontmatter, links, code blocks, and math. Future token-accounting work must show included-note cost separately.
+- [x] Disclose included paths/content before submission and send them only after the explicit request. Note-path inclusion settings must also apply consistently to these notes.
+- [x] Handle renamed/deleted/missing notes, stale captures, large files, duplicate references, and switching the active note without leaking context into another conversation.
+- [x] Test selection/deduplication, prompt boundaries, size limits, missing/renamed notes, no-write guarantees, privacy, and reload behavior.
+- [ ] Test interaction with context compression when that roadmap item is implemented. Compression remains deferred and was not claimed or exercised in Stage 35.
 
 ## Delivery constraints
 

@@ -59,6 +59,12 @@ The editable presets above are DeepSeek `deepseek-flash` and Kimi `k3.1-pro`. Op
 
 4. Confirm that the answer streams into chat, reasoning is folded when present, and the note does not change.
 5. Try **Discuss** and **Brainstorm**. These modes also leave the note unchanged.
+6. Click **Add notes** and explicitly choose another Markdown note in the picker. Its path appears under **Additional notes**; use **Remove** or **Clear all** to change the selection. Opening the picker, choosing a note, and switching notes do not send a provider request.
+7. Submit another question and confirm that the response can use the selected note while neither the active note nor the additional note changes. Additional-note content is read-only context in every mode, including Edit and Modify Selection.
+
+Selections are independent for each active target note, survive switching between notes, and clear when Obsidian reloads. They are not saved in conversations or plugin settings. Renaming a selected note updates its path; deleting it removes it from visible selections. If a selected path goes missing before capture, the request fails safely before contacting the provider, so remove the missing entry and retry.
+
+The current **Context size** setting is a separate combined source-character budget for all additional notes. Emend divides the remaining budget fairly in selection order and gives unused capacity from shorter notes to later notes. Large notes are included from their beginnings with `[...]` at omitted edges. The active-note and selection-context budgets behave as before.
 
 Useful controls:
 
@@ -121,10 +127,11 @@ Send another request. Emend rereads these files on every request and places skil
 
 ## 8. Verify persistence and privacy behavior
 
-- Ask different questions in two notes, switch between them, and reload Obsidian. Each note should restore its own conversation.
-- Saved chats are under `<Vault>/.obsidian/emend/chats/`. They contain ready chat messages, not API keys or buffered full-note edit responses.
-- Enable **Include note path** only if you want the vault/note path sent to the provider.
-- Full-note Edit always sends the complete note. Read-only modes send bounded context; selection editing sends the complete selection plus surrounding context.
+- Ask different questions in two notes, switch between them, and reload Obsidian. Each note should restore its own conversation, while its additional-note selections are empty after reload.
+- Saved chats are under `<Vault>/.obsidian/emend/chats/`. They contain ready chat messages, not API keys, additional-note selections/snapshots, or buffered full-note edit responses.
+- Additional-note paths are always shown locally in the picker controls so you can review what is selected. With **Include note path** off, provider prompts use only generic labels such as `Additional note 1`; with it on, each section includes `Path: <vault>/<note path>`. Selected content is sent with either setting when you explicitly submit.
+- Enable **Include note path** only if you want the vault/note path sent to the provider for both active and additional notes.
+- Full-note Edit always sends the complete active note. Read-only modes send bounded active-note context; selection editing sends the complete selection plus surrounding context. All three can include separate bounded, read-only additional-note snapshots, but Operations can target only the captured active note or selection.
 - Deleting a note does not delete its saved conversation automatically.
 
 ## Verification checklist
@@ -135,6 +142,7 @@ You have completed the quick start when:
 - Edit writes reviewable CriticMarkup, not an in-plugin diff.
 - Track Changes can accept or reject the edit.
 - Modify Selection changes only the captured selection and native undo works.
-- Conversations return after switching notes and reloading Obsidian.
+- Explicitly selected additional notes appear with their paths, remain read-only, respect context/path limits, and never leak between target notes.
+- Conversations return after switching notes and reloading Obsidian, while additional-note selections clear on reload.
 
 If a scenario fails, see the troubleshooting section in [INSTALLATION.md](INSTALLATION.md) and check the provider error shown in chat before retrying.
