@@ -1,3 +1,7 @@
+import {
+	formatAdditionalNotesPrompt,
+	type AdditionalNoteSnapshot,
+} from './additional-notes-context';
 import type { RequestContext } from './context';
 import type { EditStrategy } from './edit-strategy';
 import { getSystemPrompt } from './mode';
@@ -31,6 +35,7 @@ export interface ReadOnlySubmission {
 	mode: ReadOnlyMode;
 	prompt: string;
 	history: ProviderHistoryMessage[];
+	additionalNotePaths: readonly string[];
 	callbacks: ReadOnlyStreamCallbacks;
 	signal: AbortSignal;
 }
@@ -40,12 +45,18 @@ export interface EditSubmission {
 	mode: 'edit';
 	prompt: string;
 	history: ProviderHistoryMessage[];
+	additionalNotePaths: readonly string[];
 	callbacks: Pick<ReadOnlyStreamCallbacks, 'onReasoning'>;
 	signal: AbortSignal;
 }
 
 interface ReadOnlyRequestCoordinatorDependencies {
 	provider: ProviderConfig;
+	loadAdditionalNotes(
+		paths: readonly string[],
+		activeNotePath: string,
+		signal: AbortSignal,
+	): Promise<AdditionalNoteSnapshot[]>;
 	loadInstructions(): Promise<InstructionPromptParts>;
 	request: typeof requestAiResponse;
 }
@@ -70,11 +81,20 @@ export class ReadOnlyRequestCoordinator {
 	) {}
 
 	async submit(submission: ReadOnlySubmission): Promise<ChatStreamResult> {
+		const additionalNotes = await this.dependencies.loadAdditionalNotes(
+			submission.additionalNotePaths,
+			submission.context.file.path,
+			submission.signal,
+		);
 		const instructions = await this.dependencies.loadInstructions();
 		const request = {
 			provider: this.dependencies.provider,
 			systemPrompt: getSystemPrompt(submission.mode, instructions),
-			userPrompt: buildUserPrompt(submission.context, submission.prompt),
+			userPrompt: buildUserPrompt(
+				submission.context,
+				submission.prompt,
+				additionalNotes,
+			),
 			history: submission.history.slice(-8),
 		};
 		const result = await this.dependencies.request(
@@ -100,6 +120,11 @@ export class EditRequestCoordinator {
 	) {}
 
 	async submit(submission: EditSubmission): Promise<EditRequestResult> {
+		const additionalNotes = await this.dependencies.loadAdditionalNotes(
+			submission.additionalNotePaths,
+			submission.context.file.path,
+			submission.signal,
+		);
 		const instructions = await this.dependencies.loadInstructions();
 		let response = '';
 		const request = {
@@ -108,6 +133,7 @@ export class EditRequestCoordinator {
 			userPrompt: buildUserPrompt(
 				submission.context,
 				submission.prompt,
+				additionalNotes,
 				submission.context.sourceText,
 			),
 			history: submission.history.slice(-8),
@@ -145,6 +171,7 @@ export class EditRequestCoordinator {
 function buildUserPrompt(
 	context: RequestContext,
 	prompt: string,
+	additionalNotes: readonly AdditionalNoteSnapshot[],
 	markdown = context.markdown,
 ) {
 	const parts: string[] = [];
@@ -153,14 +180,11 @@ function buildUserPrompt(
 		parts.push('Active note path:', notePath, '');
 	}
 
-	parts.push(
-		'Active note Markdown:',
-		'```markdown',
-		markdown,
-		'```',
-		'',
-		'User message:',
-		prompt,
-	);
+	parts.push('Active note Markdown:', '```markdown', markdown, '```');
+	const additionalNotesPrompt = formatAdditionalNotesPrompt(additionalNotes);
+	if (additionalNotesPrompt) {
+		parts.push('', additionalNotesPrompt);
+	}
+	parts.push('', 'User message:', prompt);
 	return parts.join('\n');
 }

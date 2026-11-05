@@ -1,4 +1,6 @@
-import { App, Modal, Notice } from 'obsidian';
+import { App, Modal, Notice, TFile } from 'obsidian';
+import type { AdditionalNotesStore } from './additional-notes-store';
+import { AdditionalNotesControl } from './additional-notes-ui';
 import type { EditResult } from './note-writer';
 import { QUICK_ACTIONS } from './quick-actions';
 
@@ -8,13 +10,18 @@ export class SelectionModal extends Modal {
 	private cancelButton: HTMLButtonElement | null = null;
 	private quickActionButtons: HTMLButtonElement[] = [];
 	private activeController: AbortController | null = null;
+	private additionalNotesControl: AdditionalNotesControl | null = null;
+	private targetFile: TFile | null = null;
 
 	constructor(
 		app: App,
 		private readonly submitSelection: (
 			prompt: string,
 			signal: AbortSignal,
+			additionalNotePaths: readonly string[],
 		) => Promise<EditResult>,
+		private readonly additionalNotesStore: AdditionalNotesStore,
+		private readonly targetPath: string,
 	) {
 		super(app);
 	}
@@ -23,6 +30,8 @@ export class SelectionModal extends Modal {
 		this.setTitle('Modify selected text');
 		this.contentEl.empty();
 		this.contentEl.addClass('emend-selection-modal');
+		const targetFile = this.app.vault.getAbstractFileByPath(this.targetPath);
+		this.targetFile = targetFile instanceof TFile ? targetFile : null;
 		const quickActionsEl = this.contentEl.createDiv('emend-chat-quick-actions');
 		for (const action of QUICK_ACTIONS) {
 			const button = quickActionsEl.createEl('button', {
@@ -35,6 +44,13 @@ export class SelectionModal extends Modal {
 				void this.submit(action.prompt);
 			});
 		}
+
+		this.additionalNotesControl = new AdditionalNotesControl(
+			this.app,
+			this.additionalNotesStore,
+			() => this.getTargetPath(),
+		);
+		this.additionalNotesControl.render(this.contentEl, false);
 
 		this.contentEl.createEl('label', {
 			text: 'How do you want to modify this selection?',
@@ -85,7 +101,14 @@ export class SelectionModal extends Modal {
 		this.submitButton = null;
 		this.cancelButton = null;
 		this.quickActionButtons = [];
+		this.additionalNotesControl?.destroy();
+		this.additionalNotesControl = null;
+		this.targetFile = null;
 		this.contentEl.empty();
+	}
+
+	private getTargetPath(): string {
+		return this.targetFile?.path ?? this.targetPath;
 	}
 
 	private setPending(pending: boolean) {
@@ -98,6 +121,7 @@ export class SelectionModal extends Modal {
 		for (const button of this.quickActionButtons) {
 			button.disabled = pending;
 		}
+		this.additionalNotesControl?.setDisabled(pending);
 	}
 
 	private async submit(prompt?: string) {
@@ -108,12 +132,17 @@ export class SelectionModal extends Modal {
 			return;
 		}
 
+		const additionalNotePaths = this.additionalNotesStore.list(this.getTargetPath());
 		const controller = new AbortController();
 		this.activeController = controller;
 		this.setPending(true);
 
 		try {
-			const result = await this.submitSelection(submittedPrompt, controller.signal);
+			const result = await this.submitSelection(
+				submittedPrompt,
+				controller.signal,
+				additionalNotePaths,
+			);
 			if (controller.signal.aborted) {
 				return;
 			}

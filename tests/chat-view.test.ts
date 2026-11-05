@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { MarkdownRenderer, Scope } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AdditionalNotesStore } from '../src/additional-notes-store';
 import type { ShortcutEvent } from '../src/chat-shortcuts';
 import { EmendChatView } from '../src/chat-view';
 import type { ChatMessage, Mode, ProviderHistoryMessage } from '../src/types';
@@ -67,6 +68,7 @@ const viewPrototype = EmendChatView.prototype as unknown as {
 	): void;
 	setMode(this: unknown, mode: Mode): void;
 	registerComposerScope(this: unknown): void;
+	render(this: unknown): void;
 	renderMessage(this: unknown, containerEl: HTMLElement, message: ChatMessage): void;
 	renderMessageBody(this: unknown, message: ChatMessage): void;
 	getDisplayText(this: unknown): string;
@@ -225,6 +227,7 @@ describe('EmendChatView conversation saving', () => {
 			messages: [] as ChatMessage[],
 			plugin: {
 				captureChatContext: () => ({ file: { path: 'Note.md' } }),
+				additionalNotesStore: new AdditionalNotesStore(),
 				requestChatCompletion: vi.fn(
 					async ({ callbacks }: { callbacks: { onContent: (text: string) => void } }) => {
 						callbacks.onContent('Answer');
@@ -269,6 +272,215 @@ describe('EmendChatView conversation saving', () => {
 			source: 'provider',
 		});
 		expect(context.messages.every((item) => item.timestamp > 0)).toBe(true);
+	});
+});
+
+describe('EmendChatView additional notes', () => {
+	it('freezes the selected paths before the first deferred save', async () => {
+		const firstSave = deferred<void>();
+		const response = deferred<{ content: string; reasoning: string }>();
+		const additionalNotesStore = new AdditionalNotesStore();
+		additionalNotesStore.add('Note.md', 'Selected.md');
+		const requestChatCompletion = vi.fn(
+			(_submission: { additionalNotePaths: readonly string[] }) => response.promise,
+		);
+		let saveCount = 0;
+		const context = {
+			inputEl: { value: 'Question' },
+			isSending: false,
+			isThreadLoading: false,
+			selectedMode: 'ask' as const,
+			messages: [] as ChatMessage[],
+			plugin: {
+				captureChatContext: () => ({ file: { path: 'Note.md' } }),
+				additionalNotesStore,
+				requestChatCompletion,
+			},
+			toProviderHistory: () => [],
+			persistMessages: vi.fn(() => {
+				saveCount++;
+				return saveCount === 1 ? firstSave.promise : Promise.resolve();
+			}),
+			render: vi.fn(),
+			scheduleMessageRender: vi.fn(),
+			closed: false,
+			activeController: null,
+		};
+
+		const submission = viewPrototype.submitPrompt.call(context);
+		expect(requestChatCompletion).not.toHaveBeenCalled();
+		additionalNotesStore.clear('Note.md');
+		additionalNotesStore.add('Note.md', 'Later.md');
+		firstSave.resolve();
+		await vi.waitFor(() => expect(requestChatCompletion).toHaveBeenCalledOnce());
+
+		expect(requestChatCompletion.mock.calls[0]?.[0].additionalNotePaths).toEqual([
+			'Selected.md',
+		]);
+		response.resolve({ content: 'Answer', reasoning: '' });
+		await submission;
+	});
+
+	it('keeps independent per-note drafts and selections and disables controls while pending', async () => {
+		let activePath = 'A.md';
+		const additionalNotesStore = new AdditionalNotesStore();
+		const contentEl = new FakeElement();
+		const context = {
+			app: {},
+			contentEl,
+			plugin: {
+				getActiveNotePath: () => activePath,
+				getActiveNoteLabel: () => activePath,
+				conversationStore: { load: vi.fn(async () => []) },
+				additionalNotesStore,
+				settings: {
+					activeProvider: 'custom',
+					providers: { custom: { name: 'Local', model: 'Test model' } },
+				},
+			},
+			notePath: null as string | null,
+			noteLoadGeneration: 0,
+			messages: [] as ChatMessage[],
+			selectedMode: 'ask' as Mode,
+			isThreadLoading: false,
+			isSending: false,
+			activeController: null,
+			closed: false,
+			inputEl: null as FakeElement | null,
+			drafts: new Map<string, string>(),
+			additionalNotesControl: null,
+			pendingMessages: new Set<ChatMessage>(),
+			messageBodyEls: new Map<string, HTMLElement>(),
+			activeModelEl: null,
+			cancelPendingRender: vi.fn(),
+		};
+		Object.setPrototypeOf(context, EmendChatView.prototype);
+		Object.assign(context, {
+			render: () => viewPrototype.render.call(context),
+		});
+
+		await viewPrototype.refreshTargetNote.call(context);
+		const aComposer = context.inputEl;
+		if (!aComposer) {
+			throw new Error('A composer missing.');
+		}
+		aComposer.value = 'A draft';
+		additionalNotesStore.add('A.md', 'For A.md');
+		expect(context.inputEl).toBe(aComposer);
+		expect(aComposer.value).toBe('A draft');
+		expect(textOf(contentEl)).toContain('For A.md');
+
+		activePath = 'B.md';
+		await viewPrototype.refreshTargetNote.call(context);
+		expect(context.inputEl?.value).toBe('');
+		expect(textOf(contentEl)).not.toContain('For A.md');
+		additionalNotesStore.add('B.md', 'For B.md');
+		if (!context.inputEl) {
+			throw new Error('B composer missing.');
+		}
+		context.inputEl.value = 'B draft';
+		expect(textOf(contentEl)).toContain('For B.md');
+
+		activePath = 'A.md';
+		await viewPrototype.refreshTargetNote.call(context);
+		expect(context.inputEl?.value).toBe('A draft');
+		expect(textOf(contentEl)).toContain('For A.md');
+		expect(textOf(contentEl)).not.toContain('For B.md');
+
+		context.isSending = true;
+		viewPrototype.render.call(context);
+		const additionalButtons = findElements(
+			contentEl,
+			(element) =>
+				element.tagName === 'button' &&
+				element.className.includes('emend-additional-notes-'),
+		);
+		expect(additionalButtons.length).toBeGreaterThanOrEqual(3);
+		expect(additionalButtons.every((button) => button.disabled)).toBe(true);
+		expect(context.inputEl?.disabled).toBe(true);
+		const quickActions = findElements(
+			contentEl,
+			(element) =>
+				element.tagName === 'button' &&
+				element.className.includes('emend-chat-quick-action'),
+		);
+		expect(quickActions.every((button) => button.disabled)).toBe(true);
+	});
+
+	it('clears an A → B → A restored draft during and after its submission', async () => {
+		let activePath = 'A.md';
+		const response = deferred<{ content: string; reasoning: string }>();
+		const additionalNotesStore = new AdditionalNotesStore();
+		const requestChatCompletion = vi.fn(
+			(_submission: { additionalNotePaths: readonly string[] }) => response.promise,
+		);
+		const contentEl = new FakeElement();
+		const context = {
+			app: {},
+			contentEl,
+			plugin: {
+				getActiveNotePath: () => activePath,
+				getActiveNoteLabel: () => activePath,
+				captureChatContext: () => ({ file: { path: activePath } }),
+				conversationStore: { load: vi.fn(async () => []) },
+				additionalNotesStore,
+				requestChatCompletion,
+				settings: {
+					activeProvider: 'custom',
+					providers: { custom: { name: 'Local', model: 'Test model' } },
+				},
+			},
+			notePath: null as string | null,
+			noteLoadGeneration: 0,
+			messages: [] as ChatMessage[],
+			selectedMode: 'ask' as Mode,
+			isThreadLoading: false,
+			isSending: false,
+			activeController: null,
+			closed: false,
+			inputEl: null as FakeElement | null,
+			drafts: new Map<string, string>(),
+			additionalNotesControl: null,
+			pendingMessages: new Set<ChatMessage>(),
+			messageBodyEls: new Map<string, HTMLElement>(),
+			activeModelEl: null,
+			cancelPendingRender: vi.fn(),
+			persistMessages: vi.fn(async () => undefined),
+			scheduleMessageRender: vi.fn(),
+		};
+		Object.setPrototypeOf(context, EmendChatView.prototype);
+		Object.assign(context, {
+			render: () => viewPrototype.render.call(context),
+		});
+
+		await viewPrototype.refreshTargetNote.call(context);
+		if (!context.inputEl) {
+			throw new Error('A composer missing.');
+		}
+		context.inputEl.value = 'Restore and send';
+		activePath = 'B.md';
+		await viewPrototype.refreshTargetNote.call(context);
+		if (!context.inputEl) {
+			throw new Error('B composer missing.');
+		}
+		context.inputEl.value = 'Keep B draft';
+		activePath = 'A.md';
+		await viewPrototype.refreshTargetNote.call(context);
+		expect(context.inputEl?.value).toBe('Restore and send');
+
+		const submission = viewPrototype.submitPrompt.call(context);
+
+		await vi.waitFor(() => expect(requestChatCompletion).toHaveBeenCalledOnce());
+		expect(context.isSending).toBe(true);
+		expect(context.inputEl?.disabled).toBe(true);
+		expect(context.inputEl?.value).toBe('');
+		expect(context.drafts.get('B.md')).toBe('Keep B draft');
+		response.resolve({ content: 'Answer', reasoning: '' });
+		await submission;
+		expect(context.isSending).toBe(false);
+		expect(context.inputEl?.disabled).toBe(false);
+		expect(context.inputEl?.value).toBe('');
+		expect(context.drafts.get('B.md')).toBe('Keep B draft');
 	});
 });
 
@@ -372,6 +584,7 @@ describe('EmendChatView keyboard shortcuts', () => {
 			messages: [] as ChatMessage[],
 			plugin: {
 				captureChatContext: () => ({ file: { path: 'Note.md' } }),
+				additionalNotesStore: new AdditionalNotesStore(),
 				requestChatCompletion,
 			},
 			toProviderHistory: () => [],
@@ -477,8 +690,11 @@ describe('EmendChatView presentation', () => {
 
 class FakeElement {
 	readonly children: FakeElement[] = [];
+	readonly attributes: Record<string, string> = {};
 	className = '';
 	textContent = '';
+	disabled = false;
+	value = '';
 
 	constructor(readonly tagName = 'div') {}
 
@@ -486,15 +702,39 @@ class FakeElement {
 		return this.append('div', options);
 	}
 
-	createEl(tagName: string, options?: { cls?: string; text?: string }) {
+	createSpan(options?: string | { cls?: string; text?: string }) {
+		return this.append('span', options);
+	}
+
+	createEl(
+		tagName: string,
+		options?: {
+			cls?: string;
+			text?: string;
+			attr?: Record<string, string>;
+		},
+	) {
 		return this.append(tagName, options);
+	}
+
+	addClass(className: string) {
+		this.className = `${this.className} ${className}`.trim();
 	}
 
 	addEventListener() {}
 
+	empty() {
+		this.children.length = 0;
+		this.textContent = '';
+	}
+
 	private append(
 		tagName: string,
-		options?: string | { cls?: string; text?: string },
+		options?: string | {
+			cls?: string;
+			text?: string;
+			attr?: Record<string, string>;
+		},
 	) {
 		const child = new FakeElement(tagName);
 		if (typeof options === 'string') {
@@ -502,10 +742,25 @@ class FakeElement {
 		} else {
 			child.className = options?.cls ?? '';
 			child.textContent = options?.text ?? '';
+			Object.assign(child.attributes, options?.attr);
 		}
 		this.children.push(child);
 		return child;
 	}
+}
+
+function findElements(
+	root: FakeElement,
+	predicate: (element: FakeElement) => boolean,
+): FakeElement[] {
+	return [
+		...(predicate(root) ? [root] : []),
+		...root.children.flatMap((child) => findElements(child, predicate)),
+	];
+}
+
+function textOf(root: FakeElement): string {
+	return [root.textContent, ...root.children.map(textOf)].join(' ');
 }
 
 function findUsageFooter(container: FakeElement): FakeElement | undefined {

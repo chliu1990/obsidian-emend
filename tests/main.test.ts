@@ -1,3 +1,4 @@
+import { TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { EmendChatView } from '../src/chat-view';
 import type { ConversationDataAdapter } from '../src/conversation-store';
@@ -107,7 +108,7 @@ describe('EmendPlugin workspace conversation events', () => {
 		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
 		Object.assign(plugin, {
 			app: {
-				vault: { adapter, configDir: '.test-config' },
+				vault: { adapter, configDir: '.test-config', on: () => ({}) },
 				workspace: {
 					on: (event: string, handler: () => void) => {
 						handlers.set(event, handler);
@@ -139,6 +140,7 @@ describe('EmendPlugin workspace conversation events', () => {
 			activeController: null,
 			closed: false,
 			inputEl: { value: '' },
+			drafts: new Map<string, string>(),
 			render: vi.fn(),
 			scheduleMessageRender: vi.fn(),
 		});
@@ -278,6 +280,7 @@ describe('EmendPlugin mode keyboard commands', () => {
 				vault: {
 					adapter: new MemoryAdapter(),
 					configDir: '.test-config',
+					on: () => ({}),
 					modify,
 				},
 				workspace: {
@@ -337,5 +340,104 @@ describe('EmendPlugin mode keyboard commands', () => {
 		expect(requestChatCompletion).not.toHaveBeenCalled();
 		expect(requestSelectionEdit).not.toHaveBeenCalled();
 		expect(modify).not.toHaveBeenCalled();
+	});
+});
+
+describe('EmendPlugin additional-note lifecycle', () => {
+	it('routes TFile rename and delete events without vault reads or requests', async () => {
+		type VaultHandler = (file: unknown, oldPath?: string) => void;
+		const handlers = new Map<string, VaultHandler>();
+		const renameEvent = {};
+		const deleteEvent = {};
+		const registerEvent = vi.fn();
+		const read = vi.fn();
+		const getMarkdownFiles = vi.fn();
+		const requestChatCompletion = vi.fn();
+		const requestSelectionEdit = vi.fn();
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, {
+			app: {
+				vault: {
+					adapter: new MemoryAdapter(),
+					configDir: '.test-config',
+					on: (event: string, handler: VaultHandler) => {
+						handlers.set(event, handler);
+						return event === 'rename' ? renameEvent : deleteEvent;
+					},
+					read,
+					getMarkdownFiles,
+				},
+				workspace: {
+					on: () => ({}),
+					getLeavesOfType: () => [],
+				},
+			},
+			loadSettings: vi.fn().mockResolvedValue(undefined),
+			registerView: vi.fn(),
+			registerEvent,
+			rememberActiveMarkdownView: vi.fn(),
+			addRibbonIcon: vi.fn(),
+			addCommand: vi.fn(),
+			addSettingTab: vi.fn(),
+			requestChatCompletion,
+			requestSelectionEdit,
+		});
+
+		await plugin.onload();
+		expect(plugin.additionalNotesStore.list('A.md')).toEqual([]);
+		expect(registerEvent).toHaveBeenCalledWith(renameEvent);
+		expect(registerEvent).toHaveBeenCalledWith(deleteEvent);
+		expect(read).not.toHaveBeenCalled();
+		expect(getMarkdownFiles).not.toHaveBeenCalled();
+		expect(requestChatCompletion).not.toHaveBeenCalled();
+		expect(requestSelectionEdit).not.toHaveBeenCalled();
+
+		plugin.additionalNotesStore.add('A.md', 'B.md');
+		plugin.additionalNotesStore.add('B.md', 'C.md');
+		handlers.get('rename')?.({ path: 'ignored.md' }, 'A.md');
+		expect(plugin.additionalNotesStore.list('A.md')).toEqual(['B.md']);
+		expect(plugin.additionalNotesStore.list('B.md')).toEqual(['C.md']);
+
+		const renamedFile = new TFile();
+		renamedFile.path = 'D.md';
+		handlers.get('rename')?.(renamedFile, 'B.md');
+		expect(plugin.additionalNotesStore.list('A.md')).toEqual(['D.md']);
+		expect(plugin.additionalNotesStore.list('B.md')).toEqual([]);
+		expect(plugin.additionalNotesStore.list('D.md')).toEqual(['C.md']);
+
+		const deletedIncludedFile = new TFile();
+		deletedIncludedFile.path = 'C.md';
+		handlers.get('delete')?.(deletedIncludedFile);
+		expect(plugin.additionalNotesStore.list('A.md')).toEqual(['D.md']);
+		expect(plugin.additionalNotesStore.list('D.md')).toEqual([]);
+
+		handlers.get('delete')?.({ path: 'D.md' });
+		expect(plugin.additionalNotesStore.list('A.md')).toEqual(['D.md']);
+		handlers.get('delete')?.(renamedFile);
+		expect(plugin.additionalNotesStore.list('A.md')).toEqual([]);
+		expect(plugin.additionalNotesStore.list('D.md')).toEqual([]);
+
+		plugin.additionalNotesStore.add('A.md', 'Ephemeral.md');
+		const reloadedPlugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(reloadedPlugin, {
+			app: plugin.app,
+			loadSettings: vi.fn().mockResolvedValue(undefined),
+			registerView: vi.fn(),
+			registerEvent: vi.fn(),
+			rememberActiveMarkdownView: vi.fn(),
+			addRibbonIcon: vi.fn(),
+			addCommand: vi.fn(),
+			addSettingTab: vi.fn(),
+			requestChatCompletion,
+			requestSelectionEdit,
+		});
+		await reloadedPlugin.onload();
+		expect(reloadedPlugin.additionalNotesStore).not.toBe(plugin.additionalNotesStore);
+		expect(reloadedPlugin.additionalNotesStore.list('A.md')).toEqual([]);
+
+		expect(read).not.toHaveBeenCalled();
+		expect(getMarkdownFiles).not.toHaveBeenCalled();
+		expect(requestChatCompletion).not.toHaveBeenCalled();
+		expect(requestSelectionEdit).not.toHaveBeenCalled();
 	});
 });

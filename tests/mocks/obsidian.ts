@@ -4,7 +4,9 @@ export class Plugin {}
 
 export class MarkdownView {}
 
-export class Modal {}
+export class Modal {
+	constructor(readonly app: App) {}
+}
 
 export class WorkspaceLeaf {}
 
@@ -36,11 +38,32 @@ export class TFile {
 }
 
 export class FuzzySuggestModal<T> {
+	static readonly instances: FuzzySuggestModal<unknown>[] = [];
 	items: T[] = [];
+	opened = false;
 
-	constructor(_app: App) {}
+	constructor(readonly app: App) {
+		FuzzySuggestModal.instances.push(this);
+	}
 
-	open(): void {}
+	open(): void {
+		this.opened = true;
+		this.items = this.getItems();
+	}
+
+	close(): void {
+		this.opened = false;
+	}
+
+	getItems(): T[] {
+		return [];
+	}
+
+	getItemText(_item: T): string {
+		return '';
+	}
+
+	onChooseItem(_item: T): void {}
 }
 
 export class PluginSettingTab {

@@ -7,6 +7,7 @@ Emend is a desktop Obsidian plugin for streaming AI chat and safe, reviewable ed
 ## Features
 
 - **Chat with context:** Ask questions, discuss ideas, or brainstorm with the active note. Responses and reasoning stream into the sidebar; these modes never write to your notes.
+- **Add notes explicitly:** Use **Add notes** in chat or Modify Selection to include bounded, read-only snapshots of other Markdown notes. Paths stay visible with remove/clear controls; selections belong to the active target note, last only for the current plugin session, and clear when the Emend plugin or Obsidian reloads.
 - **Edit with confidence:** Full-note and selection edits use a closed Operations protocol—`insert`, `remove`, `replace`, and `comment`—with exact anchors and atomic validation before anything is written.
 - **Review every change:** Valid operations become CriticMarkup that you can accept or reject in Track Changes. Emend has no competing diff or Apply button.
 - **Work quickly:** Use **Fix grammar**, **Make concise**, or **Add examples** in chat or the selection modal, with keyboard shortcuts and native undo.
@@ -64,8 +65,9 @@ Open **Settings → Community plugins**, reload plugins, and enable **Emend** an
 
 2. Open **Emend chat** from the ribbon or Command Palette.
 3. Select **Ask**, **Discuss**, or **Brainstorm** and submit a question. The note stays unchanged.
-4. Select **Edit** or a quick action to make a change. Review the resulting markup in Track Changes.
-5. For a smaller edit, select text and run **Modify selected text with AI**. Enter an instruction or use a quick action in the modal.
+4. Optionally click **Add notes** to choose other Markdown notes as read-only context for the next request. Review their visible paths and use **Remove** or **Clear all** as needed; these per-target selections survive note switches during the current plugin session and clear when the Emend plugin or Obsidian reloads.
+5. Select **Edit** or a quick action to make a change. Review the resulting markup in Track Changes.
+6. For a smaller edit, select text and run **Modify selected text with AI**. Enter an instruction or use a quick action in the modal. The same target note's additional-note selections are available here.
 
 <img src="docs/images/emend-selection.jpg" alt="Modify selected text dialog with quick actions" width="720">
 
@@ -104,11 +106,11 @@ Model history retains each ready message's mode, historical note-write permissio
 
 Emend makes **no background AI requests**. Content is sent only when you explicitly submit a chat or edit action.
 
-- Note context, prompts, recent ready history, and any loaded `AGENTS.md`/skill instructions are sent to the selected provider as required for that request.
-- Full-note Edit sends the entire note. Read-only chat uses bounded context; selection editing sends the complete selection and bounded surrounding context.
-- Note and vault paths are sent only when **Include note path** is enabled.
+- Note context, prompts, recent ready history, explicitly selected additional-note snapshots, and any loaded `AGENTS.md`/skill instructions are sent to the selected provider as required for that request. Picking, opening, or switching notes sends nothing and does not read additional-note content.
+- Full-note Edit sends the entire active note. Read-only chat uses bounded active-note context; selection editing sends the complete selection and bounded surrounding context. Additional notes use a separate combined source-character budget and are read-only in every mode.
+- Note and vault paths are sent only when **Include note path** is enabled. With it off, additional-note sections have generic numbered labels without their paths; with it on, they include vault-qualified paths. The local controls always show selected paths before submission.
 - API keys are stored in **Obsidian SecretStorage**, not plaintext `data.json`. Legacy plaintext keys are migrated automatically.
-- Ready conversations are stored locally under `<Vault>/.obsidian/emend/chats/`. API keys, request bodies, loading/error states, and buffered edit responses are not persisted.
+- Ready conversations are stored locally under `<Vault>/.obsidian/emend/chats/`. API keys, request bodies, additional-note selections/snapshots, loading/error states, and buffered edit responses are not persisted.
 - Deleting a note does not automatically delete its saved conversation.
 
 See the [privacy and storage details](QUICK_START.md#8-verify-persistence-and-privacy-behavior) and [installation/removal guide](INSTALLATION.md#remove-emend) for cleanup instructions.

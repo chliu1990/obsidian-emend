@@ -7,6 +7,7 @@ import {
 	setIcon,
 	WorkspaceLeaf,
 } from 'obsidian';
+import { AdditionalNotesControl } from './additional-notes-ui';
 import { EMEND_BUILD_ID } from './build-info';
 import type EmendPlugin from './main';
 import { getComposerShortcut, getDefaultShortcutLabels } from './chat-shortcuts';
@@ -42,6 +43,8 @@ export class EmendChatView extends ItemView {
 	private closed = false;
 	private notePath: string | null = null;
 	private noteLoadGeneration = 0;
+	private additionalNotesControl: AdditionalNotesControl | null = null;
+	private readonly drafts = new Map<string, string>();
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -80,6 +83,8 @@ export class EmendChatView extends ItemView {
 		this.pendingMessages.clear();
 		this.messageBodyEls.clear();
 		this.activeModelEl = null;
+		this.additionalNotesControl?.destroy();
+		this.additionalNotesControl = null;
 		this.inputEl = null;
 		this.contentEl.empty();
 	}
@@ -108,6 +113,9 @@ export class EmendChatView extends ItemView {
 			return;
 		}
 
+		if (this.notePath && this.inputEl) {
+			this.drafts.set(this.notePath, this.inputEl.value);
+		}
 		this.notePath = notePath;
 		const generation = ++this.noteLoadGeneration;
 		if (this.isSending) {
@@ -146,6 +154,7 @@ export class EmendChatView extends ItemView {
 		this.cancelPendingRender();
 		this.pendingMessages.clear();
 		this.messageBodyEls.clear();
+		this.additionalNotesControl?.destroy();
 		const { contentEl } = this;
 		contentEl.empty();
 		contentEl.addClass('emend-chat-view');
@@ -216,6 +225,16 @@ export class EmendChatView extends ItemView {
 			});
 		}
 
+		this.additionalNotesControl = new AdditionalNotesControl(
+			this.app,
+			this.plugin.additionalNotesStore,
+			() => this.notePath,
+		);
+		this.additionalNotesControl.render(
+			contentEl,
+			this.isSending || this.isThreadLoading,
+		);
+
 		const composerEl = contentEl.createDiv('emend-chat-composer');
 		this.inputEl = composerEl.createEl('textarea', {
 			cls: 'emend-chat-input',
@@ -224,6 +243,9 @@ export class EmendChatView extends ItemView {
 				rows: '4',
 			},
 		});
+		this.inputEl.value = this.notePath
+			? this.drafts.get(this.notePath) ?? ''
+			: '';
 		this.inputEl.disabled = this.isSending || this.isThreadLoading;
 		this.inputEl.addEventListener('keydown', (event) => {
 			this.handleComposerKeydown(event);
@@ -451,6 +473,8 @@ export class EmendChatView extends ItemView {
 		const history = this.toProviderHistory();
 		const mode = this.selectedMode;
 		const sourcePath = context.file.path;
+		const additionalNotePaths =
+			this.plugin.additionalNotesStore?.list(sourcePath) ?? [];
 		const noteMessages = this.messages;
 		const loadingMessage: ChatMessage = {
 			id: createMessageId(),
@@ -464,6 +488,7 @@ export class EmendChatView extends ItemView {
 		};
 		const controller = new AbortController();
 
+		this.drafts?.delete(sourcePath);
 		this.messages.push({
 			id: createMessageId(),
 			role: 'user',
@@ -491,6 +516,7 @@ export class EmendChatView extends ItemView {
 					mode,
 					prompt,
 					history,
+					additionalNotePaths,
 					callbacks: {
 						onReasoning: (text) => {
 							loadingMessage.reasoning += text;
@@ -509,6 +535,7 @@ export class EmendChatView extends ItemView {
 					mode,
 					prompt,
 					history,
+					additionalNotePaths,
 					callbacks: {
 						onContent: (text) => {
 							loadingMessage.content += text;

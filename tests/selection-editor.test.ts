@@ -1,5 +1,6 @@
 import { TFile, type MarkdownView } from 'obsidian';
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
+import type { AdditionalNoteSnapshot } from '../src/additional-notes-context';
 import type { EditPreparation } from '../src/edit-strategy';
 import { operationEditStrategy } from '../src/operation-edit-strategy';
 import type {
@@ -7,6 +8,7 @@ import type {
 	StreamEvent,
 	StreamResult,
 } from '../src/provider-stream';
+import { QUICK_ACTIONS } from '../src/quick-actions';
 import {
 	applyPreparedSelectionEdit,
 	captureSelectionSnapshot,
@@ -399,14 +401,22 @@ function makeSelectionCoordinator(
 ) {
 	const { adapter } = makeAdapter(snapshot);
 	const loadInstructions = vi.fn(async () => instructions);
+	const loadAdditionalNotes = vi.fn(
+		async (
+			_paths: readonly string[],
+			_activeNotePath: string,
+			_signal: AbortSignal,
+		): Promise<AdditionalNoteSnapshot[]> => [],
+	);
 	const coordinator = new SelectionEditRequestCoordinator({
 		provider,
+		loadAdditionalNotes,
 		loadInstructions,
 		request,
 		editor: adapter,
 		editStrategy: operationEditStrategy,
 	});
-	return { adapter, coordinator, loadInstructions, request };
+	return { adapter, coordinator, loadAdditionalNotes, loadInstructions, request };
 }
 
 function makeSelectionSubmission(
@@ -418,6 +428,7 @@ function makeSelectionSubmission(
 		prompt: 'Improve this selection.',
 		maxContextCharacters: 20,
 		smartSelectionContext: true,
+		additionalNotePaths: [],
 		signal: new AbortController().signal,
 		...overrides,
 	};
@@ -427,6 +438,16 @@ describe('SelectionEditRequestCoordinator', () => {
 	const replaceBetaResponse = JSON.stringify([
 		{ type: 'replace', target: 'beta', replacement: 'delta' },
 	]);
+
+	it('requires an additional-note loader in its dependencies', () => {
+		type Dependencies = ConstructorParameters<
+			typeof SelectionEditRequestCoordinator
+		>[0];
+
+		expectTypeOf<Dependencies['loadAdditionalNotes']>().toEqualTypeOf<
+			Required<Dependencies>['loadAdditionalNotes']
+		>();
+	});
 
 	it('loads current instructions and uses the operation selection prompt', async () => {
 		const snapshot = makeSnapshot();
@@ -453,6 +474,74 @@ describe('SelectionEditRequestCoordinator', () => {
 				systemPrompt.indexOf('Agent instructions'),
 			);
 		}
+	});
+
+	it('loads exact additional-note paths before instructions and places labelled context before the message', async () => {
+		const snapshot = makeSnapshot();
+		const order: string[] = [];
+		const request = selectionRequest('[]');
+		const originalRequest = request.getMockImplementation();
+		request.mockImplementation(async (...args) => {
+			order.push('request');
+			return originalRequest?.(...args) ?? { content: '[]', reasoning: '' };
+		});
+		const { coordinator, loadAdditionalNotes, loadInstructions } =
+			makeSelectionCoordinator(request, snapshot);
+		loadAdditionalNotes.mockImplementation(async () => {
+			order.push('additional notes');
+			return [{
+				sourcePath: 'Reference.md',
+				providerPath: 'Vault/Reference.md',
+				markdown: 'Additional only.',
+				sourceCharacters: 16,
+				includedCharacters: 16,
+			}];
+		});
+		loadInstructions.mockImplementation(async () => {
+			order.push('instructions');
+			return { skillTexts: new Map() };
+		});
+		const additionalNotePaths = ['Reference.md'];
+		const submission = makeSelectionSubmission(snapshot, { additionalNotePaths });
+
+		await coordinator.submit(submission);
+
+		expect(loadAdditionalNotes).toHaveBeenCalledExactlyOnceWith(
+			additionalNotePaths,
+			'folder/note.md',
+			submission.signal,
+		);
+		expect(order).toEqual(['additional notes', 'instructions', 'request']);
+		const userPrompt = request.mock.calls[0]?.[0].userPrompt ?? '';
+		expect(userPrompt.indexOf('Selected text:')).toBeLessThan(
+			userPrompt.indexOf('## Additional note 1'),
+		);
+		expect(userPrompt.indexOf('Context:')).toBeLessThan(
+			userPrompt.indexOf('## Additional note 1'),
+		);
+		expect(userPrompt.indexOf('## Additional note 1')).toBeLessThan(
+			userPrompt.indexOf('User message:'),
+		);
+		expect(userPrompt).toContain('Path: Vault/Reference.md');
+		expect(userPrompt).toContain('Additional only.');
+	});
+
+	it('omits additional-note sections when no paths are selected', async () => {
+		const snapshot = makeSnapshot();
+		const { coordinator, loadAdditionalNotes, request } =
+			makeSelectionCoordinator(selectionRequest('[]'), snapshot);
+		const submission = makeSelectionSubmission(snapshot);
+
+		await coordinator.submit(submission);
+
+		expect(loadAdditionalNotes).toHaveBeenCalledExactlyOnceWith(
+			[],
+			'folder/note.md',
+			submission.signal,
+		);
+		expect(request.mock.calls[0]?.[0].userPrompt).not.toContain(
+			'## Additional note',
+		);
 	});
 
 	it('restores Stage 09 symmetric context when smart context is disabled', async () => {
@@ -545,6 +634,95 @@ describe('SelectionEditRequestCoordinator', () => {
 			snapshot.from,
 			snapshot.to,
 		);
+	});
+
+	it.each(QUICK_ACTIONS)(
+		'$id uses the same additional-note selection path',
+		async (action) => {
+			const snapshot = makeSnapshot();
+			const { coordinator, loadAdditionalNotes, request } =
+				makeSelectionCoordinator(selectionRequest('[]'), snapshot);
+			loadAdditionalNotes.mockResolvedValue([{
+				sourcePath: 'Reference.md',
+				markdown: 'Additional only.',
+				sourceCharacters: 16,
+				includedCharacters: 16,
+			}]);
+			const additionalNotePaths = ['Reference.md'];
+			const submission = makeSelectionSubmission(snapshot, {
+				prompt: action.prompt,
+				additionalNotePaths,
+			});
+
+			await coordinator.submit(submission);
+
+			expect(loadAdditionalNotes).toHaveBeenCalledExactlyOnceWith(
+				additionalNotePaths,
+				'folder/note.md',
+				submission.signal,
+			);
+			const userPrompt = request.mock.calls[0]?.[0].userPrompt ?? '';
+			expect(userPrompt).toContain('## Additional note 1');
+			expect(userPrompt).toContain(`User message:\n${action.prompt}`);
+		},
+	);
+
+	it('rejects an Operation target found only in an additional note without replacing', async () => {
+		const snapshot = makeSnapshot();
+		const additionalNote: AdditionalNoteSnapshot = {
+			sourcePath: 'Reference.md',
+			markdown: 'Additional only.',
+			sourceCharacters: 16,
+			includedCharacters: 16,
+		};
+		const originalAdditionalMarkdown = additionalNote.markdown;
+		const request = selectionRequest(JSON.stringify([
+			{ type: 'replace', target: 'Additional only', replacement: 'Changed' },
+		]));
+		const { adapter, coordinator, loadAdditionalNotes } =
+			makeSelectionCoordinator(request, snapshot);
+		loadAdditionalNotes.mockResolvedValue([additionalNote]);
+
+		await expect(
+			coordinator.submit(makeSelectionSubmission(snapshot, {
+				additionalNotePaths: ['Reference.md'],
+			})),
+		).rejects.toThrow(/not found|match/i);
+
+		expect(request).toHaveBeenCalledOnce();
+		expect(adapter.readCurrentText).not.toHaveBeenCalled();
+		expect(adapter.replaceRange).not.toHaveBeenCalled();
+		expect(snapshot.fullText).toBe('# Note\nAlpha beta gamma.\nEnd');
+		expect(additionalNote.markdown).toBe(originalAdditionalMarkdown);
+	});
+
+	it('applies an active-selection insertion without changing additional-note text', async () => {
+		const snapshot = makeSnapshot();
+		const additionalNote: AdditionalNoteSnapshot = {
+			sourcePath: 'Reference.md',
+			markdown: 'Additional only.',
+			sourceCharacters: 16,
+			includedCharacters: 16,
+		};
+		const request = selectionRequest(JSON.stringify([
+			{ type: 'insert', anchor: 'beta', position: 'after', text: ' changed' },
+		]));
+		const { adapter, coordinator, loadAdditionalNotes } =
+			makeSelectionCoordinator(request, snapshot);
+		loadAdditionalNotes.mockResolvedValue([additionalNote]);
+
+		await expect(
+			coordinator.submit(makeSelectionSubmission(snapshot, {
+				additionalNotePaths: ['Reference.md'],
+			})),
+		).resolves.toEqual({ applied: true, changeCount: 1 });
+
+		expect(adapter.replaceRange).toHaveBeenCalledExactlyOnceWith(
+			'beta{++ changed++}',
+			snapshot.from,
+			snapshot.to,
+		);
+		expect(additionalNote.markdown).toBe('Additional only.');
 	});
 
 	it('returns a no-op result without replacing unchanged output', async () => {

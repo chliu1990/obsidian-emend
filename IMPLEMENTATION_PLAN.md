@@ -14,6 +14,7 @@ Deferred, unimplemented work is specified separately in [future-context-manageme
 - Ask, Discuss, and Brainstorm have no note writer. Edit and Modify Selection apply validated CriticMarkup immediately after completion, abort, exact-source, active-target, and permission checks. Track Changes is the only review surface.
 - Operations are the only model-facing edit protocol. The closed JSON command union validates exact original-snapshot ranges atomically and compiles into the internal CriticMarkup path; there is no edit-strategy setting.
 - Full-note Edit sends the complete captured note. Selection editing sends the complete selection plus default smart structural context or the symmetric opt-out; context expansion never expands the replacement target.
+- Additional notes are explicitly picked Markdown files with per-target, session-only selections shared by chat and Modify Selection. Their fresh bounded snapshots are read-only in every mode, use a separate combined source-character budget with fair allocation and omission markers, and never become edit targets. Active-note deduplication, rename/delete handling, missing-path failure, and reload clearing are covered in [Stage 35](devel_docs/35-additional-notes-context.md).
 - Vault-root `AGENTS.md` and directly referenced skills are loaded for every request, with skills placed before agent instructions. Note paths are shared only when explicitly enabled.
 - Ready per-note conversations and token-usage metadata persist locally through versioned atomic storage. Provider credentials persist separately in Obsidian SecretStorage, while plugin `data.json` keeps every `apiKey` empty. Request bodies, note snapshots, transient messages, and full edit responses are not persisted.
 - The Track Changes plugin is required to review accepted annotations. Emend intentionally has no in-plugin Apply/Reject or diff UI.
@@ -42,6 +43,7 @@ Deferred, unimplemented work is specified separately in [future-context-manageme
 20. [Operations-only editing and selection actions](devel_docs/20-operations-selection-actions.md) — one model-facing protocol and shared selection quick actions.
 21. [SecretStorage API keys](devel_docs/21-secret-storage.md) — provider credential migration, request resolution, and sanitized settings persistence.
 22. [Release verification](devel_docs/22-release-verification.md) — deferred roadmap, current guides, hardened-release smoke matrix, reviews, and final CI evidence.
+35. [Additional notes as context](devel_docs/35-additional-notes-context.md) — explicit per-target session selections, bounded read-only snapshots, path privacy, guarded edit integration, clean-gate evidence, and real-Obsidian picker/chat/selection-modal verification.
 
 ## Verification and release process
 

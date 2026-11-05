@@ -1,5 +1,6 @@
 import { App, TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
+import { AdditionalNotesStore } from '../src/additional-notes-store';
 import type { EditResult } from '../src/note-writer';
 import { operationEditStrategy } from '../src/operation-edit-strategy';
 import { QUICK_ACTIONS } from '../src/quick-actions';
@@ -23,6 +24,10 @@ class FakeElement {
 
 	createDiv(options?: string | { cls?: string; text?: string }) {
 		return this.append('div', options);
+	}
+
+	createSpan(options?: string | { cls?: string; text?: string }) {
+		return this.append('span', options);
 	}
 
 	createEl(
@@ -96,10 +101,23 @@ function openModal(
 	submitSelection: (
 		prompt: string,
 		signal: AbortSignal,
+		additionalNotePaths: readonly string[],
 	) => Promise<EditResult>,
+	store = new AdditionalNotesStore(),
+	targetPath = 'note.md',
 ) {
 	const contentEl = new FakeElement();
-	const modal = new SelectionModal(new App(), submitSelection);
+	const targetFile = new TFile();
+	targetFile.path = targetPath;
+	const app = new App();
+	Object.assign(app, {
+		vault: {
+			getAbstractFileByPath: vi.fn((path: string) =>
+				path === targetPath ? targetFile : null
+			),
+		},
+	});
+	const modal = new SelectionModal(app, submitSelection, store, targetPath);
 	Object.assign(modal, {
 		contentEl,
 		setTitle: vi.fn(),
@@ -108,10 +126,17 @@ function openModal(
 	modal.onOpen();
 	return {
 		modal,
+		store,
+		targetFile,
 		contentEl,
 		input: findElements(contentEl, (element) => element.tagName === 'textarea')[0],
 		quickActions: findElements(contentEl, (element) =>
 			element.className.split(' ').includes('emend-chat-quick-action')
+		),
+		additionalButtons: findElements(contentEl, (element) =>
+			element.className.split(' ').some((name) =>
+				name.startsWith('emend-additional-notes-')
+			) && element.tagName === 'button'
 		),
 	};
 }
@@ -149,7 +174,12 @@ describe('SelectionModal quick actions', () => {
 		async (action) => {
 			const response = deferred<EditResult>();
 			const submitSelection = vi.fn(() => response.promise);
-			const { contentEl, input, quickActions } = openModal(submitSelection);
+			const store = new AdditionalNotesStore();
+			store.add('note.md', 'Context.md');
+			const { contentEl, input, quickActions, additionalButtons } = openModal(
+				submitSelection,
+				store,
+			);
 			const button = findAction(contentEl, action.id);
 			expect(button).toBeDefined();
 			expect(input?.value).toBe('');
@@ -160,9 +190,12 @@ describe('SelectionModal quick actions', () => {
 			expect(submitSelection).toHaveBeenCalledWith(
 				action.prompt,
 				expect.any(AbortSignal),
+				['Context.md'],
 			);
 			expect(quickActions).toHaveLength(QUICK_ACTIONS.length);
 			expect(quickActions.every((item) => item.disabled)).toBe(true);
+			expect(additionalButtons.length).toBeGreaterThanOrEqual(3);
+			expect(additionalButtons.every((item) => item.disabled)).toBe(true);
 			expect(input?.disabled).toBe(true);
 			for (const item of quickActions) {
 				item.click();
@@ -172,8 +205,88 @@ describe('SelectionModal quick actions', () => {
 			response.reject(new Error('Provider unavailable'));
 			await vi.waitFor(() => {
 				expect(quickActions.every((item) => !item.disabled)).toBe(true);
+				expect(additionalButtons.every((item) => !item.disabled)).toBe(true);
 				expect(input?.disabled).toBe(false);
 			});
+		},
+	);
+
+	it('captures the target note paths exactly once for a typed submission', async () => {
+		const response = deferred<EditResult>();
+		const submitSelection = vi.fn(
+			(
+				_prompt: string,
+				_signal: AbortSignal,
+				_additionalNotePaths: readonly string[],
+			) => response.promise,
+		);
+		const store = new AdditionalNotesStore();
+		store.add('note.md', 'First.md');
+		store.add('note.md', 'Second.md');
+		store.add('other.md', 'Wrong target.md');
+		const { contentEl, input } = openModal(submitSelection, store, 'note.md');
+		if (!input) {
+			throw new Error('Selection input missing.');
+		}
+		input.value = '  Clarify this selection.  ';
+		const submitButton = findElements(contentEl, (element) =>
+			element.className.split(' ').includes('emend-chat-primary-button')
+		)[0];
+
+		submitButton?.click();
+
+		expect(submitSelection).toHaveBeenCalledTimes(1);
+		expect(submitSelection).toHaveBeenCalledWith(
+			'Clarify this selection.',
+			expect.any(AbortSignal),
+			['First.md', 'Second.md'],
+		);
+		store.clear('note.md');
+		expect(submitSelection.mock.calls[0]?.[2]).toEqual(['First.md', 'Second.md']);
+		response.resolve({ applied: false, changeCount: 0 });
+		await vi.waitFor(() => expect(input.disabled).toBe(false));
+	});
+
+	it('submits the renamed target paths for typed input', async () => {
+		const submitSelection = vi.fn(async () => ({ applied: false, changeCount: 0 }));
+		const store = new AdditionalNotesStore();
+		store.add('note.md', 'Context.md');
+		const { contentEl, input, targetFile } = openModal(submitSelection, store);
+		if (!input) {
+			throw new Error('Selection input missing.');
+		}
+		input.value = 'Clarify this selection.';
+		targetFile.path = 'renamed.md';
+		store.rename('note.md', targetFile.path);
+
+		findElements(contentEl, (element) =>
+			element.className.split(' ').includes('emend-chat-primary-button')
+		)[0]?.click();
+
+		await vi.waitFor(() => expect(submitSelection).toHaveBeenCalledWith(
+			'Clarify this selection.',
+			expect.any(AbortSignal),
+			['Context.md'],
+		));
+	});
+
+	it.each(QUICK_ACTIONS)(
+		'$id submits the renamed target paths after the modal opens',
+		async (action) => {
+			const submitSelection = vi.fn(async () => ({ applied: false, changeCount: 0 }));
+			const store = new AdditionalNotesStore();
+			store.add('note.md', 'Context.md');
+			const { contentEl, targetFile } = openModal(submitSelection, store);
+			targetFile.path = 'renamed.md';
+			store.rename('note.md', targetFile.path);
+
+			findAction(contentEl, action.id)?.click();
+
+			await vi.waitFor(() => expect(submitSelection).toHaveBeenCalledWith(
+				action.prompt,
+				expect.any(AbortSignal),
+				['Context.md'],
+			));
 		},
 	);
 
@@ -228,6 +341,7 @@ describe('SelectionModal quick actions', () => {
 				: vi.fn(async () => ({ content: 'not json', reasoning: '' }));
 			const coordinator = new SelectionEditRequestCoordinator({
 				provider,
+				loadAdditionalNotes: async () => [],
 				loadInstructions: async () => ({ skillTexts: new Map() }),
 				request,
 				editor,
@@ -239,6 +353,7 @@ describe('SelectionModal quick actions', () => {
 					prompt,
 					maxContextCharacters: 1000,
 					smartSelectionContext: true,
+					additionalNotePaths: [],
 					signal,
 				})
 			);
