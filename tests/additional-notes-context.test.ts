@@ -346,4 +346,24 @@ describe('formatAdditionalNotesPrompt', () => {
 			'```',
 		].join('\n'));
 	});
+
+	it.each([3, 6])('uses an outer fence longer than a %i-backtick source run', (runLength) => {
+		const innerFence = '`'.repeat(runLength);
+		const markdown = `Before\n${innerFence}ts\nconst value = 1;\n${innerFence}\nAfter`;
+		const outerFence = '`'.repeat(runLength + 1);
+
+		expect(formatAdditionalNotesPrompt([{
+			sourcePath: 'path.md',
+			markdown,
+			sourceCharacters: markdown.length,
+			includedCharacters: markdown.length,
+		}])).toBe([
+			'## Additional note 1',
+			'Additional notes are read-only context and are not edit targets.',
+			'',
+			`${outerFence}markdown`,
+			markdown,
+			outerFence,
+		].join('\n'));
+	});
 });

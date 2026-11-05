@@ -107,7 +107,17 @@ function openModal(
 	targetPath = 'note.md',
 ) {
 	const contentEl = new FakeElement();
-	const modal = new SelectionModal(new App(), submitSelection, store, targetPath);
+	const targetFile = new TFile();
+	targetFile.path = targetPath;
+	const app = new App();
+	Object.assign(app, {
+		vault: {
+			getAbstractFileByPath: vi.fn((path: string) =>
+				path === targetPath ? targetFile : null
+			),
+		},
+	});
+	const modal = new SelectionModal(app, submitSelection, store, targetPath);
 	Object.assign(modal, {
 		contentEl,
 		setTitle: vi.fn(),
@@ -117,6 +127,7 @@ function openModal(
 	return {
 		modal,
 		store,
+		targetFile,
 		contentEl,
 		input: findElements(contentEl, (element) => element.tagName === 'textarea')[0],
 		quickActions: findElements(contentEl, (element) =>
@@ -235,6 +246,49 @@ describe('SelectionModal quick actions', () => {
 		response.resolve({ applied: false, changeCount: 0 });
 		await vi.waitFor(() => expect(input.disabled).toBe(false));
 	});
+
+	it('submits the renamed target paths for typed input', async () => {
+		const submitSelection = vi.fn(async () => ({ applied: false, changeCount: 0 }));
+		const store = new AdditionalNotesStore();
+		store.add('note.md', 'Context.md');
+		const { contentEl, input, targetFile } = openModal(submitSelection, store);
+		if (!input) {
+			throw new Error('Selection input missing.');
+		}
+		input.value = 'Clarify this selection.';
+		targetFile.path = 'renamed.md';
+		store.rename('note.md', targetFile.path);
+
+		findElements(contentEl, (element) =>
+			element.className.split(' ').includes('emend-chat-primary-button')
+		)[0]?.click();
+
+		await vi.waitFor(() => expect(submitSelection).toHaveBeenCalledWith(
+			'Clarify this selection.',
+			expect.any(AbortSignal),
+			['Context.md'],
+		));
+	});
+
+	it.each(QUICK_ACTIONS)(
+		'$id submits the renamed target paths after the modal opens',
+		async (action) => {
+			const submitSelection = vi.fn(async () => ({ applied: false, changeCount: 0 }));
+			const store = new AdditionalNotesStore();
+			store.add('note.md', 'Context.md');
+			const { contentEl, targetFile } = openModal(submitSelection, store);
+			targetFile.path = 'renamed.md';
+			store.rename('note.md', targetFile.path);
+
+			findAction(contentEl, action.id)?.click();
+
+			await vi.waitFor(() => expect(submitSelection).toHaveBeenCalledWith(
+				action.prompt,
+				expect.any(AbortSignal),
+				['Context.md'],
+			));
+		},
+	);
 
 	it('restores Cancel after a stopped quick-action request settles', async () => {
 		const response = deferred<EditResult>();

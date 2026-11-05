@@ -106,18 +106,23 @@ function file(path: string) {
 }
 
 function createControl(targetPath = 'Active.md') {
-	const getMarkdownFiles = vi.fn(() => [
-		file('Active.md'),
+	const targetFile = file(targetPath);
+	const files = [
+		targetFile,
 		file('Already selected.md'),
 		file('First.md'),
 		file('Folder/Second.md'),
-	]);
+	];
+	const getMarkdownFiles = vi.fn(() => files);
+	const getAbstractFileByPath = vi.fn((path: string) =>
+		files.find((item) => item.path === path) ?? null
+	);
 	const app = new App();
-	Object.assign(app, { vault: { getMarkdownFiles } });
+	Object.assign(app, { vault: { getMarkdownFiles, getAbstractFileByPath } });
 	const store = new AdditionalNotesStore();
 	const container = new FakeElement();
 	const control = new AdditionalNotesControl(app, store, () => targetPath);
-	return { app, store, container, control, getMarkdownFiles };
+	return { app, store, container, control, getMarkdownFiles, targetFile };
 }
 
 type MockPicker = AdditionalNotesPicker & {
@@ -166,6 +171,28 @@ describe('AdditionalNotesControl', () => {
 		]);
 		expect(textOf(container)).toContain('First.md');
 		expect(getMarkdownFiles).toHaveBeenCalledTimes(1);
+	});
+
+	it('adds to the renamed target through an already-open picker', () => {
+		const { store, container, control, targetFile } = createControl();
+		store.add('Active.md', 'Already selected.md');
+		control.render(container as unknown as HTMLElement, false);
+		findButton(container, 'Add notes')?.click();
+		const picker = fuzzyModalInstances()[0];
+		const firstItem = picker?.items[0];
+		if (!picker || !firstItem) {
+			throw new Error('Picker did not offer the expected note.');
+		}
+
+		targetFile.path = 'Renamed Active.md';
+		store.rename('Active.md', targetFile.path);
+		picker.onChooseItem(firstItem);
+
+		expect(store.list('Renamed Active.md')).toEqual([
+			'Already selected.md',
+			'First.md',
+		]);
+		expect(store.list('Active.md')).toEqual([]);
 	});
 
 	it('shows local paths, empty copy, and next-request disclosure through every store update', () => {
@@ -225,5 +252,17 @@ describe('AdditionalNotesControl', () => {
 		store.rename('One.md', 'Renamed.md');
 		expect(textOf(container)).toContain('One.md');
 		expect(textOf(container)).not.toContain('Renamed.md');
+	});
+
+	it('closes its active picker on destroy', () => {
+		const { container, control } = createControl();
+		control.render(container as unknown as HTMLElement, false);
+		findButton(container, 'Add notes')?.click();
+		const picker = fuzzyModalInstances()[0];
+		expect(picker?.opened).toBe(true);
+
+		control.destroy();
+
+		expect(picker?.opened).toBe(false);
 	});
 });

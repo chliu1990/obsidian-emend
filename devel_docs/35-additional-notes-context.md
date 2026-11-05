@@ -6,10 +6,10 @@ Additional-note context is implemented and reviewed through Tasks 1–4. Stage 3
 
 ## Implemented behavior
 
-- **Add notes** uses an explicit vault Markdown picker. The in-memory store keeps ordered selections per active target, deduplicates the active note and repeats, and shares selections between chat and Modify Selection for that target only. Selections survive target switches but not plugin/Obsidian reload and are never persisted.
-- Selected paths remain visible with remove/clear controls and a content-sharing disclosure. Rename updates selected/target paths; delete removes deleted included paths. A missing path fails the whole capture before selected-note reads, instruction reads, or networking.
+- **Add notes** uses an explicit vault Markdown picker. The in-memory store keeps ordered selections per active target, deduplicates the active note and repeats, and shares selections between chat and Modify Selection for that target only. Selections survive target switches during the current plugin session, clear on plugin or Obsidian reload, and are never persisted.
+- Selected paths remain visible with remove/clear controls and a content-sharing disclosure. Rename updates selected/target paths; open pickers and Modify Selection resolve the captured target `TFile`'s live path, and controls close their owned picker on destroy. Delete removes deleted included paths. A missing path fails the whole capture before selected-note reads, instruction reads, or networking.
 - Submission captures the target's path array before the first await, then resolves and reads fresh selected-note snapshots. No additional-note content is read or sent by picker/open/note-switch actions.
-- Additional notes use a separate combined `maxContextCharacters` source budget. Each note receives `floor(remaining budget / remaining notes)`; included source characters are subtracted and unused capacity rolls forward. Prefix truncation ends with `[...]`. Labels, fences, and markers are additional to source-character accounting.
+- Additional notes use a separate combined `maxContextCharacters` source budget. Each note receives `floor(remaining budget / remaining notes)`; included source characters are subtracted and unused capacity rolls forward. Prefix truncation ends with `[...]`. Labels, fences, and markers are additional to source-character accounting. Each snapshot's outer prompt fence is longer than its longest backtick run.
 - Prompt sections are separately numbered and explicitly read-only. With **Include note path** off they contain no path label or path metadata; with it on they contain `Path: <vault>/<note path>`. Note content itself is preserved within the captured budget, and active-note path behavior is unchanged.
 - Additional-note snapshots are context in every mode, never edit targets. Full-note Operations compile only against the active note and selection Operations only against the captured selection. Additional-note-only anchors fail with zero writes.
 
@@ -34,7 +34,7 @@ Obsidian's own `vault-open` IPC opened synthetic vaults, and Emend and Track Cha
 
 ## Chat, payload, and guarded-write evidence
 
-The reconciled assertions are in `test_vault/evidence/verification.json`; sanitized bodies are in `test_vault/evidence/requests.json`. The matrix used:
+`test_vault/evidence/verification.json` records the original non-modal matrix; its modal entries were superseded by the final Xvfb modal evidence below. Sanitized bodies from that original matrix are in `test_vault/evidence/requests.json`. The matrix used:
 
 ```bash
 node test_vault/mock-provider.mjs
@@ -94,7 +94,7 @@ XDG_CONFIG_HOME="$PWD/test_vault/headless/home/.config" \
 node test_vault/verify-modals-xvfb.mjs
 ```
 
-A fresh mock captured three final requests. All five assertions in `test_vault/evidence/xvfb-modals.json` passed:
+`test_vault/evidence/xvfb-modals.json` is the final modal evidence. A fresh mock captured three final requests, and all five assertions passed:
 
 1. The real chat **Add notes** picker selected `Reference Small.md` and `Reference Large.md`. Reopening it offered only `Reference B.md`, proving active-note and already-selected filtering without a request or write.
 2. The real Modify Selection modal inherited both selections; its actual Remove, Clear all, and picker controls removed, cleared, and restored both paths without a request.
@@ -103,6 +103,10 @@ A fresh mock captured three final requests. All five assertions in `test_vault/e
 5. One valid submission sent both additional-note sections exactly once with generic path-off labels and produced `{~~Selection original~>Selection edited~~}` only in the captured target. Both additional notes retained their original sentinels.
 
 Earlier helper iterations exposed verifier issues—scope detection for a picker nested above the selection modal, request timing, and one incorrect fixture sentinel—not runtime failures. The final clean run reset the synthetic target and mock evidence and passed without assertion corrections.
+
+## Final review fix-wave evidence
+
+The final whole-branch fix wave added `test_vault/evidence/xvfb-rename.json` using the same isolated Xvfb/Obsidian setup and a separate loopback mock. All six targeted assertions passed: an already-open picker added to the renamed target; typed Modify Selection and all three quick actions sent the renamed target's two selected snapshots; and closing the selection modal closed its active picker. The focused RED run failed eight new regressions before implementation, the focused GREEN run passed 32/32 tests, and the final full gate passed 546/546 tests with clean lint, build, and diff check.
 
 ## Screenshots inspected
 

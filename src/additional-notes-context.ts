@@ -92,7 +92,12 @@ export function formatAdditionalNotesPrompt(
 		if (note.providerPath) {
 			lines.push(`Path: ${note.providerPath}`);
 		}
-		lines.push('', '```markdown', note.markdown, '```');
+		const longestBacktickRun = note.markdown.match(/`+/g)?.reduce(
+			(longest, run) => Math.max(longest, run.length),
+			0,
+		) ?? 0;
+		const fence = '`'.repeat(Math.max(3, longestBacktickRun + 1));
+		lines.push('', `${fence}markdown`, note.markdown, fence);
 		return lines.join('\n');
 	});
 	return sections.join('\n\n');

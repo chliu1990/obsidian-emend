@@ -4,7 +4,9 @@ export class Plugin {}
 
 export class MarkdownView {}
 
-export class Modal {}
+export class Modal {
+	constructor(readonly app: App) {}
+}
 
 export class WorkspaceLeaf {}
 
@@ -47,6 +49,10 @@ export class FuzzySuggestModal<T> {
 	open(): void {
 		this.opened = true;
 		this.items = this.getItems();
+	}
+
+	close(): void {
+		this.opened = false;
 	}
 
 	getItems(): T[] {

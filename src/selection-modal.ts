@@ -1,4 +1,4 @@
-import { App, Modal, Notice } from 'obsidian';
+import { App, Modal, Notice, TFile } from 'obsidian';
 import type { AdditionalNotesStore } from './additional-notes-store';
 import { AdditionalNotesControl } from './additional-notes-ui';
 import type { EditResult } from './note-writer';
@@ -11,6 +11,7 @@ export class SelectionModal extends Modal {
 	private quickActionButtons: HTMLButtonElement[] = [];
 	private activeController: AbortController | null = null;
 	private additionalNotesControl: AdditionalNotesControl | null = null;
+	private targetFile: TFile | null = null;
 
 	constructor(
 		app: App,
@@ -29,6 +30,8 @@ export class SelectionModal extends Modal {
 		this.setTitle('Modify selected text');
 		this.contentEl.empty();
 		this.contentEl.addClass('emend-selection-modal');
+		const targetFile = this.app.vault.getAbstractFileByPath(this.targetPath);
+		this.targetFile = targetFile instanceof TFile ? targetFile : null;
 		const quickActionsEl = this.contentEl.createDiv('emend-chat-quick-actions');
 		for (const action of QUICK_ACTIONS) {
 			const button = quickActionsEl.createEl('button', {
@@ -45,7 +48,7 @@ export class SelectionModal extends Modal {
 		this.additionalNotesControl = new AdditionalNotesControl(
 			this.app,
 			this.additionalNotesStore,
-			() => this.targetPath,
+			() => this.getTargetPath(),
 		);
 		this.additionalNotesControl.render(this.contentEl, false);
 
@@ -100,7 +103,12 @@ export class SelectionModal extends Modal {
 		this.quickActionButtons = [];
 		this.additionalNotesControl?.destroy();
 		this.additionalNotesControl = null;
+		this.targetFile = null;
 		this.contentEl.empty();
+	}
+
+	private getTargetPath(): string {
+		return this.targetFile?.path ?? this.targetPath;
 	}
 
 	private setPending(pending: boolean) {
@@ -124,7 +132,7 @@ export class SelectionModal extends Modal {
 			return;
 		}
 
-		const additionalNotePaths = this.additionalNotesStore.list(this.targetPath);
+		const additionalNotePaths = this.additionalNotesStore.list(this.getTargetPath());
 		const controller = new AbortController();
 		this.activeController = controller;
 		this.setPending(true);

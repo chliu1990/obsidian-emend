@@ -5,15 +5,16 @@ export class AdditionalNotesPicker extends FuzzySuggestModal<TFile> {
 	constructor(
 		app: App,
 		private readonly store: AdditionalNotesStore,
-		private readonly targetPath: string,
+		private readonly targetFile: TFile,
 	) {
 		super(app);
 	}
 
 	getItems(): TFile[] {
-		const selected = new Set(this.store.list(this.targetPath));
+		const targetPath = this.targetFile.path;
+		const selected = new Set(this.store.list(targetPath));
 		return this.app.vault.getMarkdownFiles().filter(
-		(file) => file.path !== this.targetPath && !selected.has(file.path),
+		(file) => file.path !== targetPath && !selected.has(file.path),
 		);
 	}
 
@@ -22,7 +23,7 @@ export class AdditionalNotesPicker extends FuzzySuggestModal<TFile> {
 	}
 
 	onChooseItem(item: TFile): void {
-		this.store.add(this.targetPath, item.path);
+		this.store.add(this.targetFile.path, item.path);
 	}
 }
 
@@ -31,6 +32,7 @@ export class AdditionalNotesControl {
 	private readonly buttons = new Set<HTMLButtonElement>();
 	private readonly removeButtons = new Set<HTMLButtonElement>();
 	private unsubscribe: (() => void) | null = null;
+	private activePicker: AdditionalNotesPicker | null = null;
 	private disabled = false;
 
 	constructor(
@@ -57,8 +59,13 @@ export class AdditionalNotesControl {
 		);
 		addButton.addEventListener('click', () => {
 			const targetPath = this.getTargetPath();
-			if (!this.disabled && targetPath) {
-				new AdditionalNotesPicker(this.app, this.store, targetPath).open();
+			const targetFile = !this.disabled && targetPath
+				? this.app.vault.getAbstractFileByPath(targetPath)
+				: null;
+			if (targetFile instanceof TFile) {
+				this.activePicker?.close();
+				this.activePicker = new AdditionalNotesPicker(this.app, this.store, targetFile);
+				this.activePicker.open();
 			}
 		});
 		const clearButton = this.createButton(
@@ -88,6 +95,8 @@ export class AdditionalNotesControl {
 	}
 
 	destroy(): void {
+		this.activePicker?.close();
+		this.activePicker = null;
 		this.unsubscribe?.();
 		this.unsubscribe = null;
 		this.listEl = null;

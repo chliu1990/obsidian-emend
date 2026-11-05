@@ -7,7 +7,7 @@ Emend is a desktop Obsidian plugin for streaming AI chat and safe, reviewable ed
 ## Features
 
 - **Chat with context:** Ask questions, discuss ideas, or brainstorm with the active note. Responses and reasoning stream into the sidebar; these modes never write to your notes.
-- **Add notes explicitly:** Use **Add notes** in chat or Modify Selection to include bounded, read-only snapshots of other Markdown notes. Paths stay visible with remove/clear controls; selections belong to the active target note and last only for the current Obsidian session.
+- **Add notes explicitly:** Use **Add notes** in chat or Modify Selection to include bounded, read-only snapshots of other Markdown notes. Paths stay visible with remove/clear controls; selections belong to the active target note, last only for the current plugin session, and clear when the Emend plugin or Obsidian reloads.
 - **Edit with confidence:** Full-note and selection edits use a closed Operations protocol—`insert`, `remove`, `replace`, and `comment`—with exact anchors and atomic validation before anything is written.
 - **Review every change:** Valid operations become CriticMarkup that you can accept or reject in Track Changes. Emend has no competing diff or Apply button.
 - **Work quickly:** Use **Fix grammar**, **Make concise**, or **Add examples** in chat or the selection modal, with keyboard shortcuts and native undo.
@@ -65,7 +65,7 @@ Open **Settings → Community plugins**, reload plugins, and enable **Emend** an
 
 2. Open **Emend chat** from the ribbon or Command Palette.
 3. Select **Ask**, **Discuss**, or **Brainstorm** and submit a question. The note stays unchanged.
-4. Optionally click **Add notes** to choose other Markdown notes as read-only context for the next request. Review their visible paths and use **Remove** or **Clear all** as needed; these per-target selections survive note switches but not an Obsidian reload.
+4. Optionally click **Add notes** to choose other Markdown notes as read-only context for the next request. Review their visible paths and use **Remove** or **Clear all** as needed; these per-target selections survive note switches during the current plugin session and clear when the Emend plugin or Obsidian reloads.
 5. Select **Edit** or a quick action to make a change. Review the resulting markup in Track Changes.
 6. For a smaller edit, select text and run **Modify selected text with AI**. Enter an instruction or use a quick action in the modal. The same target note's additional-note selections are available here.
 
