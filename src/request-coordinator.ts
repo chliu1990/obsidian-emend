@@ -3,6 +3,7 @@ import {
 	type AdditionalNoteSnapshot,
 } from './additional-notes-context';
 import type { RequestContext } from './context';
+import type { DeepSeekWebSearchCoordinator } from './deepseek-web';
 import type { EditStrategy } from './edit-strategy';
 import { getSystemPrompt } from './mode';
 import {
@@ -14,7 +15,7 @@ import {
 	requestAiResponse,
 	type StreamResult,
 } from './provider-stream';
-import { resolveTokenUsage } from './token-usage';
+import { resolveRoundTokenUsage, resolveTokenUsage } from './token-usage';
 import type { TokenUsage } from './token-usage';
 import type {
 	InstructionPromptParts,
@@ -22,6 +23,7 @@ import type {
 	ProviderConfig,
 	ProviderHistoryMessage,
 } from './types';
+import type { WebSearchRunOptions, WebSource } from './web-search';
 
 export type ReadOnlyMode = Exclude<Mode, 'edit'>;
 
@@ -29,6 +31,11 @@ export interface ReadOnlyStreamCallbacks {
 	onContent: (text: string) => void;
 	onReasoning: (text: string) => void;
 }
+
+export type ReadOnlyWebSearchOptions = Omit<
+	WebSearchRunOptions,
+	'callbacks' | 'signal'
+>;
 
 export interface ReadOnlySubmission {
 	context: RequestContext;
@@ -38,6 +45,7 @@ export interface ReadOnlySubmission {
 	additionalNotePaths: readonly string[];
 	callbacks: ReadOnlyStreamCallbacks;
 	signal: AbortSignal;
+	webSearch?: ReadOnlyWebSearchOptions;
 }
 
 export interface EditSubmission {
@@ -59,6 +67,7 @@ interface ReadOnlyRequestCoordinatorDependencies {
 	): Promise<AdditionalNoteSnapshot[]>;
 	loadInstructions(): Promise<InstructionPromptParts>;
 	request: typeof requestAiResponse;
+	webSearch?: Pick<DeepSeekWebSearchCoordinator, 'submit'>;
 }
 
 interface EditRequestCoordinatorDependencies
@@ -69,6 +78,7 @@ interface EditRequestCoordinatorDependencies
 
 export interface ChatStreamResult extends Omit<StreamResult, 'usage'> {
 	usage: TokenUsage;
+	sources?: WebSource[];
 }
 
 export interface EditRequestResult extends EditResult {
@@ -97,17 +107,35 @@ export class ReadOnlyRequestCoordinator {
 			),
 			history: submission.history.slice(-8),
 		};
+		const callbacks = {
+			onEvent: (event: Parameters<Parameters<typeof requestAiResponse>[1]['onEvent']>[0]) => {
+				if (event.type === 'content') {
+					submission.callbacks.onContent(event.text);
+				} else if (event.type === 'reasoning') {
+					submission.callbacks.onReasoning(event.text);
+				}
+			},
+		};
+		if (submission.webSearch) {
+			if (!this.dependencies.webSearch) {
+				throw new Error('Online search is not available for this provider and model.');
+			}
+			const result = await this.dependencies.webSearch.submit(request, {
+				...submission.webSearch,
+				callbacks,
+				signal: submission.signal,
+			});
+			return {
+				content: result.content,
+				reasoning: result.reasoning,
+				sources: result.sources,
+				usage: resolveRoundTokenUsage(result.rounds),
+			};
+		}
+
 		const result = await this.dependencies.request(
 			request,
-			{
-				onEvent: (event) => {
-					if (event.type === 'content') {
-						submission.callbacks.onContent(event.text);
-					} else if (event.type === 'reasoning') {
-						submission.callbacks.onReasoning(event.text);
-					}
-				},
-			},
+			callbacks,
 			submission.signal,
 		);
 		return { ...result, usage: resolveTokenUsage(request, result) };

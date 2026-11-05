@@ -7,6 +7,7 @@ import {
 	type RequestContext,
 } from './context';
 import { ConversationStore } from './conversation-store';
+import { DeepSeekWebSearchCoordinator } from './deepseek-web';
 import { getEditStrategy } from './edit-strategy';
 import { loadAllInstructions } from './instructions-loader';
 import { createVaultNoteWriter, type EditResult } from './note-writer';
@@ -38,6 +39,7 @@ import type {
 	ProviderId,
 	SelectionSnapshot,
 } from './types';
+import { supportsDeepSeekWeb } from './web-search';
 
 type ReadOnlyMainSubmission = Omit<ReadOnlySubmission, 'additionalNotePaths'> & {
 	additionalNotePaths?: readonly string[];
@@ -302,12 +304,18 @@ export default class EmendPlugin extends Plugin {
 		if (!submission.prompt.trim()) {
 			throw new Error('Enter a prompt first.');
 		}
+		const activeProvider = this.settings.activeProvider;
+		const activeModel = this.settings.providers[activeProvider].model;
+		const webSupported = supportsDeepSeekWeb(activeProvider, activeModel);
+		if (submission.mode !== 'edit' && submission.webSearch && !webSupported) {
+			throw new Error('Online search is only available for DeepSeek deepseek-flash and deepseek-v4-pro.');
+		}
 
 		return this.withNoteRequest(submission.context.file.path, async () => {
 			const dependencies = {
 				provider: {
-					...this.settings.providers[this.settings.activeProvider],
-					apiKey: this.getApiKey(this.settings.activeProvider),
+					...this.settings.providers[activeProvider],
+					apiKey: this.getApiKey(activeProvider),
 				},
 				loadAdditionalNotes: (
 					paths: readonly string[],
@@ -332,7 +340,16 @@ export default class EmendPlugin extends Plugin {
 				});
 			}
 
-			const coordinator = new ReadOnlyRequestCoordinator(dependencies);
+			const webSearch = webSupported
+				? new DeepSeekWebSearchCoordinator({
+					provider: dependencies.provider,
+					request: requestAiResponse,
+				})
+				: undefined;
+			const coordinator = new ReadOnlyRequestCoordinator({
+				...dependencies,
+				...(webSearch ? { webSearch } : {}),
+			});
 			return coordinator.submit({
 				...submission,
 				additionalNotePaths: submission.additionalNotePaths ?? [],
