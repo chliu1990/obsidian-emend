@@ -14,17 +14,45 @@ export type StreamEvent =
 	| { type: 'usage'; usage: ProviderTokenUsage }
 	| { type: 'done' };
 
+export interface ProviderToolDefinition {
+	type: 'function';
+	function: {
+		name: string;
+		description: string;
+		parameters: Record<string, unknown>;
+	};
+}
+
+export interface ProviderToolCall {
+	id: string;
+	name: string;
+	arguments: string;
+}
+
+export type ProviderContinuationMessage =
+	| { role: 'assistant'; content: string; toolCalls: ProviderToolCall[] }
+	| { role: 'tool'; toolCallId: string; content: string };
+
 export interface AiProviderRequest {
 	provider: ProviderConfig;
 	systemPrompt: string;
 	userPrompt: string;
 	history: ProviderHistoryMessage[];
+	tools?: ProviderToolDefinition[];
+	continuation?: ProviderContinuationMessage[];
 }
 
 export interface StreamResult {
 	content: string;
 	reasoning: string;
 	usage?: ProviderTokenUsage;
+	finishReason?: string;
+	toolCalls?: ProviderToolCall[];
+}
+
+interface ProviderRoundState {
+	finishReason?: string;
+	toolCalls: ProviderToolCall[];
 }
 
 export async function requestAiResponse(
@@ -70,10 +98,14 @@ export async function requestAiResponse(
 					{ role: 'system', content: request.systemPrompt },
 					...formatProviderHistory(request.history.slice(-8)),
 					{ role: 'user', content: request.userPrompt },
+					...formatContinuationMessages(request.continuation ?? []),
 				],
 				temperature: 0.3,
 				reasoning_effort: provider.reasoningEffort,
 				stream: true,
+				...(request.tools?.length
+					? { tools: request.tools, tool_choice: 'auto' }
+					: {}),
 				...(provider.requestUsage
 					? { stream_options: { include_usage: true } }
 					: {}),
@@ -123,13 +155,20 @@ export async function requestAiResponse(
 				emit(parser.finish());
 			}
 
-			if (!content && !reasoning) {
+			const round = parser.getRoundState();
+			if (!content && !reasoning && round.toolCalls.length === 0) {
 				throw new Error('No text was found in the provider response.');
 			}
 
 			const result: StreamResult = { content, reasoning };
 			if (usage) {
 				result.usage = usage;
+			}
+			if (round.finishReason) {
+				result.finishReason = round.finishReason;
+			}
+			if (round.toolCalls.length > 0) {
+				result.toolCalls = round.toolCalls;
 			}
 			return result;
 		} finally {
@@ -142,6 +181,27 @@ export async function requestAiResponse(
 		}
 		throw new Error(sanitizeProviderError(error, apiKey));
 	}
+}
+
+function formatContinuationMessages(messages: ProviderContinuationMessage[]) {
+	return messages.map((message) => {
+		if (message.role === 'tool') {
+			return {
+				role: 'tool',
+				tool_call_id: message.toolCallId,
+				content: message.content,
+			};
+		}
+		return {
+			role: 'assistant',
+			content: message.content,
+			tool_calls: message.toolCalls.map((call) => ({
+				id: call.id,
+				type: 'function',
+				function: { name: call.name, arguments: call.arguments },
+			})),
+		};
+	});
 }
 
 function formatHttpProviderError(status: number, responseText: string) {
@@ -178,8 +238,11 @@ function sanitizeProviderError(error: unknown, apiKey: string) {
 export function createSseParser(): {
 	push(chunk: Uint8Array): StreamEvent[];
 	finish(): StreamEvent[];
+	getRoundState(): ProviderRoundState;
 } {
 	const decoder = new TextDecoder();
+	const toolCallParts = new Map<number, ProviderToolCall>();
+	let finishReason: string | undefined;
 	let buffer = '';
 	let dataLines: string[] = [];
 	let done = false;
@@ -218,6 +281,9 @@ export function createSseParser(): {
 		const delta = isRecord(firstChoice) && isRecord(firstChoice.delta)
 			? firstChoice.delta
 			: undefined;
+		if (isRecord(firstChoice) && typeof firstChoice.finish_reason === 'string') {
+			finishReason = firstChoice.finish_reason;
+		}
 		if (typeof delta?.content === 'string' && delta.content.length > 0) {
 			events.push({ type: 'content', text: delta.content });
 		}
@@ -226,6 +292,11 @@ export function createSseParser(): {
 			delta.reasoning_content.length > 0
 		) {
 			events.push({ type: 'reasoning', text: delta.reasoning_content });
+		}
+		if (Array.isArray(delta?.tool_calls)) {
+			for (const value of delta.tool_calls) {
+				captureToolCallPart(toolCallParts, value);
+			}
 		}
 
 		const usage = parseTokenUsage(payload.usage);
@@ -297,7 +368,51 @@ export function createSseParser(): {
 			}
 			return events;
 		},
+		getRoundState(): ProviderRoundState {
+			const toolCalls = Array.from(toolCallParts.entries())
+				.sort(([left], [right]) => left - right)
+				.map(([, call]) => call);
+			for (const call of toolCalls) {
+				if (!call.id.trim() || !call.name.trim()) {
+					throw new Error('The provider returned a malformed tool call.');
+				}
+				try {
+					JSON.parse(call.arguments);
+				} catch {
+					throw new Error('The provider returned a malformed tool call.');
+				}
+			}
+			return { finishReason, toolCalls };
+		},
 	};
+}
+
+function captureToolCallPart(
+	parts: Map<number, ProviderToolCall>,
+	value: unknown,
+) {
+	if (!isRecord(value) || !Number.isInteger(value.index) || (value.index as number) < 0) {
+		throw new Error('The provider returned a malformed tool call.');
+	}
+	const index = value.index as number;
+	const part = parts.get(index) ?? { id: '', name: '', arguments: '' };
+	if (typeof value.id === 'string' && value.id) {
+		if (part.id && part.id !== value.id) {
+			throw new Error('The provider returned a malformed tool call.');
+		}
+		part.id = value.id;
+	}
+	const fn = isRecord(value.function) ? value.function : undefined;
+	if (typeof fn?.name === 'string' && fn.name) {
+		if (part.name && part.name !== fn.name) {
+			throw new Error('The provider returned a malformed tool call.');
+		}
+		part.name = fn.name;
+	}
+	if (typeof fn?.arguments === 'string') {
+		part.arguments += fn.arguments;
+	}
+	parts.set(index, part);
 }
 
 function parseTokenUsage(value: unknown): ProviderTokenUsage | undefined {

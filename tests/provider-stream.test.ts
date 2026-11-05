@@ -572,4 +572,95 @@ describe('requestAiResponse', () => {
 		).rejects.toThrow(new RegExp(_label, 'i'));
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
+
+	it('assembles fragmented streamed tool calls by index without emitting their arguments as content', async () => {
+		mockStream([
+			'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-search","type":"function","function":{"name":"web_search","arguments":"{\\"query\\":\\"Deep"}}]}}]}\n\n',
+			'data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call-fetch","type":"function","function":{"name":"web_fetch","arguments":"{\\"url\\":\\"https://example.test/"}}]}}]}\n\n',
+			'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"Seek\\"}"}},{"index":1,"function":{"arguments":"page\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n',
+			'data: [DONE]\n\n',
+		]);
+		const events: StreamEvent[] = [];
+
+		const result = await requestAiResponse(
+			makeRequest(),
+			{ onEvent: (event) => events.push(event) },
+			new AbortController().signal,
+		);
+
+		expect(result).toEqual({
+			content: '',
+			reasoning: '',
+			finishReason: 'tool_calls',
+			toolCalls: [
+				{ id: 'call-search', name: 'web_search', arguments: '{"query":"DeepSeek"}' },
+				{ id: 'call-fetch', name: 'web_fetch', arguments: '{"url":"https://example.test/page"}' },
+			],
+		});
+		expect(events.filter((event) => event.type === 'content')).toEqual([]);
+	});
+
+	it('rejects incomplete or malformed tool calls instead of executing partial arguments', async () => {
+		mockStream([
+			'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-search","function":{"name":"web_search","arguments":"not-json"}}]},"finish_reason":"tool_calls"}]}\n\n',
+			'data: [DONE]\n\n',
+		]);
+
+		await expect(
+			requestAiResponse(makeRequest(), { onEvent: vi.fn() }, new AbortController().signal),
+		).rejects.toThrow('malformed tool call');
+	});
+
+	it('serializes tool declarations and assistant/tool continuation messages', async () => {
+		const fetchMock = mockStream([
+			'data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n\n',
+			'data: [DONE]\n\n',
+		]);
+
+		const result = await requestAiResponse(
+			makeRequest({
+				tools: [{
+					type: 'function',
+					function: {
+						name: 'web_search',
+						description: 'Search the web',
+						parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+					},
+				}],
+				continuation: [
+					{
+						role: 'assistant',
+						content: '',
+						toolCalls: [{ id: 'call-1', name: 'web_search', arguments: '{"query":"Emend"}' }],
+					},
+					{ role: 'tool', toolCallId: 'call-1', content: '{"results":[]}' },
+				],
+			}),
+			{ onEvent: vi.fn() },
+			new AbortController().signal,
+		);
+
+		const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+		const body = JSON.parse(init.body as string) as Record<string, unknown>;
+		expect(body.tool_choice).toBe('auto');
+		expect(body.tools).toEqual([{
+			type: 'function',
+			function: {
+				name: 'web_search',
+				description: 'Search the web',
+				parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+			},
+		}]);
+		expect(body.messages).toEqual([
+			{ role: 'system', content: 'System prompt' },
+			{ role: 'user', content: 'Current prompt' },
+			{
+				role: 'assistant',
+				content: '',
+				tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'web_search', arguments: '{"query":"Emend"}' } }],
+			},
+			{ role: 'tool', tool_call_id: 'call-1', content: '{"results":[]}' },
+		]);
+		expect(result.finishReason).toBe('stop');
+	});
 });
