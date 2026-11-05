@@ -1,8 +1,34 @@
-import type { ProviderToolCall } from './provider-stream';
+import type {
+	AiProviderRequest,
+	ProviderToolCall,
+	StreamEvent,
+	StreamResult,
+} from './provider-stream';
 import type { ProviderId } from './types';
 
 export type WebSearchMode = 'off' | 'review' | 'auto';
 export type EnabledWebSearchMode = Exclude<WebSearchMode, 'off'>;
+
+export interface WebSearchActivity {
+	status: 'pending' | 'complete';
+	label: string;
+}
+
+export interface WebSearchRunOptions {
+	mode: EnabledWebSearchMode;
+	maxToolCalls: number;
+	reviewCalls(calls: readonly WebToolCall[]): Promise<readonly WebToolCall[]>;
+	onActivity(activity: WebSearchActivity): void;
+	callbacks: { onEvent(event: StreamEvent): void };
+	signal: AbortSignal;
+}
+
+export interface WebToolLoopResult {
+	content: string;
+	reasoning: string;
+	sources: WebSource[];
+	rounds: Array<{ request: AiProviderRequest; result: StreamResult }>;
+}
 
 export type WebToolCall =
 	| { id: string; name: 'web_search'; query: string }
