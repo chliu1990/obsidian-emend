@@ -2,21 +2,24 @@
 
 ## Status
 
-Stages 1–22 of the Emend rewrite are implemented and reviewed. This file is an index to the numbered stage records, not a description of unfinished pseudocode or a second runtime specification.
+This file indexes the implemented Emend rewrite and later numbered feature records. It is not a description of unfinished pseudocode or a second runtime specification.
 
 Current behavior is documented in [README.md](README.md) and [AGENTS.md](AGENTS.md). The original real-Obsidian release matrix is in [devel_docs/manual-verification.md](devel_docs/manual-verification.md); release-candidate results and CI evidence are in [devel_docs/17-release-candidate.md](devel_docs/17-release-candidate.md), and the hardened release smoke matrix is in [devel_docs/22-release-verification.md](devel_docs/22-release-verification.md). Historical records retain the behavior and evidence from their own stages.
 
-Deferred, unimplemented work is specified separately in [future-context-management.md](devel_docs/future-context-management.md), [future-web-search.md](devel_docs/future-web-search.md), and [future-discovery-and-workflows.md](devel_docs/future-discovery-and-workflows.md). Those documents do not change current request, context, privacy, or provider behavior.
+Deferred context-management and discovery work is specified separately in [future-context-management.md](devel_docs/future-context-management.md) and [future-discovery-and-workflows.md](devel_docs/future-discovery-and-workflows.md). [future-web-search.md](devel_docs/future-web-search.md) records the current DeepSeek baseline and only the remaining unimplemented provider/retrieval work. These future designs do not change current request, context, privacy, or provider behavior.
 
 ## Architecture contract
 
 - Emend is desktop-only and requires Obsidian 1.11.4 or newer. DeepSeek `deepseek-flash` at `https://api.deepseek.com`, Kimi `k3.1-pro` at `https://api.kimi.com/coding/v1`, and custom HTTP(S) endpoints use one OpenAI-compatible streaming `fetch` transport with Server-Sent Events. Preset URLs and models remain editable.
-- Ask, Discuss, and Brainstorm have no note writer. Edit and Modify Selection apply validated CriticMarkup immediately after completion, abort, exact-source, active-target, and permission checks. Track Changes is the only review surface.
+- Ask, Discuss, and Brainstorm have no note writer. For DeepSeek `deepseek-flash` and `deepseek-v4-pro`, their composer Web control supports default-off Off/Review/Auto retrieval. The model directs sequential search/fetch calls across multiple rounds within a default eight-call setting (1–20), a 40,000-character shared content budget, and a 12,000-character per-fetch limit. Only actual HTTP(S) results become stable citations. Kimi/custom providers and unsupported models fail clearly without silent unsearched fallback. See [Stage 36](devel_docs/36-deepseek-online-search.md).
+- Web model rounds use ordinary captured context/history/instructions, while search/fetch endpoints receive only validated visible arguments. Review permits editing every proposed batch; Auto skips only that pause. Retrieved text is untrusted, never gains a writer, and may incur separate DeepSeek retrieval charges.
+- Edit and Modify Selection apply validated CriticMarkup immediately after completion, abort, exact-source, active-target, and permission checks. Track Changes is the only review surface; web research is not available to either editing path or to Edit quick actions.
 - Operations are the only model-facing edit protocol. The closed JSON command union validates exact original-snapshot ranges atomically and compiles into the internal CriticMarkup path; there is no edit-strategy setting.
 - Full-note Edit sends the complete captured note. Selection editing sends the complete selection plus default smart structural context or the symmetric opt-out; context expansion never expands the replacement target.
 - Additional notes are explicitly picked Markdown files with per-target, session-only selections shared by chat and Modify Selection. Their fresh bounded snapshots are read-only in every mode, use a separate combined source-character budget with fair allocation and omission markers, and never become edit targets. Active-note deduplication, rename/delete handling, missing-path failure, and reload clearing are covered in [Stage 35](devel_docs/35-additional-notes-context.md).
 - Vault-root `AGENTS.md` and directly referenced skills are loaded for every request, with skills placed before agent instructions. Note paths are shared only when explicitly enabled.
-- Ready per-note conversations and token-usage metadata persist locally through versioned atomic storage. Provider credentials persist separately in Obsidian SecretStorage, while plugin `data.json` keeps every `apiKey` empty. Request bodies, note snapshots, transient messages, and full edit responses are not persisted.
+- Ready per-note conversations and token-usage metadata persist locally through versioned atomic storage. Conversation schema 2 loads version 1 and adds only ready Web badges and sanitized citation metadata; queries, retrieval arguments/results, request bodies, note snapshots, transient activity/messages, and full edit responses are not persisted. Provider credentials persist separately in Obsidian SecretStorage, while plugin `data.json` keeps every `apiKey` empty.
+- Web usage is provider-reported only when every model round has a complete valid triplet; otherwise every round is estimated independently and labeled as estimated. No search pricing or token counts are invented.
 - The Track Changes plugin is required to review accepted annotations. Emend intentionally has no in-plugin Apply/Reject or diff UI.
 
 ## Numbered stage records
@@ -44,6 +47,7 @@ Deferred, unimplemented work is specified separately in [future-context-manageme
 21. [SecretStorage API keys](devel_docs/21-secret-storage.md) — provider credential migration, request resolution, and sanitized settings persistence.
 22. [Release verification](devel_docs/22-release-verification.md) — deferred roadmap, current guides, hardened-release smoke matrix, reviews, and final CI evidence.
 35. [Additional notes as context](devel_docs/35-additional-notes-context.md) — explicit per-target session selections, bounded read-only snapshots, path privacy, guarded edit integration, clean-gate evidence, and real-Obsidian picker/chat/selection-modal verification.
+36. [DeepSeek online search](devel_docs/36-deepseek-online-search.md) — DeepSeek-only read-only Off/Review/Auto controls, bounded multi-round search/fetch, citations and schema 2, focused automated/local-mock coverage, and real-Obsidian verification still pending.
 
 ## Verification and release process
 
@@ -57,6 +61,6 @@ npm run build
 git diff --check
 ```
 
-Real-Obsidian verification uses only the ignored `test_vault/`, Track Changes, a local OpenAI-compatible SSE mock, and dummy credentials. It must not use real provider accounts, paid calls, or other vaults.
+Real-Obsidian verification uses only the ignored `test_vault/`, Track Changes, local OpenAI-compatible chat/search/fetch mocks with CORS, and dummy credentials. It must not use real provider accounts, paid calls, or other vaults. Stage 36 does not yet claim real-Obsidian or real-provider verification.
 
 GitHub Actions runs lint, tests, and the production build through `.github/workflows/ci.yaml` on `ubuntu-latest` with Node 24. For a later release, `npm version <patch|minor|major>` synchronizes `package.json`, `package-lock.json`, `manifest.json`, and `versions.json`. Create or dispatch a tag that exactly matches the manifest version, without a leading `v`; `.github/workflows/release.yaml` verifies it and publishes `main.js`, `manifest.json`, and `styles.css` as individual GitHub release assets after all checks pass.

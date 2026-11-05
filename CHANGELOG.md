@@ -4,6 +4,17 @@ All notable changes to Emend are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Added
+
+- DeepSeek-only **Web: Off / Review / Auto** controls for Ask, Discuss, and Brainstorm with `deepseek-flash` and `deepseek-v4-pro`; Off remains the default, and Review permits editing each proposed search/fetch batch.
+- Model-directed multi-round `web_search`/`web_fetch` with sequential calls, a configurable default limit of 8 calls (1–20), a 40,000-character shared retrieval budget, and a 12,000-character per-fetch limit.
+- Stable result-backed source IDs, safe citation rendering/copying, all-round provider-or-estimated usage, and conversation schema 2 persistence for ready Web badges and sanitized citations with version 1 loading.
+- Disclosure that model-generated retrieval arguments may contain note-derived text and that successful DeepSeek search/fetch calls may be billed separately.
+
+### Security
+
+- Kept web retrieval inside writer-free read-only modes, treated retrieved content as untrusted data, and rejected Kimi/custom providers and unsupported models without silent fallback to unsearched chat.
+
 ## [2.4.0] - 2026-11-05
 
 ### Added
