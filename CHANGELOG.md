@@ -2,6 +2,25 @@
 
 All notable changes to Emend are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - 2026-11-07
+
+### Added
+
+- Deterministic Unicode word/segment-level multi-hunk replacement ranges with bounded fallback, precise targeting prompts, and actionable Operation diagnostics.
+- Exactly one same-provider correction round for candidate-validation failures in full-note Edit and Modify Selection, with aggregated full-note usage and successful-attempt-only persisted reasoning.
+- Structural Markdown safeguards for inline code, fenced code and Track Changes review shadows, and single-cell table editing with actual composed-candidate validation.
+
+### Fixed
+
+- Kept inline-code replacements reviewable so Accept All no longer leaves hidden CriticMarkup behind.
+- Rejected table-structure, delimiter-escape, and fenced-code edits that could corrupt accepted Markdown or produce unreviewable suggestions.
+- Prevented rejected-attempt reasoning and raw correction artifacts from entering ready persisted chats.
+
+### Security
+
+- Limited correction feedback to bounded allowlisted diagnostics without source excerpts or Operation payloads, and preserved terminal provider, abort, stale-target, permission, and write failures.
+- Kept invalid candidates and correction feedback transient, with no new background requests, telemetry, credential handling, or write paths.
+
 ## [2.5.0] - 2026-11-06
 
 ### Added
@@ -86,7 +105,8 @@ All notable changes to Emend are documented here. The format follows [Keep a Cha
 - Strict provider error redaction and bounded error output.
 - Validated anchors, ambiguity/overlap rejection, stale-source/target checks, and abort/unload protection for note writes.
 
-[Unreleased]: https://github.com/chliu1990/obsidian-emend/compare/2.5.0...HEAD
+[Unreleased]: https://github.com/chliu1990/obsidian-emend/compare/2.6.0...HEAD
+[2.6.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.6.0
 [2.5.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.5.0
 [2.4.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.4.0
 [2.3.1]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.3.1
