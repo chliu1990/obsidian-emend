@@ -157,7 +157,7 @@ describe('fenced code edit guards', () => {
 		])).toBeUndefined();
 	});
 
-	it('extends unclosed fences to EOF and requires a matching close run', () => {
+	it('extends unclosed fences to EOF and requires an exact review-parser close run', () => {
 		const unclosed = 'Before\n  ~~~~ info\ninside\nAfter';
 		expect(findMarkdownEditViolation(unclosed, [
 			targetOperation(unclosed, 'After'),
@@ -168,10 +168,10 @@ describe('fenced code edit guards', () => {
 			targetOperation(shortClose, 'After'),
 		])).toMatchObject({ code: 'fenced-code-edit', line: 5 });
 
-		const closed = 'Before\n~~~\ninside\n~~~~   \nAfter';
-		expect(findMarkdownEditViolation(closed, [
-			targetOperation(closed, 'After'),
-		])).toBeUndefined();
+		const longerClose = 'Before\n~~~\ninside\n~~~~   \nAfter';
+		expect(findMarkdownEditViolation(longerClose, [
+			targetOperation(longerClose, 'After'),
+		])).toMatchObject({ code: 'fenced-code-edit', line: 5 });
 	});
 });
 
@@ -376,7 +376,7 @@ describe('Markdown scanner review regressions', () => {
 			});
 			expect(findMarkdownEditViolation(closed, [
 				boundaryOperation(`${newline}added`),
-			])).toBeUndefined();
+			])).toMatchObject({ code: 'fenced-code-edit', line: 3 });
 			const afterLineEnding = `${closed}${newline}`;
 			expect(findMarkdownEditViolation(afterLineEnding, [{
 				...boundaryOperation('added'),
@@ -396,9 +396,14 @@ describe('Markdown scanner review regressions', () => {
 			expect(findMarkdownEditViolation(fullText, [
 				targetOperation(fullText, 'alpha'),
 			])).toMatchObject({ code: 'fenced-code-edit', line: 2 });
-			expect(findMarkdownEditViolation(fullText, [
+			const following = findMarkdownEditViolation(fullText, [
 				targetOperation(fullText, 'After'),
-			])).toBeUndefined();
+			]);
+			if (fullText.startsWith('- ') || fullText.startsWith('1. ')) {
+				expect(following).toMatchObject({ code: 'fenced-code-edit', line: 4 });
+			} else {
+				expect(following).toBeUndefined();
+			}
 		}
 	});
 
@@ -432,7 +437,7 @@ describe('Markdown scanner review regressions', () => {
 	});
 
 	it('keeps backtick fence openers with backtick info strings as inline code', () => {
-		const fullText = '```alpha``` followed by prose\nNext prose';
+		const fullText = 'Before ```alpha``` followed by prose\nNext prose';
 		expect(findMarkdownEditViolation(fullText, [
 			targetOperation(fullText, 'followed by prose'),
 			targetOperation(fullText, 'Next prose', { operation: 2 }),

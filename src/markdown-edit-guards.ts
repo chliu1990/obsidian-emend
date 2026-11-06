@@ -47,6 +47,7 @@ export function findMarkdownEditViolation(
 ): MarkdownEditViolation | undefined {
 	const lines = scanLines(fullText);
 	const fences = scanFences(lines);
+	const reviewFenceRanges = scanTrackChangesFenceRanges(lines, fullText);
 	const inlineSpans = scanInlineCode(fullText, fences);
 	const tables = scanTables(lines, fences);
 
@@ -79,11 +80,23 @@ export function findMarkdownEditViolation(
 			const insertedText = operation.text ?? '';
 			if (fences.some((fence) =>
 				((operation.insertionPoint === fence.start || operation.insertionPoint === fence.openingStart) && !hasTrailingLineBreak(insertedText)) ||
-				(operation.insertionPoint === fence.closingContentEnd && !hasLeadingLineBreak(insertedText))
+				operation.insertionPoint === fence.closingContentEnd
 			)) {
 				return violation('fenced-code-edit');
 			}
-		} else if (fences.some((fence) => intersects(operation, fence))) {
+			const atSemanticOpening = fences.some((fence) =>
+				operation.insertionPoint === fence.start || operation.insertionPoint === fence.openingStart
+			);
+			if (!atSemanticOpening && reviewFenceRanges.some((range) =>
+				strictlyInside(operation.insertionPoint, range) ||
+				(!range.closed && operation.insertionPoint === range.end && operation.insertionPoint > range.start)
+			)) {
+				return violation('fenced-code-edit');
+			}
+		} else if (
+			fences.some((fence) => intersects(operation, fence)) ||
+			reviewFenceRanges.some((range) => intersects(operation, range))
+		) {
 			return violation('fenced-code-edit');
 		}
 
@@ -235,6 +248,53 @@ function scanFences(lines: readonly SourceLine[]): FenceRange[] {
 		index = closingIndex;
 	}
 	return fences;
+}
+
+interface ReviewFenceRange extends SourceRange {
+	closed: boolean;
+}
+
+function scanTrackChangesFenceRanges(
+	lines: readonly SourceLine[],
+	fullText: string,
+): ReviewFenceRange[] {
+	const ranges: ReviewFenceRange[] = [];
+	for (let index = 0; index < lines.length; index += 1) {
+		const line = lines[index];
+		if (!line || fullText[line.end - 1] !== '\n') {
+			continue;
+		}
+		const run = /^ {0,3}(`{3,}|~{3,})/.exec(line.text)?.[1];
+		if (!run) {
+			continue;
+		}
+		let end = fullText.length;
+		let closingIndex = index;
+		let closed = false;
+		for (let candidate = index + 1; candidate < lines.length; candidate += 1) {
+			const candidateLine = lines[candidate];
+			if (!candidateLine) {
+				continue;
+			}
+			closingIndex = candidate;
+			if (isExactReviewFenceClose(candidateLine.text, run)) {
+				end = candidateLine.contentEnd;
+				closed = true;
+				break;
+			}
+		}
+		ranges.push({
+			start: line.start > 0 ? line.start - 1 : 0,
+			end,
+			closed,
+		});
+		index = closingIndex;
+	}
+	return ranges;
+}
+
+function isExactReviewFenceClose(text: string, run: string): boolean {
+	return /^ {0,3}(`+|~+)[ \t]*$/.exec(text)?.[1] === run;
 }
 
 function parseFenceOpening(text: string): { run: string; start: number } | undefined {
@@ -535,10 +595,6 @@ function tableRowViewSignature(text: string, contentStart: number): string {
 
 function hasTrailingLineBreak(text: string): boolean {
 	return text.endsWith('\n') || text.endsWith('\r');
-}
-
-function hasLeadingLineBreak(text: string): boolean {
-	return text.startsWith('\n') || text.startsWith('\r');
 }
 
 function splitTableRow(line: SourceLine, contentStart = 0): SourceRange[] {

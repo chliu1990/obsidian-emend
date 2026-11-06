@@ -725,13 +725,9 @@ describe('conservative Markdown boundary safeguards', () => {
 		expect(() => prepare(original, [
 			{ type: 'remove', target: 'beta' },
 		])).toThrow(expect.objectContaining({ code: 'fenced-code-edit', line: 4 }));
-		const preparation = prepare(original, [
+		expect(() => prepare(original, [
 			{ type: 'replace', target: 'After', replacement: 'Following' },
-		]);
-		expect(toRejectView(preparation.annotatedMarkdown)).toBe(original);
-		expect(toAcceptView(preparation.annotatedMarkdown)).toBe(
-			'- ```\n  alpha\n\n  beta\n  ```\nFollowing',
-		);
+		])).toThrow(expect.objectContaining({ code: 'fenced-code-edit', line: 6 }));
 	});
 
 	it.each(['\n', '\r\n'])('validates fence-boundary payloads with %j line endings', (newline) => {
@@ -748,11 +744,9 @@ describe('conservative Markdown boundary safeguards', () => {
 		]);
 		expect(toRejectView(before.annotatedMarkdown)).toBe(original);
 		expect(toAcceptView(before.annotatedMarkdown)).toBe(`added${newline}${original}`);
-		const after = prepare(original, [
+		expect(() => prepare(original, [
 			{ type: 'insert', anchor: '```', position: 'after', text: `${newline}added`, occurrence: 2 },
-		]);
-		expect(toRejectView(after.annotatedMarkdown)).toBe(original);
-		expect(toAcceptView(after.annotatedMarkdown)).toBe(`${original}${newline}added`);
+		])).toThrow(expect.objectContaining({ code: 'fenced-code-edit' }));
 	});
 
 	it('allows ordinary text after a closing fence line ending', () => {
@@ -914,6 +908,76 @@ describe('Markdown inline and block content distinctions', () => {
 		expect(toRejectView(preparation.annotatedMarkdown)).toBe(original);
 		expect(toAcceptView(preparation.annotatedMarkdown)).toContain('first');
 		expect(toAcceptView(preparation.annotatedMarkdown)).toContain('second');
+	});
+});
+
+describe('Track Changes bare-fence compatibility', () => {
+	it.each(['\n', '\r\n'])('rejects list-fence following prose with immediate and blank separation: %j', (newline) => {
+		for (const original of [
+			`- \`\`\`${newline}  alpha${newline}  \`\`\`${newline}After`,
+			`- \`\`\`${newline}  alpha${newline}${newline}  beta${newline}  \`\`\`${newline}${newline}After`,
+		]) {
+			expect(() => prepare(original, [
+				{ type: 'replace', target: 'After', replacement: 'Following' },
+			])).toThrow(expect.objectContaining({ code: 'fenced-code-edit' }));
+		}
+	});
+
+	it('keeps top-level and blockquote following prose reviewable', () => {
+		for (const original of [
+			'```\nalpha\n```\nAfter',
+			'> ```\n> alpha\n> ```\nAfter',
+		]) {
+			const preparation = prepare(original, [
+				{ type: 'replace', target: 'After', replacement: 'Following' },
+			]);
+			expect(toRejectView(preparation.annotatedMarkdown)).toBe(original);
+			expect(toAcceptView(preparation.annotatedMarkdown)).toBe(original.replace('After', 'Following'));
+		}
+	});
+
+	it('treats a longer top-level closing run as a new review-parser shadow', () => {
+		const original = '```\nalpha\n````\nAfter';
+		expect(() => prepare(original, [
+			{ type: 'replace', target: 'After', replacement: 'Following' },
+		])).toThrow(expect.objectContaining({ code: 'fenced-code-edit' }));
+	});
+
+	it('ends a review-parser shadow only at an exact later bare run', () => {
+		const original = [
+			'- ```',
+			'  alpha',
+			'  `````',
+			'Before',
+			'```',
+			'During',
+			'> `````',
+			'',
+			'`````',
+			'After',
+		].join('\n');
+		expect(() => prepare(original, [
+			{ type: 'remove', target: 'Before' },
+		])).toThrow(expect.objectContaining({ code: 'fenced-code-edit' }));
+		expect(() => prepare(original, [
+			{ type: 'remove', target: 'During' },
+		])).toThrow(expect.objectContaining({ code: 'fenced-code-edit' }));
+		const preparation = prepare(original, [
+			{ type: 'replace', target: 'After', replacement: 'Following' },
+		]);
+		expect(toRejectView(preparation.annotatedMarkdown)).toBe(original);
+		expect(toAcceptView(preparation.annotatedMarkdown)).toContain('Following');
+	});
+
+	it('rejects insertion inside and at EOF of a list-created review-parser shadow', () => {
+		const withProse = '- ```\n  alpha\n  ```\nAfter';
+		expect(() => prepare(withProse, [
+			{ type: 'insert', anchor: 'After', position: 'after', text: ' added' },
+		])).toThrow(expect.objectContaining({ code: 'fenced-code-edit' }));
+		const atEof = '- ```\n  alpha\n  ```\n';
+		expect(() => prepare(atEof, [
+			{ type: 'insert', anchor: '  ```\n', position: 'after', text: 'added' },
+		])).toThrow(expect.objectContaining({ code: 'fenced-code-edit' }));
 	});
 });
 
