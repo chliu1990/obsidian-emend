@@ -829,6 +829,11 @@ describe('EditRequestCoordinator', () => {
 			'| Left | Right |\n| --- | --- |\n| \\ab\\| two | three |',
 			[{ type: 'remove', target: 'a' }, { type: 'remove', target: 'b' }],
 		],
+		[
+			'insertion offset parity',
+			'Alpha | Beta\n--- | ---\none\\\\|two',
+			[{ type: 'insert', anchor: '\\', position: 'before', text: 'x', occurrence: 2 }],
+		],
 	])('rejects composed table edits with two calls and zero writes: %s', async (_label, sourceText, operations) => {
 		const request = editRequest(JSON.stringify(operations));
 		const { coordinator, writer } = makeEditCoordinator(request, sourceText);

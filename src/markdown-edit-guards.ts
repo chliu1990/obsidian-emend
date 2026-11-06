@@ -555,11 +555,11 @@ function preservesTableRowStructure(
 	let annotated = original;
 	let accepted = original;
 	const ordered = operations.slice().sort((left, right) =>
-		right.start - left.start || right.operation - left.operation
+		compiledOperationStart(right) - compiledOperationStart(left) || right.operation - left.operation
 	);
 	for (const operation of ordered) {
-		const start = operation.start - row.start;
-		const end = operation.end - row.start;
+		const start = compiledOperationStart(operation) - row.start;
+		const end = operation.operationType === 'insert' ? start : operation.end - row.start;
 		const target = original.slice(start, end);
 		const compiledText = operation.compiledText ?? fallbackCompiledText(operation, target);
 		annotated = `${annotated.slice(0, start)}${compiledText}${annotated.slice(end)}`;
@@ -577,6 +577,12 @@ function preservesTableRowStructure(
 	return [annotated, accepted, original].every((candidate) =>
 		tableRowViewSignature(candidate, contentStart) === originalSignature
 	);
+}
+
+function compiledOperationStart(operation: GuardedMarkdownOperation): number {
+	return operation.operationType === 'insert'
+		? operation.insertionPoint ?? operation.start
+		: operation.start;
 }
 
 function fallbackCompiledText(operation: GuardedMarkdownOperation, target: string): string {

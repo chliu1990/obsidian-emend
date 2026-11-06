@@ -1037,6 +1037,16 @@ describe('composed table edit candidates', () => {
 		])).toThrow(expect.objectContaining({ code: 'table-structure-edit' }));
 	});
 
+	it('composes an insertion at its zero-width insertionPoint rather than its anchor bounds', () => {
+		const original = 'Alpha | Beta\n--- | ---\none\\\\|two';
+		const currentAnnotated = 'Alpha | Beta\n--- | ---\none\\{++x++}\\|two';
+		expect(toRejectView(currentAnnotated)).toBe(original);
+		expect(toAcceptView(currentAnnotated)).toBe('Alpha | Beta\n--- | ---\none\\x\\|two');
+		expect(() => prepare(original, [
+			{ type: 'insert', anchor: '\\', position: 'before', text: 'x', occurrence: 2 },
+		])).toThrow(expect.objectContaining({ code: 'table-structure-edit' }));
+	});
+
 	it.each(['    one', '\tone'])('rejects a cell replacement that starts indented code: %j', (replacement) => {
 		const original = 'Alpha | Beta\n--- | ---\none | two';
 		expect(() => prepare(original, [
