@@ -23,7 +23,7 @@ import type {
 	ProviderConfig,
 	ProviderHistoryMessage,
 } from './types';
-import type { WebSearchRunOptions, WebSource } from './web-search';
+import type { WebActivityRecord, WebSearchRunOptions, WebSource } from './web-search';
 
 export type ReadOnlyMode = Exclude<Mode, 'edit'>;
 
@@ -79,6 +79,7 @@ interface EditRequestCoordinatorDependencies
 export interface ChatStreamResult extends Omit<StreamResult, 'usage'> {
 	usage: TokenUsage;
 	sources?: WebSource[];
+	activities?: WebActivityRecord[];
 }
 
 export interface EditRequestResult extends EditResult {
@@ -129,6 +130,7 @@ export class ReadOnlyRequestCoordinator {
 				content: result.content,
 				reasoning: result.reasoning,
 				sources: result.sources,
+				activities: result.activities,
 				usage: resolveRoundTokenUsage(result.rounds),
 			};
 		}

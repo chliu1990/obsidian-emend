@@ -725,6 +725,7 @@ describe('ReadOnlyRequestCoordinator web routing', () => {
 				content: 'Web answer',
 				reasoning: '',
 				sources: [{ id: 'S1', title: 'Source', url: 'https://example.test/source' }],
+				activities: [],
 				rounds: [{
 					request,
 					result: {

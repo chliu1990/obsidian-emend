@@ -42,6 +42,7 @@ const parsedSearchResult = {
 	url: 'https://example.test/emend',
 	snippet: 'Short evidence',
 	summary: 'Longer model evidence',
+	content: '',
 	siteName: 'Example',
 	date: undefined,
 };
@@ -61,13 +62,13 @@ describe('DeepSeek retrieval clients', () => {
 			new AbortController().signal,
 		);
 
-		expect(results).toEqual([parsedSearchResult]);
+		expect(results).toEqual([{ ...parsedSearchResult, content: '' }]);
 		const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
 		expect(url).toBe('https://api.deepseek.com/v1/tools/search');
 		expect(JSON.parse(init.body as string)).toEqual({
 			query: 'Emend plugin',
 			count: 5,
-			need_content: false,
+			need_content: true,
 		});
 	});
 
@@ -362,5 +363,114 @@ describe('DeepSeekWebSearchCoordinator', () => {
 			signal: controller.signal,
 		}))).rejects.toThrow();
 		expect(search).not.toHaveBeenCalled();
+	});
+});
+
+
+describe('DeepSeek web follow-up behavior', () => {
+	it('returns fetch failures as tool outcomes so the model can finish with other evidence', async () => {
+		const failure = new Error('HTTP 403 from GitHub');
+		const fetchPage = vi.fn(async () => { throw failure; });
+		const { coordinator, request } = coordinatorWith([
+			toolRound([{ id: 'call-fetch', name: 'web_fetch', arguments: '{"url":"https://github.com/example/repo"}' }]),
+			finalRound('Search summaries answered part of the question; the GitHub page could not be read.'),
+		], vi.fn(async () => [parsedSearchResult]), fetchPage);
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(result.content).toContain('could not be read');
+		expect(result.sources).toEqual([]);
+		expect(result.activities).toEqual([{
+			type: 'fetch',
+			target: 'https://github.com/example/repo',
+			status: 'failed',
+		}]);
+		expect(request).toHaveBeenCalledTimes(2);
+		const toolMessage = request.mock.calls[1]?.[0].continuation?.find(
+			(message) => message.role === 'tool',
+		);
+		expect(toolMessage?.role === 'tool' && toolMessage.content).toContain('fetch_failed');
+		expect(toolMessage?.role === 'tool' && toolMessage.content).not.toContain('dummy-key');
+	});
+
+	it('uses search summaries first and tells the model to disclose unread fetched pages', async () => {
+		const { coordinator, request } = coordinatorWith([finalRound('No fetch needed')]);
+
+		await coordinator.submit(aiRequest(), options());
+
+		const firstRequest = request.mock.calls[0]?.[0];
+		const fetchTool = firstRequest?.tools?.find((tool) => tool.function.name === 'web_fetch');
+		expect(fetchTool?.function.description).toContain('Do not fetch merely because a search result exists');
+		expect(firstRequest?.systemPrompt).toContain('If a fetch fails, do not claim the page was read');
+	});
+
+	it('records completed search and fetch activity for folded review', async () => {
+		const { coordinator } = coordinatorWith([
+			toolRound([{ id: 'call-search', name: 'web_search', arguments: '{"query":"activity query"}' }]),
+			toolRound([{ id: 'call-fetch', name: 'web_fetch', arguments: '{"url":"https://example.test/page"}' }]),
+			finalRound(),
+		]);
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(result.activities).toEqual([
+			{ type: 'search', target: 'activity query', status: 'completed' },
+			{ type: 'fetch', target: 'https://example.test/page', status: 'completed' },
+		]);
+	});
+});
+
+
+describe('DeepSeek search-first retrieval', () => {
+	it('bounds returned search page content separately with explicit truncation metadata', async () => {
+		const search = vi.fn(async () => [{
+			...parsedSearchResult,
+			content: 'z'.repeat(7000),
+		}]);
+		const { coordinator, request } = coordinatorWith([
+			toolRound([{ id: 'call-search', name: 'web_search', arguments: '{"query":"full content"}' }]),
+			finalRound('Search content was sufficient; no fetch is needed.'),
+		], search);
+
+		await coordinator.submit(aiRequest(), options());
+
+		const toolMessage = request.mock.calls[1]?.[0].continuation?.find(
+			(message) => message.role === 'tool',
+		);
+		const payload = JSON.parse(toolMessage?.role === 'tool' ? toolMessage.content : '{}') as {
+			results: Array<{ content: string; contentTruncated: boolean }>;
+		};
+		expect(payload.results[0]?.content).toHaveLength(6005);
+		expect(payload.results[0]?.content.endsWith('[...]')).toBe(true);
+		expect(payload.results[0]?.contentTruncated).toBe(true);
+	});
+
+	it.each([400, 401, 402, 413])('keeps fetch account/request HTTP %s fatal', async (status) => {
+		const failure = Object.assign(new Error(`HTTP ${status}`), { status });
+		const fetchPage = vi.fn(async () => { throw failure; });
+		const { coordinator, request } = coordinatorWith([
+			toolRound([{ id: 'call-fetch', name: 'web_fetch', arguments: '{"url":"https://example.test/private"}' }]),
+			finalRound('Must not be returned'),
+		], vi.fn(async () => []), fetchPage);
+
+		await expect(coordinator.submit(aiRequest(), options())).rejects.toBe(failure);
+		expect(request).toHaveBeenCalledOnce();
+	});
+
+	it('treats an empty fetched page as unread rather than evidence', async () => {
+		const fetchPage = vi.fn(async () => ({ title: 'Empty', content: '  ' }));
+		const { coordinator } = coordinatorWith([
+			toolRound([{ id: 'call-fetch', name: 'web_fetch', arguments: '{"url":"https://example.test/empty"}' }]),
+			finalRound('The requested page was unavailable.'),
+		], vi.fn(async () => []), fetchPage);
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(result.activities).toEqual([{
+			type: 'fetch',
+			target: 'https://example.test/empty',
+			status: 'failed',
+		}]);
+		expect(result.sources).toEqual([]);
 	});
 });
