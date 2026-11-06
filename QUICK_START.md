@@ -109,6 +109,10 @@ An invalid candidate causes exactly one automatic correction request to the same
 
 Every full-note and selection edit asks the model for a closed JSON array of `insert`, `remove`, `replace`, and `comment` commands. Emend validates exact anchors and occurrences, rejects ambiguous or overlapping commands, compiles valid commands into CriticMarkup, and uses the same Track Changes review path. Typed diagnostics identify precise failure codes, operation numbers, and bounded match details. Existing declared-range overlap and insertion-ambiguity checks remain conservative after minimization. Operations are the only model-facing edit protocol; there is no edit-strategy setting.
 
+Structural guards reject partial inline-code targets (`inline-code-range`), fenced-code edits (`fenced-code-edit`), and table structure changes (`table-structure-edit`) before any write. Backtick-containing replacements use whole-target markup so delimiters stay reviewable. Tables allow only text edits within one existing header/body cell; escaped pipes and safe cell insert/remove/replace/comment Operations remain available. Selection classifies structure against the full note without expanding its target.
+
+Raw markup shown while the cursor is inside a table cell is upstream Obsidian/Track Changes presentation behavior. Use exact accept/reject results—not that live presentation—to verify correctness.
+
 The minimizer shares a bounded work budget across each response and falls back to one substitution for the changed middle when a detailed diff would be too expensive. Correction requests are transient implementation details: raw operations, rejected candidates, and diagnostic feedback do not appear in ready chats or stored threads. After a retry, full-note chat keeps only the successful attempt's reasoning; selection editing has no usage footer or retry-status UI.
 
 ## 7. Test instructions and skills

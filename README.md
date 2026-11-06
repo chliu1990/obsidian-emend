@@ -96,9 +96,10 @@ Emend never lets the model rewrite a document directly. It returns a bare JSON a
 
 1. Requires exact anchors and unique matches or explicit one-based occurrences, with typed diagnostics that identify the operation, failure code, and bounded match details.
 2. Rejects malformed, ambiguous, overlapping, or markup-injecting commands. Declared-range overlap and insertion-ambiguity rules remain conservative even when smaller review hunks could otherwise coexist.
-3. Compiles valid operations into CriticMarkup and revalidates the result. Broad replacements are reduced to deterministic Unicode word/segment-level hunks—not character-minimal fragments—with a bounded single-substitution fallback for expensive responses.
-4. If candidate validation fails, automatically makes one correction request to the same provider (at most two provider calls total). The unchanged original request is resubmitted with the invalid response and bounded diagnostic feedback; there is no delay, backoff, or new retry setting. A second invalid response is terminal.
-5. Checks that the captured file and source have not changed and that the request was not aborted, then writes once so Track Changes can review the edit. Provider failures, aborts, stale targets, and write failures are terminal rather than triggers for another correction round.
+3. Rejects partial inline-code targets (`inline-code-range`), fenced-code edits (`fenced-code-edit`), and table structure changes (`table-structure-edit`) atomically. Tables allow text edits within one existing header/body cell, including safe insert/remove/replace/comment Operations and escaped pipes. Selection uses full-note context only for structural classification, never target expansion.
+4. Compiles valid operations into CriticMarkup and revalidates the result. Broad replacements are reduced to deterministic Unicode word/segment-level hunks—not character-minimal fragments—with whole-target fallback for backtick-containing replacements and a bounded single-substitution fallback for expensive responses.
+5. If candidate validation fails, automatically makes one correction request to the same provider (at most two provider calls total). The unchanged original request is resubmitted with the invalid response and bounded diagnostic feedback; there is no delay, backoff, or new retry setting. A second invalid response is terminal.
+6. Checks that the captured file and source have not changed and that the request was not aborted, then writes once so Track Changes can review the edit. Provider failures, aborts, stale targets, and write failures are terminal rather than triggers for another correction round.
 
 Full-note Edit always sends the complete note. Modify Selection sends the complete selection plus surrounding context, but replaces only the captured range. Both use the same minimization and validation-correction flow. Full-note usage covers all attempted rounds; selection editing has no usage display. Raw operations, invalid responses, and correction feedback remain transient rather than ready-chat content or persisted history. After a correction, a successful full-note attempt retains only that attempt's reasoning.
 
@@ -126,6 +127,7 @@ See the [privacy and storage details](QUICK_START.md#8-verify-persistence-and-pr
 - [Roadmap](ROADMAP.md) and [changelog](CHANGELOG.md)
 - [DeepSeek online search implementation](devel_docs/36-deepseek-online-search.md)
 - [Minimal edit ranges and guarded correction](devel_docs/37-minimal-edit-ranges.md)
+- [Markdown edit safeguards and verification](devel_docs/38-markdown-edit-safeguards.md)
 - [Contributing guide](CONTRIBUTING.md) and [security policy](SECURITY.md)
 - [CI and release workflows](.github/workflows/)
 - [Deferred context-management roadmap](devel_docs/future-context-management.md)
