@@ -11,6 +11,9 @@ export type EditResponseValidationCode =
 	| 'occurrence-out-of-range'
 	| 'overlapping-targets'
 	| 'ambiguous-insertion'
+	| 'inline-code-range'
+	| 'fenced-code-edit'
+	| 'table-structure-edit'
 	| 'compiled-markup-rejected';
 
 export interface EditResponseValidationDetails {
@@ -21,6 +24,7 @@ export interface EditResponseValidationDetails {
 	matchCount?: number;
 	occurrence?: number;
 	matchLines?: number[];
+	line?: number;
 }
 
 export class EditResponseValidationError extends Error {
@@ -32,6 +36,7 @@ export class EditResponseValidationError extends Error {
 	readonly matchCount?: number;
 	readonly occurrence?: number;
 	readonly matchLines?: number[];
+	readonly line?: number;
 
 	constructor(
 		code: EditResponseValidationCode,
@@ -48,6 +53,7 @@ export class EditResponseValidationError extends Error {
 		this.matchCount = details.matchCount;
 		this.occurrence = details.occurrence;
 		this.matchLines = details.matchLines?.slice(0, 8);
+		this.line = details.line;
 	}
 }
 
@@ -84,6 +90,9 @@ export function formatEditValidationFeedback(error: EditResponseValidationError)
 	}
 	if (error.matchLines !== undefined) {
 		diagnostic.matchLines = error.matchLines.slice(0, 8);
+	}
+	if (error.line !== undefined) {
+		diagnostic.line = error.line;
 	}
 	return `${RETRY_INSTRUCTION}\n${JSON.stringify(diagnostic)}`;
 }

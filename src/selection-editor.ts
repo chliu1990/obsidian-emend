@@ -167,6 +167,7 @@ export class SelectionEditRequestCoordinator {
 		const instructions = await this.dependencies.loadInstructions();
 		const { prepared } = await prepareEditResponse({
 			original: submission.snapshot.selectedText,
+			sourceContext: submission.snapshot,
 			request: {
 				provider: this.dependencies.provider,
 				systemPrompt: this.dependencies.editStrategy.getSelectionPrompt(instructions),

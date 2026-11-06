@@ -1,9 +1,14 @@
 import { prepareCriticMarkupEdit } from './critic-markup';
-import type { EditStrategy } from './edit-strategy';
+import type { EditSourceContext, EditStrategy } from './edit-strategy';
 import {
 	EditResponseValidationError,
 	EditSourceValidationError,
 } from './edit-validation';
+import {
+	findMarkdownEditViolation,
+	type GuardedMarkdownOperation,
+	type MarkdownEditViolation,
+} from './markdown-edit-guards';
 import { appendInstructions, HISTORY_PERMISSION_PROMPT } from './mode';
 import { createReplacementCompiler } from './replacement-diff';
 import type { EditOperation, InstructionPromptParts } from './types';
@@ -46,6 +51,7 @@ interface CompiledRange extends OriginalRange {
 }
 
 const MINIMAL_TARGET_PROMPT = 'For every edit, use the smallest complete semantic target that contains the change. Put independent edits in separate nonoverlapping operations instead of broadening one target. Use insert for pure additions and remove for pure deletions. When text repeats, keep the target minimal and use occurrence rather than broadening the target.';
+const MARKDOWN_STRUCTURE_PROMPT = 'Do not target or insert inside fenced code. Inline code targets must include the complete backtick-delimited span. Tables allow only text edits within one existing header or body cell; do not edit rows, columns, or delimiter rows, and do not insert newlines or unescaped | separators.';
 
 const FULL_NOTE_PROMPT = `You are Emend, an AI editor for an Obsidian note. Return only a bare JSON array of edit operations against the complete original note. Do not return a rewritten document, prose, Markdown, or a code fence.
 The closed command union is:
@@ -55,6 +61,7 @@ The closed command union is:
 - {"type":"comment","target":"exact original text","comment":"nonempty comment","occurrence":1}
 The occurrence field is optional. Omit it only when the anchor or target occurs exactly once; otherwise use a one-based positive integer. Use no other commands or fields. Return [] when no change is needed. Never include CriticMarkup delimiters in operation strings.
 ${MINIMAL_TARGET_PROMPT}
+${MARKDOWN_STRUCTURE_PROMPT}
 
 ${HISTORY_PERMISSION_PROMPT}`;
 
@@ -65,7 +72,8 @@ The closed command union is:
 - {"type":"replace","target":"exact original text","replacement":"nonempty replacement","occurrence":1}
 - {"type":"comment","target":"exact original text","comment":"nonempty comment","occurrence":1}
 The occurrence field is optional. Omit it only when the anchor or target occurs exactly once; otherwise use a one-based positive integer. Use no other commands or fields. Return [] when no change is needed. Never include CriticMarkup delimiters in operation strings.
-${MINIMAL_TARGET_PROMPT}`;
+${MINIMAL_TARGET_PROMPT}
+${MARKDOWN_STRUCTURE_PROMPT}`;
 
 export const operationEditStrategy: EditStrategy = {
 	id: 'operations',
@@ -73,7 +81,7 @@ export const operationEditStrategy: EditStrategy = {
 		appendInstructions(FULL_NOTE_PROMPT, instructions),
 	getSelectionPrompt: (instructions?: InstructionPromptParts) =>
 		appendInstructions(SELECTION_PROMPT, instructions),
-	prepareEdit: (original, response) => {
+	prepareEdit: (original, response, sourceContext) => {
 		try {
 			prepareCriticMarkupEdit(original, original);
 		} catch {
@@ -82,7 +90,7 @@ export const operationEditStrategy: EditStrategy = {
 
 		let compiled: string;
 		try {
-			compiled = compileEditOperations(original, response);
+			compiled = compileEditOperations(original, response, sourceContext);
 		} catch (error) {
 			if (error instanceof EditResponseValidationError) {
 				throw error;
@@ -104,7 +112,11 @@ export const operationEditStrategy: EditStrategy = {
 	},
 };
 
-export function compileEditOperations(original: string, response: string): string {
+export function compileEditOperations(
+	original: string,
+	response: string,
+	sourceContext?: EditSourceContext,
+): string {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(response);
@@ -125,6 +137,11 @@ export function compileEditOperations(original: string, response: string): strin
 		resolveOperation(original, parseOperation(value, order), order),
 	);
 	validateRangeIsolation(resolved);
+	validateMarkdownStructure(resolved, sourceContext ?? {
+		fullText: original,
+		from: 0,
+		to: original.length,
+	});
 	const compileReplacement = createReplacementCompiler();
 
 	const changes: CompiledRange[] = resolved.map(({ operation, anchorRange, order }) => {
@@ -158,6 +175,65 @@ export function compileEditOperations(original: string, response: string): strin
 		compiled = `${compiled.slice(0, change.start)}${change.text}${compiled.slice(change.end)}`;
 	}
 	return compiled;
+}
+
+function validateMarkdownStructure(
+	resolved: readonly ResolvedOperation[],
+	sourceContext: EditSourceContext,
+): void {
+	const operations: GuardedMarkdownOperation[] = resolved.map(({ operation, anchorRange, order }) => {
+		const base = {
+			operation: order + 1,
+			operationType: operation.type,
+			start: sourceContext.from + anchorRange.start,
+			end: sourceContext.from + anchorRange.end,
+		};
+		switch (operation.type) {
+			case 'insert':
+				return {
+					...base,
+					insertionPoint: sourceContext.from + (operation.position === 'before'
+						? anchorRange.start
+						: anchorRange.end),
+					text: operation.text,
+				};
+			case 'remove':
+				return base;
+			case 'replace':
+				return { ...base, replacement: operation.replacement };
+			case 'comment':
+				return { ...base, comment: operation.comment };
+		}
+	});
+	const violation = findMarkdownEditViolation(sourceContext.fullText, operations);
+	if (violation) {
+		throw markdownEditValidationError(violation);
+	}
+}
+
+function markdownEditValidationError(
+	violation: MarkdownEditViolation,
+): EditResponseValidationError {
+	const { operation, operationType, field, line } = violation;
+	const details = { operation, operationType, field, line };
+	if (violation.code === 'inline-code-range') {
+		const message = operationType === 'insert'
+			? `Operation ${operation} insertion is inside an inline code span at line ${line}; insert before or after the complete span instead. No edits were applied.`
+			: `Operation ${operation} target intersects an inline code span without containing it completely at line ${line}; target the complete span including backtick delimiters or text wholly outside it. No edits were applied.`;
+		return new EditResponseValidationError(violation.code, message, details);
+	}
+	if (violation.code === 'fenced-code-edit') {
+		return new EditResponseValidationError(
+			violation.code,
+			`Operation ${operation} edits fenced code at line ${line}; Track Changes cannot review fenced-code edits. Choose text outside the fenced block. No edits were applied.`,
+			details,
+		);
+	}
+	return new EditResponseValidationError(
+		violation.code,
+		`Operation ${operation} changes table structure at line ${line}; edit only text within one existing header or body cell and preserve rows, columns, delimiter rows, and unescaped | separators. No edits were applied.`,
+		details,
+	);
 }
 
 function parseOperation(value: unknown, index: number): EditOperation {

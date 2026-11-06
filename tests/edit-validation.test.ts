@@ -88,6 +88,27 @@ describe('edit validation feedback', () => {
 		expect(feedback).not.toContain('SECRET');
 	});
 
+	it.each(['inline-code-range', 'fenced-code-edit', 'table-structure-edit'] as const)(
+		'serializes only allowlisted structural diagnostics for %s',
+		(code) => {
+			const error = new EditResponseValidationError(
+				code,
+				'PRIVATE SOURCE TARGET REPLACEMENT COMMENT',
+				{ operation: 2, operationType: 'replace', field: 'target', line: 7 },
+			);
+
+			const feedback = formatEditValidationFeedback(error);
+			expect(JSON.parse(feedback.split('\n')[1] ?? '')).toEqual({
+				code,
+				operation: 2,
+				operationType: 'replace',
+				field: 'target',
+				line: 7,
+			});
+			expect(feedback).not.toContain('PRIVATE SOURCE TARGET REPLACEMENT COMMENT');
+		},
+	);
+
 	it('classifies malformed original markup as a terminal source error', () => {
 		const error = captureError(() => operationEditStrategy.prepareEdit(
 			'{--UNCLOSED PRIVATE SOURCE',

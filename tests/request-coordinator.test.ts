@@ -797,6 +797,98 @@ describe('EditRequestCoordinator', () => {
 		expect(continuation?.[1]?.content).toContain('"code":"invalid-json"');
 	});
 
+	it('rejects an added table column after exactly two invalid responses without reading or writing', async () => {
+		const sourceText = '| Alpha | Beta |\n| --- | --- |\n| one | two |';
+		const invalidResponse = JSON.stringify([
+			{ type: 'replace', target: '| Alpha | Beta |', replacement: '| Alpha | New | Beta |' },
+		]);
+		const request = editRequest(invalidResponse);
+		const { coordinator, writer } = makeEditCoordinator(request, sourceText);
+		const context = makeContext({ sourceText, markdown: sourceText });
+
+		await expect(coordinator.submit(makeEditSubmission({ context }))).rejects.toMatchObject({
+			code: 'table-structure-edit',
+			operation: 1,
+			field: 'target',
+			line: 1,
+		});
+
+		expect(request).toHaveBeenCalledTimes(2);
+		expect(writer.readCurrentText).not.toHaveBeenCalled();
+		expect(writer.write).not.toHaveBeenCalled();
+	});
+
+	it('rejects fenced-code edits without reading or writing the full note', async () => {
+		const sourceText = 'Before\n```\nalpha\n```\nAfter';
+		const request = editRequest(JSON.stringify([{ type: 'remove', target: 'alpha' }]));
+		const { coordinator, writer } = makeEditCoordinator(request, sourceText);
+		const context = makeContext({ sourceText, markdown: sourceText });
+
+		await expect(coordinator.submit(makeEditSubmission({ context }))).rejects.toMatchObject({
+			code: 'fenced-code-edit',
+			line: 3,
+		});
+		expect(request).toHaveBeenCalledTimes(2);
+		expect(writer.readCurrentText).not.toHaveBeenCalled();
+		expect(writer.write).not.toHaveBeenCalled();
+	});
+
+	it('corrects an unsafe inline-code target to a complete span with bounded feedback', async () => {
+		const sourceText = 'Before `alpha` after';
+		const invalidResponse = JSON.stringify([
+			{ type: 'replace', target: 'alpha', replacement: 'PRIVATE REPLACEMENT' },
+		]);
+		const validResponse = JSON.stringify([
+			{ type: 'replace', target: '`alpha`', replacement: '`beta`' },
+		]);
+		const request = editRequest(invalidResponse)
+			.mockResolvedValueOnce({ content: invalidResponse, reasoning: '' })
+			.mockResolvedValueOnce({ content: validResponse, reasoning: '' });
+		const { coordinator, writer } = makeEditCoordinator(request, sourceText);
+		const submission = makeEditSubmission({
+			context: makeContext({ sourceText, markdown: sourceText }),
+		});
+
+		await expect(coordinator.submit(submission)).resolves.toMatchObject({ applied: true });
+		expect(request).toHaveBeenCalledTimes(2);
+		const feedback = request.mock.calls[1]?.[0].continuation?.[1]?.content ?? '';
+		expect(feedback).toContain('"code":"inline-code-range"');
+		expect(feedback).toContain('"line":1');
+		expect(feedback).not.toContain('PRIVATE REPLACEMENT');
+		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
+			submission.context.file,
+			'Before {~~`alpha`~>`beta`~~} after',
+		);
+	});
+
+	it('accepts a corrected single-cell replacement after rejecting an added column', async () => {
+		const sourceText = '| Alpha | Beta |\n| --- | --- |\n| one | two |';
+		const invalidResponse = JSON.stringify([
+			{ type: 'replace', target: '| Alpha | Beta |', replacement: '| Alpha | New | Beta |' },
+		]);
+		const validResponse = JSON.stringify([
+			{ type: 'replace', target: 'Alpha', replacement: 'First' },
+		]);
+		const request = editRequest(invalidResponse)
+			.mockResolvedValueOnce({ content: invalidResponse, reasoning: '' })
+			.mockResolvedValueOnce({ content: validResponse, reasoning: '' });
+		const { coordinator, writer } = makeEditCoordinator(request, sourceText);
+		const submission = makeEditSubmission({
+			context: makeContext({ sourceText, markdown: sourceText }),
+		});
+
+		await expect(coordinator.submit(submission)).resolves.toMatchObject({
+			applied: true,
+			changeCount: 1,
+		});
+		expect(request).toHaveBeenCalledTimes(2);
+		expect(request.mock.calls[1]?.[0].continuation?.[1]?.content).toContain('"code":"table-structure-edit"');
+		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
+			submission.context.file,
+			'| {~~Alpha~>First~~} | Beta |\n| --- | --- |\n| one | two |',
+		);
+	});
+
 	it.each(['mixed', 'missing'] as const)(
 		'estimates both rounds independently when provider usage is %s',
 		async (usageCase) => {

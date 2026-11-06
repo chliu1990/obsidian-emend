@@ -1,4 +1,4 @@
-import type { EditPreparation, EditStrategy } from './edit-strategy';
+import type { EditPreparation, EditSourceContext, EditStrategy } from './edit-strategy';
 import {
 	EditResponseValidationError,
 	formatEditValidationFeedback,
@@ -12,6 +12,7 @@ export async function prepareEditResponse(options: {
 	editStrategy: Pick<EditStrategy, 'prepareEdit'>;
 	requestRound: typeof requestAiResponse;
 	signal: AbortSignal;
+	sourceContext?: EditSourceContext;
 	onReasoning?: (text: string) => void;
 	onRetry?: () => void;
 }): Promise<{ prepared: EditPreparation; usage: TokenUsage }> {
@@ -36,7 +37,9 @@ export async function prepareEditResponse(options: {
 
 		let prepared: EditPreparation;
 		try {
-			prepared = options.editStrategy.prepareEdit(options.original, result.content);
+			prepared = options.sourceContext
+				? options.editStrategy.prepareEdit(options.original, result.content, options.sourceContext)
+				: options.editStrategy.prepareEdit(options.original, result.content);
 		} catch (error) {
 			if (round === 1 || !(error instanceof EditResponseValidationError)) {
 				throw error;

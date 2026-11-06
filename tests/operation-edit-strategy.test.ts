@@ -507,6 +507,127 @@ describe('operation validation diagnostics', () => {
 	});
 });
 
+describe('Markdown structural edit safeguards', () => {
+	function structuralError(run: () => unknown): unknown {
+		try {
+			run();
+		} catch (error) {
+			return error;
+		}
+		throw new Error('Expected structural validation to fail.');
+	}
+
+	it('rejects a content-only inline-code target with an actionable diagnostic', () => {
+		const error = structuralError(() => prepare('Before\n`alpha` after', [
+			{ type: 'replace', target: 'alpha', replacement: 'PRIVATE REPLACEMENT' },
+		]));
+		expect(error).toMatchObject({
+			name: 'EditResponseValidationError',
+			code: 'inline-code-range',
+			operation: 1,
+			operationType: 'replace',
+			field: 'target',
+			line: 2,
+		});
+		expect((error as Error).message).toBe(
+			'Operation 1 target intersects an inline code span without containing it completely at line 2; target the complete span including backtick delimiters or text wholly outside it. No edits were applied.',
+		);
+		expect((error as Error).message).not.toContain('PRIVATE REPLACEMENT');
+	});
+
+	it('rejects insertion inside inline code with its specific diagnostic', () => {
+		const error = structuralError(() => prepare('Before `alpha` after', [
+			{ type: 'insert', anchor: 'alpha', position: 'after', text: 'beta' },
+		]));
+		expect(error).toMatchObject({ code: 'inline-code-range', field: 'anchor', line: 1 });
+		expect((error as Error).message).toBe(
+			'Operation 1 insertion is inside an inline code span at line 1; insert before or after the complete span instead. No edits were applied.',
+		);
+	});
+
+	it('compiles complete-span and larger-span replacements without fragmenting delimiters', () => {
+		expect(prepare('Before `alpha` after', [
+			{ type: 'replace', target: '`alpha`', replacement: '`beta`' },
+		]).annotatedMarkdown).toBe('Before {~~`alpha`~>`beta`~~} after');
+		expect(prepare('Before `alpha` after', [
+			{ type: 'replace', target: 'Before `alpha` after', replacement: 'Before `beta` after' },
+		]).annotatedMarkdown).toBe('{~~Before `alpha` after~>Before `beta` after~~}');
+	});
+
+	it('rejects fenced-code targets and insertions with exact line diagnostics', () => {
+		const fullText = 'Before\n```\nalpha\n```\nAfter';
+		const targetError = structuralError(() => prepare(fullText, [
+			{ type: 'comment', target: 'alpha', comment: 'PRIVATE COMMENT' },
+		]));
+		expect(targetError).toMatchObject({
+			code: 'fenced-code-edit', operationType: 'comment', field: 'target', line: 3,
+		});
+		expect((targetError as Error).message).toBe(
+			'Operation 1 edits fenced code at line 3; Track Changes cannot review fenced-code edits. Choose text outside the fenced block. No edits were applied.',
+		);
+		const insertionError = structuralError(() => prepare(fullText, [
+			{ type: 'insert', anchor: 'alpha', position: 'after', text: 'beta' },
+		]));
+		expect(insertionError).toMatchObject({ code: 'fenced-code-edit', field: 'anchor', line: 3 });
+	});
+
+	it('rejects an added table column and preserves ordinary single-cell edits', () => {
+		const table = '| Alpha | Beta |\n| --- | --- |\n| one | two |';
+		const error = structuralError(() => prepare(table, [
+			{ type: 'replace', target: '| Alpha | Beta |', replacement: '| Alpha | New | Beta |' },
+		]));
+		expect(error).toMatchObject({
+			name: 'EditResponseValidationError',
+			code: 'table-structure-edit',
+			operation: 1,
+			operationType: 'replace',
+			field: 'target',
+			line: 1,
+		});
+		expect((error as Error).message).toBe(
+			'Operation 1 changes table structure at line 1; edit only text within one existing header or body cell and preserve rows, columns, delimiter rows, and unescaped | separators. No edits were applied.',
+		);
+		expect(prepare(table, [
+			{ type: 'replace', target: 'Alpha', replacement: 'First' },
+			{ type: 'remove', target: 'one' },
+			{ type: 'comment', target: 'two', comment: 'Review' },
+		]).annotatedMarkdown).toBe(
+			'| {~~Alpha~>First~~} | Beta |\n| --- | --- |\n| {--one--} | two{>>Review<<} |',
+		);
+	});
+
+	it('allows escaped pipes in cells and prose pipes outside tables', () => {
+		const table = '| Alpha | Beta |\n| --- | --- |\n| one | two |';
+		expect(prepare(table, [
+			{ type: 'replace', target: 'Alpha', replacement: 'A \\| B' },
+		]).annotatedMarkdown).toContain('A \\| B');
+		expect(prepare('Alpha | Beta', [
+			{ type: 'replace', target: 'Alpha | Beta', replacement: 'Alpha | Gamma' },
+		]).annotatedMarkdown).toBe('Alpha | {~~Beta~>Gamma~~}');
+	});
+
+	it('maps selected offsets into full-note structure without expanding occurrence resolution', () => {
+		const error = structuralError(() => compileEditOperations(
+			'alpha',
+			JSON.stringify([{ type: 'remove', target: 'alpha' }]),
+			{ fullText: 'Before\n`alpha`', from: 8, to: 13 },
+		));
+		expect(error).toMatchObject({ code: 'inline-code-range', line: 2 });
+		expect(() => compileEditOperations(
+			'alpha',
+			JSON.stringify([{ type: 'remove', target: 'Before' }]),
+			{ fullText: 'Before\n`alpha`', from: 8, to: 13 },
+		)).toThrow(/not found|match/i);
+	});
+
+	it('keeps existing range-isolation errors ahead of structural checks', () => {
+		expect(structuralError(() => prepare('`alpha`', [
+			{ type: 'remove', target: 'alpha' },
+			{ type: 'comment', target: 'alpha', comment: 'Review' },
+		]))).toMatchObject({ code: 'overlapping-targets' });
+	});
+});
+
 describe('operation EditStrategy selection boundaries', () => {
 	it('cannot address text outside the selection passed as the original snapshot', () => {
 		expect(() => prepare('beta', [
@@ -543,6 +664,9 @@ describe('edit strategy factory and prompts', () => {
 			expect(prompt).toContain('separate nonoverlapping operations');
 			expect(prompt).toContain('Use insert for pure additions and remove for pure deletions.');
 			expect(prompt).toContain('occurrence rather than broadening');
+			expect(prompt).toContain('Do not target or insert inside fenced code.');
+			expect(prompt).toContain('Inline code targets must include the complete backtick-delimited span.');
+			expect(prompt).toContain('Tables allow only text edits within one existing header or body cell; do not edit rows, columns, or delimiter rows, and do not insert newlines or unescaped | separators.');
 			expect(prompt).not.toContain('COMPLETE note with every requested change marked using CriticMarkup');
 			expect(prompt.indexOf('Review skill')).toBeLessThan(prompt.indexOf('Agent instructions'));
 			if (kind === 'selection') {

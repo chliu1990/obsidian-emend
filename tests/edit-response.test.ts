@@ -122,6 +122,33 @@ describe('prepareEditResponse', () => {
 		);
 	});
 
+	it('forwards absolute source context to both preparation attempts', async () => {
+		const sourceContext = {
+			fullText: 'Before `Original snapshot` after',
+			from: 8,
+			to: 25,
+		};
+		const validationError = new EditResponseValidationError('inline-code-range', 'Invalid.', {
+			operation: 1,
+			operationType: 'replace',
+			field: 'target',
+			line: 1,
+		});
+		const prepareEdit = vi.fn<EditStrategy['prepareEdit']>()
+			.mockImplementationOnce(() => { throw validationError; })
+			.mockReturnValueOnce(prepared);
+		const requestRound = vi.fn<typeof requestAiResponse>()
+			.mockResolvedValueOnce(result('first-invalid'))
+			.mockResolvedValueOnce(result('second-valid'));
+
+		await prepareEditResponse(prepareOptions(requestRound, prepareEdit, { sourceContext }));
+
+		expect(prepareEdit.mock.calls).toEqual([
+			['Original snapshot', 'first-invalid', sourceContext],
+			['Original snapshot', 'second-valid', sourceContext],
+		]);
+	});
+
 	it('returns a valid no-op preparation after one provider call', async () => {
 		const noOp: EditPreparation = {
 			annotatedMarkdown: 'Original snapshot',

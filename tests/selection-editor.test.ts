@@ -808,6 +808,56 @@ describe('SelectionEditRequestCoordinator', () => {
 		expect(adapter.replaceRange).not.toHaveBeenCalled();
 	});
 
+	it('rejects a selection inside fenced code without reading or replacing', async () => {
+		const snapshot = makeSnapshot('Before\n```\nalpha\n```\nAfter', 'alpha');
+		const request = selectionRequest(JSON.stringify([{ type: 'remove', target: 'alpha' }]));
+		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
+
+		await expect(coordinator.submit(makeSelectionSubmission(snapshot))).rejects.toMatchObject({
+			code: 'fenced-code-edit',
+			line: 3,
+		});
+		expect(request).toHaveBeenCalledTimes(2);
+		expect(adapter.readCurrentText).not.toHaveBeenCalled();
+		expect(adapter.replaceRange).not.toHaveBeenCalled();
+	});
+
+	it('uses absolute selection offsets for inline-code guards without expanding the target', async () => {
+		const snapshot = makeSnapshot('Before `alpha` after', 'alpha');
+		const request = selectionRequest(JSON.stringify([
+			{ type: 'replace', target: 'alpha', replacement: 'beta' },
+		]));
+		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
+
+		await expect(coordinator.submit(makeSelectionSubmission(snapshot))).rejects.toMatchObject({
+			code: 'inline-code-range',
+			line: 1,
+		});
+		expect(request).toHaveBeenCalledTimes(2);
+		expect(snapshot.selectedText).toBe('alpha');
+		expect(snapshot.fullText).toBe('Before `alpha` after');
+		expect(adapter.readCurrentText).not.toHaveBeenCalled();
+		expect(adapter.replaceRange).not.toHaveBeenCalled();
+	});
+
+	it('applies a complete inline-code span selection at its original offsets', async () => {
+		const snapshot = makeSnapshot('Before `alpha` after', '`alpha`');
+		const request = selectionRequest(JSON.stringify([
+			{ type: 'replace', target: '`alpha`', replacement: '`beta`' },
+		]));
+		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
+
+		await expect(coordinator.submit(makeSelectionSubmission(snapshot))).resolves.toEqual({
+			applied: true,
+			changeCount: 1,
+		});
+		expect(adapter.replaceRange).toHaveBeenCalledExactlyOnceWith(
+			'{~~`alpha`~>`beta`~~}',
+			snapshot.from,
+			snapshot.to,
+		);
+	});
+
 	it('corrects one invalid response against the same selection and replaces minimal markup once', async () => {
 		const fullText = '# Note\nThey have a plan.\nEnd';
 		const snapshot = makeSnapshot(fullText, 'They have a plan.');
