@@ -334,7 +334,9 @@ export class EmendChatView extends ItemView {
 			}
 		});
 		this.pendingScrollRestore = { previousScrollTop, wasFollowing };
-		this.settleMarkdownRender(this.renderGeneration);
+		if (this.pendingMarkdownRenders === 0) {
+			this.settleMarkdownRender(this.renderGeneration);
+		}
 	}
 
 	private renderEmptyState(containerEl: HTMLElement) {

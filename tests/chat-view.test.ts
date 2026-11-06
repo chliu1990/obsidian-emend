@@ -710,6 +710,7 @@ describe('EmendChatView presentation', () => {
 class FakeElement {
 	readonly children: FakeElement[] = [];
 	readonly attributes: Record<string, string> = {};
+	readonly ownerDocument = { createElement: () => new FakeElement() };
 	className = '';
 	textContent = '';
 	title = '';
@@ -744,6 +745,14 @@ class FakeElement {
 
 	addClass(className: string) {
 		this.className = `${this.className} ${className}`.trim();
+	}
+
+	querySelector() {
+		return this.children[0] ?? null;
+	}
+
+	getBoundingClientRect() {
+		return { top: 0 };
 	}
 
 	replaceWith(replacement: FakeElement) {
@@ -1287,5 +1296,79 @@ describe('EmendChatView compact Web disclosure', () => {
 		expect(disclosure).toHaveLength(0);
 		expect(webSelect?.title).toContain('note context');
 		expect(webSelect?.title).toContain('stored locally with ready chats');
+	});
+});
+
+
+describe('EmendChatView render-end response alignment', () => {
+	it('keeps the response target until actual Markdown settlement expands the scroller', async () => {
+		const markdown = deferred<void>();
+		vi.spyOn(MarkdownRenderer, 'render').mockReturnValue(markdown.promise);
+		const contentEl = new FakeElement();
+		const context = {
+			app: {},
+			contentEl,
+			plugin: {
+				getActiveNotePath: () => 'Note.md',
+				getActiveNoteLabel: () => 'Note.md',
+				conversationStore: {
+					load: vi.fn(async () => {
+						context.responseStartMessageId = 'answer';
+						context.followLatestMessages = false;
+						return [message('answer', 'Note.md')];
+					}),
+				},
+				additionalNotesStore: new AdditionalNotesStore(),
+				settings: {
+					activeProvider: 'deepseek',
+					providers: { deepseek: { name: 'DeepSeek', model: 'deepseek-flash' } },
+				},
+			},
+			notePath: null as string | null,
+			noteLoadGeneration: 0,
+			messages: [] as ChatMessage[],
+			selectedMode: 'ask' as Mode,
+			webSearchMode: 'off' as const,
+			responseStartMessageId: null as string | null,
+			followLatestMessages: true,
+			pendingMarkdownRenders: 0,
+			renderGeneration: 0,
+			isThreadLoading: false,
+			isSending: false,
+			activeController: null,
+			closed: false,
+			inputEl: null as FakeElement | null,
+			drafts: new Map<string, string>(),
+			additionalNotesControl: null,
+			pendingMessages: new Set<ChatMessage>(),
+			messageBodyEls: new Map<string, HTMLElement>(),
+			activeModelEl: null,
+			cancelPendingRender: vi.fn(),
+		};
+		Object.setPrototypeOf(context, EmendChatView.prototype);
+
+		await viewPrototype.refreshTargetNote.call(context);
+
+		expect(context.pendingMarkdownRenders).toBe(1);
+		expect(context.responseStartMessageId).toBe('answer');
+		const messagesEl = (context as unknown as { messagesEl: FakeElement }).messagesEl;
+		const responseEl = messagesEl.children[0];
+		if (!responseEl) throw new Error('Response element missing');
+		Object.assign(messagesEl, {
+			scrollTop: 40,
+			scrollHeight: 4856,
+			clientHeight: 197,
+			getBoundingClientRect: () => ({ top: 100 }),
+			querySelector: () => responseEl,
+		});
+		Object.assign(responseEl, {
+			getBoundingClientRect: () => ({ top: 260 }),
+		});
+
+		markdown.resolve();
+		await vi.waitFor(() => expect(context.pendingMarkdownRenders).toBe(0));
+
+		expect(messagesEl.scrollTop).toBe(200);
+		expect(context.responseStartMessageId).toBeNull();
 	});
 });
