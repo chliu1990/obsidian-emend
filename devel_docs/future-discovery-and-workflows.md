@@ -34,13 +34,15 @@ Requested in the maintainer's roadmap discussion.
 - [ ] Do not scan folders in the background, include unselected folders, or grant folder documents a write path.
 - [ ] Handle missing/renamed folders, large folders, non-Markdown files, and switching the active target without leaking context.
 
-## 4. Easier selected-text editing — issue #24
+## 4. Easier selected-text editing — issue #24 (implemented)
 
 Track: https://github.com/chliu1990/obsidian-emend/issues/24
 
-- [ ] Add a nearby checkbox or similarly direct composer control for modifying only selected text instead of requiring the Command Palette.
-- [ ] Default to the selection workflow when usable text is selected, while preserving an explicit way to choose full-note chat/Edit.
-- [ ] Reuse exact selection capture, complete-selection prompting, guarded Operations, native undo, pending controls, and Track Changes; do not add a second writer or submission path.
+Implemented and verified in [Stage 39](39-easier-selection-editing.md); no deferred checklist item remains here.
+
+- [x] Add a nearby checkbox or similarly direct composer control for modifying only selected text instead of requiring the Command Palette. The implemented control is a two-value **Edit target** selector.
+- [x] Default to the selection workflow when usable text is selected, while preserving an explicit way to choose full-note chat/Edit.
+- [x] Reuse exact selection capture, complete-selection prompting, guarded Operations, native undo, pending controls, and Track Changes; do not add a second writer or submission path.
 
 ## 5. Minimal edit ranges — issue #23 (implemented)
 
