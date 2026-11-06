@@ -165,10 +165,13 @@ describe('operation EditStrategy protocol', () => {
 		});
 	});
 
-	it('lets Stage 07 reject compilation that would nest inside existing markup', () => {
+	it('classifies Stage 07 candidate rejection without exposing the compiler error', () => {
 		expect(() => prepare('{--alpha--}', [
 			{ type: 'comment', target: 'alpha', comment: 'nested' },
-		])).toThrow(/Nested CriticMarkup|preserve every original token|reject view/);
+		])).toThrow(expect.objectContaining({
+			name: 'EditResponseValidationError',
+			code: 'compiled-markup-rejected',
+		}));
 	});
 
 	it.each([
@@ -291,7 +294,11 @@ describe('operation EditStrategy protocol', () => {
 			])).toThrow(/delimiter/i);
 			expect(() => prepare(`Alpha ${delimiter} beta`, [
 				{ type: 'remove', target: delimiter },
-			])).toThrow(/delimiter/i);
+			])).toThrow(expect.objectContaining({
+				name: delimiter === '~>'
+					? 'EditResponseValidationError'
+					: 'EditSourceValidationError',
+			}));
 		},
 	);
 
@@ -300,6 +307,157 @@ describe('operation EditStrategy protocol', () => {
 			{ type: 'replace', target: 'Alpha', replacement: 'Changed' },
 			{ type: 'remove', target: 'missing' },
 		])).toThrow();
+	});
+});
+
+describe('operation validation diagnostics', () => {
+	function validationError(run: () => unknown): unknown {
+		try {
+			run();
+		} catch (error) {
+			return error;
+		}
+		throw new Error('Expected operation validation to fail.');
+	}
+
+	it.each([
+		['not json', 'invalid-json'],
+		['{}', 'invalid-response-shape'],
+		['null', 'invalid-response-shape'],
+	])('classifies response syntax and shape with %s', (response, code) => {
+		expect(validationError(() => compileEditOperations('Alpha', response))).toMatchObject({
+			name: 'EditResponseValidationError',
+			code,
+		});
+	});
+
+	it('identifies an unknown field without rejecting the allowed operation type', () => {
+		expect(validationError(() => prepare('Alpha', [
+			{ type: 'remove', target: 'Alpha', extra: true },
+		]))).toMatchObject({
+			name: 'EditResponseValidationError',
+			code: 'invalid-operation',
+			operation: 1,
+			operationType: 'remove',
+			field: 'extra',
+		});
+	});
+
+	it.each([
+		[
+			{ type: 'insert', position: 'after', text: 'x' },
+			'missing-anchor',
+			'insert',
+			'anchor',
+		],
+		[
+			{ type: 'remove' },
+			'missing-target',
+			'remove',
+			'target',
+		],
+	] as const)('distinguishes a missing anchor from a missing target', (
+		operation,
+		code,
+		operationType,
+		field,
+	) => {
+		expect(validationError(() => prepare('Alpha', [operation]))).toMatchObject({
+			name: 'EditResponseValidationError',
+			code,
+			operation: 1,
+			operationType,
+			field,
+		});
+	});
+
+	it('reports an actionable ambiguous target with one-based match lines', () => {
+		const original = [
+			'Alpha',
+			'filler',
+			'filler',
+			'same',
+			'filler',
+			'filler',
+			'filler',
+			'same',
+			'filler',
+			'filler',
+			'filler',
+			'same',
+		].join('\n');
+		const error = validationError(() => prepare(original, [
+			{ type: 'insert', anchor: 'Alpha', position: 'after', text: '!' },
+			{ type: 'remove', target: 'same' },
+		]));
+
+		expect(error).toMatchObject({
+			name: 'EditResponseValidationError',
+			code: 'ambiguous-target',
+			operation: 2,
+			operationType: 'remove',
+			field: 'target',
+			matchCount: 3,
+			matchLines: [4, 8, 12],
+		});
+		expect((error as Error).message).toBe(
+			'Operation 2 target is ambiguous: 3 matches at lines 4, 8, 12; specify occurrence from 1 to 3.',
+		);
+	});
+
+	it('bounds ambiguous candidate lines to eight', () => {
+		const error = validationError(() => prepare(Array(10).fill('same').join('\n'), [
+			{ type: 'remove', target: 'same' },
+		]));
+
+		expect(error).toMatchObject({
+			code: 'ambiguous-target',
+			matchCount: 10,
+			matchLines: [1, 2, 3, 4, 5, 6, 7, 8],
+		});
+	});
+
+	it('reports requested and available occurrences with candidate lines', () => {
+		expect(validationError(() => prepare('same\nsame\nsame', [
+			{ type: 'remove', target: 'same', occurrence: 4 },
+		]))).toMatchObject({
+			name: 'EditResponseValidationError',
+			code: 'occurrence-out-of-range',
+			operation: 1,
+			operationType: 'remove',
+			field: 'target',
+			matchCount: 3,
+			occurrence: 4,
+			matchLines: [1, 2, 3],
+		});
+	});
+
+	it('identifies both operations in an overlapping-target conflict', () => {
+		expect(validationError(() => prepare('Alpha beta gamma', [
+			{ type: 'replace', target: 'Alpha beta', replacement: 'x' },
+			{ type: 'remove', target: 'beta' },
+		]))).toMatchObject({
+			name: 'EditResponseValidationError',
+			code: 'overlapping-targets',
+			operation: 1,
+			relatedOperation: 2,
+			operationType: 'replace',
+			field: 'target',
+		});
+	});
+
+	it('identifies both operations in an insertion-target conflict', () => {
+		expect(validationError(() => prepare('Alpha beta', [
+			{ type: 'insert', anchor: 'Alpha', position: 'after', text: 'x' },
+			{ type: 'remove', target: 'Alpha beta' },
+		]))).toMatchObject({
+			name: 'EditResponseValidationError',
+			code: 'ambiguous-insertion',
+			operation: 1,
+			relatedOperation: 2,
+			operationType: 'insert',
+			field: 'anchor',
+		});
 	});
 });
 

@@ -1,5 +1,9 @@
 import { prepareCriticMarkupEdit } from './critic-markup';
 import type { EditStrategy } from './edit-strategy';
+import {
+	EditResponseValidationError,
+	EditSourceValidationError,
+} from './edit-validation';
 import { appendInstructions, HISTORY_PERMISSION_PROMPT } from './mode';
 import type { EditOperation, InstructionPromptParts } from './types';
 
@@ -64,8 +68,35 @@ export const operationEditStrategy: EditStrategy = {
 		appendInstructions(FULL_NOTE_PROMPT, instructions),
 	getSelectionPrompt: (instructions?: InstructionPromptParts) =>
 		appendInstructions(SELECTION_PROMPT, instructions),
-	prepareEdit: (original, response) =>
-		prepareCriticMarkupEdit(original, compileEditOperations(original, response)),
+	prepareEdit: (original, response) => {
+		try {
+			prepareCriticMarkupEdit(original, original);
+		} catch {
+			throw new EditSourceValidationError();
+		}
+
+		let compiled: string;
+		try {
+			compiled = compileEditOperations(original, response);
+		} catch (error) {
+			if (error instanceof EditResponseValidationError) {
+				throw error;
+			}
+			throw new EditResponseValidationError(
+				'invalid-operation',
+				'Operations could not be compiled against the unchanged original snapshot.',
+			);
+		}
+
+		try {
+			return prepareCriticMarkupEdit(original, compiled);
+		} catch {
+			throw new EditResponseValidationError(
+				'compiled-markup-rejected',
+				'Compiled operations were rejected by CriticMarkup validation; revise the operations to preserve existing markup and reject-view content.',
+			);
+		}
+	},
 };
 
 export function compileEditOperations(original: string, response: string): string {
@@ -73,10 +104,16 @@ export function compileEditOperations(original: string, response: string): strin
 	try {
 		parsed = JSON.parse(response);
 	} catch {
-		throw new Error('Operation edit response must be a bare JSON array.');
+		throw new EditResponseValidationError(
+			'invalid-json',
+			'Operation edit response must be a bare JSON array.',
+		);
 	}
 	if (!Array.isArray(parsed)) {
-		throw new Error('Operation edit response must be a bare JSON array.');
+		throw new EditResponseValidationError(
+			'invalid-response-shape',
+			'Edit response must be a bare JSON array of operations.',
+		);
 	}
 
 	const resolved = parsed.map((value, order) =>
@@ -123,37 +160,50 @@ function parseOperation(value: unknown, index: number): EditOperation {
 		typeof value.type !== 'string' ||
 		!Object.prototype.hasOwnProperty.call(OPERATION_FIELDS, value.type)
 	) {
-		throw new Error(`Operation ${index + 1} has an unknown type or malformed value.`);
+		throw new EditResponseValidationError(
+			'invalid-operation',
+			`Operation ${index + 1} has an unknown type or malformed value.`,
+			{ operation: index + 1, field: 'type' },
+		);
 	}
 	const type = value.type as EditOperation['type'];
 	const allowedFields = OPERATION_FIELDS[type];
-	if (Object.keys(value).some((field) => !allowedFields.includes(field))) {
-		throw new Error(`Operation ${index + 1} contains unknown fields.`);
+	const unknownField = Object.keys(value).find((field) => !allowedFields.includes(field));
+	if (unknownField !== undefined) {
+		throw new EditResponseValidationError(
+			'invalid-operation',
+			`Operation ${index + 1} contains unknown fields; use only the fields allowed for ${type}.`,
+			{ operation: index + 1, operationType: type, field: unknownField },
+		);
 	}
-	const occurrence = parseOccurrence(value.occurrence, index);
+	const occurrence = parseOccurrence(value.occurrence, index, type);
 	switch (type) {
 		case 'insert': {
-			const anchor = requiredString(value, 'anchor', index);
-			const text = requiredString(value, 'text', index);
+			const anchor = requiredString(value, 'anchor', index, type);
+			const text = requiredString(value, 'text', index, type);
 			if (value.position !== 'before' && value.position !== 'after') {
-				throw new Error(`Insert operation ${index + 1} has an invalid position.`);
+				throw new EditResponseValidationError(
+					'invalid-operation',
+					`Insert operation ${index + 1} has an invalid position; use before or after.`,
+					{ operation: index + 1, operationType: type, field: 'position' },
+				);
 			}
 			return { type, anchor, position: value.position, text, occurrence };
 		}
 		case 'remove':
-			return { type, target: requiredString(value, 'target', index), occurrence };
+			return { type, target: requiredString(value, 'target', index, type), occurrence };
 		case 'replace':
 			return {
 				type,
-				target: requiredString(value, 'target', index),
-				replacement: requiredString(value, 'replacement', index),
+				target: requiredString(value, 'target', index, type),
+				replacement: requiredString(value, 'replacement', index, type),
 				occurrence,
 			};
 		case 'comment':
 			return {
 				type,
-				target: requiredString(value, 'target', index),
-				comment: requiredString(value, 'comment', index),
+				target: requiredString(value, 'target', index, type),
+				comment: requiredString(value, 'comment', index, type),
 				occurrence,
 			};
 	}
@@ -161,25 +211,47 @@ function parseOperation(value: unknown, index: number): EditOperation {
 
 function requiredString(
 	value: Record<string, unknown>,
-	field: string,
+	field: 'anchor' | 'target' | 'text' | 'replacement' | 'comment',
 	index: number,
+	operationType: EditOperation['type'],
 ): string {
 	const text = value[field];
 	if (typeof text !== 'string' || text.length === 0) {
-		throw new Error(`Operation ${index + 1} requires a nonempty ${field} string.`);
+		const code = field === 'anchor'
+			? 'missing-anchor'
+			: field === 'target'
+				? 'missing-target'
+				: 'invalid-operation';
+		throw new EditResponseValidationError(
+			code,
+			`Operation ${index + 1} requires a nonempty ${field} string.`,
+			{ operation: index + 1, operationType, field },
+		);
 	}
 	if (CRITIC_MARKUP_DELIMITERS.some((delimiter) => text.includes(delimiter))) {
-		throw new Error(`Operation ${index + 1} contains a CriticMarkup delimiter.`);
+		throw new EditResponseValidationError(
+			'invalid-operation',
+			`Operation ${index + 1} contains a CriticMarkup delimiter in ${field}; remove the delimiter.`,
+			{ operation: index + 1, operationType, field },
+		);
 	}
 	return text;
 }
 
-function parseOccurrence(value: unknown, index: number): number | undefined {
+function parseOccurrence(
+	value: unknown,
+	index: number,
+	operationType: EditOperation['type'],
+): number | undefined {
 	if (value === undefined) {
 		return undefined;
 	}
 	if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
-		throw new Error(`Operation ${index + 1} has an invalid occurrence.`);
+		throw new EditResponseValidationError(
+			'invalid-operation',
+			`Operation ${index + 1} has an invalid occurrence; use a one-based positive integer.`,
+			{ operation: index + 1, operationType, field: 'occurrence' },
+		);
 	}
 	return value;
 }
@@ -190,7 +262,13 @@ function resolveOperation(
 	order: number,
 ): ResolvedOperation {
 	const text = operation.type === 'insert' ? operation.anchor : operation.target;
-	const anchorRange = findOriginalRange(original, text, operation.occurrence, order);
+	const anchorRange = findOriginalRange(
+		original,
+		text,
+		operation.occurrence,
+		order,
+		operation.type,
+	);
 	return { operation, anchorRange, order };
 }
 
@@ -199,6 +277,7 @@ function findOriginalRange(
 	text: string,
 	occurrence: number | undefined,
 	index: number,
+	operationType: EditOperation['type'],
 ): OriginalRange {
 	const matches: OriginalRange[] = [];
 	let fromIndex = 0;
@@ -210,24 +289,57 @@ function findOriginalRange(
 		matches.push({ start, end: start + text.length });
 		fromIndex = start + 1;
 	}
+
+	const field = operationType === 'insert' ? 'anchor' : 'target';
+	const matchCount = matches.length;
+	const matchLines = matches.slice(0, 8).map((match) => sourceLineAt(original, match.start));
+	const details = { operation: index + 1, operationType, field, matchCount, matchLines };
 	if (matches.length === 0) {
-		throw new Error(`Operation ${index + 1} anchor or target was not found in the original snapshot.`);
+		const code = field === 'anchor' ? 'missing-anchor' : 'missing-target';
+		throw new EditResponseValidationError(
+			code,
+			`Operation ${index + 1} ${field} was not found in the unchanged original snapshot; use exact original text.`,
+			details,
+		);
 	}
 	if (occurrence === undefined) {
 		if (matches.length !== 1) {
-			throw new Error(`Operation ${index + 1} anchor or target is ambiguous; specify occurrence.`);
+			const code = field === 'anchor' ? 'ambiguous-anchor' : 'ambiguous-target';
+			throw new EditResponseValidationError(
+				code,
+				`Operation ${index + 1} ${field} is ambiguous: ${matchCount} matches at lines ${matchLines.join(', ')}; specify occurrence from 1 to ${matchCount}.`,
+				details,
+			);
 		}
 		const onlyMatch = matches[0];
 		if (!onlyMatch) {
-			throw new Error(`Operation ${index + 1} has no original match.`);
+			throw new EditResponseValidationError(
+				'invalid-operation',
+				`Operation ${index + 1} has no original match.`,
+				details,
+			);
 		}
 		return onlyMatch;
 	}
 	const match = matches[occurrence - 1];
 	if (!match) {
-		throw new Error(`Operation ${index + 1} occurrence is out of range.`);
+		throw new EditResponseValidationError(
+			'occurrence-out-of-range',
+			`Operation ${index + 1} occurrence ${occurrence} is out of range: ${matchCount} matches are available; use an occurrence from 1 to ${matchCount}.`,
+			{ ...details, occurrence },
+		);
 	}
 	return match;
+}
+
+function sourceLineAt(original: string, offset: number): number {
+	let line = 1;
+	for (let index = 0; index < offset; index += 1) {
+		if (original[index] === '\n') {
+			line += 1;
+		}
+	}
+	return line;
 }
 
 function validateRangeIsolation(resolved: ResolvedOperation[]): void {
@@ -235,7 +347,16 @@ function validateRangeIsolation(resolved: ResolvedOperation[]): void {
 	for (const [index, left] of targets.entries()) {
 		for (const right of targets.slice(index + 1)) {
 			if (rangesOverlap(left.anchorRange, right.anchorRange)) {
-				throw new Error('Operation target ranges overlap.');
+				throw new EditResponseValidationError(
+					'overlapping-targets',
+					`Operation ${left.order + 1} target overlaps operation ${right.order + 1} target; use disjoint original ranges.`,
+					{
+						operation: left.order + 1,
+						relatedOperation: right.order + 1,
+						operationType: left.operation.type,
+						field: 'target',
+					},
+				);
 			}
 		}
 	}
@@ -247,11 +368,21 @@ function validateRangeIsolation(resolved: ResolvedOperation[]): void {
 		const position = item.operation.position === 'before'
 			? item.anchorRange.start
 			: item.anchorRange.end;
-		if (targets.some((target) =>
+		const conflict = targets.find((target) =>
 			rangesOverlap(item.anchorRange, target.anchorRange) ||
 			(position >= target.anchorRange.start && position <= target.anchorRange.end)
-		)) {
-			throw new Error('Insertion anchor or position is ambiguous with another operation target.');
+		);
+		if (conflict) {
+			throw new EditResponseValidationError(
+				'ambiguous-insertion',
+				`Operation ${item.order + 1} insertion conflicts with operation ${conflict.order + 1} target; use a nonoverlapping anchor and insertion position.`,
+				{
+					operation: item.order + 1,
+					relatedOperation: conflict.order + 1,
+					operationType: item.operation.type,
+					field: 'anchor',
+				},
+			);
 		}
 	}
 }
