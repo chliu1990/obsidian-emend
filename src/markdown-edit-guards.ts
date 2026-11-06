@@ -50,7 +50,12 @@ export function findMarkdownEditViolation(
 
 	for (const operation of operations) {
 		const field: MarkdownEditViolation['field'] = operation.operationType === 'insert' ? 'anchor' : 'target';
-		const line = sourceLineAt(fullText, operation.start);
+		const line = sourceLineAt(
+			fullText,
+			operation.operationType === 'insert'
+				? operation.insertionPoint ?? operation.start
+				: operation.start,
+		);
 		const violation = (
 			code: MarkdownEditViolation['code'],
 			violationField: MarkdownEditViolation['field'] = field,
@@ -63,7 +68,10 @@ export function findMarkdownEditViolation(
 		});
 
 		if (operation.operationType === 'insert') {
-			if (fences.some((fence) => strictlyInside(operation.insertionPoint, fence))) {
+			if (fences.some((fence) =>
+				strictlyInside(operation.insertionPoint, fence) ||
+				(!fence.closed && operation.insertionPoint === fence.end && operation.insertionPoint > fence.start)
+			)) {
 				return violation('fenced-code-edit');
 			}
 		} else if (fences.some((fence) => intersects(operation, fence))) {
@@ -141,21 +149,34 @@ function scanLines(fullText: string): SourceLine[] {
 	return lines;
 }
 
-function scanFences(lines: readonly SourceLine[]): SourceRange[] {
-	const fences: SourceRange[] = [];
+interface FenceRange extends SourceRange {
+	closed: boolean;
+}
+
+interface ContainerOpening {
+	contentStart: number;
+	continuation: string;
+}
+
+function scanFences(lines: readonly SourceLine[]): FenceRange[] {
+	const fences: FenceRange[] = [];
 	for (let index = 0; index < lines.length; index += 1) {
 		const line = lines[index];
 		if (!line) {
 			continue;
 		}
-		const opening = /^ {0,3}(`{3,}|~{3,})/.exec(line.text);
+		const container = readContainerOpening(line.text);
+		const opening = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(
+			line.text.slice(container.contentStart),
+		);
 		const run = opening?.[1];
-		if (!run) {
+		if (!run || (run[0] === '`' && opening?.[2]?.includes('`'))) {
 			continue;
 		}
 		const character = run[0];
 		let end = line.end;
 		let closingIndex = index;
+		let closed = false;
 		for (let candidate = index + 1; candidate < lines.length; candidate += 1) {
 			const candidateLine = lines[candidate];
 			if (!candidateLine) {
@@ -163,14 +184,44 @@ function scanFences(lines: readonly SourceLine[]): SourceRange[] {
 			}
 			end = candidateLine.end;
 			closingIndex = candidate;
-			if (isFenceClose(candidateLine.text, character ?? '', run.length)) {
+			const content = stripContainer(candidateLine.text, container.continuation);
+			if (
+				content !== undefined &&
+				isFenceClose(content, character ?? '', run.length)
+			) {
+				closed = true;
 				break;
 			}
 		}
-		fences.push({ start: line.start, end });
+		fences.push({ start: line.start, end, closed });
 		index = closingIndex;
 	}
 	return fences;
+}
+
+function readContainerOpening(text: string): ContainerOpening {
+	let contentStart = 0;
+	let continuation = '';
+	while (contentStart < text.length) {
+		const remaining = text.slice(contentStart);
+		const quote = /^ {0,3}>[ \t]?/.exec(remaining)?.[0];
+		if (quote) {
+			contentStart += quote.length;
+			continuation += quote;
+			continue;
+		}
+		const list = /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]+/.exec(remaining)?.[0];
+		if (!list) {
+			break;
+		}
+		contentStart += list.length;
+		continuation += list.replace(/[^ \t]/g, ' ');
+	}
+	return { contentStart, continuation };
+}
+
+function stripContainer(text: string, continuation: string): string | undefined {
+	return text.startsWith(continuation) ? text.slice(continuation.length) : undefined;
 }
 
 function isFenceClose(text: string, character: string, minimumLength: number): boolean {
@@ -205,7 +256,7 @@ function scanInlineCode(fullText: string, fences: readonly SourceRange[]): Sourc
 			if (containingFence) {
 				break;
 			}
-			if (fullText[cursor] !== '`' || isEscaped(fullText, cursor)) {
+			if (fullText[cursor] !== '`') {
 				cursor += 1;
 				continue;
 			}
@@ -242,18 +293,30 @@ function scanTables(lines: readonly SourceLine[], fences: readonly SourceRange[]
 		if (!headerLine || !delimiterLine || inAnyRange(headerLine, fences) || inAnyRange(delimiterLine, fences)) {
 			continue;
 		}
-		if (!hasUnescapedPipe(headerLine.text)) {
+		const container = readContainerOpening(headerLine.text);
+		if (!hasUnescapedPipe(headerLine.text.slice(container.contentStart))) {
 			continue;
 		}
-		const delimiterCells = splitTableRow(delimiterLine);
-		if (
-			delimiterCells.length === 0 ||
-			!delimiterCells.every((cell) => /^:?-+:?$/.test(delimiterLine.text.slice(cell.start, cell.end).trim()))
-		) {
+		const delimiterContent = stripContainer(delimiterLine.text, container.continuation);
+		if (delimiterContent === undefined) {
+			const fallback = readContainerOpening(delimiterLine.text);
+			if (isDelimiterRow(delimiterLine, fallback.contentStart)) {
+				tables.push({
+					start: headerLine.start,
+					end: delimiterLine.end,
+					header: { ...tableRow(headerLine, container.contentStart), cells: [] },
+					delimiter: { start: delimiterLine.start, end: delimiterLine.end },
+					body: [],
+				});
+				index += 1;
+			}
+			continue;
+		}
+		if (!isDelimiterRow(delimiterLine, container.continuation.length)) {
 			continue;
 		}
 
-		const header = tableRow(headerLine);
+		const header = tableRow(headerLine, container.contentStart);
 		const body: TableRow[] = [];
 		let end = delimiterLine.end;
 		let bodyIndex = index + 2;
@@ -262,7 +325,11 @@ function scanTables(lines: readonly SourceLine[], fences: readonly SourceRange[]
 			if (!line || line.text.trim().length === 0 || inAnyRange(line, fences)) {
 				break;
 			}
-			body.push(tableRow(line));
+			const content = stripContainer(line.text, container.continuation);
+			if (content === undefined || isTableBodyTerminator(content)) {
+				break;
+			}
+			body.push(tableRow(line, container.continuation.length));
 			end = line.end;
 		}
 		tables.push({
@@ -277,34 +344,56 @@ function scanTables(lines: readonly SourceLine[], fences: readonly SourceRange[]
 	return tables;
 }
 
-function tableRow(line: SourceLine): TableRow {
+function isDelimiterRow(line: SourceLine, contentStart: number): boolean {
+	const cells = splitTableRow(line, contentStart);
+	return cells.length > 0 && cells.every((cell) =>
+		/^:?-+:?$/.test(line.text.slice(cell.start, cell.end).trim())
+	);
+}
+
+function isTableBodyTerminator(text: string): boolean {
+	return /^ {0,3}#{1,6}(?:[ \t]+|$)/.test(text) ||
+		/^ {0,3}>/.test(text) ||
+		/^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]+/.test(text) ||
+		/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(text);
+}
+
+function tableRow(line: SourceLine, contentStart = 0): TableRow {
 	return {
 		start: line.start,
 		end: line.end,
-		cells: splitTableRow(line).map((cell) => ({
+		cells: splitTableRow(line, contentStart).map((cell) => ({
 			start: line.start + cell.start,
 			end: line.start + cell.end,
 		})),
 	};
 }
 
-function splitTableRow(line: SourceLine): SourceRange[] {
+function splitTableRow(line: SourceLine, contentStart = 0): SourceRange[] {
 	const pipes: number[] = [];
-	for (let index = 0; index < line.text.length; index += 1) {
+	for (let index = contentStart; index < line.text.length; index += 1) {
 		if (line.text[index] === '|' && !isEscaped(line.text, index)) {
 			pipes.push(index);
 		}
 	}
 	if (pipes.length === 0) {
-		return [{ start: 0, end: line.text.length }];
+		return [{ start: contentStart, end: line.text.length }];
 	}
-	const starts = [0, ...pipes.map((pipe) => pipe + 1)];
+	let trimmedStart = contentStart;
+	while (line.text[trimmedStart] === ' ' || line.text[trimmedStart] === '\t') {
+		trimmedStart += 1;
+	}
+	let trimmedEnd = line.text.length;
+	while (trimmedEnd > trimmedStart && (line.text[trimmedEnd - 1] === ' ' || line.text[trimmedEnd - 1] === '\t')) {
+		trimmedEnd -= 1;
+	}
+	const starts = [contentStart, ...pipes.map((pipe) => pipe + 1)];
 	const ends = [...pipes, line.text.length];
 	const cells = starts.map((start, index) => ({ start, end: ends[index] ?? line.text.length }));
-	if (pipes[0] === 0) {
+	if (pipes[0] === trimmedStart) {
 		cells.shift();
 	}
-	if (pipes[pipes.length - 1] === line.text.length - 1) {
+	if (pipes[pipes.length - 1] === trimmedEnd - 1) {
 		cells.pop();
 	}
 	return cells;

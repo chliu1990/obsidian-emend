@@ -620,6 +620,26 @@ describe('Markdown structural edit safeguards', () => {
 		)).toThrow(/not found|match/i);
 	});
 
+	it('honors closing backticks after backslashes in absolute selection context', () => {
+		const fullText = 'Before\n`alpha\\` after';
+		const error = structuralError(() => compileEditOperations(
+			'alpha',
+			JSON.stringify([{ type: 'replace', target: 'alpha', replacement: 'beta' }]),
+			{ fullText, from: 8, to: 13 },
+		));
+		expect(error).toMatchObject({ code: 'inline-code-range', field: 'target', line: 2 });
+	});
+
+	it('uses the insertion point rather than the anchor start for diagnostic lines', () => {
+		const error = structuralError(() => prepare('`alpha\r\nbeta`', [
+			{ type: 'insert', anchor: 'alpha\r\nbeta', position: 'after', text: 'added' },
+		]));
+		expect(error).toMatchObject({ code: 'inline-code-range', field: 'anchor', line: 2 });
+		expect((error as Error).message).toBe(
+			'Operation 1 insertion is inside an inline code span at line 2; insert before or after the complete span instead. No edits were applied.',
+		);
+	});
+
 	it('keeps existing range-isolation errors ahead of structural checks', () => {
 		expect(structuralError(() => prepare('`alpha`', [
 			{ type: 'remove', target: 'alpha' },
