@@ -82,10 +82,12 @@ Useful controls:
    ```
 
 2. Confirm that chat shows an edit confirmation rather than the full rewritten note.
-3. Open the Track Changes review surface. You should see the correction and insertion as reviewable changes.
+3. Open the Track Changes review surface. You should see the correction and insertion as reviewable changes. Even if the model replaces a whole sentence or paragraph, Emend reduces the review markup to deterministic word/segment-level hunks where practical; it does not produce character-minimal fragments.
 4. Accept or reject the changes in Track Changes. Emend itself has no Apply/Reject buttons.
 
 For quick actions, select **Fix grammar**, **Make concise**, or **Add examples** above the composer. Each switches to Edit and submits one visible request through the same guarded path.
+
+An invalid candidate causes exactly one automatic correction request to the same provider, so one submission can make at most two provider calls. The correction includes the unchanged original request, the invalid response, and bounded actionable validation feedback. A second invalid response writes nothing and shows the final diagnostic. Provider errors, Stop, stale notes, and write failures do not trigger another correction round. Full-note token usage includes every attempted round.
 
 ## 5. Test selection-only editing
 
@@ -98,14 +100,16 @@ For quick actions, select **Fix grammar**, **Make concise**, or **Add examples**
    ```
 
 4. Select **Modify selection**, or use **Fix grammar**, **Make concise**, or **Add examples** in the modal to submit a shared quick-action prompt without typing.
-5. Confirm that only the selected sentence receives CriticMarkup. The heading and idea list must remain unchanged.
+5. Confirm that only the selected sentence receives CriticMarkup. The heading and idea list must remain unchanged. Selection replacements use the same word-aware multi-hunk minimization and single validation-correction round as full-note Edit.
 6. Review it in Track Changes, or press **Cmd+Z** on macOS (**Ctrl+Z** on Windows/Linux) to undo the editor replacement.
 
 **Smart selection context** is enabled by default. Emend can send the containing paragraph for context, but it never expands the replacement target.
 
 ## 6. Understand operation-based editing
 
-Every full-note and selection edit asks the model for a closed JSON array of `insert`, `remove`, `replace`, and `comment` commands. Emend validates exact anchors and occurrences, rejects ambiguous or overlapping commands, compiles valid commands into CriticMarkup, and uses the same Track Changes review path. Operations are the only model-facing edit protocol; there is no edit-strategy setting.
+Every full-note and selection edit asks the model for a closed JSON array of `insert`, `remove`, `replace`, and `comment` commands. Emend validates exact anchors and occurrences, rejects ambiguous or overlapping commands, compiles valid commands into CriticMarkup, and uses the same Track Changes review path. Typed diagnostics identify precise failure codes, operation numbers, and bounded match details. Existing declared-range overlap and insertion-ambiguity checks remain conservative after minimization. Operations are the only model-facing edit protocol; there is no edit-strategy setting.
+
+The minimizer shares a bounded work budget across each response and falls back to one substitution for the changed middle when a detailed diff would be too expensive. Correction requests are transient implementation details: raw operations, rejected candidates, and diagnostic feedback do not appear in ready chats or stored threads. After a retry, full-note chat keeps only the successful attempt's reasoning; selection editing has no usage footer or retry-status UI.
 
 ## 7. Test instructions and skills
 

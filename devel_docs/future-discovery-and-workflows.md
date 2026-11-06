@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-These are approved future feature requests, not current Emend behavior. Every item requires its own focused design, reviewed PR, unit tests, privacy/permission review, and appropriate real-Obsidian verification. Nothing here authorizes background requests, hidden vault scans, automatic uploads, new write permissions, or a bundled implementation.
+Except for entries explicitly marked implemented and linked to their verification records, these are approved future feature requests, not current Emend behavior. Every deferred item requires its own focused design, reviewed PR, unit tests, privacy/permission review, and appropriate real-Obsidian verification. Nothing here authorizes background requests, hidden vault scans, automatic uploads, new write permissions, or a bundled implementation.
 
 ## 1. File-structure and title discovery for automatic TOCs
 
@@ -42,14 +42,16 @@ Track: https://github.com/chliu1990/obsidian-emend/issues/24
 - [ ] Default to the selection workflow when usable text is selected, while preserving an explicit way to choose full-note chat/Edit.
 - [ ] Reuse exact selection capture, complete-selection prompting, guarded Operations, native undo, pending controls, and Track Changes; do not add a second writer or submission path.
 
-## 5. Minimal edit ranges — issue #23
+## 5. Minimal edit ranges — issue #23 (implemented)
 
 Track: https://github.com/chliu1990/obsidian-emend/issues/23
 
-- [ ] Reduce unnecessarily broad replacement ranges so small textual changes remain small and readable in Track Changes.
-- [ ] Improve precise anchor/location selection and ambiguous-target diagnostics so the model and user can locate the intended modification reliably.
-- [ ] Evaluate prompt guidance and deterministic post-processing separately; preserve exact source semantics and never weaken Operations validation.
-- [ ] Test substitutions within sentences, repeated text, Unicode, existing CriticMarkup, overlap/ambiguity rejection, and unchanged-output no-ops.
+Implemented and verified in [Stage 37](37-minimal-edit-ranges.md); no deferred checklist item remains here.
+
+- [x] Reduce unnecessarily broad replacement ranges so small textual changes remain small and readable in Track Changes.
+- [x] Improve precise anchor/location selection and ambiguous-target diagnostics so the model and user can locate the intended modification reliably.
+- [x] Evaluate prompt guidance and deterministic post-processing separately; preserve exact source semantics and never weaken Operations validation.
+- [x] Test substitutions within sentences, repeated text, Unicode, existing CriticMarkup, overlap/ambiguity rejection, and unchanged-output no-ops.
 
 ## 6. Permission-grouped modes — issue #25
 
