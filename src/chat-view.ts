@@ -51,6 +51,9 @@ export class EmendChatView extends ItemView {
 	private webReviewModal: WebSearchModal | null = null;
 	private activeController: AbortController | null = null;
 	private pendingRenderFrame: number | null = null;
+	private pendingMarkdownRenders = 0;
+	private pendingScrollRestore: { previousScrollTop: number; wasFollowing: boolean } | null = null;
+	private renderGeneration = 0;
 	private pendingMessages = new Set<ChatMessage>();
 	private messageBodyEls = new Map<string, HTMLElement>();
 	private closed = false;
@@ -94,6 +97,9 @@ export class EmendChatView extends ItemView {
 		this.activeController?.abort();
 		this.webReviewModal?.close();
 		this.webReviewModal = null;
+		this.renderGeneration++;
+		this.pendingMarkdownRenders = 0;
+		this.pendingScrollRestore = null;
 		this.cancelPendingRender();
 		this.pendingMessages.clear();
 		this.messageBodyEls.clear();
@@ -170,6 +176,9 @@ export class EmendChatView extends ItemView {
 	private render() {
 		const previousScrollTop = this.messagesEl?.scrollTop ?? 0;
 		const wasFollowing = this.followLatestMessages;
+		this.renderGeneration++;
+		this.pendingMarkdownRenders = 0;
+		this.pendingScrollRestore = null;
 		this.cancelPendingRender();
 		this.pendingMessages.clear();
 		this.messageBodyEls.clear();
@@ -328,7 +337,8 @@ export class EmendChatView extends ItemView {
 				text: WEB_SEARCH_DISCLOSURE,
 			});
 		}
-		this.restoreMessageScroll(previousScrollTop, wasFollowing);
+		this.pendingScrollRestore = { previousScrollTop, wasFollowing };
+		this.settleMarkdownRender(this.renderGeneration);
 	}
 
 	private renderEmptyState(containerEl: HTMLElement) {
@@ -450,6 +460,8 @@ export class EmendChatView extends ItemView {
 		const currentContentEl = bodyEl.createDiv('emend-chat-message-content');
 		const renderedEl = bodyEl.ownerDocument.createElement('div');
 		renderedEl.className = 'emend-chat-message-content';
+		const generation = this.renderGeneration;
+		this.pendingMarkdownRenders = (this.pendingMarkdownRenders ?? 0) + 1;
 		void MarkdownRenderer.render(
 			this.app,
 			message.content,
@@ -462,12 +474,14 @@ export class EmendChatView extends ItemView {
 					currentContentEl.replaceWith(renderedEl);
 					this.scrollMessagesToBottomIfFollowing();
 				}
+				this.settleMarkdownRender(generation);
 			})
 			.catch(() => {
 				if (!this.closed && currentContentEl.isConnected) {
 					currentContentEl.textContent = message.content;
 					this.scrollMessagesToBottomIfFollowing();
 				}
+				this.settleMarkdownRender(generation);
 			});
 	}
 
@@ -491,6 +505,21 @@ export class EmendChatView extends ItemView {
 		}
 		if (this.messagesEl) {
 			this.messagesEl.scrollTop = previousScrollTop;
+		}
+	}
+
+	private settleMarkdownRender(generation: number) {
+		if (generation !== this.renderGeneration) {
+			return;
+		}
+		this.pendingMarkdownRenders = Math.max(0, (this.pendingMarkdownRenders ?? 0) - 1);
+		if (this.pendingMarkdownRenders > 0) {
+			return;
+		}
+		const restore = this.pendingScrollRestore;
+		this.pendingScrollRestore = null;
+		if (restore) {
+			this.restoreMessageScroll(restore.previousScrollTop, restore.wasFollowing);
 		}
 	}
 
@@ -670,11 +699,7 @@ export class EmendChatView extends ItemView {
 				loadingMessage.usage = result.usage;
 				loadingMessage.webSources = result.sources;
 				loadingMessage.webActivities = result.activities;
-				const unreadPages = new Set(
-					(result.activities ?? [])
-						.filter((activity) => activity.type === 'fetch' && activity.status === 'failed')
-						.map((activity) => activity.target),
-				).size;
+				const unreadPages = getUnreadPageCount(result.activities);
 				if (unreadPages > 0) {
 					loadingMessage.content += `${loadingMessage.content ? '\n\n' : ''}Emend could not read ${unreadPages} requested page${unreadPages === 1 ? '' : 's'}. The answer may be incomplete.`;
 				}
@@ -762,6 +787,23 @@ export class EmendChatView extends ItemView {
 		const model = provider.model.trim();
 		return model ? `${provider.name} · ${model}` : provider.name;
 	}
+}
+
+export function getUnreadPageCount(activities: WebActivityRecord[] | undefined) {
+	const completedTargets = new Set(
+		(activities ?? [])
+			.filter((activity) => activity.type === 'fetch' && activity.status === 'completed')
+			.map((activity) => activity.target),
+	);
+	return new Set(
+		(activities ?? [])
+			.filter((activity) =>
+				activity.type === 'fetch' &&
+				activity.status === 'failed' &&
+				!completedTargets.has(activity.target)
+			)
+			.map((activity) => activity.target),
+	).size;
 }
 
 export function formatChatMessageForCopy(message: ChatMessage) {

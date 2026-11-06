@@ -130,7 +130,10 @@ describe('DeepSeek retrieval clients', () => {
 			{ id: 'call-2', name: 'web_fetch', url: 'https://example.test/private' },
 			provider,
 			new AbortController().signal,
-		)).rejects.toMatchObject({ status: 401, message: expect.not.stringContaining('dummy-key') });
+		)).rejects.toMatchObject({
+			status: 401,
+			message: 'API request failed with HTTP 401.\nUnauthorized [redacted]',
+		});
 	});
 
 	it('propagates aborts without wrapping them', async () => {

@@ -3,7 +3,7 @@ import { MarkdownRenderer, Scope } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AdditionalNotesStore } from '../src/additional-notes-store';
 import type { ShortcutEvent } from '../src/chat-shortcuts';
-import { EmendChatView, formatChatMessageForCopy } from '../src/chat-view';
+import { EmendChatView, formatChatMessageForCopy, getUnreadPageCount } from '../src/chat-view';
 import type { ChatMessage, Mode, ProviderHistoryMessage } from '../src/types';
 
 function getCssRule(selector: string): string {
@@ -74,6 +74,7 @@ const viewPrototype = EmendChatView.prototype as unknown as {
 	scrollMessagesToBottom(this: unknown): void;
 	scrollMessagesToBottomIfFollowing(this: unknown): void;
 	restoreMessageScroll(this: unknown, previousScrollTop: number, wasFollowing: boolean): void;
+	settleMarkdownRender(this: unknown, generation: number): void;
 	scheduleMessageRender(this: unknown, message: ChatMessage): void;
 	getDisplayText(this: unknown): string;
 	onClose(this: unknown): Promise<void>;
@@ -1091,9 +1092,64 @@ describe('EmendChatView latest-message scrolling', () => {
 			closed: false,
 			messageBodyEls: new Map<string, HTMLElement>([['answer', body as unknown as HTMLElement]]),
 			scrollMessagesToBottomIfFollowing,
+			settleMarkdownRender: (generation: number) =>
+				viewPrototype.settleMarkdownRender.call(context, generation),
 		};
 
 		viewPrototype.renderMessageBody.call(context, message('answer', 'Note.md'));
 		await vi.waitFor(() => expect(scrollMessagesToBottomIfFollowing).toHaveBeenCalledOnce());
+	});
+});
+
+
+describe('EmendChatView completion relayout and unread pages', () => {
+	it('restores upward-reading position only after all current Markdown layouts settle', async () => {
+		const firstRender = deferred<void>();
+		const secondRender = deferred<void>();
+		vi.spyOn(MarkdownRenderer, 'render')
+			.mockImplementationOnce(() => firstRender.promise)
+			.mockImplementationOnce(() => secondRender.promise);
+		const messagesEl = new FakeElement();
+		messagesEl.scrollHeight = 1200;
+		const context = {
+			closed: false,
+			renderGeneration: 1,
+			pendingMarkdownRenders: 0,
+			pendingScrollRestore: { previousScrollTop: 275, wasFollowing: false },
+			messagesEl,
+			messageBodyEls: new Map<string, HTMLElement>(),
+			scrollMessagesToBottomIfFollowing: vi.fn(),
+			settleMarkdownRender: (generation: number) =>
+				viewPrototype.settleMarkdownRender.call(context, generation),
+			restoreMessageScroll: (previousScrollTop: number, wasFollowing: boolean) =>
+				viewPrototype.restoreMessageScroll.call(context, previousScrollTop, wasFollowing),
+		};
+		for (const id of ['first', 'second']) {
+			const body = new FakeElement();
+			Object.assign(body, {
+				ownerDocument: { createElement: () => new FakeElement() },
+			});
+			context.messageBodyEls.set(id, body as unknown as HTMLElement);
+		}
+
+		viewPrototype.renderMessageBody.call(context, message('first', 'Note.md'));
+		viewPrototype.renderMessageBody.call(context, message('second', 'Note.md'));
+		expect(context.pendingMarkdownRenders).toBe(2);
+
+		firstRender.resolve();
+		await vi.waitFor(() => expect(context.pendingMarkdownRenders).toBe(1));
+		expect(messagesEl.scrollTop).toBe(0);
+		secondRender.resolve();
+		await vi.waitFor(() => expect(messagesEl.scrollTop).toBe(275));
+	});
+
+	it('does not warn about a page that later fetched successfully', () => {
+		expect(getUnreadPageCount([
+			{ type: 'fetch', target: 'https://example.test/page', status: 'failed' },
+			{ type: 'fetch', target: 'https://example.test/page', status: 'completed' },
+		])).toBe(0);
+		expect(getUnreadPageCount([
+			{ type: 'fetch', target: 'https://example.test/other', status: 'failed' },
+		])).toBe(1);
 	});
 });
