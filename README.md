@@ -7,6 +7,7 @@ Emend is a desktop Obsidian plugin for streaming AI chat and safe, reviewable ed
 ## Features
 
 - **Chat with context:** Ask questions, discuss ideas, or brainstorm with the active note. Responses and reasoning stream into the sidebar; these modes never write to your notes.
+- **Research on the web explicitly:** For DeepSeek `deepseek-flash` and `deepseek-v4-pro`, the read-only composer offers **Web: Off** (the default), **Review**, and **Auto**. The model can direct sequential search/fetch calls across multiple rounds; Review shows editable call batches, and actual retrieved HTTP(S) results become stable, safe citations. Search returns bounded page content before Fetch is needed. Expected Fetch failures become visible unread-page outcomes instead of failing the whole answer, while credential/account errors remain fatal. Folded Web activity preserves query/URL/status metadata locally. Web retrieval never writes notes. Kimi/custom providers and other models are unsupported, with no silent unsearched fallback.
 - **Add notes explicitly:** Use **Add notes** in chat or Modify Selection to include bounded, read-only snapshots of other Markdown notes. Paths stay visible with remove/clear controls; selections belong to the active target note, last only for the current plugin session, and clear when the Emend plugin or Obsidian reloads.
 - **Edit with confidence:** Full-note and selection edits use a closed Operations protocol—`insert`, `remove`, `replace`, and `comment`—with exact anchors and atomic validation before anything is written.
 - **Review every change:** Valid operations become CriticMarkup that you can accept or reject in Track Changes. Emend has no competing diff or Apply button.
@@ -65,9 +66,10 @@ Open **Settings → Community plugins**, reload plugins, and enable **Emend** an
 
 2. Open **Emend chat** from the ribbon or Command Palette.
 3. Select **Ask**, **Discuss**, or **Brainstorm** and submit a question. The note stays unchanged.
-4. Optionally click **Add notes** to choose other Markdown notes as read-only context for the next request. Review their visible paths and use **Remove** or **Clear all** as needed; these per-target selections survive note switches during the current plugin session and clear when the Emend plugin or Obsidian reloads.
-5. Select **Edit** or a quick action to make a change. Review the resulting markup in Track Changes.
-6. For a smaller edit, select text and run **Modify selected text with AI**. Enter an instruction or use a quick action in the modal. The same target note's additional-note selections are available here.
+4. Optionally use the composer **Web** control with DeepSeek `deepseek-flash` or `deepseek-v4-pro`. **Off** is the default; **Review** shows each model-proposed search/fetch batch with editable queries/URLs, while **Auto** runs validated batches directly. The model may use multiple rounds and sequential calls up to **Settings → Emend → Web tool call limit** (default 8, range 1–20). Retrieved content shares a 40,000-character submission budget, with at most 12,000 characters per fetched page. The disclosure warns that arguments may contain note-derived text and successful DeepSeek retrieval may be billed separately. Web is unavailable in Edit and for Kimi/custom providers or unsupported models; failures never silently become unsearched answers.
+5. Optionally click **Add notes** to choose other Markdown notes as read-only context for the next request. Review their visible paths and use **Remove** or **Clear all** as needed; these per-target selections survive note switches during the current plugin session and clear when the Emend plugin or Obsidian reloads.
+6. Select **Edit** or a quick action to make a change. Review the resulting markup in Track Changes.
+7. For a smaller edit, select text and run **Modify selected text with AI**. Enter an instruction or use a quick action in the modal. The same target note's additional-note selections are available here.
 
 <img src="docs/images/emend-selection.jpg" alt="Modify selected text dialog with quick actions" width="720">
 
@@ -107,10 +109,11 @@ Model history retains each ready message's mode, historical note-write permissio
 Emend makes **no background AI requests**. Content is sent only when you explicitly submit a chat or edit action.
 
 - Note context, prompts, recent ready history, explicitly selected additional-note snapshots, and any loaded `AGENTS.md`/skill instructions are sent to the selected provider as required for that request. Picking, opening, or switching notes sends nothing and does not read additional-note content.
-- Full-note Edit sends the entire active note. Read-only chat uses bounded active-note context; selection editing sends the complete selection and bounded surrounding context. Additional notes use a separate combined source-character budget and are read-only in every mode.
+- With **Web: Review** or **Auto**, those ordinary model-round contents go to DeepSeek, which may derive search queries and fetch URLs from them. DeepSeek search/fetch endpoints receive only the visible validated arguments; Review permits editing every proposed batch. Retrieved text is untrusted external data and never writes notes or becomes instructions/skills. Successful retrieval may be billed separately. Changing the Web control, opening a note, loading a thread, or rendering citations performs no retrieval.
+- Full-note Edit sends the entire active note. Read-only chat uses bounded active-note context; selection editing sends the complete selection and bounded surrounding context. Additional notes use a separate combined source-character budget and are read-only in every mode. Web search is unavailable to Edit, quick actions, and Modify Selection.
 - Note and vault paths are sent only when **Include note path** is enabled. With it off, additional-note sections have generic numbered labels without their paths; with it on, they include vault-qualified paths. The local controls always show selected paths before submission.
 - API keys are stored in **Obsidian SecretStorage**, not plaintext `data.json`. Legacy plaintext keys are migrated automatically.
-- Ready conversations are stored locally under `<Vault>/.obsidian/emend/chats/`. API keys, request bodies, additional-note selections/snapshots, loading/error states, and buffered edit responses are not persisted.
+- Ready conversations are stored locally under `<Vault>/.obsidian/emend/chats/` using schema 2; version 1 threads load and become schema 2 on the next save. Ready Review/Auto badges, sanitized result-backed citations, and folded Web activity (search queries, fetch URLs, and completed/failed/skipped outcomes) may persist. API keys, raw request bodies/tool arguments/results, retrieved content, transient activity, additional-note selections/snapshots, loading/error/stopped states, and buffered edit responses are not persisted.
 - Deleting a note does not automatically delete its saved conversation.
 
 See the [privacy and storage details](QUICK_START.md#8-verify-persistence-and-privacy-behavior) and [installation/removal guide](INSTALLATION.md#remove-emend) for cleanup instructions.
@@ -121,13 +124,14 @@ See the [privacy and storage details](QUICK_START.md#8-verify-persistence-and-pr
 - [Quick start](QUICK_START.md)
 - [Architecture and implementation records](IMPLEMENTATION_PLAN.md)
 - [Roadmap](ROADMAP.md) and [changelog](CHANGELOG.md)
+- [DeepSeek online search implementation](devel_docs/36-deepseek-online-search.md)
 - [Contributing guide](CONTRIBUTING.md) and [security policy](SECURITY.md)
 - [CI and release workflows](.github/workflows/)
 - [Deferred context-management roadmap](devel_docs/future-context-management.md)
-- [Deferred web-search roadmap](devel_docs/future-web-search.md)
+- [Remaining web-search roadmap](devel_docs/future-web-search.md)
 - [Provider and context feature backlog](devel_docs/future-provider-and-context-features.md)
 
-Deferred documents describe possible future work, not features in this release.
+Deferred documents describe possible future work, not features in this release; the web-search roadmap separately identifies the implemented DeepSeek baseline.
 
 ## Development
 

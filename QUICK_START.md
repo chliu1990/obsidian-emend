@@ -45,7 +45,7 @@ Emend appends `/chat/completions` to the base URL. The provider must support str
 
 API keys are stored in Obsidian SecretStorage, not as plaintext in Emend's `data.json`. Existing plaintext keys migrate automatically on load. Clearing a key in settings removes that provider's stored credential; removing the plugin folder alone does not. Do not use a real key in screenshots or shared test files.
 
-The editable presets above are DeepSeek `deepseek-flash` and Kimi `k3.1-pro`. Operations is the only editing protocol; there is no CriticMarkup strategy selector. Context-cost bars/automatic compression and online search are deferred, not current features; see the [context-management roadmap](devel_docs/future-context-management.md) and [web-search roadmap](devel_docs/future-web-search.md).
+The editable presets above are DeepSeek `deepseek-flash` and Kimi `k3.1-pro`. Operations is the only editing protocol; there is no CriticMarkup strategy selector. DeepSeek `deepseek-flash` and `deepseek-v4-pro` support default-off **Web: Review / Auto** research in read-only chat; other providers and editing paths do not. Context-cost bars/automatic compression and other-provider search adapters remain deferred; see the [context-management roadmap](devel_docs/future-context-management.md) and [remaining web-search work](devel_docs/future-web-search.md).
 
 ## 3. Test read-only chat
 

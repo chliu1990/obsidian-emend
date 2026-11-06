@@ -441,3 +441,33 @@ describe('EmendPlugin additional-note lifecycle', () => {
 		expect(requestSelectionEdit).not.toHaveBeenCalled();
 	});
 });
+
+
+describe('EmendPlugin web provider guard', () => {
+	it.each([
+		['custom', 'deepseek-flash'],
+		['kimi', 'k3.1-pro'],
+		['deepseek', 'unsupported-model'],
+	] as const)('rejects web mode for %s model %s before any request', async (activeProvider, model) => {
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		const settings = structuredClone(DEFAULT_SETTINGS);
+		settings.activeProvider = activeProvider;
+		settings.providers[activeProvider].model = model;
+		Object.assign(plugin, { settings });
+
+		await expect(plugin.requestChatCompletion({
+			context: { file: { path: 'Note.md' } } as ReadOnlySubmission['context'],
+			mode: 'ask',
+			prompt: 'Research this',
+			history: [],
+			callbacks: { onContent: vi.fn(), onReasoning: vi.fn() },
+			webSearch: {
+				mode: 'auto',
+				maxToolCalls: 8,
+				reviewCalls: async (calls) => calls,
+				onActivity: vi.fn(),
+			},
+			signal: new AbortController().signal,
+		})).rejects.toThrow('only available for DeepSeek deepseek-flash and deepseek-v4-pro');
+	});
+});

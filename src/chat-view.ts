@@ -19,8 +19,17 @@ import {
 } from './quick-actions';
 import { formatTokenUsage } from './token-usage';
 import type { ChatMessage, Mode, ProviderHistoryMessage } from './types';
+import { WebSearchModal } from './web-search-modal';
+import type {
+	WebActivityRecord,
+	WebSearchActivity,
+	WebSearchMode,
+	WebSource,
+	WebToolCall,
+} from './web-search';
 
 export const EMEND_CHAT_VIEW_TYPE = 'emend-chat-view';
+export const WEB_SEARCH_DISCLOSURE = 'DeepSeek may generate search queries and fetch URLs from note context. Review asks before each batch; Auto runs directly. Successful search/fetch calls may be billed separately. Queries, URLs, and outcomes are stored locally with ready chats.';
 
 const MODE_PLACEHOLDERS: Record<Mode, string> = {
 	ask: 'Ask about the active note...',
@@ -31,13 +40,21 @@ const MODE_PLACEHOLDERS: Record<Mode, string> = {
 
 export class EmendChatView extends ItemView {
 	private messages: ChatMessage[] = [];
+	private messagesEl: HTMLElement | null = null;
+	private followLatestMessages = true;
+	private responseStartMessageId: string | null = null;
 	private inputEl: HTMLTextAreaElement | null = null;
 	private activeModelEl: HTMLElement | null = null;
 	private isSending = false;
 	private isThreadLoading = false;
 	private selectedMode: Mode;
+	private webSearchMode: WebSearchMode = 'off';
+	private webReviewModal: WebSearchModal | null = null;
 	private activeController: AbortController | null = null;
 	private pendingRenderFrame: number | null = null;
+	private pendingMarkdownRenders = 0;
+	private pendingScrollRestore: { previousScrollTop: number; wasFollowing: boolean } | null = null;
+	private renderGeneration = 0;
 	private pendingMessages = new Set<ChatMessage>();
 	private messageBodyEls = new Map<string, HTMLElement>();
 	private closed = false;
@@ -79,10 +96,16 @@ export class EmendChatView extends ItemView {
 		this.noteLoadGeneration++;
 		this.notePath = null;
 		this.activeController?.abort();
+		this.webReviewModal?.close();
+		this.webReviewModal = null;
+		this.renderGeneration++;
+		this.pendingMarkdownRenders = 0;
+		this.pendingScrollRestore = null;
 		this.cancelPendingRender();
 		this.pendingMessages.clear();
 		this.messageBodyEls.clear();
 		this.activeModelEl = null;
+		this.messagesEl = null;
 		this.additionalNotesControl?.destroy();
 		this.additionalNotesControl = null;
 		this.inputEl = null;
@@ -117,6 +140,7 @@ export class EmendChatView extends ItemView {
 			this.drafts.set(this.notePath, this.inputEl.value);
 		}
 		this.notePath = notePath;
+		this.followLatestMessages = true;
 		const generation = ++this.noteLoadGeneration;
 		if (this.isSending) {
 			this.activeController?.abort();
@@ -151,6 +175,11 @@ export class EmendChatView extends ItemView {
 	}
 
 	private render() {
+		const previousScrollTop = this.messagesEl?.scrollTop ?? 0;
+		const wasFollowing = this.followLatestMessages;
+		this.renderGeneration++;
+		this.pendingMarkdownRenders = 0;
+		this.pendingScrollRestore = null;
 		this.cancelPendingRender();
 		this.pendingMessages.clear();
 		this.messageBodyEls.clear();
@@ -199,6 +228,11 @@ export class EmendChatView extends ItemView {
 		}
 
 		const messagesEl = contentEl.createDiv('emend-chat-messages');
+		this.messagesEl = messagesEl;
+		messagesEl.addEventListener('scroll', () => {
+			this.followLatestMessages =
+				messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight <= 24;
+		});
 		if (this.messages.length === 0) {
 			this.renderEmptyState(messagesEl);
 		} else {
@@ -252,6 +286,33 @@ export class EmendChatView extends ItemView {
 		});
 
 		const actionsEl = composerEl.createDiv('emend-chat-composer-actions');
+		const webLabelEl = actionsEl.createEl('label', { cls: 'emend-chat-web-mode' });
+		webLabelEl.createSpan({ text: 'Web' });
+		const webSelectEl = webLabelEl.createEl('select', {
+			attr: { 'aria-label': 'Web search mode' },
+		});
+		webSelectEl.title = WEB_SEARCH_DISCLOSURE;
+		for (const [value, label] of [
+			['off', 'Off'],
+			['review', 'Review'],
+			['auto', 'Auto'],
+		] as const) {
+			webSelectEl.createEl('option', { text: label, attr: { value } });
+		}
+		webSelectEl.value = this.webSearchMode ?? 'off';
+		webSelectEl.disabled = this.isSending || this.isThreadLoading || this.selectedMode === 'edit';
+		webSelectEl.addEventListener('change', () => {
+			const value = webSelectEl.value;
+			if (value !== 'off' && value !== 'review' && value !== 'auto') {
+				return;
+			}
+			const draft = this.inputEl?.value ?? '';
+			this.webSearchMode = value;
+			this.render();
+			if (this.inputEl) {
+				this.inputEl.value = draft;
+			}
+		});
 		this.activeModelEl = actionsEl.createDiv({
 			cls: 'emend-chat-active-model',
 			text: this.getActiveModelLabel(),
@@ -272,6 +333,10 @@ export class EmendChatView extends ItemView {
 				void this.submitPrompt();
 			}
 		});
+		this.pendingScrollRestore = { previousScrollTop, wasFollowing };
+		if (this.pendingMarkdownRenders === 0) {
+			this.settleMarkdownRender(this.renderGeneration);
+		}
 	}
 
 	private renderEmptyState(containerEl: HTMLElement) {
@@ -287,9 +352,10 @@ export class EmendChatView extends ItemView {
 	}
 
 	private renderMessage(containerEl: HTMLElement, message: ChatMessage) {
-		const messageEl = containerEl.createDiv(
-			`emend-chat-message is-${message.role} is-${message.status}`,
-		);
+		const messageEl = containerEl.createDiv({
+			cls: `emend-chat-message is-${message.role} is-${message.status}`,
+			attr: { 'data-message-id': message.id },
+		});
 		const headerEl = messageEl.createDiv('emend-chat-message-header');
 		const labelsEl = headerEl.createDiv('emend-chat-message-labels');
 		labelsEl.createDiv({
@@ -300,6 +366,12 @@ export class EmendChatView extends ItemView {
 			cls: 'emend-chat-mode-badge',
 			text: getModeLabel(message.mode),
 		});
+		if (message.webSearchMode) {
+			labelsEl.createDiv({
+				cls: 'emend-chat-mode-badge',
+				text: `Web: ${message.webSearchMode === 'review' ? 'Review' : 'Auto'}`,
+			});
+		}
 		if (message.status === 'stopped') {
 			labelsEl.createDiv({
 				cls: 'emend-chat-mode-badge',
@@ -317,13 +389,17 @@ export class EmendChatView extends ItemView {
 				text: 'Copy',
 			});
 			copyButton.addEventListener('click', () => {
-				void copyToClipboard(message.content);
+				void copyToClipboard(formatChatMessageForCopy(message));
 			});
 		}
 
 		const bodyEl = messageEl.createDiv('emend-chat-message-body');
 		this.messageBodyEls.set(message.id, bodyEl);
 		this.renderMessageBody(message);
+		if (message.role === 'assistant' && message.status === 'ready') {
+			renderWebActivities(messageEl, message.webActivities);
+			renderWebSources(messageEl, message.webSources);
+		}
 		if (
 			message.role === 'assistant' &&
 			message.status === 'ready' &&
@@ -342,6 +418,13 @@ export class EmendChatView extends ItemView {
 			return;
 		}
 		bodyEl.empty();
+
+		if (message.status === 'loading' && message.webActivity) {
+			bodyEl.createDiv({
+				cls: 'emend-chat-web-activity',
+				text: message.webActivity,
+			});
+		}
 
 		if (message.reasoning) {
 			const detailsEl = bodyEl.createEl('details', {
@@ -376,6 +459,8 @@ export class EmendChatView extends ItemView {
 		const currentContentEl = bodyEl.createDiv('emend-chat-message-content');
 		const renderedEl = bodyEl.ownerDocument.createElement('div');
 		renderedEl.className = 'emend-chat-message-content';
+		const generation = this.renderGeneration;
+		this.pendingMarkdownRenders = (this.pendingMarkdownRenders ?? 0) + 1;
 		void MarkdownRenderer.render(
 			this.app,
 			message.content,
@@ -386,13 +471,68 @@ export class EmendChatView extends ItemView {
 			.then(() => {
 				if (!this.closed && currentContentEl.isConnected) {
 					currentContentEl.replaceWith(renderedEl);
+					this.scrollMessagesToBottomIfFollowing();
 				}
+				this.settleMarkdownRender(generation);
 			})
 			.catch(() => {
 				if (!this.closed && currentContentEl.isConnected) {
 					currentContentEl.textContent = message.content;
+					this.scrollMessagesToBottomIfFollowing();
 				}
+				this.settleMarkdownRender(generation);
 			});
+	}
+
+	private scrollMessagesToBottom() {
+		if (this.closed || !this.messagesEl) {
+			return;
+		}
+		this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+	}
+
+	private scrollMessagesToBottomIfFollowing() {
+		if (this.followLatestMessages) {
+			this.scrollMessagesToBottom();
+		}
+	}
+
+	private restoreMessageScroll(previousScrollTop: number, wasFollowing: boolean) {
+		if (wasFollowing) {
+			this.scrollMessagesToBottom();
+			return;
+		}
+		if (this.messagesEl) {
+			this.messagesEl.scrollTop = previousScrollTop;
+		}
+	}
+
+	private settleMarkdownRender(generation: number) {
+		if (generation !== this.renderGeneration) {
+			return;
+		}
+		this.pendingMarkdownRenders = Math.max(0, (this.pendingMarkdownRenders ?? 0) - 1);
+		if (this.pendingMarkdownRenders > 0) {
+			return;
+		}
+		const responseStartMessageId = this.responseStartMessageId;
+		this.responseStartMessageId = null;
+		const restore = this.pendingScrollRestore;
+		this.pendingScrollRestore = null;
+		if (responseStartMessageId) {
+			const messageEl = this.messagesEl?.querySelector<HTMLElement>(
+				`[data-message-id="${responseStartMessageId}"]`,
+			);
+			if (this.messagesEl && messageEl) {
+				const scrollerTop = this.messagesEl.getBoundingClientRect().top;
+				const messageTop = messageEl.getBoundingClientRect().top;
+				this.messagesEl.scrollTop += messageTop - scrollerTop;
+			}
+			return;
+		}
+		if (restore) {
+			this.restoreMessageScroll(restore.previousScrollTop, restore.wasFollowing);
+		}
 	}
 
 	private scheduleMessageRender(message: ChatMessage) {
@@ -412,6 +552,7 @@ export class EmendChatView extends ItemView {
 			for (const pendingMessage of messages) {
 				this.renderMessageBody(pendingMessage);
 			}
+			this.scrollMessagesToBottomIfFollowing();
 		});
 	}
 
@@ -472,6 +613,9 @@ export class EmendChatView extends ItemView {
 
 		const history = this.toProviderHistory();
 		const mode = this.selectedMode;
+		const webSearchMode: WebSearchMode = mode === 'edit'
+			? 'off'
+			: this.webSearchMode ?? 'off';
 		const sourcePath = context.file.path;
 		const additionalNotePaths =
 			this.plugin.additionalNotesStore?.list(sourcePath) ?? [];
@@ -498,10 +642,13 @@ export class EmendChatView extends ItemView {
 			sourcePath,
 			status: 'ready',
 			timestamp: Date.now(),
+			...(webSearchMode !== 'off' ? { webSearchMode } : {}),
 		});
 		this.messages.push(loadingMessage);
 		this.activeController = controller;
 		this.isSending = true;
+		this.responseStartMessageId = null;
+		this.followLatestMessages = true;
 		this.render();
 
 		try {
@@ -547,8 +694,28 @@ export class EmendChatView extends ItemView {
 						},
 					},
 					signal: controller.signal,
+					...(webSearchMode !== 'off'
+						? {
+							webSearch: {
+								mode: webSearchMode,
+								maxToolCalls: this.plugin.settings.maxWebToolCalls,
+								reviewCalls: (calls: readonly WebToolCall[]) =>
+									this.reviewWebCalls(calls, controller.signal),
+								onActivity: (activity: WebSearchActivity) => {
+									loadingMessage.webActivity = activity.label;
+									this.scheduleMessageRender(loadingMessage);
+								},
+							},
+						}
+						: {}),
 				});
 				loadingMessage.usage = result.usage;
+				loadingMessage.webSources = result.sources;
+				loadingMessage.webActivities = result.activities;
+				const unreadPages = getUnreadPageCount(result.activities);
+				if (unreadPages > 0) {
+					loadingMessage.content += `${loadingMessage.content ? '\n\n' : ''}Emend could not read ${unreadPages} requested page${unreadPages === 1 ? '' : 's'}. The answer may be incomplete.`;
+				}
 			}
 			controller.signal.throwIfAborted();
 			loadingMessage.status = 'ready';
@@ -571,9 +738,39 @@ export class EmendChatView extends ItemView {
 			this.activeController = null;
 			this.isSending = false;
 			if (!this.closed) {
+				if (loadingMessage.status === 'ready') {
+					this.responseStartMessageId = loadingMessage.id;
+					this.followLatestMessages = false;
+				}
 				this.render();
 			}
 		}
+	}
+
+	private reviewWebCalls(
+		calls: readonly WebToolCall[],
+		signal: AbortSignal,
+	): Promise<readonly WebToolCall[]> {
+		return new Promise((resolve, reject) => {
+			const modal = new WebSearchModal(
+				this.app,
+				calls,
+				(value) => {
+					this.webReviewModal = null;
+					resolve(value);
+				},
+				(error: unknown) => {
+					this.webReviewModal = null;
+					reject(error instanceof Error ? error : new Error(String(error)));
+				},
+				() => this.activeController?.abort(),
+			);
+			this.webReviewModal = modal;
+			signal.addEventListener('abort', () => {
+				modal.close();
+			}, { once: true });
+			modal.open();
+		});
 	}
 
 	private async persistMessages(notePath: string, messages: ChatMessage[]) {
@@ -590,7 +787,9 @@ export class EmendChatView extends ItemView {
 			.slice(-8)
 			.map((message) => ({
 				role: message.role,
-				content: message.content,
+				content: message.role === 'assistant'
+					? formatChatMessageForCopy(message)
+					: message.content,
 				mode: message.mode,
 				origin: message.role === 'user'
 					? 'user'
@@ -604,6 +803,75 @@ export class EmendChatView extends ItemView {
 		];
 		const model = provider.model.trim();
 		return model ? `${provider.name} · ${model}` : provider.name;
+	}
+}
+
+export function getUnreadPageCount(activities: WebActivityRecord[] | undefined) {
+	const completedTargets = new Set(
+		(activities ?? [])
+			.filter((activity) => activity.type === 'fetch' && activity.status === 'completed')
+			.map((activity) => activity.target),
+	);
+	return new Set(
+		(activities ?? [])
+			.filter((activity) =>
+				activity.type === 'fetch' &&
+				activity.status === 'failed' &&
+				!completedTargets.has(activity.target)
+			)
+			.map((activity) => activity.target),
+	).size;
+}
+
+export function formatChatMessageForCopy(message: ChatMessage) {
+	const sources = message.webSources ?? [];
+	if (sources.length === 0) {
+		return message.content;
+	}
+	const sourceList = sources.map((source) =>
+		`- [${source.id}] [${source.title}](${source.url})`
+	).join('\n');
+	return `${message.content}\n\n### Sources\n${sourceList}`;
+}
+
+function renderWebActivities(
+	containerEl: HTMLElement,
+	activities: WebActivityRecord[] | undefined,
+) {
+	if (!activities?.length) {
+		return;
+	}
+	const detailsEl = containerEl.createEl('details', { cls: 'emend-chat-web-activity' });
+	detailsEl.open = false;
+	detailsEl.createEl('summary', { text: `Web activity (${activities.length})` });
+	for (const activity of activities) {
+		const type = activity.type === 'search' ? 'Search' : 'Fetch';
+		const status = activity.status.charAt(0).toUpperCase() + activity.status.slice(1);
+		detailsEl.createDiv({
+			cls: 'emend-chat-web-activity-item',
+			text: `${type} · ${status} · ${activity.target}`,
+		});
+	}
+}
+
+function renderWebSources(containerEl: HTMLElement, sources: WebSource[] | undefined) {
+	if (!sources?.length) {
+		return;
+	}
+	const detailsEl = containerEl.createEl('details', { cls: 'emend-chat-web-sources' });
+	detailsEl.open = false;
+	detailsEl.createEl('summary', { text: `Sources (${sources.length})` });
+	for (const source of sources) {
+		const itemEl = detailsEl.createDiv('emend-chat-web-source');
+		const anchorEl = itemEl.createEl('a', {
+			text: `[${source.id}] ${source.title}`,
+			attr: { href: source.url },
+		});
+		anchorEl.target = '_blank';
+		anchorEl.rel = 'noopener noreferrer';
+		if (source.snippet) {
+			itemEl.createDiv({ cls: 'emend-chat-web-source-snippet', text: source.snippet });
+		}
 	}
 }
 

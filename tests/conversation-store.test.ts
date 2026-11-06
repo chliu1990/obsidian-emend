@@ -131,7 +131,7 @@ describe('ConversationStore schema', () => {
 		await store.save('folder/Note.md', messages);
 
 		expect(await store.load('folder/Note.md')).toEqual(messages);
-		expect(adapter.files.get(threadPath(adapter))).toContain('"version": 1');
+		expect(adapter.files.get(threadPath(adapter))).toContain('"version": 2');
 	});
 
 	it('serializes only ready messages and omits runtime-only fields', async () => {
@@ -405,7 +405,7 @@ describe('ConversationStore corruption recovery', () => {
 		await store.save('Note.md', [readyMessage({ content: 'Recovered' })]);
 
 		expect(adapter.files.get(`${path}.corrupt`)).toBe(malformed);
-		expect(JSON.parse(adapter.files.get(path) ?? '')).toMatchObject({ version: 1 });
+		expect(JSON.parse(adapter.files.get(path) ?? '')).toMatchObject({ version: 2 });
 		expect(adapter.files.get(path)).toContain('Recovered');
 		expect(adapter.operations.filter((operation) => operation.includes('.corrupt'))).toHaveLength(1);
 	});
@@ -434,7 +434,7 @@ describe('ConversationStore corruption recovery', () => {
 		const { store, warning } = makeStore(adapter);
 		await store.save('Note.md', [readyMessage()]);
 		const path = threadPath(adapter);
-		const future = JSON.stringify({ version: 2, messages: [readyMessage()] });
+		const future = JSON.stringify({ version: 3, messages: [readyMessage()] });
 		adapter.files.set(path, future);
 		adapter.operations.length = 0;
 
@@ -447,5 +447,125 @@ describe('ConversationStore corruption recovery', () => {
 		expect(adapter.files.get(path)).toBe(future);
 		expect(adapter.files.has(`${path}.corrupt`)).toBe(false);
 		expect(adapter.operations).toEqual([]);
+	});
+});
+
+
+describe('ConversationStore web citation migration', () => {
+	it('round trips Review/Auto badges and actual sources in schema 2', async () => {
+		const adapter = new MemoryAdapter();
+		const { store } = makeStore(adapter);
+		const messages = [
+			readyMessage({
+				id: 'question',
+				role: 'user',
+				content: 'Research',
+				reasoning: '',
+				webSearchMode: 'review',
+			}),
+			readyMessage({
+				id: 'answer',
+				webSources: [{
+					id: 'S1',
+					title: 'Actual source',
+					url: 'https://example.test/source',
+					snippet: 'Evidence',
+				}],
+				webActivities: [
+					{ type: 'search', target: 'activity query', status: 'completed' },
+					{ type: 'fetch', target: 'https://example.test/unreadable', status: 'failed' },
+					{ type: 'fetch', target: 'https://example.test/skipped', status: 'skipped' },
+				],
+			}),
+		];
+
+		await store.save('Note.md', messages);
+
+		expect(await store.load('Note.md')).toEqual(messages);
+		expect(JSON.parse(adapter.files.get(threadPath(adapter)) ?? '')).toMatchObject({ version: 2 });
+	});
+
+	it('loads v1 without web metadata and writes v2 on the next save', async () => {
+		const adapter = new MemoryAdapter();
+		const { store } = makeStore(adapter);
+		await store.save('Note.md', [readyMessage()]);
+		const path = threadPath(adapter);
+		adapter.files.set(path, JSON.stringify({ version: 1, messages: [readyMessage()] }));
+
+		expect(await store.load('Note.md')).toEqual([readyMessage()]);
+		await store.save('Note.md', await store.load('Note.md'));
+
+		expect(JSON.parse(adapter.files.get(path) ?? '')).toMatchObject({ version: 2 });
+	});
+
+	it('sanitizes malformed and duplicate persisted web metadata', async () => {
+		const adapter = new MemoryAdapter();
+		const { store } = makeStore(adapter);
+		await store.save('Note.md', [readyMessage()]);
+		const path = threadPath(adapter);
+		const validSource = { id: 'S1', title: 'Actual', url: 'https://example.test/source', snippet: 'Evidence' };
+		adapter.files.set(path, JSON.stringify({
+			version: 2,
+			messages: [
+				{
+					...readyMessage({ id: 'question', role: 'user' }),
+					webSearchMode: 'invalid',
+					webActivity: 'Searching: private query',
+				},
+				{
+					...readyMessage({ id: 'answer' }),
+					webSearchMode: 'auto',
+					webSources: [
+						validSource,
+						validSource,
+						{ ...validSource, id: 'S2' },
+						{ ...validSource, id: 'S3', url: 'https://user:secret@example.test/private' },
+						{ ...validSource, id: 'S4', url: 'javascript:alert(1)' },
+						{ ...validSource, id: 'S5', snippet: 42 },
+					],
+					webActivities: [
+						{ type: 'search', target: 'activity query', status: 'completed' },
+						{ type: 'invalid', target: 'bad', status: 'completed' },
+						{ type: 'search', target: 'bad status', status: 'pending' },
+						{ type: 'search', target: 'multi\nline', status: 'completed' },
+						{ type: 'fetch', target: 'https://user:secret@example.test/private', status: 'failed' },
+					],
+				},
+			],
+		}));
+
+		const loaded = await store.load('Note.md');
+
+		expect(loaded[0]).not.toHaveProperty('webSearchMode');
+		expect(loaded[0]).not.toHaveProperty('webActivity');
+		expect(loaded[1]).not.toHaveProperty('webSearchMode');
+		expect(loaded[1]?.webSources).toEqual([validSource]);
+		expect(loaded[1]?.webActivities).toEqual([
+			{ type: 'search', target: 'activity query', status: 'completed' },
+		]);
+	});
+
+	it('retains sanitized activity while omitting transient and tool payload fields', async () => {
+		const adapter = new MemoryAdapter();
+		const { store } = makeStore(adapter);
+		const message = readyMessage({
+			webSources: [{ id: 'S1', title: 'Actual', url: 'https://example.test/source' }],
+			webActivities: [{ type: 'search', target: 'activity query', status: 'completed' }],
+			webActivity: 'Searching: private query',
+			searchQuery: 'private query',
+			toolArguments: '{"query":"private query"}',
+			toolResult: 'retrieved page',
+			requestBody: '{"messages":[]}',
+		} as Partial<ChatMessage>);
+
+		await store.save('Note.md', [message]);
+
+		const raw = adapter.files.get(threadPath(adapter)) ?? '';
+		expect(raw).toContain('https://example.test/source');
+		expect(raw).toContain('activity query');
+		expect(raw).not.toContain('private query');
+		expect(raw).not.toContain('retrieved page');
+		expect(raw).not.toContain('requestBody');
+		expect(raw).not.toContain('webActivity');
 	});
 });

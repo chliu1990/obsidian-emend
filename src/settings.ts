@@ -69,6 +69,7 @@ export const DEFAULT_SETTINGS: EmendSettings = {
 	includeNotePathInContext: false,
 	smartSelectionContext: true,
 	maxContextCharacters: 12000,
+	maxWebToolCalls: 8,
 };
 
 export function normalizeSettings(data: unknown): EmendSettings {
@@ -107,6 +108,7 @@ export function normalizeSettings(data: unknown): EmendSettings {
 				? root.smartSelectionContext
 				: DEFAULT_SETTINGS.smartSelectionContext,
 		maxContextCharacters: normalizeContextLimit(root.maxContextCharacters),
+		maxWebToolCalls: normalizeWebToolCallLimit(root.maxWebToolCalls),
 	};
 }
 
@@ -350,6 +352,26 @@ export class EmendSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					});
 			});
+
+		new Setting(containerEl)
+			.setName('Web tool call limit')
+			// eslint-disable-next-line obsidianmd/ui/sentence-case -- DeepSeek is a provider brand name.
+			.setDesc('Maximum model-requested search and fetch calls per answer. Successful DeepSeek retrieval calls may be billed separately.')
+			.addText((text) => {
+				text.inputEl.type = 'number';
+				text.inputEl.min = '1';
+				text.inputEl.max = '20';
+				text.inputEl.step = '1';
+				text
+					.setPlaceholder(String(DEFAULT_SETTINGS.maxWebToolCalls))
+					.setValue(String(this.plugin.settings.maxWebToolCalls))
+					.onChange(async (value) => {
+						this.plugin.settings.maxWebToolCalls = normalizeWebToolCallLimit(
+							Number.parseInt(value, 10),
+						);
+						await this.plugin.saveSettings();
+					});
+			});
 	}
 
 	private async refreshModels(providerId: ProviderId) {
@@ -431,6 +453,12 @@ function normalizeContextLimit(value: unknown) {
 	return typeof value === 'number' && Number.isFinite(value)
 		? Math.max(1000, Math.floor(value))
 		: DEFAULT_SETTINGS.maxContextCharacters;
+}
+
+function normalizeWebToolCallLimit(value: unknown) {
+	return typeof value === 'number' && Number.isFinite(value)
+		? Math.min(20, Math.max(1, Math.floor(value)))
+		: DEFAULT_SETTINGS.maxWebToolCalls;
 }
 
 function stringOrDefault(value: unknown, fallback: string) {

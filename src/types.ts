@@ -1,5 +1,6 @@
 import type { TFile } from 'obsidian';
 import type { TokenUsage } from './token-usage';
+import type { EnabledWebSearchMode, WebActivityRecord, WebSource } from './web-search';
 
 export type ProviderId = 'deepseek' | 'kimi' | 'custom';
 
@@ -43,6 +44,10 @@ export interface ChatMessage {
 	status: 'ready' | 'loading' | 'error' | 'stopped';
 	timestamp: number;
 	usage?: TokenUsage;
+	webSearchMode?: EnabledWebSearchMode;
+	webSources?: WebSource[];
+	webActivities?: WebActivityRecord[];
+	webActivity?: string;
 }
 
 export interface SelectionSnapshot {
@@ -80,4 +85,5 @@ export interface EmendSettings {
 	includeNotePathInContext: boolean;
 	smartSelectionContext: boolean;
 	maxContextCharacters: number;
+	maxWebToolCalls: number;
 }

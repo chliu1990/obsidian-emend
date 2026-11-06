@@ -1,7 +1,8 @@
 import type { DataAdapter } from 'obsidian';
 import type { ChatMessage } from './types';
+import { normalizeWebUrl, type WebActivityRecord, type WebSource } from './web-search';
 
-export const CONVERSATION_SCHEMA_VERSION = 1;
+export const CONVERSATION_SCHEMA_VERSION = 2;
 
 export type ConversationDataAdapter = Pick<
 	DataAdapter,
@@ -178,6 +179,24 @@ function toPersistedMessage(message: ChatMessage): ChatMessage {
 			source: message.usage.source,
 		};
 	}
+	if (
+		message.role === 'user' &&
+		(message.webSearchMode === 'review' || message.webSearchMode === 'auto')
+	) {
+		persisted.webSearchMode = message.webSearchMode;
+	}
+	const sources = message.role === 'assistant'
+		? sanitizeWebSources(message.webSources)
+		: undefined;
+	if (sources?.length) {
+		persisted.webSources = sources;
+	}
+	const activities = message.role === 'assistant'
+		? sanitizeWebActivities(message.webActivities)
+		: undefined;
+	if (activities?.length) {
+		persisted.webActivities = activities;
+	}
 	return persisted;
 }
 
@@ -191,7 +210,7 @@ function inspectThread(contents: string): ThreadInspection {
 	if (!isRecord(value) || typeof value.version !== 'number') {
 		return { kind: 'malformed' };
 	}
-	if (value.version !== CONVERSATION_SCHEMA_VERSION) {
+	if (value.version !== 1 && value.version !== CONVERSATION_SCHEMA_VERSION) {
 		return { kind: 'unsupported' };
 	}
 	if (!Array.isArray(value.messages)) {
@@ -199,7 +218,7 @@ function inspectThread(contents: string): ThreadInspection {
 	}
 	return {
 		kind: 'valid',
-		messages: value.messages.filter(isReadyMessage).map(normalizeUsageSource),
+		messages: value.messages.filter(isReadyMessage).map(normalizeLoadedMessage),
 	};
 }
 
@@ -238,6 +257,91 @@ function isTokenUsage(value: unknown) {
 			value.source === 'provider' ||
 			value.source === 'estimated')
 	);
+}
+
+function normalizeLoadedMessage(message: ChatMessage): ChatMessage {
+	const normalized = normalizeUsageSource(message);
+	delete normalized.webActivity;
+	if (normalized.role !== 'user' ||
+		(normalized.webSearchMode !== 'review' && normalized.webSearchMode !== 'auto')) {
+		delete normalized.webSearchMode;
+	}
+	if (normalized.role !== 'assistant') {
+		delete normalized.webSources;
+		delete normalized.webActivities;
+	} else {
+		const sources = sanitizeWebSources(normalized.webSources);
+		if (sources.length) {
+			normalized.webSources = sources;
+		} else {
+			delete normalized.webSources;
+		}
+		const activities = sanitizeWebActivities(normalized.webActivities);
+		if (activities.length) {
+			normalized.webActivities = activities;
+		} else {
+			delete normalized.webActivities;
+		}
+	}
+	return normalized;
+}
+
+function sanitizeWebSources(value: unknown): WebSource[] {
+	if (!Array.isArray(value)) {
+		return [];
+	}
+	const sources: WebSource[] = [];
+	const ids = new Set<string>();
+	const urls = new Set<string>();
+	for (const entry of value) {
+		if (!isRecord(entry) ||
+			typeof entry.id !== 'string' || !entry.id.trim() ||
+			typeof entry.title !== 'string' || !entry.title.trim() ||
+			typeof entry.url !== 'string' ||
+			(entry.snippet !== undefined && typeof entry.snippet !== 'string')) {
+			continue;
+		}
+		const url = normalizeWebUrl(entry.url);
+		if (!url || ids.has(entry.id) || urls.has(url)) {
+			continue;
+		}
+		const source: WebSource = { id: entry.id, title: entry.title, url };
+		if (typeof entry.snippet === 'string') {
+			source.snippet = entry.snippet;
+		}
+		ids.add(entry.id);
+		urls.add(url);
+		sources.push(source);
+	}
+	return sources;
+}
+
+function sanitizeWebActivities(value: unknown): WebActivityRecord[] {
+	if (!Array.isArray(value)) {
+		return [];
+	}
+	const activities: WebActivityRecord[] = [];
+	for (const entry of value) {
+		if (!isRecord(entry) ||
+			(entry.type !== 'search' && entry.type !== 'fetch') ||
+			(entry.status !== 'completed' && entry.status !== 'failed' && entry.status !== 'skipped') ||
+			typeof entry.target !== 'string') {
+			continue;
+		}
+		if (entry.type === 'search') {
+			const target = entry.target.trim();
+			if (!target || /[\r\n]/.test(target) || Array.from(target).length > 128) {
+				continue;
+			}
+			activities.push({ type: 'search', target, status: entry.status });
+			continue;
+		}
+		const target = normalizeWebUrl(entry.target);
+		if (target) {
+			activities.push({ type: 'fetch', target, status: entry.status });
+		}
+	}
+	return activities;
 }
 
 function normalizeUsageSource(message: ChatMessage): ChatMessage {

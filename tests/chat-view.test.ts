@@ -3,7 +3,7 @@ import { MarkdownRenderer, Scope } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AdditionalNotesStore } from '../src/additional-notes-store';
 import type { ShortcutEvent } from '../src/chat-shortcuts';
-import { EmendChatView } from '../src/chat-view';
+import { EmendChatView, formatChatMessageForCopy, getUnreadPageCount } from '../src/chat-view';
 import type { ChatMessage, Mode, ProviderHistoryMessage } from '../src/types';
 
 function getCssRule(selector: string): string {
@@ -71,6 +71,11 @@ const viewPrototype = EmendChatView.prototype as unknown as {
 	render(this: unknown): void;
 	renderMessage(this: unknown, containerEl: HTMLElement, message: ChatMessage): void;
 	renderMessageBody(this: unknown, message: ChatMessage): void;
+	scrollMessagesToBottom(this: unknown): void;
+	scrollMessagesToBottomIfFollowing(this: unknown): void;
+	restoreMessageScroll(this: unknown, previousScrollTop: number, wasFollowing: boolean): void;
+	settleMarkdownRender(this: unknown, generation: number): void;
+	scheduleMessageRender(this: unknown, message: ChatMessage): void;
 	getDisplayText(this: unknown): string;
 	onClose(this: unknown): Promise<void>;
 	toProviderHistory(this: unknown): ProviderHistoryMessage[];
@@ -128,6 +133,20 @@ describe('EmendChatView provider history', () => {
 			{ role: 'user', content: 'Follow-up question', mode: 'ask', origin: 'user' },
 			{ role: 'assistant', content: 'Follow-up answer', mode: 'ask', origin: 'model' },
 		]);
+	});
+
+	it('keeps retrieved sources with their historical answer so source IDs remain unambiguous', () => {
+		const context = {
+			messages: [{
+				...message('researched-answer', 'Note.md'),
+				content: 'Historical answer [S1]',
+				webSources: [{ id: 'S1', title: 'Original source', url: 'https://example.test/original' }],
+			}],
+		};
+
+		expect(viewPrototype.toProviderHistory.call(context)[0]?.content).toBe(
+			'Historical answer [S1]\n\n### Sources\n- [S1] [Original source](https://example.test/original)',
+		);
 	});
 });
 
@@ -691,10 +710,17 @@ describe('EmendChatView presentation', () => {
 class FakeElement {
 	readonly children: FakeElement[] = [];
 	readonly attributes: Record<string, string> = {};
+	readonly ownerDocument = { createElement: () => new FakeElement() };
 	className = '';
 	textContent = '';
+	title = '';
 	disabled = false;
 	value = '';
+	open = false;
+	scrollTop = 0;
+	scrollHeight = 0;
+	clientHeight = 0;
+	isConnected = true;
 
 	constructor(readonly tagName = 'div') {}
 
@@ -720,6 +746,20 @@ class FakeElement {
 	addClass(className: string) {
 		this.className = `${this.className} ${className}`.trim();
 	}
+
+	querySelector() {
+		return this.children[0] ?? null;
+	}
+
+	getBoundingClientRect() {
+		return { top: 0 };
+	}
+
+	replaceWith(replacement: FakeElement) {
+		this.replacement = replacement;
+	}
+
+	replacement?: FakeElement;
 
 	addEventListener() {}
 
@@ -856,5 +896,479 @@ describe('EmendChatView token usage footer', () => {
 		});
 
 		expect(findUsageFooter(container)).toBeUndefined();
+	});
+});
+
+
+describe('EmendChatView web research', () => {
+	it('captures Auto options, activity, user badge metadata, and returned sources', async () => {
+		const requestChatCompletion = vi.fn(async (submission: {
+			webSearch?: { onActivity(activity: { status: string; label: string }): void };
+			callbacks: { onContent(text: string): void };
+		}) => {
+			submission.webSearch?.onActivity({ status: 'pending', label: 'Searching: Emend' });
+			submission.callbacks.onContent('Answer [S1]');
+			return {
+				content: 'Answer [S1]',
+				reasoning: '',
+				sources: [{ id: 'S1', title: 'Actual source', url: 'https://example.test/source', snippet: 'Evidence' }],
+				activities: [
+					{ type: 'search' as const, target: 'Emend', status: 'completed' as const },
+					{ type: 'fetch' as const, target: 'https://example.test/unreadable', status: 'failed' as const },
+				],
+				usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4, source: 'provider' as const },
+			};
+		});
+		const context = {
+			inputEl: { value: 'Research' },
+			isSending: false,
+			isThreadLoading: false,
+			selectedMode: 'ask' as const,
+			webSearchMode: 'auto' as const,
+			messages: [] as ChatMessage[],
+			plugin: {
+				settings: { maxWebToolCalls: 6 },
+				captureChatContext: () => ({ file: { path: 'Note.md' } }),
+				additionalNotesStore: new AdditionalNotesStore(),
+				requestChatCompletion,
+			},
+			toProviderHistory: () => [],
+			persistMessages: vi.fn(async () => undefined),
+			render: vi.fn(),
+			scheduleMessageRender: vi.fn(),
+			closed: false,
+			activeController: null,
+			webReviewModal: null,
+		};
+
+		await viewPrototype.submitPrompt.call(context);
+
+		const submission = requestChatCompletion.mock.calls[0]?.[0];
+		expect(submission).toMatchObject({ webSearch: { mode: 'auto', maxToolCalls: 6 } });
+		expect(context.messages[0]?.webSearchMode).toBe('auto');
+		expect(context.messages[1]?.webSources).toEqual([
+			{ id: 'S1', title: 'Actual source', url: 'https://example.test/source', snippet: 'Evidence' },
+		]);
+		expect(context.messages[1]?.webActivity).toBe('Searching: Emend');
+		expect(context.messages[1]?.webActivities).toEqual([
+			{ type: 'search', target: 'Emend', status: 'completed' },
+			{ type: 'fetch', target: 'https://example.test/unreadable', status: 'failed' },
+		]);
+		expect(context.messages[1]?.content).toContain(
+			'Emend could not read 1 requested page. The answer may be incomplete.',
+		);
+	});
+
+	it('does not submit web options in Edit even when Auto is selected', async () => {
+		const requestChatCompletion = vi.fn(async (_submission: unknown) => ({
+			applied: false,
+			usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4, source: 'provider' as const },
+		}));
+		const context = {
+			inputEl: { value: 'Edit note' },
+			isSending: false,
+			isThreadLoading: false,
+			selectedMode: 'edit' as const,
+			webSearchMode: 'auto' as const,
+			messages: [] as ChatMessage[],
+			plugin: {
+				settings: { maxWebToolCalls: 6 },
+				captureChatContext: () => ({ file: { path: 'Note.md' } }),
+				additionalNotesStore: new AdditionalNotesStore(),
+				requestChatCompletion,
+			},
+			toProviderHistory: () => [],
+			persistMessages: vi.fn(async () => undefined),
+			render: vi.fn(),
+			scheduleMessageRender: vi.fn(),
+			closed: false,
+			activeController: null,
+		};
+
+		await viewPrototype.submitPrompt.call(context);
+
+		expect(requestChatCompletion.mock.calls[0]?.[0]).not.toHaveProperty('webSearch');
+		expect(context.messages[0]?.webSearchMode).toBeUndefined();
+	});
+
+	it('renders only retrieved source links and the Review/Auto badge', () => {
+		const container = renderForFooter({
+			...message('answer', 'Note.md'),
+			webSources: [{ id: 'S1', title: 'Actual source', url: 'https://example.test/source', snippet: 'Evidence' }],
+		});
+		const user = renderForFooter({
+			...message('question', 'Note.md'),
+			role: 'user',
+			webSearchMode: 'review',
+		});
+
+		const anchors = findElements(container, (element) => element.tagName === 'a');
+		expect(anchors).toHaveLength(1);
+		expect(anchors[0]?.attributes.href).toBe('https://example.test/source');
+		expect(textOf(container)).toContain('Evidence');
+		expect(textOf(user)).toContain('Web: Review');
+	});
+
+	it('copies actual citations without treating model-written links as retrieved sources', () => {
+		const copied = formatChatMessageForCopy({
+			...message('answer', 'Note.md'),
+			content: 'Answer [S1] with [unverified](https://unverified.test)',
+			webSources: [{ id: 'S1', title: 'Actual source', url: 'https://example.test/source' }],
+		});
+
+		expect(copied).toContain('https://example.test/source');
+		expect(copied).toContain('https://unverified.test');
+		expect(copied.match(/### Sources/g)).toHaveLength(1);
+	});
+});
+
+
+describe('EmendChatView web activity review', () => {
+	it('renders a closed folded activity list with completed, failed, and skipped outcomes', () => {
+		const container = renderForFooter({
+			...message('answer', 'Note.md'),
+			webActivities: [
+				{ type: 'search', target: 'activity query', status: 'completed' },
+				{ type: 'fetch', target: 'https://example.test/failed', status: 'failed' },
+				{ type: 'fetch', target: 'https://example.test/skipped', status: 'skipped' },
+			],
+		});
+
+		const details = findElements(container, (element) =>
+			element.tagName === 'details' && element.className === 'emend-chat-web-activity'
+		)[0];
+		expect(details).toBeDefined();
+		expect(details?.open).toBe(false);
+		expect(textOf(details as FakeElement)).toContain('Web activity (3)');
+		expect(textOf(details as FakeElement)).toContain('Search · Completed · activity query');
+		expect(textOf(details as FakeElement)).toContain('Fetch · Failed · https://example.test/failed');
+		expect(textOf(details as FakeElement)).toContain('Fetch · Skipped · https://example.test/skipped');
+	});
+});
+
+
+describe('EmendChatView latest-message scrolling', () => {
+	it('aligns the scroller to its full height when following the latest response', () => {
+		const messagesEl = { scrollHeight: 1200, scrollTop: 0 };
+		viewPrototype.scrollMessagesToBottom.call({ closed: false, messagesEl });
+		expect(messagesEl.scrollTop).toBe(1200);
+	});
+
+	it('restores the previous position when the reader was not following latest', () => {
+		const messagesEl = { scrollHeight: 1200, scrollTop: 0 };
+		viewPrototype.restoreMessageScroll.call({ messagesEl }, 275, false);
+		expect(messagesEl.scrollTop).toBe(275);
+
+		const scrollMessagesToBottom = vi.fn();
+		viewPrototype.restoreMessageScroll.call({ messagesEl, scrollMessagesToBottom }, 275, true);
+		expect(scrollMessagesToBottom).toHaveBeenCalledOnce();
+	});
+
+	it('scrolls after streamed message bodies only while following latest', () => {
+		const pendingMessage = { ...message('streaming', 'Note.md'), status: 'loading' as const };
+		const scrollMessagesToBottomIfFollowing = vi.fn();
+		const context = {
+			closed: false,
+			pendingMessages: new Set([pendingMessage]),
+			pendingRenderFrame: null,
+			contentEl: {
+				ownerDocument: {
+					defaultView: {
+						requestAnimationFrame: (callback: () => void) => {
+							callback();
+							return 1;
+						},
+					},
+				},
+			},
+			renderMessageBody: vi.fn(),
+			scrollMessagesToBottomIfFollowing,
+		};
+
+		viewPrototype.scheduleMessageRender.call(context, pendingMessage);
+
+		expect(context.renderMessageBody).toHaveBeenCalledWith(pendingMessage);
+		expect(scrollMessagesToBottomIfFollowing).toHaveBeenCalledOnce();
+	});
+
+	it('reapplies bottom alignment after asynchronous Markdown layout', async () => {
+		vi.spyOn(MarkdownRenderer, 'render').mockResolvedValue(undefined);
+		const body = new FakeElement();
+		Object.assign(body, {
+			ownerDocument: { createElement: () => new FakeElement() },
+		});
+		const scrollMessagesToBottomIfFollowing = vi.fn();
+		const context = {
+			closed: false,
+			messageBodyEls: new Map<string, HTMLElement>([['answer', body as unknown as HTMLElement]]),
+			scrollMessagesToBottomIfFollowing,
+			settleMarkdownRender: (generation: number) =>
+				viewPrototype.settleMarkdownRender.call(context, generation),
+		};
+
+		viewPrototype.renderMessageBody.call(context, message('answer', 'Note.md'));
+		await vi.waitFor(() => expect(scrollMessagesToBottomIfFollowing).toHaveBeenCalledOnce());
+	});
+
+	it('sets the completed response target after following the loading render at bottom', async () => {
+		const followStates: boolean[] = [];
+		const renderTargetStates: Array<string | null> = [];
+		const context = {
+			inputEl: { value: 'Question' },
+			isSending: false,
+			isThreadLoading: false,
+			selectedMode: 'ask' as const,
+			webSearchMode: 'off' as const,
+			messages: [] as ChatMessage[],
+			followLatestMessages: false,
+			responseStartMessageId: 'previous-response' as string | null,
+			plugin: {
+				captureChatContext: () => ({ file: { path: 'Note.md' } }),
+				additionalNotesStore: new AdditionalNotesStore(),
+				requestChatCompletion: vi.fn(async ({ callbacks }: {
+					callbacks: { onContent(text: string): void };
+				}) => {
+					callbacks.onContent('Answer');
+					return { content: 'Answer', reasoning: '' };
+				}),
+			},
+			toProviderHistory: () => [],
+			persistMessages: vi.fn(() => {
+				saveCount++;
+				return saveCount === 1 ? Promise.resolve() : persistence.promise;
+			}),
+			render: vi.fn(() => {
+				followStates.push(context.followLatestMessages);
+				renderTargetStates.push(context.responseStartMessageId);
+			}),
+			scheduleMessageRender: vi.fn(),
+			closed: false,
+			activeController: null,
+		};
+		const persistence = deferred<void>();
+		let saveCount = 0;
+
+		const submission = viewPrototype.submitPrompt.call(context);
+		await vi.waitFor(() => expect(saveCount).toBe(2));
+		expect(context.responseStartMessageId).toBeNull();
+		expect(context.followLatestMessages).toBe(true);
+		persistence.resolve();
+		await submission;
+
+		expect(context.responseStartMessageId).toBe(context.messages[1]?.id);
+		expect(followStates).toEqual([true, false]);
+		expect(renderTargetStates).toEqual([null, context.messages[1]?.id]);
+	});
+
+	it('aligns the targeted response after Markdown layouts and clears the target', () => {
+		const messagesEl = renderForFooter(message('answer', 'Note.md'));
+		const responseEl = messagesEl.children[0];
+		if (!responseEl) {
+			throw new Error('Response element missing.');
+		}
+		Object.assign(messagesEl, {
+			scrollTop: 40,
+			getBoundingClientRect: () => ({ top: 100 }),
+			querySelector: () => findElements(
+				messagesEl,
+				(element) => element.attributes['data-message-id'] === 'answer',
+			)[0] ?? null,
+		});
+		Object.assign(responseEl, {
+			getBoundingClientRect: () => ({ top: 260 }),
+		});
+		const context = {
+			closed: false,
+			renderGeneration: 4,
+			pendingMarkdownRenders: 0,
+			pendingScrollRestore: { previousScrollTop: 275, wasFollowing: false },
+			responseStartMessageId: 'answer' as string | null,
+			followLatestMessages: false,
+			messagesEl,
+			restoreMessageScroll: (previousScrollTop: number, wasFollowing: boolean) =>
+				viewPrototype.restoreMessageScroll.call(context, previousScrollTop, wasFollowing),
+		};
+
+		viewPrototype.settleMarkdownRender.call(context, 4);
+
+		expect(messagesEl.scrollTop).toBe(200);
+		expect(context.responseStartMessageId).toBeNull();
+	});
+});
+
+
+describe('EmendChatView completion relayout and unread pages', () => {
+	it('restores upward-reading position only after all current Markdown layouts settle', async () => {
+		const firstRender = deferred<void>();
+		const secondRender = deferred<void>();
+		vi.spyOn(MarkdownRenderer, 'render')
+			.mockImplementationOnce(() => firstRender.promise)
+			.mockImplementationOnce(() => secondRender.promise);
+		const messagesEl = new FakeElement();
+		messagesEl.scrollHeight = 1200;
+		const context = {
+			closed: false,
+			renderGeneration: 1,
+			pendingMarkdownRenders: 0,
+			pendingScrollRestore: { previousScrollTop: 275, wasFollowing: false },
+			messagesEl,
+			messageBodyEls: new Map<string, HTMLElement>(),
+			scrollMessagesToBottomIfFollowing: vi.fn(),
+			settleMarkdownRender: (generation: number) =>
+				viewPrototype.settleMarkdownRender.call(context, generation),
+			restoreMessageScroll: (previousScrollTop: number, wasFollowing: boolean) =>
+				viewPrototype.restoreMessageScroll.call(context, previousScrollTop, wasFollowing),
+		};
+		for (const id of ['first', 'second']) {
+			const body = new FakeElement();
+			Object.assign(body, {
+				ownerDocument: { createElement: () => new FakeElement() },
+			});
+			context.messageBodyEls.set(id, body as unknown as HTMLElement);
+		}
+
+		viewPrototype.renderMessageBody.call(context, message('first', 'Note.md'));
+		viewPrototype.renderMessageBody.call(context, message('second', 'Note.md'));
+		expect(context.pendingMarkdownRenders).toBe(2);
+
+		firstRender.resolve();
+		await vi.waitFor(() => expect(context.pendingMarkdownRenders).toBe(1));
+		expect(messagesEl.scrollTop).toBe(0);
+		secondRender.resolve();
+		await vi.waitFor(() => expect(messagesEl.scrollTop).toBe(275));
+	});
+
+	it('does not warn about a page that later fetched successfully', () => {
+		expect(getUnreadPageCount([
+			{ type: 'fetch', target: 'https://example.test/page', status: 'failed' },
+			{ type: 'fetch', target: 'https://example.test/page', status: 'completed' },
+		])).toBe(0);
+		expect(getUnreadPageCount([
+			{ type: 'fetch', target: 'https://example.test/other', status: 'failed' },
+		])).toBe(1);
+	});
+});
+
+
+describe('EmendChatView compact Web disclosure', () => {
+	it('keeps disclosure on the Web selector tooltip without a large bottom block', async () => {
+		const contentEl = new FakeElement();
+		const context = {
+			app: {},
+			contentEl,
+			plugin: {
+				getActiveNotePath: () => 'Note.md',
+				getActiveNoteLabel: () => 'Note.md',
+				conversationStore: { load: vi.fn(async () => []) },
+				additionalNotesStore: new AdditionalNotesStore(),
+				settings: {
+					activeProvider: 'deepseek',
+					providers: { deepseek: { name: 'DeepSeek', model: 'deepseek-flash' } },
+				},
+			},
+			notePath: null as string | null,
+			noteLoadGeneration: 0,
+			messages: [] as ChatMessage[],
+			selectedMode: 'ask' as Mode,
+			webSearchMode: 'auto' as const,
+			isThreadLoading: false,
+			isSending: false,
+			activeController: null,
+			closed: false,
+			inputEl: null as FakeElement | null,
+			drafts: new Map<string, string>(),
+			additionalNotesControl: null,
+			pendingMessages: new Set<ChatMessage>(),
+			messageBodyEls: new Map<string, HTMLElement>(),
+			activeModelEl: null,
+			cancelPendingRender: vi.fn(),
+		};
+		Object.setPrototypeOf(context, EmendChatView.prototype);
+
+		await viewPrototype.refreshTargetNote.call(context);
+
+		const disclosure = findElements(contentEl, (element) =>
+			element.className.split(' ').includes('emend-chat-web-disclosure')
+		);
+		const webSelect = findElements(contentEl, (element) =>
+			element.tagName === 'select' && element.attributes['aria-label'] === 'Web search mode'
+		)[0];
+		expect(disclosure).toHaveLength(0);
+		expect(webSelect?.title).toContain('note context');
+		expect(webSelect?.title).toContain('stored locally with ready chats');
+	});
+});
+
+
+describe('EmendChatView render-end response alignment', () => {
+	it('keeps the response target until actual Markdown settlement expands the scroller', async () => {
+		const markdown = deferred<void>();
+		vi.spyOn(MarkdownRenderer, 'render').mockReturnValue(markdown.promise);
+		const contentEl = new FakeElement();
+		const context = {
+			app: {},
+			contentEl,
+			plugin: {
+				getActiveNotePath: () => 'Note.md',
+				getActiveNoteLabel: () => 'Note.md',
+				conversationStore: {
+					load: vi.fn(async () => {
+						context.responseStartMessageId = 'answer';
+						context.followLatestMessages = false;
+						return [message('answer', 'Note.md')];
+					}),
+				},
+				additionalNotesStore: new AdditionalNotesStore(),
+				settings: {
+					activeProvider: 'deepseek',
+					providers: { deepseek: { name: 'DeepSeek', model: 'deepseek-flash' } },
+				},
+			},
+			notePath: null as string | null,
+			noteLoadGeneration: 0,
+			messages: [] as ChatMessage[],
+			selectedMode: 'ask' as Mode,
+			webSearchMode: 'off' as const,
+			responseStartMessageId: null as string | null,
+			followLatestMessages: true,
+			pendingMarkdownRenders: 0,
+			renderGeneration: 0,
+			isThreadLoading: false,
+			isSending: false,
+			activeController: null,
+			closed: false,
+			inputEl: null as FakeElement | null,
+			drafts: new Map<string, string>(),
+			additionalNotesControl: null,
+			pendingMessages: new Set<ChatMessage>(),
+			messageBodyEls: new Map<string, HTMLElement>(),
+			activeModelEl: null,
+			cancelPendingRender: vi.fn(),
+		};
+		Object.setPrototypeOf(context, EmendChatView.prototype);
+
+		await viewPrototype.refreshTargetNote.call(context);
+
+		expect(context.pendingMarkdownRenders).toBe(1);
+		expect(context.responseStartMessageId).toBe('answer');
+		const messagesEl = (context as unknown as { messagesEl: FakeElement }).messagesEl;
+		const responseEl = messagesEl.children[0];
+		if (!responseEl) throw new Error('Response element missing');
+		Object.assign(messagesEl, {
+			scrollTop: 40,
+			scrollHeight: 4856,
+			clientHeight: 197,
+			getBoundingClientRect: () => ({ top: 100 }),
+			querySelector: () => responseEl,
+		});
+		Object.assign(responseEl, {
+			getBoundingClientRect: () => ({ top: 260 }),
+		});
+
+		markdown.resolve();
+		await vi.waitFor(() => expect(context.pendingMarkdownRenders).toBe(0));
+
+		expect(messagesEl.scrollTop).toBe(200);
+		expect(context.responseStartMessageId).toBeNull();
 	});
 });

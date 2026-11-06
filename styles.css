@@ -368,3 +368,70 @@
 		justify-content: space-between;
 	}
 }
+
+
+.emend-chat-web-mode {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+.emend-chat-web-activity,
+.emend-chat-web-source-snippet {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	line-height: 1.4;
+}
+
+.emend-chat-web-activity {
+	margin-top: 6px;
+}
+
+.emend-chat-web-sources {
+	margin-top: 8px;
+}
+
+.emend-chat-web-source {
+	margin-top: 6px;
+	overflow-wrap: anywhere;
+}
+
+.emend-web-review-modal {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.emend-web-review-call {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin-bottom: 10px;
+}
+
+.emend-web-review-input {
+	width: 100%;
+}
+
+.emend-web-review-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+}
+
+.emend-web-review-error {
+	color: var(--text-error);
+	font-size: var(--font-ui-small);
+}
+
+
+.emend-chat-web-activity > summary {
+	cursor: pointer;
+}
+
+.emend-chat-web-activity-item {
+	margin-top: 4px;
+	overflow-wrap: anywhere;
+}

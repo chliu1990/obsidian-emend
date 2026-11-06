@@ -21,6 +21,7 @@ import type {
 	ProviderConfig,
 	ProviderHistoryMessage,
 } from '../src/types';
+import type { WebSearchRunOptions, WebToolLoopResult } from '../src/web-search';
 
 const provider: ProviderConfig = {
 	name: 'Local test provider',
@@ -708,5 +709,74 @@ describe('EditRequestCoordinator', () => {
 
 		await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
 		expect(writer.write).not.toHaveBeenCalled();
+	});
+});
+
+
+describe('ReadOnlyRequestCoordinator web routing', () => {
+	it.each(['review', 'auto'] as const)('routes %s submissions through the web coordinator with captured options', async (mode) => {
+		const ordinaryRequest = successfulRequest();
+		const webSubmit = vi.fn(async (
+			request: AiProviderRequest,
+			options: WebSearchRunOptions,
+		): Promise<WebToolLoopResult> => {
+			options.callbacks.onEvent({ type: 'content', text: 'Web answer' });
+			return {
+				content: 'Web answer',
+				reasoning: '',
+				sources: [{ id: 'S1', title: 'Source', url: 'https://example.test/source' }],
+				activities: [],
+				rounds: [{
+					request,
+					result: {
+						content: 'Web answer',
+						reasoning: '',
+						usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12 },
+					},
+				}],
+			};
+		});
+		const coordinator = new ReadOnlyRequestCoordinator({
+			provider,
+			loadAdditionalNotes: makeAdditionalNotesLoader(),
+			loadInstructions: async () => ({ skillTexts: new Map() }),
+			request: ordinaryRequest,
+			webSearch: { submit: webSubmit },
+		});
+		const reviewCalls = vi.fn(async (
+			calls: Parameters<WebSearchRunOptions['reviewCalls']>[0],
+		) => calls);
+		const onActivity = vi.fn();
+
+		const result = await coordinator.submit(makeSubmission({
+			webSearch: { mode, maxToolCalls: 7, reviewCalls, onActivity },
+		}));
+
+		expect(ordinaryRequest).not.toHaveBeenCalled();
+		expect(webSubmit).toHaveBeenCalledOnce();
+		expect(webSubmit.mock.calls[0]?.[1]).toMatchObject({ mode, maxToolCalls: 7, reviewCalls, onActivity });
+		expect(result.content).toBe('Web answer');
+		expect(result.sources).toEqual([{ id: 'S1', title: 'Source', url: 'https://example.test/source' }]);
+		expect(result.usage).toEqual({ promptTokens: 10, completionTokens: 2, totalTokens: 12, source: 'provider' });
+	});
+
+	it('does not silently use ordinary chat when web support is unavailable', async () => {
+		const ordinaryRequest = successfulRequest();
+		const coordinator = new ReadOnlyRequestCoordinator({
+			provider,
+			loadAdditionalNotes: makeAdditionalNotesLoader(),
+			loadInstructions: async () => ({ skillTexts: new Map() }),
+			request: ordinaryRequest,
+		});
+
+		await expect(coordinator.submit(makeSubmission({
+			webSearch: {
+				mode: 'auto',
+				maxToolCalls: 8,
+				reviewCalls: async (calls) => calls,
+				onActivity: vi.fn(),
+			},
+		}))).rejects.toThrow('Online search is not available');
+		expect(ordinaryRequest).not.toHaveBeenCalled();
 	});
 });
