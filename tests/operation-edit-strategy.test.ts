@@ -1,6 +1,7 @@
 import { TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import type { RequestContext } from '../src/context';
+import { parseCriticMarkup, toRejectView } from '../src/critic-markup';
 import * as editStrategyModule from '../src/edit-strategy';
 import { getEditStrategy } from '../src/edit-strategy';
 import type { NoteWriter } from '../src/note-writer';
@@ -28,6 +29,30 @@ const HISTORY_PERMISSION_PROMPT = 'History annotations describe earlier requests
 
 function prepare(original: string, operations: unknown) {
 	return operationEditStrategy.prepareEdit(original, JSON.stringify(operations));
+}
+
+function toAcceptView(text: string): string {
+	let result = '';
+	let cursor = 0;
+	for (const token of parseCriticMarkup(text)) {
+		result += text.slice(cursor, token.start);
+		switch (token.type) {
+			case 'insertion':
+			case 'highlight':
+				result += token.content;
+				break;
+			case 'substitution':
+				result += token.newText ?? '';
+				break;
+			case 'comment':
+				result += token.raw;
+				break;
+			case 'deletion':
+				break;
+		}
+		cursor = token.end;
+	}
+	return result + text.slice(cursor);
 }
 
 describe('operation EditStrategy protocol', () => {
@@ -645,6 +670,146 @@ describe('Markdown structural edit safeguards', () => {
 			{ type: 'remove', target: 'alpha' },
 			{ type: 'comment', target: 'alpha', comment: 'Review' },
 		]))).toMatchObject({ code: 'overlapping-targets' });
+	});
+});
+
+describe('conservative Markdown boundary safeguards', () => {
+	it('rejects removing a backslash that would expose a table delimiter', () => {
+		const original = '| Left | Right |\n| --- | --- |\n| one \\| two | three |';
+		const currentAnnotated = '| Left | Right |\n| --- | --- |\n| one {--\\--}| two | three |';
+		expect(toRejectView(currentAnnotated)).toBe(original);
+		expect(toAcceptView(currentAnnotated)).toBe(
+			'| Left | Right |\n| --- | --- |\n| one | two | three |',
+		);
+		expect(() => prepare(original, [
+			{ type: 'remove', target: '\\' },
+		])).toThrow(expect.objectContaining({ code: 'table-structure-edit' }));
+	});
+
+	it('rejects inserting a backslash that escapes an existing table delimiter', () => {
+		const original = '| Left | Right |\n| --- | --- |\n| one | two |';
+		const currentAnnotated = '| Left | Right |\n| --- | --- |\n| one {++\\++}| two |';
+		expect(toRejectView(currentAnnotated)).toBe(original);
+		expect(toAcceptView(currentAnnotated)).toBe(
+			'| Left | Right |\n| --- | --- |\n| one \\| two |',
+		);
+		expect(() => prepare(original, [
+			{ type: 'insert', anchor: 'one ', position: 'after', text: '\\' },
+		])).toThrow(expect.objectContaining({ code: 'table-structure-edit' }));
+	});
+
+	it('rejects a second backslash that exposes an escaped table delimiter', () => {
+		const original = '| Left | Right |\n| --- | --- |\n| one \\| two | three |';
+		expect(() => prepare(original, [
+			{ type: 'insert', anchor: 'one ', position: 'after', text: '\\' },
+		])).toThrow(expect.objectContaining({ code: 'table-structure-edit' }));
+	});
+
+	it('preserves ordinary cell text and safe escaped pipes in all review views', () => {
+		const original = '| Left | Right |\n| --- | --- |\n| one \\| two | three |';
+		const preparation = prepare(original, [
+			{ type: 'replace', target: 'one', replacement: 'first' },
+			{ type: 'insert', anchor: 'three', position: 'before', text: '\\| ' },
+		]);
+		expect(preparation.annotatedMarkdown).toBe(
+			'| Left | Right |\n| --- | --- |\n| {~~one~>first~~} \\| two | {++\\| ++}three |',
+		);
+		expect(toRejectView(preparation.annotatedMarkdown)).toBe(original);
+		expect(toAcceptView(preparation.annotatedMarkdown)).toBe(
+			'| Left | Right |\n| --- | --- |\n| first \\| two | \\| three |',
+		);
+	});
+
+	it('keeps blank lines inside a list fence until the next nonblank container row', () => {
+		const original = '- ```\n  alpha\n\n  beta\n  ```\nAfter';
+		expect(() => prepare(original, [
+			{ type: 'remove', target: 'beta' },
+		])).toThrow(expect.objectContaining({ code: 'fenced-code-edit', line: 4 }));
+		const preparation = prepare(original, [
+			{ type: 'replace', target: 'After', replacement: 'Following' },
+		]);
+		expect(toRejectView(preparation.annotatedMarkdown)).toBe(original);
+		expect(toAcceptView(preparation.annotatedMarkdown)).toBe(
+			'- ```\n  alpha\n\n  beta\n  ```\nFollowing',
+		);
+	});
+
+	it.each(['\n', '\r\n'])('validates fence-boundary payloads with %j line endings', (newline) => {
+		const original = `\`\`\`${newline}alpha${newline}\`\`\``;
+		expect(() => prepare(original, [
+			{ type: 'insert', anchor: '```', position: 'before', text: 'added', occurrence: 1 },
+		])).toThrow(expect.objectContaining({ code: 'fenced-code-edit' }));
+		expect(() => prepare(original, [
+			{ type: 'insert', anchor: '```', position: 'after', text: 'added', occurrence: 2 },
+		])).toThrow(expect.objectContaining({ code: 'fenced-code-edit' }));
+
+		const before = prepare(original, [
+			{ type: 'insert', anchor: '```', position: 'before', text: `added${newline}`, occurrence: 1 },
+		]);
+		expect(toRejectView(before.annotatedMarkdown)).toBe(original);
+		expect(toAcceptView(before.annotatedMarkdown)).toBe(`added${newline}${original}`);
+		const after = prepare(original, [
+			{ type: 'insert', anchor: '```', position: 'after', text: `${newline}added`, occurrence: 2 },
+		]);
+		expect(toRejectView(after.annotatedMarkdown)).toBe(original);
+		expect(toAcceptView(after.annotatedMarkdown)).toBe(`${original}${newline}added`);
+	});
+
+	it('allows ordinary text after a closing fence line ending', () => {
+		for (const newline of ['\n', '\r\n']) {
+			const original = `\`\`\`${newline}alpha${newline}\`\`\`${newline}`;
+			const preparation = prepare(original, [
+				{ type: 'insert', anchor: `\`\`\`${newline}`, position: 'after', text: 'added', occurrence: 2 },
+			]);
+			expect(toRejectView(preparation.annotatedMarkdown)).toBe(original);
+			expect(toAcceptView(preparation.annotatedMarkdown)).toBe(`${original}added`);
+		}
+	});
+
+	it('rejects backticks that extend inline-code boundary runs', () => {
+		expect(() => prepare('`alpha`', [
+			{ type: 'insert', anchor: '`alpha`', position: 'before', text: '`' },
+		])).toThrow(expect.objectContaining({ code: 'inline-code-range' }));
+		expect(() => prepare('`alpha`', [
+			{ type: 'insert', anchor: '`alpha`', position: 'after', text: '`' },
+		])).toThrow(expect.objectContaining({ code: 'inline-code-range' }));
+		const preparation = prepare('`alpha`', [
+			{ type: 'insert', anchor: '`alpha`', position: 'before', text: 'safe ' },
+			{ type: 'insert', anchor: '`alpha`', position: 'after', text: ' safe' },
+		]);
+		expect(toRejectView(preparation.annotatedMarkdown)).toBe('`alpha`');
+		expect(toAcceptView(preparation.annotatedMarkdown)).toBe('safe `alpha` safe');
+	});
+
+	it.each([
+		'First `alpha\n\nbeta` last',
+		'First `alpha\r\n\r\nbeta` last',
+		'> First `alpha\n>\n> beta` last',
+		'First `alpha\n# Heading\nbeta` last',
+		'First `alpha\n- item\nbeta` last',
+	])('does not join inline code across a paragraph or block boundary: %j', (original) => {
+		const preparation = prepare(original, [
+			{ type: 'replace', target: 'alpha', replacement: 'first' },
+			{ type: 'replace', target: 'beta', replacement: 'second' },
+		]);
+		expect(toRejectView(preparation.annotatedMarkdown)).toBe(original);
+		expect(toAcceptView(preparation.annotatedMarkdown)).toContain('first');
+		expect(toAcceptView(preparation.annotatedMarkdown)).toContain('second');
+	});
+
+	it('keeps valid multiline inline spans within one container paragraph', () => {
+		for (const original of ['`alpha\nbeta`', '> `alpha\n> beta`']) {
+			expect(() => prepare(original, [
+				{ type: 'replace', target: 'beta', replacement: 'gamma' },
+			])).toThrow(expect.objectContaining({ code: 'inline-code-range' }));
+			const target = original.startsWith('>') ? '`alpha\n> beta`' : '`alpha\nbeta`';
+			const replacement = original.startsWith('>') ? '`alpha\n> gamma`' : '`alpha\ngamma`';
+			const preparation = prepare(original, [
+				{ type: 'replace', target, replacement },
+			]);
+			expect(toRejectView(preparation.annotatedMarkdown)).toBe(original);
+			expect(toAcceptView(preparation.annotatedMarkdown)).toContain('gamma');
+		}
 	});
 });
 

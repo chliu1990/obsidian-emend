@@ -13,6 +13,8 @@ interface SourceLine extends SourceRange {
 type TableCell = SourceRange;
 
 interface TableRow extends SourceRange {
+	contentStart: number;
+	contentEnd: number;
 	cells: TableCell[];
 }
 
@@ -74,12 +76,26 @@ export function findMarkdownEditViolation(
 			)) {
 				return violation('fenced-code-edit');
 			}
+			const insertedText = operation.text ?? '';
+			if (fences.some((fence) =>
+				(operation.insertionPoint === fence.openingStart && !hasTrailingLineBreak(insertedText)) ||
+				(operation.insertionPoint === fence.closingContentEnd && !hasLeadingLineBreak(insertedText))
+			)) {
+				return violation('fenced-code-edit');
+			}
 		} else if (fences.some((fence) => intersects(operation, fence))) {
 			return violation('fenced-code-edit');
 		}
 
 		if (operation.operationType === 'insert') {
 			if (inlineSpans.some((span) => strictlyInside(operation.insertionPoint, span))) {
+				return violation('inline-code-range');
+			}
+			const insertedText = operation.text ?? '';
+			if (inlineSpans.some((span) =>
+				(operation.insertionPoint === span.start && insertedText.endsWith('`')) ||
+				(operation.insertionPoint === span.end && insertedText.startsWith('`'))
+			)) {
 				return violation('inline-code-range');
 			}
 		} else if (inlineSpans.some((span) =>
@@ -98,13 +114,16 @@ export function findMarkdownEditViolation(
 			}
 
 			const rows = [table.header, ...table.body];
-			const anchorCell = rows.flatMap((row) => row.cells).find((cell) => contains(cell, operation));
+			const affectedRow = rows.find((row) =>
+				row.cells.some((cell) => contains(cell, operation))
+			);
+			const anchorCell = affectedRow?.cells.find((cell) => contains(cell, operation));
 			const touchesTable = intersects(operation, table) ||
 				(operation.insertionPoint !== undefined && inside(operation.insertionPoint, table));
 			if (!touchesTable) {
 				continue;
 			}
-			if (!anchorCell) {
+			if (!affectedRow || !anchorCell) {
 				return violation('table-structure-edit');
 			}
 			if (
@@ -123,6 +142,9 @@ export function findMarkdownEditViolation(
 						: undefined;
 			if (payloadField && hasTableStructureCharacters(operation[payloadField] ?? '')) {
 				return violation('table-structure-edit', payloadField);
+			}
+			if (!preservesTableRowStructure(fullText, affectedRow, operation)) {
+				return violation('table-structure-edit', payloadField ?? field);
 			}
 		}
 	}
@@ -152,6 +174,8 @@ function scanLines(fullText: string): SourceLine[] {
 interface FenceRange extends SourceRange {
 	closed: boolean;
 	containerEnded: boolean;
+	openingStart: number;
+	closingContentEnd?: number;
 }
 
 type ContainerSegment =
@@ -179,13 +203,21 @@ function scanFences(lines: readonly SourceLine[]): FenceRange[] {
 			continue;
 		}
 		const character = run[0];
+		const openingStart = line.start + container.contentStart +
+			(opening?.index ?? 0) + (opening?.[0].indexOf(run) ?? 0);
 		let end = line.end;
 		let closingIndex = index;
 		let closed = false;
 		let containerEnded = false;
+		let closingContentEnd: number | undefined;
 		for (let candidate = index + 1; candidate < lines.length; candidate += 1) {
 			const candidateLine = lines[candidate];
 			if (!candidateLine) {
+				continue;
+			}
+			if (container.segments.length > 0 && candidateLine.text.trim().length === 0) {
+				end = candidateLine.end;
+				closingIndex = candidate;
 				continue;
 			}
 			const contentStart = matchContainer(candidateLine.text, container.segments);
@@ -198,10 +230,11 @@ function scanFences(lines: readonly SourceLine[]): FenceRange[] {
 			closingIndex = candidate;
 			if (isFenceClose(candidateLine.text.slice(contentStart), character ?? '', run.length)) {
 				closed = true;
+				closingContentEnd = candidateLine.contentEnd;
 				break;
 			}
 		}
-		fences.push({ start: line.start, end, closed, containerEnded });
+		fences.push({ start: line.start, end, closed, containerEnded, openingStart, closingContentEnd });
 		index = closingIndex;
 	}
 	return fences;
@@ -271,6 +304,8 @@ function isFenceClose(text: string, character: string, minimumLength: number): b
 
 function scanInlineCode(fullText: string, fences: readonly SourceRange[]): SourceRange[] {
 	const spans: SourceRange[] = [];
+	const lines = scanLines(fullText);
+	const linesByStart = new Map(lines.map((line) => [line.start, line]));
 	let index = 0;
 	while (index < fullText.length) {
 		const fence = fences.find((range) => index >= range.start && index < range.end);
@@ -282,11 +317,17 @@ function scanInlineCode(fullText: string, fences: readonly SourceRange[]): Sourc
 			index += 1;
 			continue;
 		}
+		const openingLine = lines.find((line) => index >= line.start && index < line.end);
+		const container = openingLine ? readContainerOpening(openingLine.text).segments : [];
 		const openingEnd = backtickRunEnd(fullText, index);
 		const runLength = openingEnd - index;
 		let cursor = openingEnd;
 		let closingEnd: number | undefined;
 		while (cursor < fullText.length) {
+			const boundaryLine = linesByStart.get(cursor);
+			if (cursor > index && boundaryLine && isInlineBoundary(boundaryLine.text, container)) {
+				break;
+			}
 			const crossingFence = fences.find((range) => range.start >= index && range.start < cursor);
 			if (crossingFence) {
 				break;
@@ -314,6 +355,14 @@ function scanInlineCode(fullText: string, fences: readonly SourceRange[]): Sourc
 		index = closingEnd;
 	}
 	return spans;
+}
+
+function isInlineBoundary(text: string, container: readonly ContainerSegment[]): boolean {
+	if (text.slice(readContainerOpening(text).contentStart).trim().length === 0) {
+		return true;
+	}
+	const contentStart = matchContainer(text, container);
+	return contentStart === undefined || isTableBodyTerminator(text.slice(contentStart));
 }
 
 function backtickRunEnd(fullText: string, start: number): number {
@@ -387,11 +436,80 @@ function tableRow(line: SourceLine, contentStart = 0): TableRow {
 	return {
 		start: line.start,
 		end: line.end,
+		contentStart: line.start + contentStart,
+		contentEnd: line.contentEnd,
 		cells: splitTableRow(line, contentStart).map((cell) => ({
 			start: line.start + cell.start,
 			end: line.start + cell.end,
 		})),
 	};
+}
+
+function preservesTableRowStructure(
+	fullText: string,
+	row: TableRow,
+	operation: GuardedMarkdownOperation,
+): boolean {
+	const original = fullText.slice(row.start, row.contentEnd);
+	const start = operation.start - row.start;
+	const end = operation.end - row.start;
+	const target = original.slice(start, end);
+	let annotated: string;
+	let accepted: string;
+	switch (operation.operationType) {
+		case 'insert': {
+			const point = (operation.insertionPoint ?? operation.start) - row.start;
+			annotated = `${original.slice(0, point)}{++${operation.text ?? ''}++}${original.slice(point)}`;
+			accepted = `${original.slice(0, point)}${operation.text ?? ''}${original.slice(point)}`;
+			break;
+		}
+		case 'remove':
+			annotated = `${original.slice(0, start)}{--${target}--}${original.slice(end)}`;
+			accepted = `${original.slice(0, start)}${original.slice(end)}`;
+			break;
+		case 'replace':
+			annotated = `${original.slice(0, start)}{~~${target}~>${operation.replacement ?? ''}~~}${original.slice(end)}`;
+			accepted = `${original.slice(0, start)}${operation.replacement ?? ''}${original.slice(end)}`;
+			break;
+		case 'comment':
+			annotated = `${original.slice(0, end)}{>>${operation.comment ?? ''}<<}${original.slice(end)}`;
+			accepted = annotated;
+			break;
+	}
+	const contentStart = row.contentStart - row.start;
+	const originalSignature = tableRowViewSignature(original, contentStart);
+	return [annotated, accepted, original].every((candidate) =>
+		tableRowViewSignature(candidate, contentStart) === originalSignature
+	);
+}
+
+function tableRowViewSignature(text: string, contentStart: number): string {
+	const line: SourceLine = { start: 0, end: text.length, contentEnd: text.length, text };
+	const cellCount = splitTableRow(line, contentStart).length;
+	let trimmedStart = contentStart;
+	while (text[trimmedStart] === ' ' || text[trimmedStart] === '\t') {
+		trimmedStart += 1;
+	}
+	let trimmedEnd = text.length;
+	while (trimmedEnd > trimmedStart && (text[trimmedEnd - 1] === ' ' || text[trimmedEnd - 1] === '\t')) {
+		trimmedEnd -= 1;
+	}
+	const leadingOuterPipe = text[trimmedStart] === '|' && !isEscaped(text, trimmedStart);
+	const trailingOuterPipe = trimmedEnd > trimmedStart && text[trimmedEnd - 1] === '|' && !isEscaped(text, trimmedEnd - 1);
+	return JSON.stringify({
+		cellCount,
+		leadingOuterPipe,
+		trailingOuterPipe,
+		blockStart: isTableBodyTerminator(text.slice(contentStart)),
+	});
+}
+
+function hasTrailingLineBreak(text: string): boolean {
+	return text.endsWith('\n') || text.endsWith('\r');
+}
+
+function hasLeadingLineBreak(text: string): boolean {
+	return text.startsWith('\n') || text.startsWith('\r');
 }
 
 function splitTableRow(line: SourceLine, contentStart = 0): SourceRange[] {

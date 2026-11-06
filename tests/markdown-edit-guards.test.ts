@@ -152,7 +152,7 @@ describe('fenced code edit guards', () => {
 		expect(findMarkdownEditViolation(fullText, [
 			targetOperation(fullText, 'Before'),
 			targetOperation(fullText, 'After', { operation: 2 }),
-			insertionOperation(fullText, 'Before\n', 'after', { operation: 3 }),
+			insertionOperation(fullText, 'Before\n', 'after', { operation: 3, text: 'added\n' }),
 			insertionOperation(fullText, 'After', 'before', { operation: 4 }),
 		])).toBeUndefined();
 	});
@@ -348,7 +348,7 @@ describe('Markdown scanner review regressions', () => {
 		])).toBeUndefined();
 	});
 
-	it('rejects insertion at EOF in unclosed fences but allows exact-after closed fences', () => {
+	it('rejects EOF insertion in unclosed fences and validates closed-fence boundary payloads', () => {
 		for (const fullText of ['```\nalpha', '```\nalpha\n', '```\r\nalpha\r\n']) {
 			const anchor = fullText.slice(fullText.indexOf('alpha'));
 			expect(findMarkdownEditViolation(fullText, [
@@ -359,15 +359,29 @@ describe('Markdown scanner review regressions', () => {
 				line: fullText.endsWith('\n') ? 3 : 2,
 			});
 		}
-		for (const fullText of ['```\nalpha\n```', '```\nalpha\n```\n']) {
-			const start = fullText.lastIndexOf('```');
-			expect(findMarkdownEditViolation(fullText, [{
+		for (const newline of ['\n', '\r\n']) {
+			const closed = `\`\`\`${newline}alpha${newline}\`\`\``;
+			const start = closed.lastIndexOf('```');
+			const boundaryOperation = (text: string): GuardedMarkdownOperation => ({
 				operation: 1,
 				operationType: 'insert',
 				start,
-				end: fullText.length,
-				insertionPoint: fullText.length,
-				text: 'added',
+				end: closed.length,
+				insertionPoint: closed.length,
+				text,
+			});
+			expect(findMarkdownEditViolation(closed, [boundaryOperation('added')])).toMatchObject({
+				code: 'fenced-code-edit',
+				line: 3,
+			});
+			expect(findMarkdownEditViolation(closed, [
+				boundaryOperation(`${newline}added`),
+			])).toBeUndefined();
+			const afterLineEnding = `${closed}${newline}`;
+			expect(findMarkdownEditViolation(afterLineEnding, [{
+				...boundaryOperation('added'),
+				end: afterLineEnding.length,
+				insertionPoint: afterLineEnding.length,
 			}])).toBeUndefined();
 		}
 	});
