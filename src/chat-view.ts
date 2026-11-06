@@ -11,6 +11,11 @@ import { AdditionalNotesControl } from './additional-notes-ui';
 import { EMEND_BUILD_ID } from './build-info';
 import type EmendPlugin from './main';
 import { getComposerShortcut, getDefaultShortcutLabels } from './chat-shortcuts';
+import {
+	resolveEditTarget,
+	type EditTargetChoice,
+	type ResolvedEditTarget,
+} from './edit-target';
 import { MODES } from './mode';
 import {
 	areQuickActionsDisabled,
@@ -49,6 +54,9 @@ export class EmendChatView extends ItemView {
 	private isThreadLoading = false;
 	private selectedMode: Mode;
 	private webSearchMode: WebSearchMode = 'off';
+	private editTargetChoice: EditTargetChoice = 'auto';
+	private displayedEditTarget: ResolvedEditTarget = 'full-note';
+	private editTargetSelectEl: HTMLSelectElement | null = null;
 	private webReviewModal: WebSearchModal | null = null;
 	private activeController: AbortController | null = null;
 	private pendingRenderFrame: number | null = null;
@@ -109,6 +117,7 @@ export class EmendChatView extends ItemView {
 		this.additionalNotesControl?.destroy();
 		this.additionalNotesControl = null;
 		this.inputEl = null;
+		this.editTargetSelectEl = null;
 		this.contentEl.empty();
 	}
 
@@ -133,6 +142,7 @@ export class EmendChatView extends ItemView {
 	async refreshTargetNote() {
 		const notePath = this.plugin.getActiveNotePath();
 		if (notePath === this.notePath) {
+			this.refreshEditTargetControl();
 			return;
 		}
 
@@ -140,6 +150,7 @@ export class EmendChatView extends ItemView {
 			this.drafts.set(this.notePath, this.inputEl.value);
 		}
 		this.notePath = notePath;
+		this.editTargetChoice = 'auto';
 		this.followLatestMessages = true;
 		const generation = ++this.noteLoadGeneration;
 		if (this.isSending) {
@@ -172,6 +183,19 @@ export class EmendChatView extends ItemView {
 				this.render();
 			}
 		}
+	}
+
+	private refreshEditTargetControl() {
+		if (!this.editTargetSelectEl) {
+			return;
+		}
+		const editTarget = resolveEditTarget(
+			this.editTargetChoice,
+			this.plugin.hasUsableSelection(),
+		);
+		this.displayedEditTarget = editTarget;
+		this.editTargetSelectEl.value = editTarget;
+		this.editTargetSelectEl.disabled = this.isSending || this.isThreadLoading;
 	}
 
 	private render() {
@@ -313,6 +337,29 @@ export class EmendChatView extends ItemView {
 				this.inputEl.value = draft;
 			}
 		});
+		const editTargetLabelEl = actionsEl.createEl('label', {
+			cls: 'emend-chat-edit-target',
+		});
+		editTargetLabelEl.createSpan({ text: 'Edit target' });
+		this.editTargetSelectEl = editTargetLabelEl.createEl('select', {
+			attr: { 'aria-label': 'Edit target' },
+		});
+		// eslint-disable-next-line obsidianmd/ui/sentence-case -- Required Task 2 tooltip.
+		this.editTargetSelectEl.title = 'Applies to Edit and quick actions.';
+		for (const [value, label] of [
+			['full-note', 'Full note'],
+			['selection', 'Selection'],
+		] as const) {
+			this.editTargetSelectEl.createEl('option', { text: label, attr: { value } });
+		}
+		this.editTargetSelectEl.addEventListener('change', () => {
+			const value = this.editTargetSelectEl?.value;
+			if (value !== 'full-note' && value !== 'selection') {
+				return;
+			}
+			this.editTargetChoice = value;
+			this.refreshEditTargetControl();
+		});
 		this.activeModelEl = actionsEl.createDiv({
 			cls: 'emend-chat-active-model',
 			text: this.getActiveModelLabel(),
@@ -333,6 +380,7 @@ export class EmendChatView extends ItemView {
 				void this.submitPrompt();
 			}
 		});
+		this.refreshEditTargetControl();
 		this.pendingScrollRestore = { previousScrollTop, wasFollowing };
 		if (this.pendingMarkdownRenders === 0) {
 			this.settleMarkdownRender(this.renderGeneration);

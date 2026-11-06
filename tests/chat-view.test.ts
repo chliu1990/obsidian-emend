@@ -118,6 +118,306 @@ function deferred<T>() {
 	return { promise, resolve };
 }
 
+function createEditTargetView(options: {
+	activePath?: string;
+	selectedText?: string;
+} = {}) {
+	let activePath = options.activePath ?? 'A.md';
+	let selectedText = options.selectedText ?? '';
+	const contentEl = new FakeElement();
+	const additionalNotesStore = new AdditionalNotesStore();
+	const read = vi.fn();
+	const requestChatCompletion = vi.fn();
+	const captureChatContext = vi.fn();
+	const context = {
+		app: { vault: { adapter: { read } } },
+		contentEl,
+		plugin: {
+			getActiveNotePath: () => activePath,
+			getActiveNoteLabel: () => activePath,
+			hasUsableSelection: () => Boolean(selectedText.trim()),
+			captureChatContext,
+			conversationStore: { load: vi.fn(async () => []) },
+			additionalNotesStore,
+			requestChatCompletion,
+			settings: {
+				activeProvider: 'custom',
+				providers: { custom: { name: 'Local', model: 'Test model' } },
+			},
+		},
+		notePath: null as string | null,
+		noteLoadGeneration: 0,
+		messages: [] as ChatMessage[],
+		selectedMode: 'ask' as Mode,
+		webSearchMode: 'off' as const,
+		isThreadLoading: false,
+		isSending: false,
+		activeController: null,
+		closed: false,
+		inputEl: null as FakeElement | null,
+		drafts: new Map<string, string>(),
+		additionalNotesControl: null,
+		pendingMessages: new Set<ChatMessage>(),
+		messageBodyEls: new Map<string, HTMLElement>(),
+		activeModelEl: null,
+		editTargetChoice: 'auto' as 'auto' | 'full-note' | 'selection',
+		displayedEditTarget: 'full-note' as 'full-note' | 'selection',
+		editTargetSelectEl: null as FakeElement | null,
+		webReviewModal: null,
+		pendingRenderFrame: null,
+		pendingMarkdownRenders: 0,
+		pendingScrollRestore: null,
+		responseStartMessageId: null,
+		followLatestMessages: true,
+		renderGeneration: 0,
+		cancelPendingRender: vi.fn(),
+	};
+	Object.setPrototypeOf(context, EmendChatView.prototype);
+	const render = vi.fn(() => viewPrototype.render.call(context));
+	Object.assign(context, { render });
+	return {
+		context,
+		contentEl,
+		render,
+		read,
+		requestChatCompletion,
+		captureChatContext,
+		setActivePath: (path: string) => {
+			activePath = path;
+		},
+		setSelectedText: (text: string) => {
+			selectedText = text;
+		},
+	};
+}
+
+function findEditTargetSelect(contentEl: FakeElement): FakeElement | undefined {
+	return findElements(
+		contentEl,
+		(element) =>
+			element.tagName === 'select' && element.attributes['aria-label'] === 'Edit target',
+	)[0];
+}
+
+describe('EmendChatView edit target control', () => {
+	it('initially displays Selection when automatic targeting has usable text', async () => {
+		const { context, contentEl } = createEditTargetView({ selectedText: 'beta' });
+
+		await viewPrototype.refreshTargetNote.call(context);
+
+		expect(findEditTargetSelect(contentEl)?.value).toBe('selection');
+		expect(context.editTargetChoice).toBe('auto');
+		expect(context.displayedEditTarget).toBe('selection');
+	});
+
+	it.each(['', ' \n\t'])(
+		'initially displays Full note for an empty or whitespace selection: %j',
+		async (selectedText) => {
+			const { context, contentEl } = createEditTargetView({ selectedText });
+
+			await viewPrototype.refreshTargetNote.call(context);
+
+			expect(findEditTargetSelect(contentEl)?.value).toBe('full-note');
+			expect(context.displayedEditTarget).toBe('full-note');
+		},
+	);
+
+	it('exposes the two explicit targets and the quick-action tooltip', async () => {
+		const { context, contentEl } = createEditTargetView();
+
+		await viewPrototype.refreshTargetNote.call(context);
+
+		const select = findEditTargetSelect(contentEl);
+		expect(select?.title).toBe('Applies to Edit and quick actions.');
+		expect(select?.children.map((option) => [option.value, option.textContent])).toEqual([
+			['full-note', 'Full note'],
+			['selection', 'Selection'],
+		]);
+	});
+
+	it.each([
+		{ choice: 'full-note', selectedText: 'usable selection' },
+		{ choice: 'selection', selectedText: '' },
+	] as const)(
+		'preserves explicit $choice targeting across renders and Ask/Edit switches',
+		async ({ choice, selectedText }) => {
+			const { context, contentEl } = createEditTargetView({ selectedText });
+			await viewPrototype.refreshTargetNote.call(context);
+			const select = findEditTargetSelect(contentEl);
+			if (context.inputEl) {
+				context.inputEl.value = 'Keep this draft';
+				context.drafts.set('A.md', context.inputEl.value);
+			}
+
+			if (select) {
+				select.value = choice;
+				select.dispatch('change');
+			}
+			viewPrototype.render.call(context);
+			expect(findEditTargetSelect(contentEl)?.value).toBe(choice);
+			viewPrototype.setMode.call(context, 'edit');
+			expect(findEditTargetSelect(contentEl)?.value).toBe(choice);
+			viewPrototype.setMode.call(context, 'ask');
+
+			expect(findEditTargetSelect(contentEl)?.value).toBe(choice);
+			expect(context.editTargetChoice).toBe(choice);
+			expect(context.displayedEditTarget).toBe(choice);
+			expect(context.inputEl?.value).toBe('Keep this draft');
+		},
+	);
+
+	it('resets to auto only for real note changes while preserving per-note drafts', async () => {
+		const { context, contentEl, setActivePath, setSelectedText } = createEditTargetView();
+		await viewPrototype.refreshTargetNote.call(context);
+		if (context.inputEl) {
+			context.inputEl.value = 'A draft';
+		}
+		setSelectedText('A selection');
+		await viewPrototype.refreshTargetNote.call(context);
+		expect(findEditTargetSelect(contentEl)?.value).toBe('selection');
+		const select = findEditTargetSelect(contentEl);
+		if (select) {
+			select.value = 'full-note';
+			select.dispatch('change');
+		}
+
+		setActivePath('B.md');
+		setSelectedText('B selection');
+		await viewPrototype.refreshTargetNote.call(context);
+
+		expect(context.editTargetChoice).toBe('auto');
+		expect(context.displayedEditTarget).toBe('selection');
+		expect(findEditTargetSelect(contentEl)?.value).toBe('selection');
+		expect(context.inputEl?.value).toBe('');
+		if (context.inputEl) {
+			context.inputEl.value = 'B draft';
+		}
+		const bSelect = findEditTargetSelect(contentEl);
+		if (bSelect) {
+			bSelect.value = 'full-note';
+			bSelect.dispatch('change');
+		}
+
+		setActivePath('A.md');
+		setSelectedText('');
+		await viewPrototype.refreshTargetNote.call(context);
+
+		expect(context.editTargetChoice).toBe('auto');
+		expect(findEditTargetSelect(contentEl)?.value).toBe('full-note');
+		expect(context.inputEl?.value).toBe('A draft');
+		setActivePath('B.md');
+		await viewPrototype.refreshTargetNote.call(context);
+		expect(context.inputEl?.value).toBe('B draft');
+	});
+
+	it('refreshes a same-note selection without recreating the textarea or reloading chat', async () => {
+		const { context, contentEl, render, setSelectedText } = createEditTargetView();
+		await viewPrototype.refreshTargetNote.call(context);
+		const composer = context.inputEl;
+		if (composer) {
+			composer.value = 'Unsubmitted draft';
+		}
+		render.mockClear();
+		setSelectedText('new selection');
+
+		await viewPrototype.refreshTargetNote.call(context);
+
+		expect(findEditTargetSelect(contentEl)?.value).toBe('selection');
+		expect(context.displayedEditTarget).toBe('selection');
+		expect(context.inputEl).toBe(composer);
+		expect(context.inputEl?.value).toBe('Unsubmitted draft');
+		expect(render).not.toHaveBeenCalled();
+		expect(context.plugin.conversationStore.load).toHaveBeenCalledOnce();
+	});
+
+	it('keeps the control and quick actions available outside Edit before submission', async () => {
+		const { context, contentEl } = createEditTargetView({ selectedText: 'beta' });
+
+		await viewPrototype.refreshTargetNote.call(context);
+
+		expect(context.selectedMode).toBe('ask');
+		expect(findEditTargetSelect(contentEl)?.disabled).toBe(false);
+		expect(findEditTargetSelect(contentEl)?.value).toBe('selection');
+		const quickActions = findElements(
+			contentEl,
+			(element) => element.className.split(' ').includes('emend-chat-quick-action'),
+		);
+		expect(quickActions).toHaveLength(3);
+		expect(quickActions.every((button) => !button.disabled)).toBe(true);
+	});
+
+	it.each([
+		{ isSending: true, isThreadLoading: false },
+		{ isSending: false, isThreadLoading: true },
+	])('disables the control while pending or loading: %o', async (state) => {
+		const { context, contentEl } = createEditTargetView({ selectedText: 'beta' });
+		await viewPrototype.refreshTargetNote.call(context);
+		context.isSending = state.isSending;
+		context.isThreadLoading = state.isThreadLoading;
+
+		viewPrototype.render.call(context);
+
+		expect(findEditTargetSelect(contentEl)?.disabled).toBe(true);
+	});
+
+	it('changes target state without requests, content reads, or composer recreation', async () => {
+		const {
+			context,
+			contentEl,
+			read,
+			requestChatCompletion,
+			captureChatContext,
+			setSelectedText,
+		} = createEditTargetView({ selectedText: 'beta' });
+		await viewPrototype.refreshTargetNote.call(context);
+		const composer = context.inputEl;
+		const select = findEditTargetSelect(contentEl);
+		if (select) {
+			select.value = 'full-note';
+			select.dispatch('change');
+		}
+		expect(context.inputEl).toBe(composer);
+		setSelectedText('');
+		await viewPrototype.refreshTargetNote.call(context);
+		viewPrototype.setMode.call(context, 'edit');
+
+		expect(context.editTargetChoice).toBe('full-note');
+		expect(context.displayedEditTarget).toBe('full-note');
+		expect(context.inputEl?.value).toBe('');
+		expect(requestChatCompletion).not.toHaveBeenCalled();
+		expect(captureChatContext).not.toHaveBeenCalled();
+		expect(read).not.toHaveBeenCalled();
+	});
+
+	it('clears the selector element reference on close', async () => {
+		const { context } = createEditTargetView();
+		context.editTargetSelectEl = new FakeElement('select');
+
+		await viewPrototype.onClose.call(context);
+
+		expect(context.editTargetSelectEl).toBeNull();
+	});
+});
+
+describe('EmendChatView edit target styles', () => {
+	it('keeps the compact control readable and its disabled state native-looking', () => {
+		const control = getCssRule('.emend-chat-edit-target');
+		const select = getCssRule('.emend-chat-edit-target select');
+		const disabled = getCssRule('.emend-chat-edit-target select:disabled');
+
+		expect(control).toContain('min-width: 0;');
+		expect(control).toContain('color: var(--text-muted);');
+		expect(select).toContain('min-width: 0;');
+		expect(disabled).toContain('color: var(--text-muted);');
+		expect(disabled).toContain('cursor: not-allowed;');
+	});
+
+	it('allows the target selector to wrap within narrow sidebars', () => {
+		expect(getCssRule('@media (max-width: 400px)')).not.toBe('');
+		expect(getCssRule('.emend-chat-edit-target select')).toContain('max-width: 100%;');
+	});
+});
+
 describe('EmendChatView provider history', () => {
 	it('filters transient entries and preserves metadata in the last eight ready messages', () => {
 		const context = {
@@ -548,6 +848,7 @@ describe('EmendChatView additional notes', () => {
 			plugin: {
 				getActiveNotePath: () => activePath,
 				getActiveNoteLabel: () => activePath,
+				hasUsableSelection: () => false,
 				conversationStore: { load: vi.fn(async () => []) },
 				additionalNotesStore,
 				settings: {
@@ -638,6 +939,7 @@ describe('EmendChatView additional notes', () => {
 			plugin: {
 				getActiveNotePath: () => activePath,
 				getActiveNoteLabel: () => activePath,
+				hasUsableSelection: () => false,
 				captureChatContext: () => ({ file: { path: activePath } }),
 				conversationStore: { load: vi.fn(async () => []) },
 				additionalNotesStore,
@@ -959,7 +1261,19 @@ class FakeElement {
 
 	replacement?: FakeElement;
 
-	addEventListener() {}
+	private readonly listeners = new Map<string, Array<() => void>>();
+
+	addEventListener(type: string, listener: () => void) {
+		const listeners = this.listeners.get(type) ?? [];
+		listeners.push(listener);
+		this.listeners.set(type, listeners);
+	}
+
+	dispatch(type: string) {
+		for (const listener of this.listeners.get(type) ?? []) {
+			listener();
+		}
+	}
 
 	empty() {
 		this.children.length = 0;
@@ -981,6 +1295,9 @@ class FakeElement {
 			child.className = options?.cls ?? '';
 			child.textContent = options?.text ?? '';
 			Object.assign(child.attributes, options?.attr);
+			if (tagName === 'option') {
+				child.value = options?.attr?.value ?? child.textContent;
+			}
 		}
 		this.children.push(child);
 		return child;
@@ -1457,6 +1774,7 @@ describe('EmendChatView compact Web disclosure', () => {
 			plugin: {
 				getActiveNotePath: () => 'Note.md',
 				getActiveNoteLabel: () => 'Note.md',
+				hasUsableSelection: () => false,
 				conversationStore: { load: vi.fn(async () => []) },
 				additionalNotesStore: new AdditionalNotesStore(),
 				settings: {
@@ -1509,6 +1827,7 @@ describe('EmendChatView render-end response alignment', () => {
 			plugin: {
 				getActiveNotePath: () => 'Note.md',
 				getActiveNoteLabel: () => 'Note.md',
+				hasUsableSelection: () => false,
 				conversationStore: {
 					load: vi.fn(async () => {
 						context.responseStartMessageId = 'answer';
