@@ -27,7 +27,7 @@ Only actual HTTP(S) results become sources. Returned URLs are deduplicated in re
 
 Usage covers every model round. It is provider-sourced only if every round supplies a complete valid usage triplet; otherwise Emend labels an estimate based on the exact round requests and responses. Search pricing and token counts are not invented.
 
-Conversation schema 2 persists the ready user's Review/Auto badge, ready assistant citation `{ id, title, url, snippet? }` metadata, and folded activity `{ type, target, status }` where status is completed, failed, or skipped. Search targets are validated single-line queries and fetch targets are credentialess HTTP(S) URLs. Version 1 threads load normally and are written as schema 2 on the next save, while future versions remain protected. Raw tool arguments/results, request bodies, retrieved content, and transient activity are not persisted. Chat also preserves the reader's position when not following latest, while new submissions, streaming, final Markdown layout, and thread restoration keep a following reader at the newest response.
+Conversation schema 2 persists the ready user's Review/Auto badge, ready assistant citation `{ id, title, url, snippet? }` metadata, and folded activity `{ type, target, status }` where status is completed, failed, or skipped. Search targets are validated single-line queries and fetch targets are credentialess HTTP(S) URLs. Version 1 threads load normally and are written as schema 2 on the next save, while future versions remain protected. Raw tool arguments/results, request bodies, retrieved content, and transient activity are not persisted. Chat also preserves the reader's position when not following latest. New submissions and streaming follow the bottom, successful completion aligns the completed response's header and beginning to the top after current Markdown layouts settle, and unrelated re-renders preserve upward readers.
 
 ## Implementation boundaries
 
@@ -80,6 +80,10 @@ The targeted real-Obsidian matrix used the same isolated runtime and loopback-on
 
 Reproduce with `node test_vault/emend-web-verify/verify.mjs --issue29`. All tested notes remained byte-for-byte unchanged. No real-provider smoke was run.
 
+## Compact disclosure verification
+
+The compact UI follow-up passed **1/1 real-Obsidian scenario with 4 assertions**: zero `.emend-chat-web-disclosure` bottom blocks, full note-context/billing/local-activity disclosure in the Web selector tooltip, no horizontal overflow at 240px, and a reduced 141.5px composer height. Evidence is in `test_vault/emend-web-verify/evidence-compact-ui/compact-ui-evidence.json` and `compact-ui-240.png`. The verified plugin bundle matched the production root bundle. A separate future UI PR for compact quick-action and additional-note controls is recorded in `future-discovery-and-workflows.md`.
+
 ## Clean local gate
 
 Run from the repository root:
@@ -88,4 +92,4 @@ Run from the repository root:
 npm ci && npm test && npm run lint && npm run build && git diff --check
 ```
 
-Result: locked install succeeded; **31 Vitest files and 620 tests passed**; ESLint reported no findings; strict TypeScript and production esbuild succeeded; `git diff --check` reported no whitespace errors. No real-provider smoke was run. All owned mock, Xvfb, and Obsidian processes were stopped after verification.
+Result: locked install succeeded; **31 Vitest files and 622 tests passed**; ESLint reported no findings; strict TypeScript and production esbuild succeeded; `git diff --check` reported no whitespace errors. No real-provider smoke was run. All owned mock, Xvfb, and Obsidian processes were stopped after verification.

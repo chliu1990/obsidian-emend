@@ -10,7 +10,7 @@ All notable changes to Emend are documented here. The format follows [Keep a Cha
 - Model-directed multi-round `web_search`/`web_fetch` with sequential calls, a configurable default limit of 8 calls (1–20), a 40,000-character shared retrieval budget, and a 12,000-character per-fetch limit.
 - Stable result-backed source IDs, safe citation rendering/copying, all-round provider-or-estimated usage, and conversation schema 2 persistence for ready Web badges and sanitized citations with version 1 loading.
 - Disclosure that model-generated retrieval arguments may contain note-derived text and that successful DeepSeek search/fetch calls may be billed separately.
-- Folded ready-message Web activity with sanitized query/URL/outcome persistence, latest-message following during streaming and final Markdown layout, and reader-position preservation when not following latest.
+- Folded ready-message Web activity with sanitized query/URL/outcome persistence, bottom following during streaming, start-of-response alignment after completion, and reader-position preservation on unrelated re-renders.
 - Search-returned bounded page content before Fetch, explicit unread-page degradation for expected Fetch failures, and fatal handling for credential/account/request errors.
 
 ### Fixed
