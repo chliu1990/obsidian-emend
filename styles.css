@@ -378,7 +378,6 @@
 	font-size: var(--font-ui-smaller);
 }
 
-.emend-chat-web-disclosure,
 .emend-chat-web-activity,
 .emend-chat-web-source-snippet {
 	color: var(--text-muted);
@@ -386,7 +385,6 @@
 	line-height: 1.4;
 }
 
-.emend-chat-web-disclosure,
 .emend-chat-web-activity {
 	margin-top: 6px;
 }

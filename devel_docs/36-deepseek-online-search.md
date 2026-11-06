@@ -59,7 +59,7 @@ The matrix covered:
 14. Modify Selection advertising no tools, making no retrieval, replacing only the captured range, and preserving native undo/redo.
 15. Target-note switching aborting a pending stream before retrieval, leaving both notes unchanged, and permitting a successful retry.
 16. Explicit fetch truncation to 12,000 content characters plus `[...]`, and malformed credentialed citation URLs being discarded before safe UI rendering.
-17. Review/Auto disclosure, live activity, actual Copy with only actual sources, provider/estimated usage labels, and a 240px composer without horizontal overflow.
+17. Review/Auto disclosure through the Web selector tooltip, live activity, actual Copy with only actual sources, provider/estimated usage labels, and a 240px composer without horizontal overflow or a large bottom disclosure.
 
 The original baseline audit covered **19 sanitized scenario logs and 36 request entries**, with zero header/credential leaks. All **15 persisted chat threads** used schema 2. Before folded activity was requested, generated queries, tool arguments/results, request bodies, web activity, stopped/error content, unsafe URLs, oversized retrieved content, and dummy credentials were absent; only ready Web badges and citation metadata remained. Follow-up verification for folded activity, latest-message scrolling, and Fetch recovery is recorded below after completion.
 
@@ -88,4 +88,4 @@ Run from the repository root:
 npm ci && npm test && npm run lint && npm run build && git diff --check
 ```
 
-Result: locked install succeeded; **31 Vitest files and 619 tests passed**; ESLint reported no findings; strict TypeScript and production esbuild succeeded; `git diff --check` reported no whitespace errors. No real-provider smoke was run. All owned mock, Xvfb, and Obsidian processes were stopped after verification.
+Result: locked install succeeded; **31 Vitest files and 620 tests passed**; ESLint reported no findings; strict TypeScript and production esbuild succeeded; `git diff --check` reported no whitespace errors. No real-provider smoke was run. All owned mock, Xvfb, and Obsidian processes were stopped after verification.

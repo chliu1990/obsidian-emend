@@ -76,6 +76,15 @@ Track: https://github.com/chliu1990/obsidian-emend/issues/13
 - [ ] Require explicit migration/overwrite confirmation and a separate **Forget shared keys** action. Make no cross-device synchronization claim.
 - [ ] Review the deliberate exception to vault-only file access and test supported desktop platforms before any implementation.
 
+## 9. Compact composer controls
+
+Requested in the maintainer's UI review after the DeepSeek web-search follow-ups.
+
+- [ ] Move Fix grammar, Make concise, Add examples, and additional-note selection into smaller icon buttons and dropdown menus beside the composer rather than large dedicated sections.
+- [ ] Preserve accessible labels/tooltips, selected-note paths and remove/clear behavior, shared submission paths, pending/disabled states, and target-note isolation.
+- [ ] Keep privacy details at the point of action or in compact menus rather than persistent bottom disclosures. Do not hide query/URL review controls or change provider/write permissions.
+- [ ] Verify keyboard navigation, narrow sidebars, native picker/modal behavior, draft preservation, latest-message scrolling, and real-Obsidian layout in a separate UI PR.
+
 ## Delivery constraints
 
 - Keep each issue and each of the three maintainer roadmap requests independent; do not bundle discovery, linked notes, folder selection, mode redesign, translation, or credential storage into one PR.

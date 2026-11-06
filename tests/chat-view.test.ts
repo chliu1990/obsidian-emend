@@ -712,6 +712,7 @@ class FakeElement {
 	readonly attributes: Record<string, string> = {};
 	className = '';
 	textContent = '';
+	title = '';
 	disabled = false;
 	value = '';
 	open = false;
@@ -1151,5 +1152,55 @@ describe('EmendChatView completion relayout and unread pages', () => {
 		expect(getUnreadPageCount([
 			{ type: 'fetch', target: 'https://example.test/other', status: 'failed' },
 		])).toBe(1);
+	});
+});
+
+
+describe('EmendChatView compact Web disclosure', () => {
+	it('keeps disclosure on the Web selector tooltip without a large bottom block', async () => {
+		const contentEl = new FakeElement();
+		const context = {
+			app: {},
+			contentEl,
+			plugin: {
+				getActiveNotePath: () => 'Note.md',
+				getActiveNoteLabel: () => 'Note.md',
+				conversationStore: { load: vi.fn(async () => []) },
+				additionalNotesStore: new AdditionalNotesStore(),
+				settings: {
+					activeProvider: 'deepseek',
+					providers: { deepseek: { name: 'DeepSeek', model: 'deepseek-flash' } },
+				},
+			},
+			notePath: null as string | null,
+			noteLoadGeneration: 0,
+			messages: [] as ChatMessage[],
+			selectedMode: 'ask' as Mode,
+			webSearchMode: 'auto' as const,
+			isThreadLoading: false,
+			isSending: false,
+			activeController: null,
+			closed: false,
+			inputEl: null as FakeElement | null,
+			drafts: new Map<string, string>(),
+			additionalNotesControl: null,
+			pendingMessages: new Set<ChatMessage>(),
+			messageBodyEls: new Map<string, HTMLElement>(),
+			activeModelEl: null,
+			cancelPendingRender: vi.fn(),
+		};
+		Object.setPrototypeOf(context, EmendChatView.prototype);
+
+		await viewPrototype.refreshTargetNote.call(context);
+
+		const disclosure = findElements(contentEl, (element) =>
+			element.className.split(' ').includes('emend-chat-web-disclosure')
+		);
+		const webSelect = findElements(contentEl, (element) =>
+			element.tagName === 'select' && element.attributes['aria-label'] === 'Web search mode'
+		)[0];
+		expect(disclosure).toHaveLength(0);
+		expect(webSelect?.title).toContain('note context');
+		expect(webSelect?.title).toContain('stored locally with ready chats');
 	});
 });

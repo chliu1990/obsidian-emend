@@ -290,6 +290,7 @@ export class EmendChatView extends ItemView {
 		const webSelectEl = webLabelEl.createEl('select', {
 			attr: { 'aria-label': 'Web search mode' },
 		});
+		webSelectEl.title = WEB_SEARCH_DISCLOSURE;
 		for (const [value, label] of [
 			['off', 'Off'],
 			['review', 'Review'],
@@ -331,12 +332,6 @@ export class EmendChatView extends ItemView {
 				void this.submitPrompt();
 			}
 		});
-		if ((this.webSearchMode ?? 'off') !== 'off' && this.selectedMode !== 'edit') {
-			composerEl.createDiv({
-				cls: 'emend-chat-web-disclosure',
-				text: WEB_SEARCH_DISCLOSURE,
-			});
-		}
 		this.pendingScrollRestore = { previousScrollTop, wasFollowing };
 		this.settleMarkdownRender(this.renderGeneration);
 	}

@@ -13,6 +13,10 @@ All notable changes to Emend are documented here. The format follows [Keep a Cha
 - Folded ready-message Web activity with sanitized query/URL/outcome persistence, latest-message following during streaming and final Markdown layout, and reader-position preservation when not following latest.
 - Search-returned bounded page content before Fetch, explicit unread-page degradation for expected Fetch failures, and fatal handling for credential/account/request errors.
 
+### Fixed
+
+- Moved Web privacy disclosure into the selector tooltip and removed the large bottom block to leave more room for chat content.
+
 ### Security
 
 - Kept web retrieval inside writer-free read-only modes, treated retrieved content as untrusted data, and rejected Kimi/custom providers and unsupported models without silent fallback to unsearched chat.
