@@ -2,7 +2,7 @@
 
 All notable changes to Emend are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.5.0] - 2026-11-06
 
 ### Added
 
@@ -86,7 +86,8 @@ All notable changes to Emend are documented here. The format follows [Keep a Cha
 - Strict provider error redaction and bounded error output.
 - Validated anchors, ambiguity/overlap rejection, stale-source/target checks, and abort/unload protection for note writes.
 
-[Unreleased]: https://github.com/chliu1990/obsidian-emend/compare/2.4.0...HEAD
+[Unreleased]: https://github.com/chliu1990/obsidian-emend/compare/2.5.0...HEAD
+[2.5.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.5.0
 [2.4.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.4.0
 [2.3.1]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.3.1
 [2.3.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.3.0
