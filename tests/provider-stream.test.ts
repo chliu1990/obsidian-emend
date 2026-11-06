@@ -627,6 +627,33 @@ describe('requestAiResponse', () => {
 		).rejects.toThrow('No text was found in the provider response.');
 	});
 
+	it('serializes ordinary assistant and user continuations without tool_calls', async () => {
+		const fetchMock = mockStream([
+			'data: {"choices":[{"delta":{"content":"corrected"}}]}\n\n',
+			'data: [DONE]\n\n',
+		]);
+
+		await requestAiResponse(
+			makeRequest({
+				continuation: [
+					{ role: 'assistant', content: 'not-json' },
+					{ role: 'user', content: 'Return a valid JSON array.' },
+				],
+			}),
+			{ onEvent: vi.fn() },
+			new AbortController().signal,
+		);
+
+		const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+		const body = JSON.parse(init.body as string) as Record<string, unknown>;
+		expect(body.messages).toEqual([
+			{ role: 'system', content: 'System prompt' },
+			{ role: 'user', content: 'Current prompt' },
+			{ role: 'assistant', content: 'not-json' },
+			{ role: 'user', content: 'Return a valid JSON array.' },
+		]);
+	});
+
 	it('serializes tool declarations and assistant/tool continuation messages', async () => {
 		const fetchMock = mockStream([
 			'data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n\n',

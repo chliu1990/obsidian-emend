@@ -558,6 +558,98 @@ describe('shared per-note request isolation', () => {
 	);
 });
 
+describe('second-round request isolation', () => {
+	it('holds the same-note lock through the correction round while another note proceeds', async () => {
+		const fixture = makePluginFixture({
+			'A.md': 'A original.',
+			'B.md': 'B original.',
+		});
+		respondWith('not-json');
+		const correction = holdResponse(JSON.stringify([
+			{ type: 'insert', anchor: 'A', position: 'after', text: ' corrected' },
+		]));
+		const pendingA = fixture.plugin.requestChatCompletion(
+			makeEditSubmission(fixture, 'A.md'),
+		);
+		void pendingA.catch(() => undefined);
+		await correction.started;
+
+		await expect(
+			fixture.plugin.requestChatCompletion(
+				makeReadOnlySubmission(fixture, 'A.md'),
+			),
+		).rejects.toEqual(new Error(PENDING_ERROR));
+		fixture.setActivePath('B.md');
+		respondWith(JSON.stringify([
+			{ type: 'replace', target: 'B', replacement: 'Corrected' },
+		]));
+		await expect(
+			fixture.plugin.requestChatCompletion(
+				makeEditSubmission(fixture, 'B.md'),
+			),
+		).resolves.toMatchObject({ applied: true, changeCount: 1 });
+		expect(requestMock).toHaveBeenCalledTimes(3);
+
+		fixture.setActivePath('A.md');
+		correction.finish();
+		await expect(pendingA).resolves.toMatchObject({
+			applied: true,
+			changeCount: 1,
+		});
+		expect(fixture.writes).toEqual([
+			{ path: 'B.md', text: '{~~B~>Corrected~~} original.' },
+			{ path: 'A.md', text: 'A{++ corrected++} original.' },
+		]);
+	});
+
+	it.each(['final validation', 'second-round abort', 'stale after correction'])(
+		'releases the note after %s so a retry can succeed',
+		async (failure) => {
+			const fixture = makePluginFixture({ 'Note.md': 'Alpha beta.' });
+			const controller = new AbortController();
+			respondWith('not-json');
+			const correction = holdResponse(
+				failure === 'final validation'
+					? 'still not-json'
+					: JSON.stringify([
+						{ type: 'replace', target: 'beta', replacement: 'delta' },
+					]),
+			);
+			const pending = fixture.plugin.requestChatCompletion(
+				makeEditSubmission(
+					fixture,
+					'Note.md',
+					'Edit this note.',
+					[],
+					controller.signal,
+				),
+			);
+			const outcome = pending.then(
+				(value) => ({ value }),
+				(error: unknown) => ({ error }),
+			);
+			await correction.started;
+			if (failure === 'second-round abort') {
+				controller.abort();
+			} else if (failure === 'stale after correction') {
+				fixture.setText('Note.md', 'Locally changed.');
+			}
+			correction.finish();
+			const result = await outcome;
+
+			expect(result).toHaveProperty('error');
+			expect(requestMock).toHaveBeenCalledTimes(2);
+			expect(fixture.writes).toEqual([]);
+			respondWith('Retry answer');
+			await expect(
+				fixture.plugin.requestChatCompletion(
+					makeReadOnlySubmission(fixture, 'Note.md'),
+				),
+			).resolves.toMatchObject({ content: 'Retry answer' });
+		},
+	);
+});
+
 describe('additional-note request integration', () => {
 	it.each([false, true])(
 		'applies includeNotePathInContext=%s to captured additional notes',
@@ -621,9 +713,11 @@ describe('additional-note request integration', () => {
 			'Note.md': 'Active text.',
 			'Reference.md': 'Additional only.',
 		});
-		respondWith(JSON.stringify([
+		const invalidResponse = JSON.stringify([
 			{ type: 'replace', target: 'Additional only', replacement: 'Changed' },
-		]));
+		]);
+		respondWith(invalidResponse);
+		respondWith(invalidResponse);
 
 		await expect(
 			fixture.plugin.requestChatCompletion(
@@ -638,7 +732,7 @@ describe('additional-note request integration', () => {
 			),
 		).rejects.toThrow(/not found|match/i);
 
-		expect(requestMock).toHaveBeenCalledOnce();
+		expect(requestMock).toHaveBeenCalledTimes(2);
 		expect(fixture.writes).toEqual([]);
 		expect(fixture.getText('Note.md')).toBe('Active text.');
 		expect(fixture.getText('Reference.md')).toBe('Additional only.');
@@ -650,9 +744,11 @@ describe('additional-note request integration', () => {
 			'Reference.md': 'Additional only.',
 		});
 		const selection = makeSelection(fixture, 'Note.md', 'beta');
-		respondWith(JSON.stringify([
+		const invalidResponse = JSON.stringify([
 			{ type: 'replace', target: 'Additional only', replacement: 'Changed' },
-		]));
+		]);
+		respondWith(invalidResponse);
+		respondWith(invalidResponse);
 
 		await expect(
 			fixture.plugin.requestSelectionEdit(
@@ -664,7 +760,7 @@ describe('additional-note request integration', () => {
 			),
 		).rejects.toThrow(/not found|match/i);
 
-		expect(requestMock).toHaveBeenCalledOnce();
+		expect(requestMock).toHaveBeenCalledTimes(2);
 		expect(selection.editor.replaceRange).not.toHaveBeenCalled();
 		expect(fixture.writes).toEqual([]);
 		expect(fixture.getText('Note.md')).toBe('Alpha beta.');

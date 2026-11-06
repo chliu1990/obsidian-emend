@@ -669,6 +669,10 @@ export class EmendChatView extends ItemView {
 							loadingMessage.reasoning += text;
 							this.scheduleMessageRender(loadingMessage);
 						},
+						onRetry: () => {
+							loadingMessage.reasoning = '';
+							this.scheduleMessageRender(loadingMessage);
+						},
 					},
 					signal: controller.signal,
 				});

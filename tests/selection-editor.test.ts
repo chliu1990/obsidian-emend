@@ -399,7 +399,7 @@ function makeSelectionCoordinator(
 	snapshot: SelectionSnapshot,
 	instructions: InstructionPromptParts = { skillTexts: new Map() },
 ) {
-	const { adapter } = makeAdapter(snapshot);
+	const { adapter, setCurrentText, setTargetCurrent } = makeAdapter(snapshot);
 	const loadInstructions = vi.fn(async () => instructions);
 	const loadAdditionalNotes = vi.fn(
 		async (
@@ -416,7 +416,15 @@ function makeSelectionCoordinator(
 		editor: adapter,
 		editStrategy: operationEditStrategy,
 	});
-	return { adapter, coordinator, loadAdditionalNotes, loadInstructions, request };
+	return {
+		adapter,
+		coordinator,
+		loadAdditionalNotes,
+		loadInstructions,
+		request,
+		setCurrentText,
+		setTargetCurrent,
+	};
 }
 
 function makeSelectionSubmission(
@@ -689,7 +697,7 @@ describe('SelectionEditRequestCoordinator', () => {
 			})),
 		).rejects.toThrow(/not found|match/i);
 
-		expect(request).toHaveBeenCalledOnce();
+		expect(request).toHaveBeenCalledTimes(2);
 		expect(adapter.readCurrentText).not.toHaveBeenCalled();
 		expect(adapter.replaceRange).not.toHaveBeenCalled();
 		expect(snapshot.fullText).toBe('# Note\nAlpha beta gamma.\nEnd');
@@ -799,4 +807,165 @@ describe('SelectionEditRequestCoordinator', () => {
 		expect(adapter.readCurrentText).not.toHaveBeenCalled();
 		expect(adapter.replaceRange).not.toHaveBeenCalled();
 	});
+
+	it('rejects a selection inside fenced code without reading or replacing', async () => {
+		const snapshot = makeSnapshot('Before\n```\nalpha\n```\nAfter', 'alpha');
+		const request = selectionRequest(JSON.stringify([{ type: 'remove', target: 'alpha' }]));
+		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
+
+		await expect(coordinator.submit(makeSelectionSubmission(snapshot))).rejects.toMatchObject({
+			code: 'fenced-code-edit',
+			line: 3,
+		});
+		expect(request).toHaveBeenCalledTimes(2);
+		expect(adapter.readCurrentText).not.toHaveBeenCalled();
+		expect(adapter.replaceRange).not.toHaveBeenCalled();
+	});
+
+	it('uses absolute selection offsets for inline-code guards without expanding the target', async () => {
+		const snapshot = makeSnapshot('Before `alpha` after', 'alpha');
+		const request = selectionRequest(JSON.stringify([
+			{ type: 'replace', target: 'alpha', replacement: 'beta' },
+		]));
+		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
+
+		await expect(coordinator.submit(makeSelectionSubmission(snapshot))).rejects.toMatchObject({
+			code: 'inline-code-range',
+			line: 1,
+		});
+		expect(request).toHaveBeenCalledTimes(2);
+		expect(snapshot.selectedText).toBe('alpha');
+		expect(snapshot.fullText).toBe('Before `alpha` after');
+		expect(adapter.readCurrentText).not.toHaveBeenCalled();
+		expect(adapter.replaceRange).not.toHaveBeenCalled();
+	});
+
+	it('applies a complete inline-code span selection at its original offsets', async () => {
+		const snapshot = makeSnapshot('Before `alpha` after', '`alpha`');
+		const request = selectionRequest(JSON.stringify([
+			{ type: 'replace', target: '`alpha`', replacement: '`beta`' },
+		]));
+		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
+
+		await expect(coordinator.submit(makeSelectionSubmission(snapshot))).resolves.toEqual({
+			applied: true,
+			changeCount: 1,
+		});
+		expect(adapter.replaceRange).toHaveBeenCalledExactlyOnceWith(
+			'{~~`alpha`~>`beta`~~}',
+			snapshot.from,
+			snapshot.to,
+		);
+	});
+
+	it('corrects one invalid response against the same selection and replaces minimal markup once', async () => {
+		const fullText = '# Note\nThey have a plan.\nEnd';
+		const snapshot = makeSnapshot(fullText, 'They have a plan.');
+		const validResponse = JSON.stringify([
+			{
+				type: 'replace',
+				target: 'They have a plan.',
+				replacement: 'They has a plan.',
+			},
+		]);
+		const request = selectionRequest('not-json')
+			.mockResolvedValueOnce({ content: 'not-json', reasoning: '' })
+			.mockResolvedValueOnce({ content: validResponse, reasoning: '' });
+		const { adapter, coordinator, loadAdditionalNotes, loadInstructions } =
+			makeSelectionCoordinator(request, snapshot);
+		loadAdditionalNotes.mockResolvedValue([{
+			sourcePath: 'Reference.md',
+			markdown: 'Additional only.',
+			sourceCharacters: 16,
+			includedCharacters: 16,
+		}]);
+		const submission = makeSelectionSubmission(snapshot, {
+			maxContextCharacters: 1000,
+			additionalNotePaths: ['Reference.md'],
+		});
+
+		const result = await coordinator.submit(submission);
+
+		expect(result).toEqual({ applied: true, changeCount: 1 });
+		expect(request).toHaveBeenCalledTimes(2);
+		expect(loadAdditionalNotes).toHaveBeenCalledOnce();
+		expect(loadInstructions).toHaveBeenCalledOnce();
+		expect(adapter.readCurrentText).toHaveBeenCalledOnce();
+		expect(adapter.replaceRange).toHaveBeenCalledExactlyOnceWith(
+			'They {~~have~>has~~} a plan.',
+			snapshot.from,
+			snapshot.to,
+		);
+		const firstRequest = request.mock.calls[0]?.[0];
+		const secondRequest = request.mock.calls[1]?.[0];
+		if (!firstRequest || !secondRequest) {
+			throw new Error('Correction request missing.');
+		}
+		expect(firstRequest.userPrompt).toContain(
+			`Selected text:\n${snapshot.selectedText}`,
+		);
+		expect(firstRequest.userPrompt).toContain('Additional only.');
+		const { continuation, ...correctionBaseRequest } = secondRequest;
+		expect(correctionBaseRequest).toEqual(firstRequest);
+		expect(continuation?.[0]).toEqual({ role: 'assistant', content: 'not-json' });
+		expect(continuation?.[1]?.content).toContain('unchanged original snapshot');
+		expect(continuation?.[1]?.content).toContain('"code":"invalid-json"');
+	});
+
+	it.each(['provider error', 'abort'])(
+		'does not read or replace after a second-round %s',
+		async (failure) => {
+			const snapshot = makeSnapshot();
+			const controller = new AbortController();
+			const error = failure === 'abort'
+				? new DOMException('Stopped', 'AbortError')
+				: new Error('Provider unavailable');
+			const request = selectionRequest('not-json')
+				.mockResolvedValueOnce({ content: 'not-json', reasoning: '' })
+				.mockImplementationOnce(async () => {
+					if (failure === 'abort') {
+						controller.abort();
+					}
+					throw error;
+				});
+			const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
+
+			await expect(coordinator.submit(makeSelectionSubmission(snapshot, {
+				signal: controller.signal,
+			}))).rejects.toBe(error);
+
+			expect(request).toHaveBeenCalledTimes(2);
+			expect(adapter.readCurrentText).not.toHaveBeenCalled();
+			expect(adapter.replaceRange).not.toHaveBeenCalled();
+		},
+	);
+
+	it.each(['stale source', 'target switch'])(
+		'keeps a corrected selection terminal after a %s',
+		async (failure) => {
+			const snapshot = makeSnapshot();
+			const request = selectionRequest('not-json')
+				.mockResolvedValueOnce({ content: 'not-json', reasoning: '' })
+				.mockResolvedValueOnce({ content: replaceBetaResponse, reasoning: '' });
+			const {
+				adapter,
+				coordinator,
+				setCurrentText,
+				setTargetCurrent,
+			} = makeSelectionCoordinator(request, snapshot);
+			if (failure === 'stale source') {
+				setCurrentText('# Note\nAlpha beta changed.\nEnd');
+			} else {
+				setTargetCurrent(false);
+			}
+
+			await expect(
+				coordinator.submit(makeSelectionSubmission(snapshot)),
+			).rejects.toThrow(STALE_ERROR);
+
+			expect(request).toHaveBeenCalledTimes(2);
+			expect(adapter.readCurrentText).toHaveBeenCalledOnce();
+			expect(adapter.replaceRange).not.toHaveBeenCalled();
+		},
+	);
 });

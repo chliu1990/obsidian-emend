@@ -1,10 +1,26 @@
 import { readFileSync } from 'node:fs';
-import { MarkdownRenderer, Scope } from 'obsidian';
+import { MarkdownRenderer, Scope, TFile } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AdditionalNotesStore } from '../src/additional-notes-store';
 import type { ShortcutEvent } from '../src/chat-shortcuts';
 import { EmendChatView, formatChatMessageForCopy, getUnreadPageCount } from '../src/chat-view';
-import type { ChatMessage, Mode, ProviderHistoryMessage } from '../src/types';
+import { operationEditStrategy } from '../src/operation-edit-strategy';
+import type {
+	AiProviderRequest,
+	StreamEvent,
+	StreamResult,
+} from '../src/provider-stream';
+import {
+	EditRequestCoordinator,
+	type EditSubmission,
+	type ReadOnlySubmission,
+} from '../src/request-coordinator';
+import type {
+	ChatMessage,
+	Mode,
+	ProviderConfig,
+	ProviderHistoryMessage,
+} from '../src/types';
 
 function getCssRule(selector: string): string {
 	const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
@@ -291,6 +307,188 @@ describe('EmendChatView conversation saving', () => {
 			source: 'provider',
 		});
 		expect(context.messages.every((item) => item.timestamp > 0)).toBe(true);
+	});
+
+	it('persists one concise corrected Edit summary with aggregate usage and clean later history', async () => {
+		const file = new TFile();
+		file.path = 'Note.md';
+		const sourceText = 'Alpha beta.';
+		const validResponse = JSON.stringify([
+			{ type: 'replace', target: 'beta', replacement: 'delta' },
+		]);
+		const invalidReasoning = 'INVALID_ROUND_REASONING';
+		const validReasoning = 'VALID_ROUND_REASONING';
+		const request = vi.fn(async (
+			_request: AiProviderRequest,
+			callbacks: { onEvent(event: StreamEvent): void },
+		): Promise<StreamResult> => {
+			callbacks.onEvent({ type: 'reasoning', text: invalidReasoning });
+			return { content: 'private invalid response', reasoning: invalidReasoning };
+		});
+		request
+			.mockImplementationOnce(async (_request, callbacks) => {
+				callbacks.onEvent({ type: 'reasoning', text: invalidReasoning });
+				return {
+					content: 'private invalid response',
+					reasoning: invalidReasoning,
+					usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12 },
+				};
+			})
+			.mockImplementationOnce(async (_request, callbacks) => {
+				callbacks.onEvent({ type: 'reasoning', text: validReasoning });
+				return {
+					content: validResponse,
+					reasoning: validReasoning,
+					usage: { promptTokens: 20, completionTokens: 5, totalTokens: 25 },
+				};
+			});
+		const editProvider: ProviderConfig = {
+			name: 'Local test provider',
+			baseUrl: 'http://127.0.0.1:8787/v1',
+			apiKey: 'dummy-test-key',
+			model: 'dummy-model',
+			reasoningEffort: 'low',
+			requestUsage: true,
+			discoveredModels: [],
+		};
+		const writer = {
+			readCurrentText: vi.fn(async () => sourceText),
+			write: vi.fn(async () => undefined),
+			isTargetCurrent: vi.fn(() => true),
+		};
+		const editCoordinator = new EditRequestCoordinator({
+			provider: editProvider,
+			loadAdditionalNotes: async () => [],
+			loadInstructions: async () => ({ skillTexts: new Map() }),
+			request,
+			writer,
+			editStrategy: operationEditStrategy,
+		});
+		const requestChatCompletion = vi.fn(async (
+			submission: EditSubmission | ReadOnlySubmission,
+		) => {
+			if (submission.mode === 'edit') {
+				return editCoordinator.submit(submission);
+			}
+			submission.callbacks.onContent('Answer');
+			return {
+				content: 'Answer',
+				reasoning: '',
+				usage: {
+					promptTokens: 3,
+					completionTokens: 1,
+					totalTokens: 4,
+					source: 'provider' as const,
+				},
+			};
+		});
+		const requestContext = {
+			file,
+			sourceText,
+			selection: { from: 0, to: 0 },
+			noteLabel: 'Note.md',
+			markdown: sourceText,
+		};
+		const savedSnapshots: ChatMessage[][] = [];
+		const context = {
+			inputEl: { value: 'Edit note' },
+			isSending: false,
+			isThreadLoading: false,
+			selectedMode: 'edit' as Mode,
+			messages: [] as ChatMessage[],
+			plugin: {
+				captureChatContext: () => requestContext,
+				additionalNotesStore: new AdditionalNotesStore(),
+				requestChatCompletion,
+			},
+			toProviderHistory: () => viewPrototype.toProviderHistory.call(context),
+			persistMessages: vi.fn(async (_path: string, messages: ChatMessage[]) => {
+				savedSnapshots.push(messages.map((message) => ({ ...message })));
+			}),
+			render: vi.fn(),
+			scheduleMessageRender: vi.fn(),
+			closed: false,
+			activeController: null,
+		};
+		const summary = 'Edit applied — 1 changes tracked. Review in Track Changes.';
+
+		await viewPrototype.submitPrompt.call(context);
+
+		expect(request).toHaveBeenCalledTimes(2);
+		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
+			file,
+			'Alpha {~~beta~>delta~~}.',
+		);
+		expect(context.messages).toHaveLength(2);
+		expect(context.messages[1]).toMatchObject({
+			role: 'assistant',
+			status: 'ready',
+			content: summary,
+			reasoning: validReasoning,
+			usage: {
+				promptTokens: 30,
+				completionTokens: 7,
+				totalTokens: 37,
+				source: 'provider',
+			},
+		});
+		expect(savedSnapshots).toHaveLength(2);
+		const savedUser = {
+			id: context.messages[0]?.id ?? '',
+			role: 'user',
+			content: 'Edit note',
+			reasoning: '',
+			mode: 'edit',
+			sourcePath: 'Note.md',
+			status: 'ready',
+			timestamp: context.messages[0]?.timestamp ?? -1,
+		};
+		const savedEdit = {
+			id: context.messages[1]?.id ?? '',
+			role: 'assistant',
+			content: summary,
+			reasoning: validReasoning,
+			mode: 'edit',
+			sourcePath: 'Note.md',
+			status: 'ready',
+			timestamp: context.messages[1]?.timestamp ?? -1,
+			usage: {
+				promptTokens: 30,
+				completionTokens: 7,
+				totalTokens: 37,
+				source: 'provider',
+			},
+		};
+		expect(savedSnapshots[0]).toEqual([savedUser]);
+		expect(savedSnapshots[1]).toEqual([savedUser, savedEdit]);
+		expect(savedSnapshots.flat().map((message) => message.content).join('\n')).not.toContain(
+			'private invalid response',
+		);
+		expect(savedSnapshots.flat().map((message) => message.content).join('\n')).not.toContain(
+			validResponse,
+		);
+
+		context.inputEl.value = 'Next question';
+		context.selectedMode = 'ask';
+		await viewPrototype.submitPrompt.call(context);
+
+		const nextSubmission = requestChatCompletion.mock.calls[1]?.[0];
+		expect(nextSubmission?.history.map((message) => message.content)).toEqual([
+			'Edit note',
+			summary,
+		]);
+		expect(nextSubmission?.history.map((message) => message.content).join('\n')).not.toContain(
+			'invalid-json',
+		);
+		expect(context.messages.filter(
+			(message) => message.role === 'assistant',
+		).map((message) => message.content)).toEqual([summary, 'Answer']);
+		expect(savedSnapshots.flat().map((message) => message.content).join('\n')).not.toContain(
+			'private invalid response',
+		);
+		expect(savedSnapshots.flat().map((message) => message.reasoning).join('\n')).not.toContain(
+			invalidReasoning,
+		);
 	});
 });
 

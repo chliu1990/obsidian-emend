@@ -3,6 +3,7 @@ import {
 	formatAdditionalNotesPrompt,
 	type AdditionalNoteSnapshot,
 } from './additional-notes-context';
+import { prepareEditResponse } from './edit-response';
 import type { EditPreparation, EditStrategy } from './edit-strategy';
 import type { EditResult } from './note-writer';
 import { canWriteToNote } from './permissions';
@@ -164,29 +165,19 @@ export class SelectionEditRequestCoordinator {
 			submission.signal,
 		);
 		const instructions = await this.dependencies.loadInstructions();
-		let response = '';
-		await this.dependencies.request(
-			{
+		const { prepared } = await prepareEditResponse({
+			original: submission.snapshot.selectedText,
+			sourceContext: submission.snapshot,
+			request: {
 				provider: this.dependencies.provider,
 				systemPrompt: this.dependencies.editStrategy.getSelectionPrompt(instructions),
 				userPrompt: buildSelectionUserPrompt(submission, additionalNotes),
 				history: [],
 			},
-			{
-				onEvent: (event) => {
-					if (event.type === 'content') {
-						response += event.text;
-					}
-				},
-			},
-			submission.signal,
-		);
-		submission.signal.throwIfAborted();
-
-		const prepared = this.dependencies.editStrategy.prepareEdit(
-			submission.snapshot.selectedText,
-			response,
-		);
+			editStrategy: this.dependencies.editStrategy,
+			requestRound: this.dependencies.request,
+			signal: submission.signal,
+		});
 		return applyPreparedSelectionEdit(
 			'edit',
 			submission.snapshot,

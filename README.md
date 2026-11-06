@@ -94,13 +94,14 @@ The compact identity beside the **Emend** title shows the manifest version in re
 
 Emend never lets the model rewrite a document directly. It returns a bare JSON array of closed operations against the captured source. Emend then:
 
-1. Requires exact anchors and unique matches or explicit one-based occurrences.
-2. Rejects malformed, ambiguous, overlapping, or markup-injecting commands.
-3. Compiles valid operations into CriticMarkup and revalidates the result.
-4. Checks that the captured file and source have not changed and that the request was not aborted.
-5. Writes once, so Track Changes can review the edit.
+1. Requires exact anchors and unique matches or explicit one-based occurrences, with typed diagnostics that identify the operation, failure code, and bounded match details.
+2. Rejects malformed, ambiguous, overlapping, or markup-injecting commands. Declared-range overlap and insertion-ambiguity rules remain conservative even when smaller review hunks could otherwise coexist.
+3. Rejects partial inline-code targets (`inline-code-range`), fenced-code edits (`fenced-code-edit`), and table structure changes (`table-structure-edit`) atomically. Tables allow text edits within one existing header/body cell, including safe insert/remove/replace/comment Operations and escaped pipes. Selection uses full-note context only for structural classification, never target expansion.
+4. Compiles valid operations into CriticMarkup and revalidates the result. Broad replacements are reduced to deterministic Unicode word/segment-level hunks—not character-minimal fragments—with whole-target fallback for backtick-containing replacements and a bounded single-substitution fallback for expensive responses.
+5. If candidate validation fails, automatically makes one correction request to the same provider (at most two provider calls total). The unchanged original request is resubmitted with the invalid response and bounded diagnostic feedback; there is no delay, backoff, or new retry setting. A second invalid response is terminal.
+6. Checks that the captured file and source have not changed and that the request was not aborted, then writes once so Track Changes can review the edit. Provider failures, aborts, stale targets, and write failures are terminal rather than triggers for another correction round.
 
-Full-note Edit always sends the complete note. Modify Selection sends the complete selection plus surrounding context, but replaces only the captured range.
+Full-note Edit always sends the complete note. Modify Selection sends the complete selection plus surrounding context, but replaces only the captured range. Both use the same minimization and validation-correction flow. Full-note usage covers all attempted rounds; selection editing has no usage display. Raw operations, invalid responses, and correction feedback remain transient rather than ready-chat content or persisted history. After a correction, a successful full-note attempt retains only that attempt's reasoning.
 
 Model history retains each ready message's mode, historical note-write permission, and origin. Local Edit confirmations are labeled as local outcomes, not model responses. These annotations describe earlier requests only: the currently selected mode alone controls note-write access, so an earlier Edit never grants writing to a later Ask, Discuss, or Brainstorm request.
 
@@ -110,7 +111,7 @@ Emend makes **no background AI requests**. Content is sent only when you explici
 
 - Note context, prompts, recent ready history, explicitly selected additional-note snapshots, and any loaded `AGENTS.md`/skill instructions are sent to the selected provider as required for that request. Picking, opening, or switching notes sends nothing and does not read additional-note content.
 - With **Web: Review** or **Auto**, those ordinary model-round contents go to DeepSeek, which may derive search queries and fetch URLs from them. DeepSeek search/fetch endpoints receive only the visible validated arguments; Review permits editing every proposed batch. Retrieved text is untrusted external data and never writes notes or becomes instructions/skills. Successful retrieval may be billed separately. Changing the Web control, opening a note, loading a thread, or rendering citations performs no retrieval.
-- Full-note Edit sends the entire active note. Read-only chat uses bounded active-note context; selection editing sends the complete selection and bounded surrounding context. Additional notes use a separate combined source-character budget and are read-only in every mode. Web search is unavailable to Edit, quick actions, and Modify Selection.
+- Full-note Edit sends the entire active note. Read-only chat uses bounded active-note context; selection editing sends the complete selection and bounded surrounding context. Additional notes use a separate combined source-character budget and are read-only in every mode. Web search is unavailable to Edit, quick actions, and Modify Selection. An invalid edit candidate can cause one automatic second call to the same provider, containing the unchanged original request plus that candidate and bounded validation feedback; this possible extra call has no separate setting and may incur provider charges.
 - Note and vault paths are sent only when **Include note path** is enabled. With it off, additional-note sections have generic numbered labels without their paths; with it on, they include vault-qualified paths. The local controls always show selected paths before submission.
 - API keys are stored in **Obsidian SecretStorage**, not plaintext `data.json`. Legacy plaintext keys are migrated automatically.
 - Ready conversations are stored locally under `<Vault>/.obsidian/emend/chats/` using schema 2; version 1 threads load and become schema 2 on the next save. Ready Review/Auto badges, sanitized result-backed citations, and folded Web activity (search queries, fetch URLs, and completed/failed/skipped outcomes) may persist. API keys, raw request bodies/tool arguments/results, retrieved content, transient activity, additional-note selections/snapshots, loading/error/stopped states, and buffered edit responses are not persisted.
@@ -125,6 +126,8 @@ See the [privacy and storage details](QUICK_START.md#8-verify-persistence-and-pr
 - [Architecture and implementation records](IMPLEMENTATION_PLAN.md)
 - [Roadmap](ROADMAP.md) and [changelog](CHANGELOG.md)
 - [DeepSeek online search implementation](devel_docs/36-deepseek-online-search.md)
+- [Minimal edit ranges and guarded correction](devel_docs/37-minimal-edit-ranges.md)
+- [Markdown edit safeguards and verification](devel_docs/38-markdown-edit-safeguards.md)
 - [Contributing guide](CONTRIBUTING.md) and [security policy](SECURITY.md)
 - [CI and release workflows](.github/workflows/)
 - [Deferred context-management roadmap](devel_docs/future-context-management.md)

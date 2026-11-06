@@ -6,11 +6,17 @@ export interface EditPreparation {
 	changeCount: number;
 }
 
+export interface EditSourceContext {
+	fullText: string;
+	from: number;
+	to: number;
+}
+
 export interface EditStrategy {
 	id: 'operations';
 	getFullNotePrompt(instructions?: InstructionPromptParts): string;
 	getSelectionPrompt(instructions?: InstructionPromptParts): string;
-	prepareEdit(original: string, response: string): EditPreparation;
+	prepareEdit(original: string, response: string, sourceContext?: EditSourceContext): EditPreparation;
 }
 
 export function getEditStrategy(): EditStrategy {

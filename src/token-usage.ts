@@ -69,7 +69,7 @@ function countRequestCharacters(request: RequestText) {
 		0,
 	);
 	const continuationCharacters = (request.continuation ?? []).reduce((sum, message) => {
-		if (message.role === 'tool') {
+		if (message.role !== 'assistant' || !('toolCalls' in message)) {
 			return sum + message.content.length;
 		}
 		return sum + message.content.length + message.toolCalls.reduce(

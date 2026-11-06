@@ -371,4 +371,65 @@ describe('SelectionModal quick actions', () => {
 			expect(editor.replaceRange).not.toHaveBeenCalled();
 		},
 	);
+
+	it('keeps controls pending through the correction round and restores them after final validation fails', async () => {
+		const file = new TFile();
+		file.path = 'note.md';
+		const fullText = 'Alpha beta gamma';
+		const snapshot: SelectionSnapshot = {
+			file,
+			fullText,
+			selectedText: 'beta',
+			from: 6,
+			to: 10,
+		};
+		const editor: SelectionEditorAdapter = {
+			readCurrentText: vi.fn(() => fullText),
+			isTargetCurrent: vi.fn(() => true),
+			replaceRange: vi.fn(),
+		};
+		const secondRound = deferred<{ content: string; reasoning: string }>();
+		const request = vi.fn(() => secondRound.promise);
+		request.mockImplementationOnce(async () => ({
+			content: 'not json',
+			reasoning: '',
+		}));
+		const coordinator = new SelectionEditRequestCoordinator({
+			provider,
+			loadAdditionalNotes: async () => [],
+			loadInstructions: async () => ({ skillTexts: new Map() }),
+			request,
+			editor,
+			editStrategy: operationEditStrategy,
+		});
+		const submitSelection = vi.fn((prompt: string, signal: AbortSignal) =>
+			coordinator.submit({
+				snapshot,
+				prompt,
+				maxContextCharacters: 1000,
+				smartSelectionContext: true,
+				additionalNotePaths: [],
+				signal,
+			})
+		);
+		const { contentEl, input, quickActions, additionalButtons } = openModal(
+			submitSelection,
+		);
+
+		findAction(contentEl, QUICK_ACTIONS[0].id)?.click();
+		await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+		expect(input?.disabled).toBe(true);
+		expect(quickActions.every((item) => item.disabled)).toBe(true);
+		expect(additionalButtons.every((item) => item.disabled)).toBe(true);
+
+		secondRound.resolve({ content: 'still not json', reasoning: '' });
+		await vi.waitFor(() => {
+			expect(input?.disabled).toBe(false);
+			expect(quickActions.every((item) => !item.disabled)).toBe(true);
+			expect(additionalButtons.every((item) => !item.disabled)).toBe(true);
+		});
+		expect(submitSelection).toHaveBeenCalledOnce();
+		expect(editor.readCurrentText).not.toHaveBeenCalled();
+		expect(editor.replaceRange).not.toHaveBeenCalled();
+	});
 });
