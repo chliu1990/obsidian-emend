@@ -72,7 +72,7 @@ export function formatEditValidationFeedback(error: EditResponseValidationError)
 		diagnostic.operationType = error.operationType;
 	}
 	if (error.field !== undefined) {
-		diagnostic.field = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(error.field)
+		diagnostic.field = ['type', 'anchor', 'position', 'text', 'occurrence', 'target', 'replacement', 'comment'].includes(error.field)
 			? error.field
 			: 'unknown';
 	}

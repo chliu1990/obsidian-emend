@@ -69,6 +69,25 @@ describe('edit validation feedback', () => {
 		expect(feedback).not.toContain('SENTINEL SOURCE');
 	});
 
+	it('maps a short alphanumeric unknown field to unknown without leaking source text', () => {
+		const error = captureError(() => compileEditOperations(
+			'SECRET',
+			JSON.stringify([{ type: 'remove', target: 'SECRET', SECRET: true }]),
+		));
+		expect(error).toBeInstanceOf(EditResponseValidationError);
+		if (!(error instanceof EditResponseValidationError)) {
+			throw new Error('Expected a response validation error.');
+		}
+		expect(error.field).toBe('SECRET');
+
+		const feedback = formatEditValidationFeedback(error);
+		expect(JSON.parse(feedback.split('\n')[1] ?? '')).toMatchObject({
+			code: 'invalid-operation',
+			field: 'unknown',
+		});
+		expect(feedback).not.toContain('SECRET');
+	});
+
 	it('classifies malformed original markup as a terminal source error', () => {
 		const error = captureError(() => operationEditStrategy.prepareEdit(
 			'{--UNCLOSED PRIVATE SOURCE',
