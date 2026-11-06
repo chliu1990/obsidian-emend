@@ -673,13 +673,14 @@ describe('operation strategy coordinator integration', () => {
 			isTargetCurrent: vi.fn(() => true),
 			replaceRange: vi.fn(),
 		};
+		const request = operationRequest(JSON.stringify([
+			{ type: 'replace', target: 'Alpha', replacement: 'Changed' },
+		]));
 		const coordinator = new SelectionEditRequestCoordinator({
 			provider,
 			loadAdditionalNotes: async () => [],
 			loadInstructions: async () => ({ skillTexts: new Map() }),
-			request: operationRequest(JSON.stringify([
-				{ type: 'replace', target: 'Alpha', replacement: 'Changed' },
-			])),
+			request,
 			editor,
 			editStrategy: operationEditStrategy,
 		});
@@ -692,6 +693,7 @@ describe('operation strategy coordinator integration', () => {
 			additionalNotePaths: [],
 			signal: new AbortController().signal,
 		})).rejects.toThrow(/not found|match/i);
+		expect(request).toHaveBeenCalledTimes(2);
 		expect(editor.readCurrentText).not.toHaveBeenCalled();
 		expect(editor.replaceRange).not.toHaveBeenCalled();
 	});

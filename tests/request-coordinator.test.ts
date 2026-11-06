@@ -589,7 +589,7 @@ describe('EditRequestCoordinator', () => {
 
 		await expect(coordinator.submit(submission)).rejects.toThrow(/not found|match/i);
 
-		expect(request).toHaveBeenCalledOnce();
+		expect(request).toHaveBeenCalledTimes(2);
 		expect(writer.readCurrentText).not.toHaveBeenCalled();
 		expect(writer.write).not.toHaveBeenCalled();
 		expect(submission.context.sourceText).toBe('# Note\nOriginal text');
@@ -708,6 +708,182 @@ describe('EditRequestCoordinator', () => {
 		finishRead(submission.context.sourceText);
 
 		await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+		expect(writer.write).not.toHaveBeenCalled();
+	});
+
+	it('corrects one invalid response and writes minimal markup once with identical captured context', async () => {
+		const sourceText = '# Note\nThey have a plan.';
+		const validResponse = JSON.stringify([
+			{
+				type: 'replace',
+				target: 'They have a plan.',
+				replacement: 'They has a plan.',
+			},
+		]);
+		const request = editRequest('not-json')
+			.mockImplementationOnce(async (_request, callbacks) => {
+				callbacks.onEvent({ type: 'reasoning', text: 'First thought.' });
+				return {
+					content: 'not-json',
+					reasoning: 'First thought.',
+					usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12 },
+				};
+			})
+			.mockImplementationOnce(async (_request, callbacks) => {
+				callbacks.onEvent({ type: 'reasoning', text: 'Second thought.' });
+				return {
+					content: validResponse,
+					reasoning: 'Second thought.',
+					usage: { promptTokens: 20, completionTokens: 5, totalTokens: 25 },
+				};
+			});
+		const { coordinator, loadAdditionalNotes, loadInstructions, writer } =
+			makeEditCoordinator(request, sourceText);
+		loadAdditionalNotes.mockResolvedValue([makeAdditionalNote()]);
+		const history: ProviderHistoryMessage[] = [
+			{ role: 'user', content: 'Earlier question', mode: 'edit', origin: 'user' },
+			{ role: 'assistant', content: 'Earlier summary', mode: 'edit', origin: 'local-edit-status' },
+		];
+		const submission = makeEditSubmission({
+			context: makeContext({ sourceText, markdown: '[...]\nbounded\n[...]' }),
+			history,
+			additionalNotePaths: ['Reference.md'],
+		});
+
+		const result = await coordinator.submit(submission);
+
+		expect(request).toHaveBeenCalledTimes(2);
+		expect(loadAdditionalNotes).toHaveBeenCalledOnce();
+		expect(loadInstructions).toHaveBeenCalledOnce();
+		expect(writer.readCurrentText).toHaveBeenCalledOnce();
+		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
+			submission.context.file,
+			'# Note\nThey {~~have~>has~~} a plan.',
+		);
+		expect(result).toEqual({
+			applied: true,
+			changeCount: 1,
+			usage: {
+				promptTokens: 30,
+				completionTokens: 7,
+				totalTokens: 37,
+				source: 'provider',
+			},
+		});
+		expect(submission.callbacks.onReasoning).toHaveBeenCalledTimes(2);
+		const firstRequest = request.mock.calls[0]?.[0];
+		const secondRequest = request.mock.calls[1]?.[0];
+		if (!firstRequest || !secondRequest) {
+			throw new Error('Correction request missing.');
+		}
+		expect(firstRequest.userPrompt).toContain(sourceText);
+		expect(firstRequest.userPrompt).not.toContain('bounded');
+		expect(firstRequest.userPrompt).toContain('Additional only.');
+		expect(firstRequest.history).toEqual(history);
+		const { continuation, ...correctionBaseRequest } = secondRequest;
+		expect(correctionBaseRequest).toEqual(firstRequest);
+		expect(continuation?.[0]).toEqual({ role: 'assistant', content: 'not-json' });
+		expect(continuation?.[1]?.role).toBe('user');
+		expect(continuation?.[1]?.content).toContain('unchanged original snapshot');
+		expect(continuation?.[1]?.content).toContain('"code":"invalid-json"');
+	});
+
+	it.each(['mixed', 'missing'] as const)(
+		'estimates both rounds independently when provider usage is %s',
+		async (usageCase) => {
+			const request = editRequest('bad')
+				.mockResolvedValueOnce({
+					content: 'bad',
+					reasoning: '',
+					...(usageCase === 'mixed'
+						? { usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12 } }
+						: {}),
+				})
+				.mockResolvedValueOnce({ content: '[]', reasoning: '' });
+			const { coordinator } = makeEditCoordinator(request);
+
+			const result = await coordinator.submit(makeEditSubmission());
+
+			expect(request).toHaveBeenCalledTimes(2);
+			const responses = ['bad', '[]'];
+			const roundUsages = request.mock.calls.map((call, index) => {
+				const roundRequest = call[0];
+				const promptCharacters = roundRequest.systemPrompt.length +
+					roundRequest.userPrompt.length +
+					(roundRequest.continuation ?? []).reduce(
+						(sum, message) => sum + message.content.length,
+						0,
+					);
+				const promptTokens = Math.max(1, Math.ceil(promptCharacters / 4));
+				const completionTokens = Math.max(
+					1,
+					Math.ceil((responses[index] ?? '').length / 4),
+				);
+				return { promptTokens, completionTokens };
+			});
+			const promptTokens = roundUsages.reduce(
+				(sum, usage) => sum + usage.promptTokens,
+				0,
+			);
+			const completionTokens = roundUsages.reduce(
+				(sum, usage) => sum + usage.completionTokens,
+				0,
+			);
+			expect(result.usage).toEqual({
+				promptTokens,
+				completionTokens,
+				totalTokens: promptTokens + completionTokens,
+				source: 'estimated',
+			});
+		},
+	);
+
+	it.each(['provider error', 'abort'])(
+		'does not read or write after a second-round %s',
+		async (failure) => {
+			const controller = new AbortController();
+			const error = failure === 'abort'
+				? new DOMException('Stopped', 'AbortError')
+				: new Error('Provider unavailable');
+			const request = editRequest('not-json')
+				.mockResolvedValueOnce({ content: 'not-json', reasoning: '' })
+				.mockImplementationOnce(async () => {
+					if (failure === 'abort') {
+						controller.abort();
+					}
+					throw error;
+				});
+			const { coordinator, writer } = makeEditCoordinator(request);
+
+			await expect(coordinator.submit(makeEditSubmission({
+				signal: controller.signal,
+			}))).rejects.toBe(error);
+
+			expect(request).toHaveBeenCalledTimes(2);
+			expect(writer.readCurrentText).not.toHaveBeenCalled();
+			expect(writer.write).not.toHaveBeenCalled();
+		},
+	);
+
+	it('retains the exact stale-source error after a successful correction', async () => {
+		const request = editRequest('not-json')
+			.mockResolvedValueOnce({ content: 'not-json', reasoning: '' })
+			.mockResolvedValueOnce({
+				content: JSON.stringify([
+					{ type: 'replace', target: 'Original', replacement: 'Edited' },
+				]),
+				reasoning: '',
+			});
+		const { coordinator, writer } = makeEditCoordinator(
+			request,
+			'# Note\nEdited while waiting',
+		);
+
+		await expect(coordinator.submit(makeEditSubmission())).rejects.toThrow(
+			'The note changed while Emend was responding. No edits were applied.',
+		);
+
+		expect(request).toHaveBeenCalledTimes(2);
 		expect(writer.write).not.toHaveBeenCalled();
 	});
 });

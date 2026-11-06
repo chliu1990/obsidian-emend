@@ -4,6 +4,7 @@ import {
 } from './additional-notes-context';
 import type { RequestContext } from './context';
 import type { DeepSeekWebSearchCoordinator } from './deepseek-web';
+import { prepareEditResponse } from './edit-response';
 import type { EditStrategy } from './edit-strategy';
 import { getSystemPrompt } from './mode';
 import {
@@ -156,7 +157,6 @@ export class EditRequestCoordinator {
 			submission.signal,
 		);
 		const instructions = await this.dependencies.loadInstructions();
-		let response = '';
 		const request = {
 			provider: this.dependencies.provider,
 			systemPrompt: this.dependencies.editStrategy.getFullNotePrompt(instructions),
@@ -168,25 +168,14 @@ export class EditRequestCoordinator {
 			),
 			history: submission.history.slice(-8),
 		};
-		const result = await this.dependencies.request(
+		const { prepared, usage } = await prepareEditResponse({
+			original: submission.context.sourceText,
 			request,
-			{
-				onEvent: (event) => {
-					if (event.type === 'content') {
-						response += event.text;
-					} else if (event.type === 'reasoning') {
-						submission.callbacks.onReasoning(event.text);
-					}
-				},
-			},
-			submission.signal,
-		);
-		submission.signal.throwIfAborted();
-
-		const prepared = this.dependencies.editStrategy.prepareEdit(
-			submission.context.sourceText,
-			response,
-		);
+			editStrategy: this.dependencies.editStrategy,
+			requestRound: this.dependencies.request,
+			signal: submission.signal,
+			onReasoning: submission.callbacks.onReasoning,
+		});
 		const editResult = await applyPreparedEdit(
 			submission.mode,
 			submission.context,
@@ -194,7 +183,7 @@ export class EditRequestCoordinator {
 			this.dependencies.writer,
 			submission.signal,
 		);
-		return { ...editResult, usage: resolveTokenUsage(request, result) };
+		return { ...editResult, usage };
 	}
 }
 
