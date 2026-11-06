@@ -46,7 +46,7 @@ The scanner distinguishes escaped pipes using backslash parity, handles outer pi
 
 ## Validation order and comments
 
-Exact original-snapshot occurrence resolution, malformed-operation checks, ambiguity checks, and existing range-isolation validation run before structural classification. The first structural violation in request order becomes bounded allowlisted feedback. One unsafe Operation rejects the entire candidate before CriticMarkup compilation or either writer runs; a second structurally invalid response is terminal after exactly two calls and zero writes.
+Exact original-snapshot occurrence resolution, malformed-operation checks, ambiguity checks, and existing range-isolation validation run first, followed by one replacement-compilation pass and composed structural validation using actual `compiledText`. The first structural violation in request order becomes bounded allowlisted feedback. One unsafe Operation rejects the entire candidate before final CriticMarkup validation or either writer runs; a second structurally invalid response is terminal after exactly two calls and zero writes.
 
 Comments before and after replacements were rechecked in prose and tables. Their compilation and review order were correct, so comment/order semantics were not changed.
 
