@@ -422,7 +422,11 @@ async function requestDeepSeekTool(
 		if (signal.aborted || (isRecord(error) && error.name === 'AbortError')) {
 			throw error;
 		}
-		throw new Error(sanitizeProviderError(error, apiKey));
+		const sanitized = new Error(sanitizeProviderError(error, apiKey));
+		if (isRecord(error) && typeof error.status === 'number') {
+			Object.assign(sanitized, { status: error.status });
+		}
+		throw sanitized;
 	}
 }
 

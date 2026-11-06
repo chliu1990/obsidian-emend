@@ -121,6 +121,18 @@ describe('DeepSeek retrieval clients', () => {
 		expect(fetchMock).toHaveBeenCalledOnce();
 	});
 
+	it('preserves the sanitized Fetch HTTP status for fatal-error classification', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+			error: { message: 'Unauthorized dummy-key' },
+		}), { status: 401 })));
+
+		await expect(fetchDeepSeekPage(
+			{ id: 'call-2', name: 'web_fetch', url: 'https://example.test/private' },
+			provider,
+			new AbortController().signal,
+		)).rejects.toMatchObject({ status: 401, message: expect.not.stringContaining('dummy-key') });
+	});
+
 	it('propagates aborts without wrapping them', async () => {
 		const controller = new AbortController();
 		const reason = new DOMException('Stopped', 'AbortError');
