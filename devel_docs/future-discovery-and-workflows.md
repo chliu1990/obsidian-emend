@@ -120,6 +120,30 @@ Requested in the maintainer's platform review.
 - [ ] Distinguish ordinary streaming from web-tool-round/final-response buffering and completed-response alignment; do not assume a platform cause before measurement.
 - [ ] Add a focused real-Obsidian macOS verification scenario before changing the current rendering behavior.
 
+## 14. Post-edit change summaries — issue #35
+
+Track: https://github.com/chliu1990/obsidian-emend/issues/35
+
+- [ ] Replace the counter-only successful full-note Edit result with concise deterministic bullets derived from the final successfully applied Operations.
+- [ ] Handle no-op, comment-only, failed, stale, stopped, and selection outcomes explicitly without exposing rejected candidates or raw correction feedback.
+- [ ] Persist only sanitized ready summaries; keep model-generated additional suggestions in a separate reviewed follow-up with explicit cost/privacy behavior rather than adding a hidden provider call or changing the closed Operations schema.
+
+## 15. Follow-up edits to unaccepted suggestions — issue #37
+
+Track: https://github.com/chliu1990/obsidian-emend/issues/37
+
+- [ ] Design deterministic merging of new Operations into existing unaccepted CriticMarkup without implicitly accepting/rejecting earlier suggestions or deleting unaffected review history.
+- [ ] Define insertion/deletion/substitution/comment merge behavior, repeated anchors, sequential follow-ups, and full-note versus selection scope without nested or ambiguous markup.
+- [ ] Preserve exact accept/reject bytes, stale guards, native undo, minimal ranges, and Stage 38 structural safeguards with real-Obsidian verification.
+
+## 16. Track Changes dependency strategy — issue #36
+
+Track: https://github.com/chliu1990/obsidian-emend/issues/36
+
+- [ ] Use Stage 38 as the current baseline of upstream presentation, review-parser, and verification limitations; keep it updated when new concrete limitations are confirmed.
+- [ ] Evaluate whether a focused fork or custom renderer is justified by maintenance cost, compatibility, security, and user value. This is research only, not approval for a renderer implementation.
+- [ ] Keep any resulting fork/renderer design independent from post-edit summaries, follow-up edit merging, and other workflow PRs.
+
 ## Delivery constraints
 
 - Keep each issue and each of the three maintainer roadmap requests independent; do not bundle discovery, linked notes, folder selection, mode redesign, translation, or credential storage into one PR.
