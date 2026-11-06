@@ -55,7 +55,9 @@ export interface EditSubmission {
 	prompt: string;
 	history: ProviderHistoryMessage[];
 	additionalNotePaths: readonly string[];
-	callbacks: Pick<ReadOnlyStreamCallbacks, 'onReasoning'>;
+	callbacks: Pick<ReadOnlyStreamCallbacks, 'onReasoning'> & {
+		onRetry?: () => void;
+	};
 	signal: AbortSignal;
 }
 
@@ -175,6 +177,7 @@ export class EditRequestCoordinator {
 			requestRound: this.dependencies.request,
 			signal: submission.signal,
 			onReasoning: submission.callbacks.onReasoning,
+			onRetry: submission.callbacks.onRetry,
 		});
 		const editResult = await applyPreparedEdit(
 			submission.mode,

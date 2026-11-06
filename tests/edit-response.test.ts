@@ -86,11 +86,12 @@ describe('prepareEditResponse', () => {
 			}],
 		});
 		const baseRequest = structuredClone(request);
+		const onRetry = vi.fn();
 
 		const response = await prepareEditResponse(prepareOptions(
 			requestRound,
 			prepareEdit,
-			{ request },
+			{ request, onRetry },
 		));
 
 		expect(response.prepared).toBe(prepared);
@@ -112,6 +113,13 @@ describe('prepareEditResponse', () => {
 			['Original snapshot', 'not-json'],
 			['Original snapshot', '[]'],
 		]);
+		expect(onRetry).toHaveBeenCalledOnce();
+		expect(onRetry.mock.invocationCallOrder[0]).toBeGreaterThan(
+			prepareEdit.mock.invocationCallOrder[0] ?? -1,
+		);
+		expect(onRetry.mock.invocationCallOrder[0]).toBeLessThan(
+			requestRound.mock.invocationCallOrder[1] ?? 0,
+		);
 	});
 
 	it('returns a valid no-op preparation after one provider call', async () => {
@@ -122,12 +130,18 @@ describe('prepareEditResponse', () => {
 		const prepareEdit = vi.fn<EditStrategy['prepareEdit']>().mockReturnValue(noOp);
 		const requestRound = vi.fn<typeof requestAiResponse>()
 			.mockResolvedValue(result('[]'));
+		const onRetry = vi.fn();
 
-		const response = await prepareEditResponse(prepareOptions(requestRound, prepareEdit));
+		const response = await prepareEditResponse(prepareOptions(
+			requestRound,
+			prepareEdit,
+			{ onRetry },
+		));
 
 		expect(response.prepared).toBe(noOp);
 		expect(requestRound).toHaveBeenCalledTimes(1);
 		expect(prepareEdit).toHaveBeenCalledOnce();
+		expect(onRetry).not.toHaveBeenCalled();
 	});
 
 	it('surfaces the second validation error without a third provider call', async () => {

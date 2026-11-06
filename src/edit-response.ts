@@ -13,6 +13,7 @@ export async function prepareEditResponse(options: {
 	requestRound: typeof requestAiResponse;
 	signal: AbortSignal;
 	onReasoning?: (text: string) => void;
+	onRetry?: () => void;
 }): Promise<{ prepared: EditPreparation; usage: TokenUsage }> {
 	const rounds: Array<{ request: AiProviderRequest; result: Awaited<ReturnType<typeof requestAiResponse>> }> = [];
 	let roundRequest = options.request;
@@ -40,6 +41,7 @@ export async function prepareEditResponse(options: {
 			if (round === 1 || !(error instanceof EditResponseValidationError)) {
 				throw error;
 			}
+			options.onRetry?.();
 			roundRequest = {
 				...options.request,
 				continuation: [

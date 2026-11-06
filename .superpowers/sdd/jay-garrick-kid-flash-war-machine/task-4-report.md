@@ -52,3 +52,55 @@ The working tree already contained a `.gitignore` modification before Task 4. It
 ## Concerns
 
 None. Verification is automated only, as requested by the brief; no real-Obsidian or real-provider calls were made.
+
+
+## Fix round 1: rejected-attempt reasoning
+
+### Change
+
+- `src/edit-response.ts`: added optional `onRetry?: () => void`. It fires exactly once after the first candidate throws `EditResponseValidationError` and before the correction request is constructed and sent. Valid first attempts and terminal second attempts do not fire it.
+- `src/request-coordinator.ts`: added the optional callback to the full-note Edit submission callback contract and forwarded it to `prepareEditResponse`. Selection behavior and its public result remain unchanged.
+- `src/chat-view.ts`: the full-note Edit `onRetry` callback clears `loadingMessage.reasoning` and schedules a rerender. Live reasoning still streams normally for both attempts; only the rejected attempt's accumulated reasoning is cleared, leaving the successful attempt's reasoning on the ready persisted message. No retry-status UI or all-round buffering was added.
+- `.gitignore` was preserved and excluded from staging.
+
+### Covering tests
+
+- `tests/edit-response.test.ts`: verifies `onRetry` occurs after first validation and before round two, and is not called for a valid first response.
+- `tests/request-coordinator.test.ts`: verifies the full-note coordinator forwards the callback between provider rounds while preserving live reasoning callbacks.
+- `tests/chat-view.test.ts`: streams distinctive `INVALID_ROUND_REASONING` and `VALID_ROUND_REASONING` sentinels and asserts complete persisted user/assistant messages, including IDs, timestamps, roles, content, reasoning, mode, source path, status, and usage. It also checks invalid-round reasoning remains absent after a later ready request.
+- `tests/selection-editor.test.ts` and `tests/selection-modal.test.ts`: run as unaffected-selection regressions.
+
+### RED evidence
+
+Command:
+
+```bash
+npx vitest run tests/edit-response.test.ts tests/request-coordinator.test.ts tests/chat-view.test.ts
+```
+
+Before production changes: **3 failed files; 3 failed tests, 103 passed tests (106 total)**. The helper and coordinator spies observed zero retry notifications. The chat integration observed ready reasoning `INVALID_ROUND_REASONINGVALID_ROUND_REASONING` instead of only `VALID_ROUND_REASONING`, directly reproducing the reported leak.
+
+### GREEN and final verification
+
+After the focused production change, the same covering command produced **3 passed files, 106 passed tests, 0 failed** (656 ms).
+
+Additional selection regression command:
+
+```bash
+npx vitest run tests/selection-editor.test.ts tests/selection-modal.test.ts
+```
+
+Result: **2 passed files, 56 passed tests, 0 failed** (674 ms).
+
+Final project gates after all code/test changes:
+
+- `npm test`: **34 passed files, 695 passed tests, 0 failed** (928 ms), with pristine output.
+- `npm run build`: passed `tsc -noEmit -skipLibCheck` and production esbuild; exit 0.
+- `npm run lint`: passed; exit 0.
+- `git diff --check`: passed; no whitespace errors.
+
+An intermediate lint run identified four test-only `no-unsafe-assignment` errors from reusable `expect.any(...)` fields. The exact snapshots now use the actual generated IDs/timestamps while keeping all behavioral fields literal; the final lint run is clean.
+
+### Commit
+
+Separate focused fix with subject `fix: discard rejected edit reasoning`; its SHA is reported in the final handoff. The pre-existing `.gitignore` modification remains unstaged.

@@ -5,7 +5,11 @@ import { AdditionalNotesStore } from '../src/additional-notes-store';
 import type { ShortcutEvent } from '../src/chat-shortcuts';
 import { EmendChatView, formatChatMessageForCopy, getUnreadPageCount } from '../src/chat-view';
 import { operationEditStrategy } from '../src/operation-edit-strategy';
-import type { StreamResult } from '../src/provider-stream';
+import type {
+	AiProviderRequest,
+	StreamEvent,
+	StreamResult,
+} from '../src/provider-stream';
 import {
 	EditRequestCoordinator,
 	type EditSubmission,
@@ -312,20 +316,31 @@ describe('EmendChatView conversation saving', () => {
 		const validResponse = JSON.stringify([
 			{ type: 'replace', target: 'beta', replacement: 'delta' },
 		]);
-		const request = vi.fn(async (): Promise<StreamResult> => ({
-			content: 'private invalid response',
-			reasoning: '',
-		}));
+		const invalidReasoning = 'INVALID_ROUND_REASONING';
+		const validReasoning = 'VALID_ROUND_REASONING';
+		const request = vi.fn(async (
+			_request: AiProviderRequest,
+			callbacks: { onEvent(event: StreamEvent): void },
+		): Promise<StreamResult> => {
+			callbacks.onEvent({ type: 'reasoning', text: invalidReasoning });
+			return { content: 'private invalid response', reasoning: invalidReasoning };
+		});
 		request
-			.mockResolvedValueOnce({
-				content: 'private invalid response',
-				reasoning: '',
-				usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12 },
+			.mockImplementationOnce(async (_request, callbacks) => {
+				callbacks.onEvent({ type: 'reasoning', text: invalidReasoning });
+				return {
+					content: 'private invalid response',
+					reasoning: invalidReasoning,
+					usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12 },
+				};
 			})
-			.mockResolvedValueOnce({
-				content: validResponse,
-				reasoning: '',
-				usage: { promptTokens: 20, completionTokens: 5, totalTokens: 25 },
+			.mockImplementationOnce(async (_request, callbacks) => {
+				callbacks.onEvent({ type: 'reasoning', text: validReasoning });
+				return {
+					content: validResponse,
+					reasoning: validReasoning,
+					usage: { promptTokens: 20, completionTokens: 5, totalTokens: 25 },
+				};
 			});
 		const editProvider: ProviderConfig = {
 			name: 'Local test provider',
@@ -409,6 +424,7 @@ describe('EmendChatView conversation saving', () => {
 			role: 'assistant',
 			status: 'ready',
 			content: summary,
+			reasoning: validReasoning,
 			usage: {
 				promptTokens: 30,
 				completionTokens: 7,
@@ -417,7 +433,34 @@ describe('EmendChatView conversation saving', () => {
 			},
 		});
 		expect(savedSnapshots).toHaveLength(2);
-		expect(savedSnapshots.flat().every((message) => message.status === 'ready')).toBe(true);
+		const savedUser = {
+			id: context.messages[0]?.id ?? '',
+			role: 'user',
+			content: 'Edit note',
+			reasoning: '',
+			mode: 'edit',
+			sourcePath: 'Note.md',
+			status: 'ready',
+			timestamp: context.messages[0]?.timestamp ?? -1,
+		};
+		const savedEdit = {
+			id: context.messages[1]?.id ?? '',
+			role: 'assistant',
+			content: summary,
+			reasoning: validReasoning,
+			mode: 'edit',
+			sourcePath: 'Note.md',
+			status: 'ready',
+			timestamp: context.messages[1]?.timestamp ?? -1,
+			usage: {
+				promptTokens: 30,
+				completionTokens: 7,
+				totalTokens: 37,
+				source: 'provider',
+			},
+		};
+		expect(savedSnapshots[0]).toEqual([savedUser]);
+		expect(savedSnapshots[1]).toEqual([savedUser, savedEdit]);
 		expect(savedSnapshots.flat().map((message) => message.content).join('\n')).not.toContain(
 			'private invalid response',
 		);
@@ -442,6 +485,9 @@ describe('EmendChatView conversation saving', () => {
 		).map((message) => message.content)).toEqual([summary, 'Answer']);
 		expect(savedSnapshots.flat().map((message) => message.content).join('\n')).not.toContain(
 			'private invalid response',
+		);
+		expect(savedSnapshots.flat().map((message) => message.reasoning).join('\n')).not.toContain(
+			invalidReasoning,
 		);
 	});
 });

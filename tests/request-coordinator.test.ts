@@ -744,10 +744,12 @@ describe('EditRequestCoordinator', () => {
 			{ role: 'user', content: 'Earlier question', mode: 'edit', origin: 'user' },
 			{ role: 'assistant', content: 'Earlier summary', mode: 'edit', origin: 'local-edit-status' },
 		];
+		const onRetry = vi.fn();
 		const submission = makeEditSubmission({
 			context: makeContext({ sourceText, markdown: '[...]\nbounded\n[...]' }),
 			history,
 			additionalNotePaths: ['Reference.md'],
+			callbacks: { onReasoning: vi.fn(), onRetry },
 		});
 
 		const result = await coordinator.submit(submission);
@@ -771,6 +773,13 @@ describe('EditRequestCoordinator', () => {
 			},
 		});
 		expect(submission.callbacks.onReasoning).toHaveBeenCalledTimes(2);
+		expect(onRetry).toHaveBeenCalledOnce();
+		expect(onRetry.mock.invocationCallOrder[0]).toBeGreaterThan(
+			request.mock.invocationCallOrder[0] ?? -1,
+		);
+		expect(onRetry.mock.invocationCallOrder[0]).toBeLessThan(
+			request.mock.invocationCallOrder[1] ?? 0,
+		);
 		const firstRequest = request.mock.calls[0]?.[0];
 		const secondRequest = request.mock.calls[1]?.[0];
 		if (!firstRequest || !secondRequest) {
