@@ -85,6 +85,65 @@ describe('createReplacementCompiler', () => {
 		expect(compile('Same text.\n', 'Same text.\n')).toBe('Same text.\n');
 	});
 
+	it('keeps a complete inline code span inside one substitution', () => {
+		const compile = createReplacementCompiler();
+		const target = '`send_coords`';
+		const replacement = '`driver`';
+		const markup = compile(target, replacement);
+
+		expect(markup).toBe('{~~`send_coords`~>`driver`~~}');
+		expectReconstruction(markup, target, replacement);
+	});
+
+	it('uses one whole-target substitution for a larger target containing a code span', () => {
+		const compile = createReplacementCompiler();
+		const target = 'Use `send_coords` here.';
+		const replacement = 'Use `driver` here.';
+		const markup = compile(target, replacement);
+
+		expect(markup).toBe('{~~Use `send_coords` here.~>Use `driver` here.~~}');
+		expectReconstruction(markup, target, replacement);
+	});
+
+	it('uses one whole-target substitution when the replacement introduces backticks', () => {
+		const compile = createReplacementCompiler();
+		const target = 'Use send_coords here.';
+		const replacement = 'Use `driver` here.';
+		const markup = compile(target, replacement);
+
+		expect(markup).toBe('{~~Use send_coords here.~>Use `driver` here.~~}');
+		expectReconstruction(markup, target, replacement);
+	});
+
+	it.each([
+		[
+			'``send_coords`',
+			'`driver``',
+			'{~~``send_coords`~>`driver``~~}',
+		],
+		[
+			'before ```alpha and `beta',
+			'after ``gamma and delta```',
+			'{~~before ```alpha and `beta~>after ``gamma and delta```~~}',
+		],
+	])('reconstructs variable-length and unmatched backtick runs exactly', (target, replacement, expected) => {
+		const markup = createReplacementCompiler()(target, replacement);
+
+		expect(markup).toBe(expected);
+		expectReconstruction(markup, target, replacement);
+	});
+
+	it('uses pure insertion and deletion markup for empty backtick sides', () => {
+		const compile = createReplacementCompiler();
+		const insertion = compile('', '`driver`');
+		const deletion = compile('`send_coords`', '');
+
+		expect(insertion).toBe('{++`driver`++}');
+		expect(deletion).toBe('{--`send_coords`--}');
+		expectReconstruction(insertion, '', '`driver`');
+		expectReconstruction(deletion, '`send_coords`', '');
+	});
+
 	it('prefers deletion when repeated-token LCS choices tie', () => {
 		const compile = createReplacementCompiler();
 		expect(compile('!?', '?!')).toBe('{--!--}?{++!++}');

@@ -23,6 +23,9 @@ export function createReplacementCompiler(): (target: string, replacement: strin
 		if (target === replacement) {
 			return target;
 		}
+		if (target.includes('`') || replacement.includes('`')) {
+			return emitEdit(target, replacement);
+		}
 
 		const oldTokens = segment(target);
 		const newTokens = segment(replacement);
