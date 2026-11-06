@@ -436,7 +436,11 @@ describe('shared per-note request isolation', () => {
 				new AbortController().signal,
 				retrySelection.editor,
 			),
-		).resolves.toEqual({ applied: true, changeCount: 1 });
+		).resolves.toMatchObject({
+			applied: true,
+			changeCount: 1,
+			usage: { source: 'estimated' },
+		});
 		expect(fixture.getText('Note.md')).toBe(
 			'Alpha{++ chat++} {~~beta~>delta~~}.',
 		);
@@ -462,7 +466,11 @@ describe('shared per-note request isolation', () => {
 		expect(requestMock).toHaveBeenCalledOnce();
 
 		pendingResponse.finish();
-		await expect(pending).resolves.toEqual({ applied: true, changeCount: 1 });
+		await expect(pending).resolves.toMatchObject({
+			applied: true,
+			changeCount: 1,
+			usage: { source: 'estimated' },
+		});
 		respondWith('Chat answer');
 		await expect(
 			fixture.plugin.requestChatCompletion(
