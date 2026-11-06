@@ -47,6 +47,7 @@ Track: https://github.com/chliu1990/obsidian-emend/issues/24
 Track: https://github.com/chliu1990/obsidian-emend/issues/23
 
 - [ ] Reduce unnecessarily broad replacement ranges so small textual changes remain small and readable in Track Changes.
+- [ ] Improve precise anchor/location selection and ambiguous-target diagnostics so the model and user can locate the intended modification reliably.
 - [ ] Evaluate prompt guidance and deterministic post-processing separately; preserve exact source semantics and never weaken Operations validation.
 - [ ] Test substitutions within sentences, repeated text, Unicode, existing CriticMarkup, overlap/ambiguity rejection, and unchanged-output no-ops.
 
@@ -84,6 +85,38 @@ Requested in the maintainer's UI review after the DeepSeek web-search follow-ups
 - [ ] Preserve accessible labels/tooltips, selected-note paths and remove/clear behavior, shared submission paths, pending/disabled states, and target-note isolation.
 - [ ] Keep privacy details at the point of action or in compact menus rather than persistent bottom disclosures. Do not hide query/URL review controls or change provider/write permissions.
 - [ ] Verify keyboard navigation, narrow sidebars, native picker/modal behavior, draft preservation, latest-message scrolling, and real-Obsidian layout in a separate UI PR.
+
+## 10. Insert-only text enrichment
+
+Requested in the maintainer's editing-workflow review.
+
+- [ ] Add an explicit addition action for inserting useful new text at a precise anchor without replacing or deleting existing content.
+- [ ] Reuse the closed Operations insert operation, exact target capture, stale-source checks, and Track Changes review; do not add a second edit protocol or writer.
+- [ ] Define full-note and selection targets, repeated-anchor occurrence handling, empty/large insertions, and unchanged-output no-ops.
+
+## 11. Regenerate or delete the latest exchange — issue #31
+
+Track: https://github.com/chliu1990/obsidian-emend/issues/31
+
+- [ ] Add regenerate and delete controls for the latest user/assistant pair without affecting earlier exchanges.
+- [ ] Regenerate from the captured user prompt and permitted context, with pending/abort/stale-target guards and no silent retry.
+- [ ] Delete the pair from both the visible thread and provider history, persist the updated thread atomically, and handle missing/latest/already-deleted states safely.
+
+## 12. Independent search and fetch providers — issue #32
+
+Track: https://github.com/chliu1990/obsidian-emend/issues/32
+
+- [ ] Evaluate opt-in third-party Search/Fetch providers such as Exa, with independent provider selection for each capability.
+- [ ] Store third-party keys in Obsidian SecretStorage, document recipient paths/costs, and require bounded results and verifiable citations.
+- [ ] Keep provider-specific adapters independent; do not add a universal schema, silent fallback, or web access to editing paths without separate review.
+
+## 13. Streaming investigation on macOS
+
+Requested in the maintainer's platform review.
+
+- [ ] Reproduce the report that responses appear all at once on Mac and measure provider deltas versus Emend rendering timestamps.
+- [ ] Distinguish ordinary streaming from web-tool-round/final-response buffering and completed-response alignment; do not assume a platform cause before measurement.
+- [ ] Add a focused real-Obsidian macOS verification scenario before changing the current rendering behavior.
 
 ## Delivery constraints
 
