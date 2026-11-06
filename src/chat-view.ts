@@ -11,6 +11,7 @@ import { AdditionalNotesControl } from './additional-notes-ui';
 import { EMEND_BUILD_ID } from './build-info';
 import type EmendPlugin from './main';
 import { getComposerShortcut, getDefaultShortcutLabels } from './chat-shortcuts';
+import type { RequestContext } from './context';
 import {
 	resolveEditTarget,
 	type EditTargetChoice,
@@ -22,6 +23,7 @@ import {
 	QUICK_ACTIONS,
 	type QuickAction,
 } from './quick-actions';
+import type { SelectionEditTarget } from './selection-editor';
 import { formatTokenUsage } from './token-usage';
 import type { ChatMessage, Mode, ProviderHistoryMessage } from './types';
 import { WebSearchModal } from './web-search-modal';
@@ -651,20 +653,44 @@ export class EmendChatView extends ItemView {
 			return;
 		}
 
-		let context;
+		const requestedMode = this.selectedMode;
+		let capturedTarget:
+			| { type: 'full-note'; mode: 'edit'; context: RequestContext }
+			| { type: 'selection'; mode: 'edit'; target: SelectionEditTarget }
+			| { type: 'read-only'; mode: Exclude<Mode, 'edit'>; context: RequestContext };
 		try {
-			context = this.plugin.captureChatContext();
+			if (requestedMode === 'edit') {
+				capturedTarget = this.displayedEditTarget === 'selection'
+					? {
+						type: 'selection',
+						mode: requestedMode,
+						target: this.plugin.captureSelectionEditTarget(),
+					}
+					: {
+						type: 'full-note',
+						mode: requestedMode,
+						context: this.plugin.captureChatContext(),
+					};
+			} else {
+				capturedTarget = {
+					type: 'read-only',
+					mode: requestedMode,
+					context: this.plugin.captureChatContext(),
+				};
+			}
 		} catch (error) {
 			new Notice(`Emend: ${getErrorMessage(error)}`);
 			return;
 		}
 
 		const history = this.toProviderHistory();
-		const mode = this.selectedMode;
+		const mode = capturedTarget.mode;
 		const webSearchMode: WebSearchMode = mode === 'edit'
 			? 'off'
 			: this.webSearchMode ?? 'off';
-		const sourcePath = context.file.path;
+		const sourcePath = capturedTarget.type === 'selection'
+			? capturedTarget.target.snapshot.file.path
+			: capturedTarget.context.file.path;
 		const additionalNotePaths =
 			this.plugin.additionalNotesStore?.list(sourcePath) ?? [];
 		const noteMessages = this.messages;
@@ -705,33 +731,43 @@ export class EmendChatView extends ItemView {
 				noteMessages.filter((message) => message.status === 'ready'),
 			);
 			controller.signal.throwIfAborted();
-			if (mode === 'edit') {
-				const result = await this.plugin.requestChatCompletion({
-					context,
-					mode,
-					prompt,
-					history,
-					additionalNotePaths,
-					callbacks: {
-						onReasoning: (text) => {
-							loadingMessage.reasoning += text;
-							this.scheduleMessageRender(loadingMessage);
-						},
-						onRetry: () => {
-							loadingMessage.reasoning = '';
-							this.scheduleMessageRender(loadingMessage);
-						},
+			if (capturedTarget.type !== 'read-only') {
+				const callbacks = {
+					onReasoning: (text: string) => {
+						loadingMessage.reasoning += text;
+						this.scheduleMessageRender(loadingMessage);
 					},
-					signal: controller.signal,
-				});
+					onRetry: () => {
+						loadingMessage.reasoning = '';
+						this.scheduleMessageRender(loadingMessage);
+					},
+				};
+				const result = capturedTarget.type === 'selection'
+					? await this.plugin.requestSelectionEdit(
+						capturedTarget.target.snapshot,
+						prompt,
+						controller.signal,
+						capturedTarget.target.editor,
+						additionalNotePaths,
+						callbacks,
+					)
+					: await this.plugin.requestChatCompletion({
+						context: capturedTarget.context,
+						mode: capturedTarget.mode,
+						prompt,
+						history,
+						additionalNotePaths,
+						callbacks,
+						signal: controller.signal,
+					});
 				loadingMessage.content = result.applied
 					? `Edit applied — ${result.changeCount} changes tracked. Review in Track Changes.`
 					: 'No changes were needed.';
 				loadingMessage.usage = result.usage;
 			} else {
 				const result = await this.plugin.requestChatCompletion({
-					context,
-					mode,
+					context: capturedTarget.context,
+					mode: capturedTarget.mode,
 					prompt,
 					history,
 					additionalNotePaths,

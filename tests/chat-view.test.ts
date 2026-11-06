@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { MarkdownRenderer, Scope, TFile } from 'obsidian';
+import { MarkdownRenderer, Notice, Scope, TFile } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AdditionalNotesStore } from '../src/additional-notes-store';
 import type { ShortcutEvent } from '../src/chat-shortcuts';
@@ -16,10 +16,16 @@ import {
 	type ReadOnlySubmission,
 } from '../src/request-coordinator';
 import type {
+	SelectionEditCallbacks,
+	SelectionEditResult,
+	SelectionEditorAdapter,
+} from '../src/selection-editor';
+import type {
 	ChatMessage,
 	Mode,
 	ProviderConfig,
 	ProviderHistoryMessage,
+	SelectionSnapshot,
 } from '../src/types';
 
 function getCssRule(selector: string): string {
@@ -789,6 +795,356 @@ describe('EmendChatView conversation saving', () => {
 		expect(savedSnapshots.flat().map((message) => message.reasoning).join('\n')).not.toContain(
 			invalidReasoning,
 		);
+	});
+});
+
+function createSelectionEditSubmission() {
+	const file = new TFile();
+	file.path = 'Note.md';
+	const snapshot: SelectionSnapshot = {
+		file,
+		fullText: 'Alpha beta.',
+		selectedText: 'beta',
+		from: 6,
+		to: 10,
+	};
+	const editor: SelectionEditorAdapter = {
+		readCurrentText: vi.fn(() => snapshot.fullText),
+		isTargetCurrent: vi.fn(() => true),
+		replaceRange: vi.fn(),
+	};
+	const additionalNotesStore = new AdditionalNotesStore();
+	const captureSelectionEditTarget = vi.fn(() => ({ snapshot, editor }));
+	const captureChatContext = vi.fn(() => ({
+		file,
+		sourceText: snapshot.fullText,
+		selection: { from: snapshot.from, to: snapshot.to },
+		noteLabel: file.path,
+		markdown: snapshot.fullText,
+	}));
+	const requestSelectionEdit = vi.fn(async (
+		_snapshot: SelectionSnapshot,
+		_prompt: string,
+		_signal: AbortSignal,
+		_editor: SelectionEditorAdapter,
+		_additionalNotePaths: readonly string[],
+		callbacks?: SelectionEditCallbacks,
+	): Promise<SelectionEditResult> => {
+		callbacks?.onReasoning?.('REJECTED raw JSON and diagnostics');
+		callbacks?.onRetry?.();
+		callbacks?.onReasoning?.('Successful reasoning');
+		return {
+			applied: true,
+			changeCount: 2,
+			usage: {
+				promptTokens: 30,
+				completionTokens: 7,
+				totalTokens: 37,
+				source: 'provider',
+			},
+		};
+	});
+	const requestChatCompletion = vi.fn(async (submission: {
+		mode: Mode;
+		prompt: string;
+		history: ProviderHistoryMessage[];
+		additionalNotePaths: readonly string[];
+		callbacks: { onContent?: (text: string) => void };
+	}) => {
+		if (submission.mode === 'edit') {
+			return {
+				applied: false,
+				changeCount: 0,
+				usage: {
+					promptTokens: 3,
+					completionTokens: 1,
+					totalTokens: 4,
+					source: 'provider' as const,
+				},
+			};
+		}
+		submission.callbacks.onContent?.('Answer');
+		return {
+			content: 'Answer',
+			reasoning: '',
+			usage: {
+				promptTokens: 3,
+				completionTokens: 1,
+				totalTokens: 4,
+				source: 'provider' as const,
+			},
+		};
+	});
+	const savedSnapshots: ChatMessage[][] = [];
+	let activePath = file.path;
+	const context = {
+		inputEl: { value: 'Edit selection' },
+		isSending: false,
+		isThreadLoading: false,
+		selectedMode: 'edit' as Mode,
+		editTargetChoice: 'auto' as 'auto' | 'full-note' | 'selection',
+		displayedEditTarget: 'selection' as 'full-note' | 'selection',
+		webSearchMode: 'off' as const,
+		notePath: file.path as string | null,
+		noteLoadGeneration: 0,
+		messages: [] as ChatMessage[],
+		drafts: new Map<string, string>(),
+		plugin: {
+			getActiveNotePath: () => activePath,
+			conversationStore: { load: vi.fn(async () => []) },
+			captureChatContext,
+			captureSelectionEditTarget,
+			additionalNotesStore,
+			requestChatCompletion,
+			requestSelectionEdit,
+			settings: { maxWebToolCalls: 8 },
+		},
+		toProviderHistory: () => viewPrototype.toProviderHistory.call(context),
+		persistMessages: vi.fn(async (_path: string, messages: ChatMessage[]) => {
+			savedSnapshots.push(messages.map((message) => ({ ...message })));
+		}),
+		render: vi.fn(),
+		scheduleMessageRender: vi.fn(),
+		closed: false,
+		activeController: null as AbortController | null,
+	};
+	return {
+		context,
+		snapshot,
+		editor,
+		additionalNotesStore,
+		captureChatContext,
+		captureSelectionEditTarget,
+		requestChatCompletion,
+		requestSelectionEdit,
+		savedSnapshots,
+		persistMessages: context.persistMessages,
+		setActivePath: (path: string) => {
+			activePath = path;
+		},
+	};
+}
+
+describe('EmendChatView selection edit submission', () => {
+	it('routes automatic displayed Selection through the exact native-editor request and normal saves', async () => {
+		const fixture = createSelectionEditSubmission();
+		fixture.additionalNotesStore.add('Note.md', 'Reference.md');
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.captureSelectionEditTarget).toHaveBeenCalledOnce();
+		expect(fixture.captureChatContext).not.toHaveBeenCalled();
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(fixture.requestSelectionEdit).toHaveBeenCalledOnce();
+		const args = fixture.requestSelectionEdit.mock.calls[0];
+		expect(args?.[0]).toBe(fixture.snapshot);
+		expect(args?.[1]).toBe('Edit selection');
+		expect(args?.[2]).toBeInstanceOf(AbortSignal);
+		expect(args?.[2].aborted).toBe(false);
+		expect(args?.[3]).toBe(fixture.editor);
+		expect(args?.[4]).toEqual(['Reference.md']);
+		expect(typeof args?.[5]?.onReasoning).toBe('function');
+		expect(typeof args?.[5]?.onRetry).toBe('function');
+		expect(fixture.context.messages[1]).toMatchObject({
+			status: 'ready',
+			content: 'Edit applied — 2 changes tracked. Review in Track Changes.',
+			reasoning: 'Successful reasoning',
+			usage: {
+				promptTokens: 30,
+				completionTokens: 7,
+				totalTokens: 37,
+				source: 'provider',
+			},
+		});
+		expect(fixture.savedSnapshots).toHaveLength(2);
+		const persisted = JSON.stringify(fixture.savedSnapshots);
+		expect(persisted).not.toContain('REJECTED raw JSON');
+		expect(persisted).not.toContain('Alpha beta.');
+		expect(persisted).not.toContain('"from":6');
+		expect(persisted).not.toContain('"to":10');
+
+		fixture.context.inputEl.value = 'Next question';
+		fixture.context.selectedMode = 'ask';
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.requestChatCompletion.mock.calls[0]?.[0].history.map(
+			(message) => message.content,
+		)).toEqual([
+			'Edit selection',
+			'Edit applied — 2 changes tracked. Review in Track Changes.',
+		]);
+	});
+
+	it('keeps explicit Full note on the ordinary request despite a usable selection', async () => {
+		const fixture = createSelectionEditSubmission();
+		fixture.context.editTargetChoice = 'full-note';
+		fixture.context.displayedEditTarget = 'full-note';
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.captureChatContext).toHaveBeenCalledOnce();
+		expect(fixture.requestChatCompletion).toHaveBeenCalledOnce();
+		expect(fixture.captureSelectionEditTarget).not.toHaveBeenCalled();
+		expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
+	});
+
+	it.each(['ask', 'discuss', 'brainstorm'] as const)(
+		'never routes read-only %s to a selection writer',
+		async (mode) => {
+			const fixture = createSelectionEditSubmission();
+			fixture.context.selectedMode = mode;
+
+			await viewPrototype.submitPrompt.call(fixture.context);
+
+			expect(fixture.requestChatCompletion).toHaveBeenCalledOnce();
+			expect(fixture.requestChatCompletion.mock.calls[0]?.[0].mode).toBe(mode);
+			expect(fixture.captureSelectionEditTarget).not.toHaveBeenCalled();
+			expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
+		},
+	);
+
+	it.each(['auto', 'selection'] as const)(
+		'fails closed without messages, saves, or fallback when %s Selection capture fails',
+		async (choice) => {
+			const fixture = createSelectionEditSubmission();
+			fixture.context.editTargetChoice = choice;
+			fixture.captureSelectionEditTarget.mockImplementation(() => {
+				throw new Error('Select non-whitespace text first.');
+			});
+			const noticeMessages = (Notice as unknown as {
+				readonly messages: string[];
+			}).messages;
+			const noticeCount = noticeMessages.length;
+
+			await viewPrototype.submitPrompt.call(fixture.context);
+
+			expect(noticeMessages.slice(noticeCount)).toEqual([
+				'Emend: Select non-whitespace text first.',
+			]);
+			expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
+			expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+			expect(fixture.captureChatContext).not.toHaveBeenCalled();
+			expect(fixture.context.messages).toEqual([]);
+			expect(fixture.savedSnapshots).toEqual([]);
+			expect(fixture.context.isSending).toBe(false);
+		},
+	);
+
+	it('captures the selection and additional-note paths before a deferred initial save', async () => {
+		const fixture = createSelectionEditSubmission();
+		fixture.additionalNotesStore.add('Note.md', 'Selected.md');
+		const firstSave = deferred<void>();
+		const response = deferred<SelectionEditResult>();
+		fixture.persistMessages.mockImplementationOnce(() => firstSave.promise);
+		fixture.requestSelectionEdit.mockImplementationOnce(() => response.promise);
+
+		const submission = viewPrototype.submitPrompt.call(fixture.context);
+		expect(fixture.captureSelectionEditTarget).toHaveBeenCalledOnce();
+		expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
+		fixture.additionalNotesStore.clear('Note.md');
+		fixture.additionalNotesStore.add('Note.md', 'Later.md');
+		fixture.captureSelectionEditTarget.mockImplementation(() => {
+			throw new Error('Selection changed after capture.');
+		});
+		firstSave.resolve();
+		await vi.waitFor(() => expect(fixture.requestSelectionEdit).toHaveBeenCalledOnce());
+
+		const args = fixture.requestSelectionEdit.mock.calls[0];
+		expect(args?.[0]).toBe(fixture.snapshot);
+		expect(args?.[3]).toBe(fixture.editor);
+		expect(args?.[4]).toEqual(['Selected.md']);
+		response.resolve({
+			applied: false,
+			changeCount: 0,
+			usage: { promptTokens: 2, completionTokens: 1, totalTokens: 3, source: 'provider' },
+		});
+		await submission;
+		expect(fixture.context.messages[1]?.content).toBe('No changes were needed.');
+	});
+
+	it.each([
+		['provider', 'Provider unavailable'],
+		['validation', 'Invalid operation array'],
+		['stale', 'The note changed while Emend was responding. No edits were applied.'],
+	])('settles a %s failure and permits a selection retry without fallback', async (_kind, errorMessage) => {
+		const fixture = createSelectionEditSubmission();
+		fixture.requestSelectionEdit.mockRejectedValueOnce(new Error(errorMessage));
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.context.messages[1]).toMatchObject({
+			status: 'error',
+			content: errorMessage,
+		});
+		expect(fixture.context.isSending).toBe(false);
+		expect(fixture.context.activeController).toBeNull();
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(fixture.savedSnapshots.flat().some(
+			(message) => message.status === 'error',
+		)).toBe(false);
+
+		fixture.context.inputEl.value = 'Retry selection';
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.requestSelectionEdit).toHaveBeenCalledTimes(2);
+		expect(fixture.context.messages[3]?.status).toBe('ready');
+	});
+
+	it('uses the existing stopped lifecycle and excludes the partial response from saves', async () => {
+		const fixture = createSelectionEditSubmission();
+		const response = deferred<SelectionEditResult>();
+		fixture.requestSelectionEdit.mockImplementationOnce(() => response.promise);
+		const submission = viewPrototype.submitPrompt.call(fixture.context);
+		await vi.waitFor(() => expect(fixture.requestSelectionEdit).toHaveBeenCalledOnce());
+
+		fixture.context.activeController?.abort();
+		response.resolve({
+			applied: false,
+			changeCount: 0,
+			usage: { promptTokens: 2, completionTokens: 1, totalTokens: 3, source: 'provider' },
+		});
+		await submission;
+
+		expect(fixture.context.messages[1]?.status).toBe('stopped');
+		expect(fixture.context.isSending).toBe(false);
+		expect(fixture.context.activeController).toBeNull();
+		expect(fixture.savedSnapshots.flat().some(
+			(message) => message.status === 'stopped',
+		)).toBe(false);
+	});
+
+	it('aborts the captured selection request on a note switch without saving it to the new thread', async () => {
+		const fixture = createSelectionEditSubmission();
+		const response = deferred<SelectionEditResult>();
+		let requestSignal: AbortSignal | undefined;
+		fixture.requestSelectionEdit.mockImplementationOnce((
+			_snapshot,
+			_prompt,
+			signal,
+		) => {
+			requestSignal = signal;
+			return response.promise;
+		});
+		const submission = viewPrototype.submitPrompt.call(fixture.context);
+		await vi.waitFor(() => expect(fixture.requestSelectionEdit).toHaveBeenCalledOnce());
+
+		fixture.setActivePath('Other.md');
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		expect(requestSignal?.aborted).toBe(true);
+		response.resolve({
+			applied: false,
+			changeCount: 0,
+			usage: { promptTokens: 2, completionTokens: 1, totalTokens: 3, source: 'provider' },
+		});
+		await submission;
+
+		expect(fixture.context.notePath).toBe('Other.md');
+		expect(fixture.context.messages).toEqual([]);
+		expect(fixture.context.isSending).toBe(false);
+		expect(fixture.context.activeController).toBeNull();
+		expect(fixture.savedSnapshots.flat().some(
+			(message) => message.status === 'stopped',
+		)).toBe(false);
 	});
 });
 
