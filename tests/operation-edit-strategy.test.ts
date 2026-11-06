@@ -65,6 +65,52 @@ describe('operation EditStrategy protocol', () => {
 		});
 	});
 
+	it('minimizes a broad sentence replacement to the changed words', () => {
+		expect(prepare('They have a plan.', [
+			{ type: 'replace', target: 'They have a plan.', replacement: 'They has a plan.' },
+		])).toEqual({
+			annotatedMarkdown: 'They {~~have~>has~~} a plan.',
+			changeCount: 1,
+		});
+	});
+
+	it('counts separated minimal cards within one declared replacement', () => {
+		const original = 'The quick brown fox jumps over the lazy dog.';
+		expect(prepare(original, [
+			{
+				type: 'replace',
+				target: original,
+				replacement: 'The quick red fox leaps over the lazy dog.',
+			},
+		])).toEqual({
+			annotatedMarkdown: 'The quick {~~brown~>red~~} fox {~~jumps~>leaps~~} over the lazy dog.',
+			changeCount: 2,
+		});
+	});
+
+	it('minimizes only the selected occurrence of a repeated broad target', () => {
+		expect(prepare('I have one.\nI have one.', [
+			{
+				type: 'replace',
+				target: 'I have one.',
+				replacement: 'I has one.',
+				occurrence: 2,
+			},
+		])).toEqual({
+			annotatedMarkdown: 'I have one.\nI {~~have~>has~~} one.',
+			changeCount: 1,
+		});
+	});
+
+	it('treats an identical replacement as a no-op', () => {
+		expect(prepare('Alpha beta', [
+			{ type: 'replace', target: 'beta', replacement: 'beta' },
+		])).toEqual({
+			annotatedMarkdown: 'Alpha beta',
+			changeCount: 0,
+		});
+	});
+
 	it('compiles a comment after an unchanged target with zero text changes', () => {
 		expect(prepare('Alpha beta', [
 			{ type: 'comment', target: 'beta', comment: 'Review this.' },
@@ -106,8 +152,8 @@ describe('operation EditStrategy protocol', () => {
 			},
 			{ type: 'insert', anchor: '後', position: 'before', text: '終\n' },
 		])).toEqual({
-			annotatedMarkdown: '前🙂\n{~~第一行\n第二行~>新しい🙂\n行~~}\n{++終\n++}後',
-			changeCount: 2,
+			annotatedMarkdown: '前🙂\n{~~第一行~>新しい🙂~~}\n{--第二--}行\n{++終\n++}後',
+			changeCount: 3,
 		});
 	});
 
@@ -493,6 +539,10 @@ describe('edit strategy factory and prompts', () => {
 			expect(prompt).toContain('"comment"');
 			expect(prompt).toContain('occurrence');
 			expect(prompt).toContain('Do not return');
+			expect(prompt).toContain('smallest complete semantic target');
+			expect(prompt).toContain('separate nonoverlapping operations');
+			expect(prompt).toContain('Use insert for pure additions and remove for pure deletions.');
+			expect(prompt).toContain('occurrence rather than broadening');
 			expect(prompt).not.toContain('COMPLETE note with every requested change marked using CriticMarkup');
 			expect(prompt.indexOf('Review skill')).toBeLessThan(prompt.indexOf('Agent instructions'));
 			if (kind === 'selection') {

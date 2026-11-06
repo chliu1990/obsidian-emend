@@ -5,6 +5,7 @@ import {
 	EditSourceValidationError,
 } from './edit-validation';
 import { appendInstructions, HISTORY_PERMISSION_PROMPT } from './mode';
+import { createReplacementCompiler } from './replacement-diff';
 import type { EditOperation, InstructionPromptParts } from './types';
 
 const CRITIC_MARKUP_DELIMITERS = [
@@ -44,6 +45,8 @@ interface CompiledRange extends OriginalRange {
 	order: number;
 }
 
+const MINIMAL_TARGET_PROMPT = 'For every edit, use the smallest complete semantic target that contains the change. Put independent edits in separate nonoverlapping operations instead of broadening one target. Use insert for pure additions and remove for pure deletions. When text repeats, keep the target minimal and use occurrence rather than broadening the target.';
+
 const FULL_NOTE_PROMPT = `You are Emend, an AI editor for an Obsidian note. Return only a bare JSON array of edit operations against the complete original note. Do not return a rewritten document, prose, Markdown, or a code fence.
 The closed command union is:
 - {"type":"insert","anchor":"exact original text","position":"before"|"after","text":"nonempty inserted text","occurrence":1}
@@ -51,6 +54,7 @@ The closed command union is:
 - {"type":"replace","target":"exact original text","replacement":"nonempty replacement","occurrence":1}
 - {"type":"comment","target":"exact original text","comment":"nonempty comment","occurrence":1}
 The occurrence field is optional. Omit it only when the anchor or target occurs exactly once; otherwise use a one-based positive integer. Use no other commands or fields. Return [] when no change is needed. Never include CriticMarkup delimiters in operation strings.
+${MINIMAL_TARGET_PROMPT}
 
 ${HISTORY_PERMISSION_PROMPT}`;
 
@@ -60,7 +64,8 @@ The closed command union is:
 - {"type":"remove","target":"exact original text","occurrence":1}
 - {"type":"replace","target":"exact original text","replacement":"nonempty replacement","occurrence":1}
 - {"type":"comment","target":"exact original text","comment":"nonempty comment","occurrence":1}
-The occurrence field is optional. Omit it only when the anchor or target occurs exactly once; otherwise use a one-based positive integer. Use no other commands or fields. Return [] when no change is needed. Never include CriticMarkup delimiters in operation strings.`;
+The occurrence field is optional. Omit it only when the anchor or target occurs exactly once; otherwise use a one-based positive integer. Use no other commands or fields. Return [] when no change is needed. Never include CriticMarkup delimiters in operation strings.
+${MINIMAL_TARGET_PROMPT}`;
 
 export const operationEditStrategy: EditStrategy = {
 	id: 'operations',
@@ -120,6 +125,7 @@ export function compileEditOperations(original: string, response: string): strin
 		resolveOperation(original, parseOperation(value, order), order),
 	);
 	validateRangeIsolation(resolved);
+	const compileReplacement = createReplacementCompiler();
 
 	const changes: CompiledRange[] = resolved.map(({ operation, anchorRange, order }) => {
 		switch (operation.type) {
@@ -134,7 +140,7 @@ export function compileEditOperations(original: string, response: string): strin
 			case 'replace':
 				return {
 					...anchorRange,
-					text: `{~~${operation.target}~>${operation.replacement}~~}`,
+					text: compileReplacement(operation.target, operation.replacement),
 					order,
 				};
 			case 'comment':
