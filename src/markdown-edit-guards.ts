@@ -195,16 +195,13 @@ function scanFences(lines: readonly SourceLine[]): FenceRange[] {
 			continue;
 		}
 		const container = readContainerOpening(line.text);
-		const opening = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(
-			line.text.slice(container.contentStart),
-		);
-		const run = opening?.[1];
-		if (!run || (run[0] === '`' && opening?.[2]?.includes('`'))) {
+		const opening = parseFenceOpening(line.text.slice(container.contentStart));
+		const run = opening?.run;
+		if (!run) {
 			continue;
 		}
 		const character = run[0];
-		const openingStart = line.start + container.contentStart +
-			(opening?.index ?? 0) + (opening?.[0].indexOf(run) ?? 0);
+		const openingStart = line.start + container.contentStart + (opening?.start ?? 0);
 		let end = line.end;
 		let closingIndex = index;
 		let closed = false;
@@ -238,6 +235,15 @@ function scanFences(lines: readonly SourceLine[]): FenceRange[] {
 		index = closingIndex;
 	}
 	return fences;
+}
+
+function parseFenceOpening(text: string): { run: string; start: number } | undefined {
+	const opening = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(text);
+	const run = opening?.[1];
+	if (!run || (run[0] === '`' && opening?.[2]?.includes('`'))) {
+		return undefined;
+	}
+	return { run, start: (opening?.index ?? 0) + (opening?.[0].indexOf(run) ?? 0) };
 }
 
 function readContainerOpening(text: string): ContainerOpening {
@@ -434,10 +440,25 @@ function isTableBodyTerminator(text: string): boolean {
 		/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(text);
 }
 
+const HTML_BLOCK_TAGS = new Set([
+	'address', 'article', 'aside', 'base', 'basefont', 'blockquote', 'body', 'caption',
+	'center', 'col', 'colgroup', 'dd', 'details', 'dialog', 'dir', 'div', 'dl', 'dt',
+	'fieldset', 'figcaption', 'figure', 'footer', 'form', 'frame', 'frameset', 'h1', 'h2',
+	'h3', 'h4', 'h5', 'h6', 'head', 'header', 'hr', 'html', 'iframe', 'legend', 'li',
+	'link', 'main', 'menu', 'menuitem', 'nav', 'noframes', 'ol', 'optgroup', 'option',
+	'p', 'param', 'pre', 'script', 'search', 'section', 'style', 'summary', 'table',
+	'tbody', 'td', 'textarea', 'tfoot', 'th', 'thead', 'title', 'tr', 'track', 'ul',
+]);
+
 function isEditBlockStart(text: string): boolean {
 	return isTableBodyTerminator(text) ||
-		/^ {0,3}(`{3,}|~{3,})/.test(text) ||
-		/^ {0,3}<\/?[A-Za-z][^>]*>/.test(text);
+		parseFenceOpening(text) !== undefined ||
+		isHtmlBlockStart(text);
+}
+
+function isHtmlBlockStart(text: string): boolean {
+	const tag = /^ {0,3}<\/?([A-Za-z][A-Za-z0-9-]*)(?:[ \t][^>]*)?\/?\s*>/.exec(text)?.[1]?.toLowerCase();
+	return tag !== undefined && HTML_BLOCK_TAGS.has(tag);
 }
 
 function tableRow(line: SourceLine, contentStart = 0): TableRow {

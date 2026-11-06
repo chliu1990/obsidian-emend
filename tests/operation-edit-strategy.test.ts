@@ -876,6 +876,47 @@ describe('remaining Markdown boundary bypasses', () => {
 	);
 });
 
+describe('Markdown inline and block content distinctions', () => {
+	it.each([
+		['> `alpha\n<span>\nbeta` after', '`alpha\n<span>\nbeta`'],
+		['- `alpha\n<https://example.com>\nbeta` after', '`alpha\n<https://example.com>\nbeta`'],
+	])('keeps inline HTML and autolinks inside lazy multiline code spans: %j', (original, target) => {
+		expect(() => prepare(original, [
+			{ type: 'replace', target: 'beta', replacement: 'changed' },
+		])).toThrow(expect.objectContaining({ code: 'inline-code-range' }));
+		const preparation = prepare(original, [
+			{ type: 'replace', target, replacement: target.replace('beta', 'gamma') },
+		]);
+		expect(toRejectView(preparation.annotatedMarkdown)).toBe(original);
+		expect(toAcceptView(preparation.annotatedMarkdown)).toContain('gamma');
+	});
+
+	it.each(['<span>', '<https://example.com>', ' ```alpha``` '])(
+		'allows inline cell replacement content without a block start: %j',
+		(replacement) => {
+			const original = 'Alpha | Beta\n--- | ---\none | two';
+			const preparation = prepare(original, [
+				{ type: 'replace', target: 'one', replacement },
+			]);
+			expect(toRejectView(preparation.annotatedMarkdown)).toBe(original);
+			expect(toAcceptView(preparation.annotatedMarkdown)).toBe(
+				`Alpha | Beta\n--- | ---\n${replacement} | two`,
+			);
+		},
+	);
+
+	it('ends inline-code matching at an actual HTML block start', () => {
+		const original = '> `alpha\n<div>\nbeta` after';
+		const preparation = prepare(original, [
+			{ type: 'replace', target: 'alpha', replacement: 'first' },
+			{ type: 'replace', target: 'beta', replacement: 'second' },
+		]);
+		expect(toRejectView(preparation.annotatedMarkdown)).toBe(original);
+		expect(toAcceptView(preparation.annotatedMarkdown)).toContain('first');
+		expect(toAcceptView(preparation.annotatedMarkdown)).toContain('second');
+	});
+});
+
 describe('operation EditStrategy selection boundaries', () => {
 	it('cannot address text outside the selection passed as the original snapshot', () => {
 		expect(() => prepare('beta', [
