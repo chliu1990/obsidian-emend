@@ -50,6 +50,26 @@ describe('resolveTokenUsage', () => {
 		});
 	});
 
+	it('estimates ordinary continuation content in the prompt', () => {
+		expect(resolveTokenUsage(
+			{
+				systemPrompt: '1234',
+				userPrompt: '123456',
+				history: [],
+				continuation: [
+					{ role: 'assistant', content: '12345678' },
+					{ role: 'user', content: '1234' },
+				],
+			},
+			result(),
+		)).toEqual({
+			promptTokens: 6,
+			completionTokens: 3,
+			totalTokens: 9,
+			source: 'estimated',
+		});
+	});
+
 	it('uses a minimum of one token for each empty estimated side', () => {
 		expect(resolveTokenUsage(
 			{ systemPrompt: '', userPrompt: '', history: [] },

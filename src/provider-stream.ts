@@ -30,6 +30,7 @@ export interface ProviderToolCall {
 }
 
 export type ProviderContinuationMessage =
+	| { role: 'assistant' | 'user'; content: string }
 	| { role: 'assistant'; content: string; toolCalls: ProviderToolCall[] }
 	| { role: 'tool'; toolCallId: string; content: string };
 
@@ -195,6 +196,9 @@ function formatContinuationMessages(messages: ProviderContinuationMessage[]) {
 				tool_call_id: message.toolCallId,
 				content: message.content,
 			};
+		}
+		if (message.role === 'user' || !('toolCalls' in message)) {
+			return { role: message.role, content: message.content };
 		}
 		return {
 			role: 'assistant',
