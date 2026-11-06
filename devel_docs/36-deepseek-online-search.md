@@ -65,6 +65,21 @@ The original baseline audit covered **19 sanitized scenario logs and 36 request 
 
 An independent whole-branch code/security review found no Critical issues and two Important transport issues. Regression tests now prove fragmented tool-call IDs/names assemble correctly and undeclared tool-only Off responses retain the empty-response error. Both fixes passed RED→GREEN verification and the full suite. The review's Minor items are deferred and recorded in the implementation ledger, not hidden in release claims.
 
+## Issue #29 follow-up verification
+
+A second independent review confirmed the activity, retrieval, and HTTP-status boundaries but identified a completion-relayout scroll bug and a lint failure. The scroll fix now waits for all current-generation Markdown layouts before restoring an upward-reading position, with stale generations ignored. Both findings passed RED→GREEN regression tests; a later successful Fetch of the same URL also clears its unread warning.
+
+The targeted real-Obsidian matrix used the same isolated runtime and loopback-only policy. Result: **7/7 scenarios and 38 assertions passed**, with **14 screenshots**, no runtime defects, and no unexercised requested items. Evidence is under `test_vault/emend-web-verify/evidence-issue29/`, with concise results in `issue29-evidence.json` and full results in `summary.json`.
+
+- Review edited actual Search/Fetch targets; folded completed/failed outcomes and sanitized schema-2 activity survived actual reload without raw results/page content.
+- Four seed responses plus streamed Markdown stayed at distance zero from newest on submission, streaming, final render, and reload. An upward reader's position remained exactly `120 → 120` across an unrelated mode re-render.
+- Search sent `need_content: true`, truncated returned content to 6,000 characters plus `[...]`, and required zero Fetch calls.
+- GitHub 403 and empty Fetch each ran once sequentially with no retry; the answer remained ready with a two-page unread warning and folded failed outcomes.
+- Fetch 401 and Search 503 remained fatal without continuation/retry or a ready partial response.
+- Seven scenario logs contained 21 request entries with zero header/credential leaks; all six follow-up threads used schema 2 and excluded raw tool/page content and credentials.
+
+Reproduce with `node test_vault/emend-web-verify/verify.mjs --issue29`. All tested notes remained byte-for-byte unchanged. No real-provider smoke was run.
+
 ## Clean local gate
 
 Run from the repository root:
@@ -73,4 +88,4 @@ Run from the repository root:
 npm ci && npm test && npm run lint && npm run build && git diff --check
 ```
 
-Result: locked install succeeded; **31 Vitest files and 602 tests passed**; ESLint reported no findings; strict TypeScript and production esbuild succeeded; `git diff --check` reported no whitespace errors. No real-provider smoke was run. All owned mock, Xvfb, and Obsidian processes were stopped after verification.
+Result: locked install succeeded; **31 Vitest files and 619 tests passed**; ESLint reported no findings; strict TypeScript and production esbuild succeeded; `git diff --check` reported no whitespace errors. No real-provider smoke was run. All owned mock, Xvfb, and Obsidian processes were stopped after verification.
