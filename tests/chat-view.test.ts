@@ -71,6 +71,10 @@ const viewPrototype = EmendChatView.prototype as unknown as {
 	render(this: unknown): void;
 	renderMessage(this: unknown, containerEl: HTMLElement, message: ChatMessage): void;
 	renderMessageBody(this: unknown, message: ChatMessage): void;
+	scrollMessagesToBottom(this: unknown): void;
+	scrollMessagesToBottomIfFollowing(this: unknown): void;
+	restoreMessageScroll(this: unknown, previousScrollTop: number, wasFollowing: boolean): void;
+	scheduleMessageRender(this: unknown, message: ChatMessage): void;
 	getDisplayText(this: unknown): string;
 	onClose(this: unknown): Promise<void>;
 	toProviderHistory(this: unknown): ProviderHistoryMessage[];
@@ -709,6 +713,11 @@ class FakeElement {
 	textContent = '';
 	disabled = false;
 	value = '';
+	open = false;
+	scrollTop = 0;
+	scrollHeight = 0;
+	clientHeight = 0;
+	isConnected = true;
 
 	constructor(readonly tagName = 'div') {}
 
@@ -734,6 +743,12 @@ class FakeElement {
 	addClass(className: string) {
 		this.className = `${this.className} ${className}`.trim();
 	}
+
+	replaceWith(replacement: FakeElement) {
+		this.replacement = replacement;
+	}
+
+	replacement?: FakeElement;
 
 	addEventListener() {}
 
@@ -886,6 +901,10 @@ describe('EmendChatView web research', () => {
 				content: 'Answer [S1]',
 				reasoning: '',
 				sources: [{ id: 'S1', title: 'Actual source', url: 'https://example.test/source', snippet: 'Evidence' }],
+				activities: [
+					{ type: 'search' as const, target: 'Emend', status: 'completed' as const },
+					{ type: 'fetch' as const, target: 'https://example.test/unreadable', status: 'failed' as const },
+				],
 				usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4, source: 'provider' as const },
 			};
 		});
@@ -920,6 +939,13 @@ describe('EmendChatView web research', () => {
 			{ id: 'S1', title: 'Actual source', url: 'https://example.test/source', snippet: 'Evidence' },
 		]);
 		expect(context.messages[1]?.webActivity).toBe('Searching: Emend');
+		expect(context.messages[1]?.webActivities).toEqual([
+			{ type: 'search', target: 'Emend', status: 'completed' },
+			{ type: 'fetch', target: 'https://example.test/unreadable', status: 'failed' },
+		]);
+		expect(context.messages[1]?.content).toContain(
+			'Emend could not read 1 requested page. The answer may be incomplete.',
+		);
 	});
 
 	it('does not submit web options in Edit even when Auto is selected', async () => {
@@ -982,5 +1008,92 @@ describe('EmendChatView web research', () => {
 		expect(copied).toContain('https://example.test/source');
 		expect(copied).toContain('https://unverified.test');
 		expect(copied.match(/### Sources/g)).toHaveLength(1);
+	});
+});
+
+
+describe('EmendChatView web activity review', () => {
+	it('renders a closed folded activity list with completed, failed, and skipped outcomes', () => {
+		const container = renderForFooter({
+			...message('answer', 'Note.md'),
+			webActivities: [
+				{ type: 'search', target: 'activity query', status: 'completed' },
+				{ type: 'fetch', target: 'https://example.test/failed', status: 'failed' },
+				{ type: 'fetch', target: 'https://example.test/skipped', status: 'skipped' },
+			],
+		});
+
+		const details = findElements(container, (element) =>
+			element.tagName === 'details' && element.className === 'emend-chat-web-activity'
+		)[0];
+		expect(details).toBeDefined();
+		expect(details?.open).toBe(false);
+		expect(textOf(details as FakeElement)).toContain('Web activity (3)');
+		expect(textOf(details as FakeElement)).toContain('Search · Completed · activity query');
+		expect(textOf(details as FakeElement)).toContain('Fetch · Failed · https://example.test/failed');
+		expect(textOf(details as FakeElement)).toContain('Fetch · Skipped · https://example.test/skipped');
+	});
+});
+
+
+describe('EmendChatView latest-message scrolling', () => {
+	it('aligns the scroller to its full height when following the latest response', () => {
+		const messagesEl = { scrollHeight: 1200, scrollTop: 0 };
+		viewPrototype.scrollMessagesToBottom.call({ closed: false, messagesEl });
+		expect(messagesEl.scrollTop).toBe(1200);
+	});
+
+	it('restores the previous position when the reader was not following latest', () => {
+		const messagesEl = { scrollHeight: 1200, scrollTop: 0 };
+		viewPrototype.restoreMessageScroll.call({ messagesEl }, 275, false);
+		expect(messagesEl.scrollTop).toBe(275);
+
+		const scrollMessagesToBottom = vi.fn();
+		viewPrototype.restoreMessageScroll.call({ messagesEl, scrollMessagesToBottom }, 275, true);
+		expect(scrollMessagesToBottom).toHaveBeenCalledOnce();
+	});
+
+	it('scrolls after streamed message bodies only while following latest', () => {
+		const pendingMessage = { ...message('streaming', 'Note.md'), status: 'loading' as const };
+		const scrollMessagesToBottomIfFollowing = vi.fn();
+		const context = {
+			closed: false,
+			pendingMessages: new Set([pendingMessage]),
+			pendingRenderFrame: null,
+			contentEl: {
+				ownerDocument: {
+					defaultView: {
+						requestAnimationFrame: (callback: () => void) => {
+							callback();
+							return 1;
+						},
+					},
+				},
+			},
+			renderMessageBody: vi.fn(),
+			scrollMessagesToBottomIfFollowing,
+		};
+
+		viewPrototype.scheduleMessageRender.call(context, pendingMessage);
+
+		expect(context.renderMessageBody).toHaveBeenCalledWith(pendingMessage);
+		expect(scrollMessagesToBottomIfFollowing).toHaveBeenCalledOnce();
+	});
+
+	it('reapplies bottom alignment after asynchronous Markdown layout', async () => {
+		vi.spyOn(MarkdownRenderer, 'render').mockResolvedValue(undefined);
+		const body = new FakeElement();
+		Object.assign(body, {
+			ownerDocument: { createElement: () => new FakeElement() },
+		});
+		const scrollMessagesToBottomIfFollowing = vi.fn();
+		const context = {
+			closed: false,
+			messageBodyEls: new Map<string, HTMLElement>([['answer', body as unknown as HTMLElement]]),
+			scrollMessagesToBottomIfFollowing,
+		};
+
+		viewPrototype.renderMessageBody.call(context, message('answer', 'Note.md'));
+		await vi.waitFor(() => expect(scrollMessagesToBottomIfFollowing).toHaveBeenCalledOnce());
 	});
 });

@@ -21,6 +21,7 @@ import { formatTokenUsage } from './token-usage';
 import type { ChatMessage, Mode, ProviderHistoryMessage } from './types';
 import { WebSearchModal } from './web-search-modal';
 import type {
+	WebActivityRecord,
 	WebSearchActivity,
 	WebSearchMode,
 	WebSource,
@@ -28,7 +29,7 @@ import type {
 } from './web-search';
 
 export const EMEND_CHAT_VIEW_TYPE = 'emend-chat-view';
-export const WEB_SEARCH_DISCLOSURE = 'DeepSeek may generate search queries and fetch URLs from note context. Review asks before each batch; Auto runs directly. Successful search/fetch calls may be billed separately.';
+export const WEB_SEARCH_DISCLOSURE = 'DeepSeek may generate search queries and fetch URLs from note context. Review asks before each batch; Auto runs directly. Successful search/fetch calls may be billed separately. Queries, URLs, and outcomes are stored locally with ready chats.';
 
 const MODE_PLACEHOLDERS: Record<Mode, string> = {
 	ask: 'Ask about the active note...',
@@ -39,6 +40,8 @@ const MODE_PLACEHOLDERS: Record<Mode, string> = {
 
 export class EmendChatView extends ItemView {
 	private messages: ChatMessage[] = [];
+	private messagesEl: HTMLElement | null = null;
+	private followLatestMessages = true;
 	private inputEl: HTMLTextAreaElement | null = null;
 	private activeModelEl: HTMLElement | null = null;
 	private isSending = false;
@@ -95,6 +98,7 @@ export class EmendChatView extends ItemView {
 		this.pendingMessages.clear();
 		this.messageBodyEls.clear();
 		this.activeModelEl = null;
+		this.messagesEl = null;
 		this.additionalNotesControl?.destroy();
 		this.additionalNotesControl = null;
 		this.inputEl = null;
@@ -129,6 +133,7 @@ export class EmendChatView extends ItemView {
 			this.drafts.set(this.notePath, this.inputEl.value);
 		}
 		this.notePath = notePath;
+		this.followLatestMessages = true;
 		const generation = ++this.noteLoadGeneration;
 		if (this.isSending) {
 			this.activeController?.abort();
@@ -163,6 +168,8 @@ export class EmendChatView extends ItemView {
 	}
 
 	private render() {
+		const previousScrollTop = this.messagesEl?.scrollTop ?? 0;
+		const wasFollowing = this.followLatestMessages;
 		this.cancelPendingRender();
 		this.pendingMessages.clear();
 		this.messageBodyEls.clear();
@@ -211,6 +218,11 @@ export class EmendChatView extends ItemView {
 		}
 
 		const messagesEl = contentEl.createDiv('emend-chat-messages');
+		this.messagesEl = messagesEl;
+		messagesEl.addEventListener('scroll', () => {
+			this.followLatestMessages =
+				messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight <= 24;
+		});
 		if (this.messages.length === 0) {
 			this.renderEmptyState(messagesEl);
 		} else {
@@ -316,6 +328,7 @@ export class EmendChatView extends ItemView {
 				text: WEB_SEARCH_DISCLOSURE,
 			});
 		}
+		this.restoreMessageScroll(previousScrollTop, wasFollowing);
 	}
 
 	private renderEmptyState(containerEl: HTMLElement) {
@@ -375,6 +388,7 @@ export class EmendChatView extends ItemView {
 		this.messageBodyEls.set(message.id, bodyEl);
 		this.renderMessageBody(message);
 		if (message.role === 'assistant' && message.status === 'ready') {
+			renderWebActivities(messageEl, message.webActivities);
 			renderWebSources(messageEl, message.webSources);
 		}
 		if (
@@ -446,13 +460,38 @@ export class EmendChatView extends ItemView {
 			.then(() => {
 				if (!this.closed && currentContentEl.isConnected) {
 					currentContentEl.replaceWith(renderedEl);
+					this.scrollMessagesToBottomIfFollowing();
 				}
 			})
 			.catch(() => {
 				if (!this.closed && currentContentEl.isConnected) {
 					currentContentEl.textContent = message.content;
+					this.scrollMessagesToBottomIfFollowing();
 				}
 			});
+	}
+
+	private scrollMessagesToBottom() {
+		if (this.closed || !this.messagesEl) {
+			return;
+		}
+		this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+	}
+
+	private scrollMessagesToBottomIfFollowing() {
+		if (this.followLatestMessages) {
+			this.scrollMessagesToBottom();
+		}
+	}
+
+	private restoreMessageScroll(previousScrollTop: number, wasFollowing: boolean) {
+		if (wasFollowing) {
+			this.scrollMessagesToBottom();
+			return;
+		}
+		if (this.messagesEl) {
+			this.messagesEl.scrollTop = previousScrollTop;
+		}
 	}
 
 	private scheduleMessageRender(message: ChatMessage) {
@@ -472,6 +511,7 @@ export class EmendChatView extends ItemView {
 			for (const pendingMessage of messages) {
 				this.renderMessageBody(pendingMessage);
 			}
+			this.scrollMessagesToBottomIfFollowing();
 		});
 	}
 
@@ -566,6 +606,7 @@ export class EmendChatView extends ItemView {
 		this.messages.push(loadingMessage);
 		this.activeController = controller;
 		this.isSending = true;
+		this.followLatestMessages = true;
 		this.render();
 
 		try {
@@ -628,6 +669,15 @@ export class EmendChatView extends ItemView {
 				});
 				loadingMessage.usage = result.usage;
 				loadingMessage.webSources = result.sources;
+				loadingMessage.webActivities = result.activities;
+				const unreadPages = new Set(
+					(result.activities ?? [])
+						.filter((activity) => activity.type === 'fetch' && activity.status === 'failed')
+						.map((activity) => activity.target),
+				).size;
+				if (unreadPages > 0) {
+					loadingMessage.content += `${loadingMessage.content ? '\n\n' : ''}Emend could not read ${unreadPages} requested page${unreadPages === 1 ? '' : 's'}. The answer may be incomplete.`;
+				}
 			}
 			controller.signal.throwIfAborted();
 			loadingMessage.status = 'ready';
@@ -723,6 +773,26 @@ export function formatChatMessageForCopy(message: ChatMessage) {
 		`- [${source.id}] [${source.title}](${source.url})`
 	).join('\n');
 	return `${message.content}\n\n### Sources\n${sourceList}`;
+}
+
+function renderWebActivities(
+	containerEl: HTMLElement,
+	activities: WebActivityRecord[] | undefined,
+) {
+	if (!activities?.length) {
+		return;
+	}
+	const detailsEl = containerEl.createEl('details', { cls: 'emend-chat-web-activity' });
+	detailsEl.open = false;
+	detailsEl.createEl('summary', { text: `Web activity (${activities.length})` });
+	for (const activity of activities) {
+		const type = activity.type === 'search' ? 'Search' : 'Fetch';
+		const status = activity.status.charAt(0).toUpperCase() + activity.status.slice(1);
+		detailsEl.createDiv({
+			cls: 'emend-chat-web-activity-item',
+			text: `${type} · ${status} · ${activity.target}`,
+		});
+	}
 }
 
 function renderWebSources(containerEl: HTMLElement, sources: WebSource[] | undefined) {

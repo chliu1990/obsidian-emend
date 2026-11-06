@@ -1,6 +1,6 @@
 import type { DataAdapter } from 'obsidian';
 import type { ChatMessage } from './types';
-import { normalizeWebUrl, type WebSource } from './web-search';
+import { normalizeWebUrl, type WebActivityRecord, type WebSource } from './web-search';
 
 export const CONVERSATION_SCHEMA_VERSION = 2;
 
@@ -191,6 +191,12 @@ function toPersistedMessage(message: ChatMessage): ChatMessage {
 	if (sources?.length) {
 		persisted.webSources = sources;
 	}
+	const activities = message.role === 'assistant'
+		? sanitizeWebActivities(message.webActivities)
+		: undefined;
+	if (activities?.length) {
+		persisted.webActivities = activities;
+	}
 	return persisted;
 }
 
@@ -262,12 +268,19 @@ function normalizeLoadedMessage(message: ChatMessage): ChatMessage {
 	}
 	if (normalized.role !== 'assistant') {
 		delete normalized.webSources;
+		delete normalized.webActivities;
 	} else {
 		const sources = sanitizeWebSources(normalized.webSources);
 		if (sources.length) {
 			normalized.webSources = sources;
 		} else {
 			delete normalized.webSources;
+		}
+		const activities = sanitizeWebActivities(normalized.webActivities);
+		if (activities.length) {
+			normalized.webActivities = activities;
+		} else {
+			delete normalized.webActivities;
 		}
 	}
 	return normalized;
@@ -301,6 +314,34 @@ function sanitizeWebSources(value: unknown): WebSource[] {
 		sources.push(source);
 	}
 	return sources;
+}
+
+function sanitizeWebActivities(value: unknown): WebActivityRecord[] {
+	if (!Array.isArray(value)) {
+		return [];
+	}
+	const activities: WebActivityRecord[] = [];
+	for (const entry of value) {
+		if (!isRecord(entry) ||
+			(entry.type !== 'search' && entry.type !== 'fetch') ||
+			(entry.status !== 'completed' && entry.status !== 'failed' && entry.status !== 'skipped') ||
+			typeof entry.target !== 'string') {
+			continue;
+		}
+		if (entry.type === 'search') {
+			const target = entry.target.trim();
+			if (!target || /[\r\n]/.test(target) || Array.from(target).length > 128) {
+				continue;
+			}
+			activities.push({ type: 'search', target, status: entry.status });
+			continue;
+		}
+		const target = normalizeWebUrl(entry.target);
+		if (target) {
+			activities.push({ type: 'fetch', target, status: entry.status });
+		}
+	}
+	return activities;
 }
 
 function normalizeUsageSource(message: ChatMessage): ChatMessage {

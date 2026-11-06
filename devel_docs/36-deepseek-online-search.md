@@ -14,19 +14,20 @@ A one-shot AI-generated query followed by one answer was rejected because it can
 
 ## Controls, privacy, and cost
 
-- The per-view composer **Web** control defaults to **Off** and offers **Review** and **Auto** in read-only modes. **Review** displays each proposed call batch with editable queries/URLs before execution; **Auto** executes the same validated calls without that pause. Both modes disclose that model-generated arguments may contain note-derived text, DeepSeek performs retrieval, and successful search/fetch calls may be billed separately.
+- The per-view composer **Web** control defaults to **Off** and offers **Review** and **Auto** in read-only modes. **Review** displays each proposed call batch with editable queries/URLs before execution; **Auto** executes the same validated calls without that pause. Both modes disclose that model-generated arguments may contain note-derived text, DeepSeek performs retrieval, successful search/fetch calls may be billed separately, and query/URL/outcome metadata is stored locally with ready chats.
 - Search/fetch endpoints receive only their visible tool arguments. Model rounds receive the ordinary captured context, history, additional notes, and instructions/skills. No request occurs when the control is changed, a note is opened, or a thread is loaded.
-- Search requests five results and no full page content. Fetch is the explicit page-browsing path. Calls have no automatic retry or unsearched fallback. An enabled model may choose zero calls, in which case Emend does not claim retrieval happened.
+- Search requests five results with page content when available, allowing the model to answer without a separate Fetch. Search result content is capped at 6,000 characters per result with explicit truncation. Fetch is reserved for necessary page content that Search did not provide, rather than routine result-page browsing.
+- Expected Fetch failures, including site-policy/extraction failures and empty pages, return an explicit unread tool outcome and let the model finish with other evidence. The ready answer includes a deterministic `Emend could not read N requested page(s). The answer may be incomplete.` warning. Aborts and Search failures remain fatal, as do Fetch HTTP 400/401/402/413. No automatic retry occurs.
 - `maxWebToolCalls` defaults to 8 and normalizes to integers from 1 through 20. Every model-requested call counts; an over-cap batch is rejected before any call in that batch executes.
 - Model-facing retrieved content has a 40,000-character per-submission budget and fetched pages have a 12,000-character per-page limit. Truncation uses `[...]` and explicit metadata. Further calls after budget exhaustion skip retrieval and receive an explicit tool result.
 
 ## Sources, usage, and persistence
 
-Only actual HTTP(S) results become sources. Returned URLs are deduplicated in retrieval order and assigned stable `S1`, `S2`, ... IDs. Ready answers can render a folded source list with safe external links and optional provider snippets; copying includes that source list. Search/fetch arguments and retrieved content never become vault writes, instructions, or skills.
+Only actual HTTP(S) results become sources. Returned URLs are deduplicated in retrieval order and assigned stable `S1`, `S2`, ... IDs. Ready answers can render folded Web activity and source lists with safe external links and optional provider snippets; copying includes that source list. Search/fetch arguments and retrieved content never become vault writes, instructions, or skills.
 
 Usage covers every model round. It is provider-sourced only if every round supplies a complete valid usage triplet; otherwise Emend labels an estimate based on the exact round requests and responses. Search pricing and token counts are not invented.
 
-Conversation schema 2 persists only the ready user's Review/Auto badge and ready assistant citation `{ id, title, url, snippet? }` metadata. Version 1 threads load normally and are written as schema 2 on the next save, while future versions remain protected. Queries, fetch-call arguments, tool results, request bodies, retrieved content, and transient activity are not persisted.
+Conversation schema 2 persists the ready user's Review/Auto badge, ready assistant citation `{ id, title, url, snippet? }` metadata, and folded activity `{ type, target, status }` where status is completed, failed, or skipped. Search targets are validated single-line queries and fetch targets are credentialess HTTP(S) URLs. Version 1 threads load normally and are written as schema 2 on the next save, while future versions remain protected. Raw tool arguments/results, request bodies, retrieved content, and transient activity are not persisted. Chat also preserves the reader's position when not following latest, while new submissions, streaming, final Markdown layout, and thread restoration keep a following reader at the newest response.
 
 ## Implementation boundaries
 
@@ -60,7 +61,7 @@ The matrix covered:
 16. Explicit fetch truncation to 12,000 content characters plus `[...]`, and malformed credentialed citation URLs being discarded before safe UI rendering.
 17. Review/Auto disclosure, live activity, actual Copy with only actual sources, provider/estimated usage labels, and a 240px composer without horizontal overflow.
 
-The final audit covered **19 sanitized scenario logs and 36 request entries**, with zero header/credential leaks. All **15 persisted chat threads** used schema 2. Generated queries, tool arguments/results, request bodies, web activity, stopped/error content, unsafe URLs, oversized retrieved content, and dummy credentials were absent; only ready Web badges and citation metadata remained.
+The original baseline audit covered **19 sanitized scenario logs and 36 request entries**, with zero header/credential leaks. All **15 persisted chat threads** used schema 2. Before folded activity was requested, generated queries, tool arguments/results, request bodies, web activity, stopped/error content, unsafe URLs, oversized retrieved content, and dummy credentials were absent; only ready Web badges and citation metadata remained. Follow-up verification for folded activity, latest-message scrolling, and Fetch recovery is recorded below after completion.
 
 An independent whole-branch code/security review found no Critical issues and two Important transport issues. Regression tests now prove fragmented tool-call IDs/names assemble correctly and undeclared tool-only Off responses retain the empty-response error. Both fixes passed RED→GREEN verification and the full suite. The review's Minor items are deferred and recorded in the implementation ledger, not hidden in release claims.
 

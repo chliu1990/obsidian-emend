@@ -23,10 +23,17 @@ export interface WebSearchRunOptions {
 	signal: AbortSignal;
 }
 
+export interface WebActivityRecord {
+	type: 'search' | 'fetch';
+	target: string;
+	status: 'completed' | 'failed' | 'skipped';
+}
+
 export interface WebToolLoopResult {
 	content: string;
 	reasoning: string;
 	sources: WebSource[];
+	activities: WebActivityRecord[];
 	rounds: Array<{ request: AiProviderRequest; result: StreamResult }>;
 }
 

@@ -427,3 +427,13 @@
 	color: var(--text-error);
 	font-size: var(--font-ui-small);
 }
+
+
+.emend-chat-web-activity > summary {
+	cursor: pointer;
+}
+
+.emend-chat-web-activity-item {
+	margin-top: 4px;
+	overflow-wrap: anywhere;
+}

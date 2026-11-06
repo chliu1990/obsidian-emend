@@ -471,6 +471,11 @@ describe('ConversationStore web citation migration', () => {
 					url: 'https://example.test/source',
 					snippet: 'Evidence',
 				}],
+				webActivities: [
+					{ type: 'search', target: 'activity query', status: 'completed' },
+					{ type: 'fetch', target: 'https://example.test/unreadable', status: 'failed' },
+					{ type: 'fetch', target: 'https://example.test/skipped', status: 'skipped' },
+				],
 			}),
 		];
 
@@ -518,6 +523,13 @@ describe('ConversationStore web citation migration', () => {
 						{ ...validSource, id: 'S4', url: 'javascript:alert(1)' },
 						{ ...validSource, id: 'S5', snippet: 42 },
 					],
+					webActivities: [
+						{ type: 'search', target: 'activity query', status: 'completed' },
+						{ type: 'invalid', target: 'bad', status: 'completed' },
+						{ type: 'search', target: 'bad status', status: 'pending' },
+						{ type: 'search', target: 'multi\nline', status: 'completed' },
+						{ type: 'fetch', target: 'https://user:secret@example.test/private', status: 'failed' },
+					],
 				},
 			],
 		}));
@@ -528,13 +540,17 @@ describe('ConversationStore web citation migration', () => {
 		expect(loaded[0]).not.toHaveProperty('webActivity');
 		expect(loaded[1]).not.toHaveProperty('webSearchMode');
 		expect(loaded[1]?.webSources).toEqual([validSource]);
+		expect(loaded[1]?.webActivities).toEqual([
+			{ type: 'search', target: 'activity query', status: 'completed' },
+		]);
 	});
 
-	it('omits transient activity and tool payload fields while retaining citations', async () => {
+	it('retains sanitized activity while omitting transient and tool payload fields', async () => {
 		const adapter = new MemoryAdapter();
 		const { store } = makeStore(adapter);
 		const message = readyMessage({
 			webSources: [{ id: 'S1', title: 'Actual', url: 'https://example.test/source' }],
+			webActivities: [{ type: 'search', target: 'activity query', status: 'completed' }],
 			webActivity: 'Searching: private query',
 			searchQuery: 'private query',
 			toolArguments: '{"query":"private query"}',
@@ -546,6 +562,7 @@ describe('ConversationStore web citation migration', () => {
 
 		const raw = adapter.files.get(threadPath(adapter)) ?? '';
 		expect(raw).toContain('https://example.test/source');
+		expect(raw).toContain('activity query');
 		expect(raw).not.toContain('private query');
 		expect(raw).not.toContain('retrieved page');
 		expect(raw).not.toContain('requestBody');

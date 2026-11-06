@@ -9,11 +9,12 @@ The current DeepSeek implementation provides:
 - A per-view composer **Web** control with **Off** (the default), **Review**, and **Auto** for Ask, Discuss, and Brainstorm using `deepseek-flash` or `deepseek-v4-pro`.
 - Model-directed `web_search` and `web_fetch` calls across multiple rounds, with calls in each batch executed sequentially. Review permits editing each proposed query or URL before that batch runs; Auto runs validated calls directly.
 - A default eight-call setting, normalized to 1–20 model-requested calls per submission; a 40,000-character shared retrieved-content budget; and a 12,000-character per-fetch limit.
-- Stable source IDs and safe citations derived only from actual HTTP(S) retrieval results, plus conversation schema 2 persistence for ready Web badges and sanitized citation metadata.
+- Stable source IDs and safe citations derived only from actual HTTP(S) retrieval results, plus conversation schema 2 persistence for ready Web badges, sanitized citation metadata, and folded query/URL/outcome activity.
+- Search returns bounded page content before Fetch is needed. Expected Fetch failures become visible unread-page outcomes rather than failing the whole answer; credential/account errors and Search failures remain fatal.
 - Read-only behavior with no note writer, no automatic retry, and no silent fallback to an unsearched answer. Kimi and custom providers and unsupported DeepSeek models produce a clear unsupported-capability error.
 - Disclosure that model-generated arguments can contain note-derived text and that successful DeepSeek search/fetch calls may be billed separately.
 
-Changing the control, opening a note, loading a thread, or rendering citations performs no retrieval. Search/fetch arguments, tool results, and retrieved content are not persisted. Retrieved text remains untrusted external data and never becomes a vault write, instruction, or skill.
+Changing the control, opening a note, loading a thread, or rendering citations performs no retrieval. Raw Search/Fetch arguments, tool results, and retrieved content are not persisted; only sanitized query/URL/outcome metadata is retained locally for folded review. Retrieved text remains untrusted external data and never becomes a vault write, instruction, or skill.
 
 ## Deferred provider adapters
 
@@ -40,7 +41,7 @@ Search can disclose note-derived text through model-generated queries and fetch 
 
 Citations must come only from actual provider/tool results with normalized credentialess HTTP(S) URLs. Never invent a URL, treat a model-written link as retrieved evidence, or execute retrieved markup or instructions. Preserve safe Obsidian DOM rendering, the no-`innerHTML` rule, stable source IDs, and citation sanitization on load.
 
-Ready messages may persist only explicitly whitelisted Web badges and citation metadata. Do not persist credentials, request bodies, queries, fetch arguments, tool results, retrieved content, note snapshots, or transient activity. Preserve schema-version protection, malformed-file backups, and existing thread retention when notes are deleted.
+Ready messages may persist only explicitly whitelisted Web badges, citation metadata, and sanitized query/URL/outcome activity. Do not persist credentials, raw request bodies/tool arguments/results, retrieved content, note snapshots, or transient activity. Preserve schema-version protection, malformed-file backups, and existing thread retention when notes are deleted.
 
 ## Required future tests
 

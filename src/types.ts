@@ -1,6 +1,6 @@
 import type { TFile } from 'obsidian';
 import type { TokenUsage } from './token-usage';
-import type { EnabledWebSearchMode, WebSource } from './web-search';
+import type { EnabledWebSearchMode, WebActivityRecord, WebSource } from './web-search';
 
 export type ProviderId = 'deepseek' | 'kimi' | 'custom';
 
@@ -46,6 +46,7 @@ export interface ChatMessage {
 	usage?: TokenUsage;
 	webSearchMode?: EnabledWebSearchMode;
 	webSources?: WebSource[];
+	webActivities?: WebActivityRecord[];
 	webActivity?: string;
 }
 
