@@ -818,6 +818,31 @@ describe('EditRequestCoordinator', () => {
 		expect(writer.write).not.toHaveBeenCalled();
 	});
 
+	it.each([
+		[
+			'minimized delimiter fragmentation',
+			'| Left | Right |\n| --- | --- |\n| \\| two | three |',
+			[{ type: 'replace', target: '\\|', replacement: `${'\\'.repeat(3)}|` }],
+		],
+		[
+			'composed backslash parity',
+			'| Left | Right |\n| --- | --- |\n| \\ab\\| two | three |',
+			[{ type: 'remove', target: 'a' }, { type: 'remove', target: 'b' }],
+		],
+	])('rejects composed table edits with two calls and zero writes: %s', async (_label, sourceText, operations) => {
+		const request = editRequest(JSON.stringify(operations));
+		const { coordinator, writer } = makeEditCoordinator(request, sourceText);
+		const context = makeContext({ sourceText, markdown: sourceText });
+
+		await expect(coordinator.submit(makeEditSubmission({ context }))).rejects.toMatchObject({
+			code: 'table-structure-edit',
+			line: 3,
+		});
+		expect(request).toHaveBeenCalledTimes(2);
+		expect(writer.readCurrentText).not.toHaveBeenCalled();
+		expect(writer.write).not.toHaveBeenCalled();
+	});
+
 	it('rejects fenced-code edits without reading or writing the full note', async () => {
 		const sourceText = 'Before\n```\nalpha\n```\nAfter';
 		const request = editRequest(JSON.stringify([{ type: 'remove', target: 'alpha' }]));

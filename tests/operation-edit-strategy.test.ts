@@ -1011,6 +1011,50 @@ describe('scoped fence opening exemptions', () => {
 	});
 });
 
+describe('composed table edit candidates', () => {
+	it('rejects actual minimized delimiter fragmentation in the composed annotated row', () => {
+		const original = '| Left | Right |\n| --- | --- |\n| \\| two | three |';
+		const currentAnnotated = '| Left | Right |\n| --- | --- |\n| \\{++\\\\++}| two | three |';
+		expect(toRejectView(currentAnnotated)).toBe(original);
+		expect(toAcceptView(currentAnnotated)).toBe(
+			`| Left | Right |\n| --- | --- |\n| ${'\\'.repeat(3)}| two | three |`,
+		);
+		expect(() => prepare(original, [
+			{ type: 'replace', target: '\\|', replacement: `${'\\'.repeat(3)}|` },
+		])).toThrow(expect.objectContaining({ code: 'table-structure-edit' }));
+	});
+
+	it('rejects multi-operation backslash parity changes composed on one original row', () => {
+		const original = '| Left | Right |\n| --- | --- |\n| \\ab\\| two | three |';
+		const currentAnnotated = '| Left | Right |\n| --- | --- |\n| \\{--a--}{--b--}\\| two | three |';
+		expect(toRejectView(currentAnnotated)).toBe(original);
+		expect(toAcceptView(currentAnnotated)).toBe(
+			'| Left | Right |\n| --- | --- |\n| \\\\| two | three |',
+		);
+		expect(() => prepare(original, [
+			{ type: 'remove', target: 'a' },
+			{ type: 'remove', target: 'b' },
+		])).toThrow(expect.objectContaining({ code: 'table-structure-edit' }));
+	});
+
+	it.each(['    one', '\tone'])('rejects a cell replacement that starts indented code: %j', (replacement) => {
+		const original = 'Alpha | Beta\n--- | ---\none | two';
+		expect(() => prepare(original, [
+			{ type: 'replace', target: 'one', replacement },
+		])).toThrow(expect.objectContaining({ code: 'table-structure-edit' }));
+	});
+
+	it('preserves exact compiled output and accepted/rejected views for ordinary cell text', () => {
+		const original = 'Alpha | Beta\n--- | ---\none | two';
+		const preparation = prepare(original, [
+			{ type: 'replace', target: 'one', replacement: 'first' },
+		]);
+		expect(preparation.annotatedMarkdown).toBe('Alpha | Beta\n--- | ---\n{~~one~>first~~} | two');
+		expect(toRejectView(preparation.annotatedMarkdown)).toBe(original);
+		expect(toAcceptView(preparation.annotatedMarkdown)).toBe('Alpha | Beta\n--- | ---\nfirst | two');
+	});
+});
+
 describe('operation EditStrategy selection boundaries', () => {
 	it('cannot address text outside the selection passed as the original snapshot', () => {
 		expect(() => prepare('beta', [

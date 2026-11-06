@@ -31,6 +31,7 @@ export interface GuardedMarkdownOperation extends SourceRange {
 	text?: string;
 	replacement?: string;
 	comment?: string;
+	compiledText?: string;
 }
 
 export interface MarkdownEditViolation {
@@ -159,7 +160,13 @@ export function findMarkdownEditViolation(
 			if (payloadField && hasTableStructureCharacters(operation[payloadField] ?? '')) {
 				return violation('table-structure-edit', payloadField);
 			}
-			if (!preservesTableRowStructure(fullText, affectedRow, operation)) {
+			if (!preservesTableRowStructure(
+				fullText,
+				affectedRow,
+				operations.filter((candidate) =>
+					affectedRow.cells.some((cell) => contains(cell, candidate))
+				),
+			)) {
 				return violation('table-structure-edit', payloadField ?? field);
 			}
 		}
@@ -542,39 +549,47 @@ function tableRow(line: SourceLine, contentStart = 0): TableRow {
 function preservesTableRowStructure(
 	fullText: string,
 	row: TableRow,
-	operation: GuardedMarkdownOperation,
+	operations: readonly GuardedMarkdownOperation[],
 ): boolean {
 	const original = fullText.slice(row.start, row.contentEnd);
-	const start = operation.start - row.start;
-	const end = operation.end - row.start;
-	const target = original.slice(start, end);
-	let annotated: string;
-	let accepted: string;
-	switch (operation.operationType) {
-		case 'insert': {
-			const point = (operation.insertionPoint ?? operation.start) - row.start;
-			annotated = `${original.slice(0, point)}{++${operation.text ?? ''}++}${original.slice(point)}`;
-			accepted = `${original.slice(0, point)}${operation.text ?? ''}${original.slice(point)}`;
-			break;
-		}
-		case 'remove':
-			annotated = `${original.slice(0, start)}{--${target}--}${original.slice(end)}`;
-			accepted = `${original.slice(0, start)}${original.slice(end)}`;
-			break;
-		case 'replace':
-			annotated = `${original.slice(0, start)}{~~${target}~>${operation.replacement ?? ''}~~}${original.slice(end)}`;
-			accepted = `${original.slice(0, start)}${operation.replacement ?? ''}${original.slice(end)}`;
-			break;
-		case 'comment':
-			annotated = `${original.slice(0, end)}{>>${operation.comment ?? ''}<<}${original.slice(end)}`;
-			accepted = annotated;
-			break;
+	let annotated = original;
+	let accepted = original;
+	const ordered = operations.slice().sort((left, right) =>
+		right.start - left.start || right.operation - left.operation
+	);
+	for (const operation of ordered) {
+		const start = operation.start - row.start;
+		const end = operation.end - row.start;
+		const target = original.slice(start, end);
+		const compiledText = operation.compiledText ?? fallbackCompiledText(operation, target);
+		annotated = `${annotated.slice(0, start)}${compiledText}${annotated.slice(end)}`;
+		const acceptedText = operation.operationType === 'insert'
+			? operation.text ?? ''
+			: operation.operationType === 'replace'
+				? operation.replacement ?? ''
+				: operation.operationType === 'comment'
+					? target
+					: '';
+		accepted = `${accepted.slice(0, start)}${acceptedText}${accepted.slice(end)}`;
 	}
 	const contentStart = row.contentStart - row.start;
 	const originalSignature = tableRowViewSignature(original, contentStart);
 	return [annotated, accepted, original].every((candidate) =>
 		tableRowViewSignature(candidate, contentStart) === originalSignature
 	);
+}
+
+function fallbackCompiledText(operation: GuardedMarkdownOperation, target: string): string {
+	switch (operation.operationType) {
+		case 'insert':
+			return `{++${operation.text ?? ''}++}`;
+		case 'remove':
+			return `{--${target}--}`;
+		case 'replace':
+			return `{~~${target}~>${operation.replacement ?? ''}~~}`;
+		case 'comment':
+			return `${target}{>>${operation.comment ?? ''}<<}`;
+	}
 }
 
 function tableRowViewSignature(text: string, contentStart: number): string {
@@ -595,6 +610,7 @@ function tableRowViewSignature(text: string, contentStart: number): string {
 		leadingOuterPipe,
 		trailingOuterPipe,
 		blockStart: isEditBlockStart(text.slice(contentStart)),
+		indentedCodeStart: /^ {4}/.test(text.slice(contentStart)) || text[contentStart] === '\t',
 	});
 }
 

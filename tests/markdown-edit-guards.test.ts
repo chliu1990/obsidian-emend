@@ -192,7 +192,7 @@ describe('table edit guards', () => {
 		expect(findMarkdownEditViolation(escaped, [
 			targetOperation(escaped, 'one \\| two', { operationType: 'replace', replacement: 'new \\| value' }),
 			targetOperation(escaped, 'three', { operation: 2 }),
-			insertionOperation(escaped, 'three', 'before', { operation: 3, text: '\\| ' }),
+			insertionOperation(escaped, 'two', 'before', { operation: 3, text: '\\| ' }),
 			targetOperation(escaped, 'Alpha', { operation: 4, operationType: 'comment', comment: 'Keep \\| literal' }),
 		])).toBeUndefined();
 	});

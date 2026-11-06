@@ -137,11 +137,6 @@ export function compileEditOperations(
 		resolveOperation(original, parseOperation(value, order), order),
 	);
 	validateRangeIsolation(resolved);
-	validateMarkdownStructure(resolved, sourceContext ?? {
-		fullText: original,
-		from: 0,
-		to: original.length,
-	});
 	const compileReplacement = createReplacementCompiler();
 
 	const changes: CompiledRange[] = resolved.map(({ operation, anchorRange, order }) => {
@@ -168,6 +163,11 @@ export function compileEditOperations(
 				};
 		}
 	});
+	validateMarkdownStructure(resolved, sourceContext ?? {
+		fullText: original,
+		from: 0,
+		to: original.length,
+	}, changes);
 
 	changes.sort((left, right) => right.start - left.start || right.order - left.order);
 	let compiled = original;
@@ -180,6 +180,7 @@ export function compileEditOperations(
 function validateMarkdownStructure(
 	resolved: readonly ResolvedOperation[],
 	sourceContext: EditSourceContext,
+	changes: readonly CompiledRange[],
 ): void {
 	const operations: GuardedMarkdownOperation[] = resolved.map(({ operation, anchorRange, order }) => {
 		const base = {
@@ -187,6 +188,7 @@ function validateMarkdownStructure(
 			operationType: operation.type,
 			start: sourceContext.from + anchorRange.start,
 			end: sourceContext.from + anchorRange.end,
+			compiledText: changes[order]?.text,
 		};
 		switch (operation.type) {
 			case 'insert':
