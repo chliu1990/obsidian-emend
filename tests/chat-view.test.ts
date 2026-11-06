@@ -1124,7 +1124,10 @@ describe('EmendChatView latest-message scrolling', () => {
 				}),
 			},
 			toProviderHistory: () => [],
-			persistMessages: vi.fn(async () => undefined),
+			persistMessages: vi.fn(() => {
+				saveCount++;
+				return saveCount === 1 ? Promise.resolve() : persistence.promise;
+			}),
 			render: vi.fn(() => {
 				followStates.push(context.followLatestMessages);
 				renderTargetStates.push(context.responseStartMessageId);
@@ -1133,8 +1136,15 @@ describe('EmendChatView latest-message scrolling', () => {
 			closed: false,
 			activeController: null,
 		};
+		const persistence = deferred<void>();
+		let saveCount = 0;
 
-		await viewPrototype.submitPrompt.call(context);
+		const submission = viewPrototype.submitPrompt.call(context);
+		await vi.waitFor(() => expect(saveCount).toBe(2));
+		expect(context.responseStartMessageId).toBeNull();
+		expect(context.followLatestMessages).toBe(true);
+		persistence.resolve();
+		await submission;
 
 		expect(context.responseStartMessageId).toBe(context.messages[1]?.id);
 		expect(followStates).toEqual([true, false]);

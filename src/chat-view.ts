@@ -717,8 +717,6 @@ export class EmendChatView extends ItemView {
 			}
 			controller.signal.throwIfAborted();
 			loadingMessage.status = 'ready';
-			this.responseStartMessageId = loadingMessage.id;
-			this.followLatestMessages = false;
 			await this.persistMessages(
 				sourcePath,
 				noteMessages.filter((message) => message.status === 'ready'),
@@ -738,6 +736,10 @@ export class EmendChatView extends ItemView {
 			this.activeController = null;
 			this.isSending = false;
 			if (!this.closed) {
+				if (loadingMessage.status === 'ready') {
+					this.responseStartMessageId = loadingMessage.id;
+					this.followLatestMessages = false;
+				}
 				this.render();
 			}
 		}
