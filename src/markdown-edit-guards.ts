@@ -78,7 +78,7 @@ export function findMarkdownEditViolation(
 			}
 			const insertedText = operation.text ?? '';
 			if (fences.some((fence) =>
-				(operation.insertionPoint === fence.openingStart && !hasTrailingLineBreak(insertedText)) ||
+				((operation.insertionPoint === fence.start || operation.insertionPoint === fence.openingStart) && !hasTrailingLineBreak(insertedText)) ||
 				(operation.insertionPoint === fence.closingContentEnd && !hasLeadingLineBreak(insertedText))
 			)) {
 				return violation('fenced-code-edit');
@@ -362,7 +362,9 @@ function isInlineBoundary(text: string, container: readonly ContainerSegment[]):
 		return true;
 	}
 	const contentStart = matchContainer(text, container);
-	return contentStart === undefined || isTableBodyTerminator(text.slice(contentStart));
+	return contentStart === undefined
+		? isEditBlockStart(text)
+		: isEditBlockStart(text.slice(contentStart));
 }
 
 function backtickRunEnd(fullText: string, start: number): number {
@@ -430,6 +432,12 @@ function isTableBodyTerminator(text: string): boolean {
 		/^ {0,3}>/.test(text) ||
 		/^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]+/.test(text) ||
 		/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(text);
+}
+
+function isEditBlockStart(text: string): boolean {
+	return isTableBodyTerminator(text) ||
+		/^ {0,3}(`{3,}|~{3,})/.test(text) ||
+		/^ {0,3}<\/?[A-Za-z][^>]*>/.test(text);
 }
 
 function tableRow(line: SourceLine, contentStart = 0): TableRow {
@@ -500,7 +508,7 @@ function tableRowViewSignature(text: string, contentStart: number): string {
 		cellCount,
 		leadingOuterPipe,
 		trailingOuterPipe,
-		blockStart: isTableBodyTerminator(text.slice(contentStart)),
+		blockStart: isEditBlockStart(text.slice(contentStart)),
 	});
 }
 

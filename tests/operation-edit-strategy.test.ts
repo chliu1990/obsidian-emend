@@ -813,6 +813,69 @@ describe('conservative Markdown boundary safeguards', () => {
 	});
 });
 
+describe('remaining Markdown boundary bypasses', () => {
+	it.each([
+		['HTML block', '\\<div> | two', '<div> | two'],
+		['fenced code', '\\``` | two', '``` | two'],
+	])('rejects a backslash removal that exposes an %s start', (_label, originalRow, acceptedRow) => {
+		const original = `Alpha | Beta\n--- | ---\n${originalRow}`;
+		const currentAnnotated = original.replace('\\', '{--\\--}');
+		expect(toRejectView(currentAnnotated)).toBe(original);
+		expect(toAcceptView(currentAnnotated)).toBe(`Alpha | Beta\n--- | ---\n${acceptedRow}`);
+		expect(() => prepare(original, [
+			{ type: 'remove', target: '\\' },
+		])).toThrow(expect.objectContaining({ code: 'table-structure-edit' }));
+	});
+
+	it('keeps ordinary backslash removal within a table cell', () => {
+		const original = 'Alpha | Beta\n--- | ---\n\\path | two';
+		const preparation = prepare(original, [
+			{ type: 'remove', target: '\\' },
+		]);
+		expect(toRejectView(preparation.annotatedMarkdown)).toBe(original);
+		expect(toAcceptView(preparation.annotatedMarkdown)).toBe(
+			'Alpha | Beta\n--- | ---\npath | two',
+		);
+	});
+
+	it.each([
+		['', ''],
+		[' ', ' '],
+		['  ', '  '],
+		['   ', '   '],
+		['> ', '> '],
+		['- ', '  '],
+	])('validates insertion at line and delimiter starts for %j fence prefixes', (prefix, continuation) => {
+		const original = `${prefix}\`\`\`\n${continuation}alpha\n${continuation}\`\`\``;
+		const lineAnchor = `${prefix}\`\`\``;
+		expect(() => prepare(original, [
+			{ type: 'insert', anchor: lineAnchor, position: 'before', text: 'added', occurrence: 1 },
+		])).toThrow(expect.objectContaining({ code: 'fenced-code-edit' }));
+		expect(() => prepare(original, [
+			{ type: 'insert', anchor: '```', position: 'before', text: 'added', occurrence: 1 },
+		])).toThrow(expect.objectContaining({ code: 'fenced-code-edit' }));
+		const preparation = prepare(original, [
+			{ type: 'insert', anchor: lineAnchor, position: 'before', text: 'added\n', occurrence: 1 },
+		]);
+		expect(toRejectView(preparation.annotatedMarkdown)).toBe(original);
+		expect(toAcceptView(preparation.annotatedMarkdown)).toBe(`added\n${original}`);
+	});
+
+	it.each(['> `alpha\nbeta` after', '- `alpha\nbeta` after'])(
+		'preserves lazy container multiline inline-code matching: %j',
+		(original) => {
+			expect(() => prepare(original, [
+				{ type: 'replace', target: 'beta', replacement: 'changed' },
+			])).toThrow(expect.objectContaining({ code: 'inline-code-range' }));
+			const preparation = prepare(original, [
+				{ type: 'replace', target: '`alpha\nbeta`', replacement: '`alpha\ngamma`' },
+			]);
+			expect(toRejectView(preparation.annotatedMarkdown)).toBe(original);
+			expect(toAcceptView(preparation.annotatedMarkdown)).toContain('gamma');
+		},
+	);
+});
+
 describe('operation EditStrategy selection boundaries', () => {
 	it('cannot address text outside the selection passed as the original snapshot', () => {
 		expect(() => prepare('beta', [
