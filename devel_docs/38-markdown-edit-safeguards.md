@@ -2,9 +2,9 @@
 
 ## Status and scope
 
-Implementation and final verification are complete for PR #34 at commit `85180b6ab6e19a1b0d277c3ebdbffba4e06c3e28`. Full-note Edit and Modify Selection reject Operations whose CriticMarkup would be invisible or structurally unsafe in inline code, fenced code, or tables. The closed Operations protocol, existing occurrence and range-isolation rules, one-correction flow, guarded writers, and Track Changes review surface remain unchanged. The safeguards are targeted conservative scanners, not a full CommonMark parser or a claim of complete Markdown coverage.
+Implementation and final verification are complete for PR #34 at commit `a75fb7f807d32a3047617c733ccc9a6c4d5eabca`. Full-note Edit and Modify Selection reject Operations whose CriticMarkup would be invisible or structurally unsafe in inline code, fenced code, or tables. The closed Operations protocol, existing occurrence and range-isolation rules, one-correction flow, guarded writers, and Track Changes review surface remain unchanged. The safeguards are targeted conservative scanners, not a full CommonMark parser or a claim of complete Markdown coverage.
 
-Track Changes 2.3.0 is the verified review implementation. Raw CriticMarkup visible while the cursor is inside a table cell is upstream Obsidian/Track Changes presentation behavior, not a defect claimed to be fixed by Emend. Exact Markdown bytes after accept/reject are the correctness criterion. Earlier `evidence-fixed` records are historical; the current head and final evidence are `evidence-fixed-v3` below.
+Track Changes 2.3.0 is the verified review implementation. Raw CriticMarkup visible while the cursor is inside a table cell is upstream Obsidian/Track Changes presentation behavior, not a defect claimed to be fixed by Emend. Exact Markdown bytes after accept/reject are the correctness criterion. Earlier `evidence-fixed*` records are historical; the current head and final evidence are `evidence-fixed-v4` below.
 
 ## Inline code
 
@@ -38,7 +38,9 @@ The following fail atomically with `table-structure-edit`:
 - inserted text, replacements, or comments containing CR/LF or an unescaped `|` in a table;
 - changes that alter unescaped-delimiter structure, cell count, outer-pipe identity, or table/block membership in the original, annotated, accepted, or rejected affected row.
 
-Affected-row view validation catches backslash edits that expose delimiters, true HTML block starts such as `<div>`, and valid fence starts. Inline HTML such as `<span>`, autolinks, and backtick runs whose info string contains backticks remain safe cell content. Escaped pipes and ordinary cell text remain editable.
+Affected-row view validation uses actual `compiledText` from one replacement-compilation pass rather than synthetic whole-target markup. All Operations affecting an original row are composed in descending actual compiled-offset/request order; insertions use zero-width ranges at `insertionPoint`. Original, actual annotated, accepted, and rejected row signatures are compared together. Accepted rows are computed directly from Operation results, while rejected rows remain the original source.
+
+This catches minimized delimiter fragmentation, multi-Operation backslash-parity changes, actual insertion-offset escapes, and four-space/tab indented-code exits in addition to backslash edits that expose delimiters, true HTML block starts such as `<div>`, and valid fence starts. Inline HTML such as `<span>`, autolinks, and backtick runs whose info string contains backticks remain safe cell content. Escaped pipes and ordinary cell text remain editable.
 
 The scanner distinguishes escaped pipes using backslash parity, handles outer pipes with indentation/trailing whitespace and CRLF, and preserves absolute real-cell offsets. Header and delimiter rows must belong to the same validated container; unrelated prose with pipes is not promoted to a synthetic table. Table bodies stop at blank lines, fences, headings, blockquotes, lists, and thematic breaks.
 
@@ -52,7 +54,7 @@ Comments before and after replacements were rechecked in prose and tables. Their
 
 The final local gate passed:
 
-- **35 Vitest files and 808 tests**;
+- **35 Vitest files and 817 tests**;
 - strict TypeScript and production esbuild through `npm run build`;
 - ESLint through `npm run lint`;
 - `git diff --check` with no whitespace errors.
@@ -61,9 +63,9 @@ Coverage includes complete and partial inline spans, lazy multiline matching, in
 
 ## Final real-Obsidian verification
 
-The production bundle at head `85180b6ab6e19a1b0d277c3ebdbffba4e06c3e28` has SHA-256 `746c77e8e4993e5b4bceb5581d6f653aa28941cdbb94367e2f5af59d41eaceaa`, identical to the copy loaded by the verification runtime. The runtime used official Obsidian 1.15.0, Track Changes 2.3.0, isolated Xvfb/CDP, and a Linux loopback OpenAI-compatible mock with dummy credentials. **60 scenarios passed with zero production failures; two CRLF setups were environment-limited.**
+The production bundle at head `a75fb7f807d32a3047617c733ccc9a6c4d5eabca` has SHA-256 `562aff8c74a31f8f0fa54902d2529fa72d3f4507c730143df71128c37765fb4a`, identical to the copy loaded by the verification runtime. The runtime used official Obsidian 1.15.0, Track Changes 2.3.0, isolated Xvfb/CDP, and a Linux loopback OpenAI-compatible mock with dummy credentials. **66 scenarios passed with zero production failures; two CRLF setups were environment-limited. All 60 v3 scenarios remained green.**
 
-Final evidence is under `test_vault/emend-table-verify/evidence-fixed-v3/`:
+Final evidence is under `test_vault/emend-table-verify/evidence-fixed-v4/`:
 
 - `summary.json` records the head, bundle hash, runtime, scenario assertions, environment limits, and exact before/annotated/accepted/rejected bytes;
 - `annotated/` and `resolved/` contain exact Markdown artifacts;
@@ -81,6 +83,7 @@ Key results:
 6. Nested semantic openings inside other review shadows rejected, while same-fence opening insertion outside other ranges remained safe.
 7. Newline-prefixed insertion before the original closing line ending rejected; insertion after that line ending yielded one suggestion and exact accept/reject.
 8. Lazy multiline spans, inline HTML/autolinks, blank/heading/HTML-block distinctions, and comment ordering retained their intended behavior.
+9. Five composed-table invalid cases—minimized delimiter fragmentation, composed removals, four-space indentation, tab indentation, and actual-offset insertion—each made exactly two calls and zero writes. The ordinary cell and escaped-pipe controls remained safe with exact accepted/rejected structure.
 
 ## Verification limits
 

@@ -49,7 +49,7 @@ Deferred context-management and discovery work is specified separately in [futur
 35. [Additional notes as context](devel_docs/35-additional-notes-context.md) — explicit per-target session selections, bounded read-only snapshots, path privacy, guarded edit integration, clean-gate evidence, and real-Obsidian picker/chat/selection-modal verification.
 36. [DeepSeek online search](devel_docs/36-deepseek-online-search.md) — DeepSeek-only read-only Off/Review/Auto controls, bounded multi-round search/fetch, citations and schema 2, focused automated coverage, and 17-scenario real-Obsidian loopback verification.
 37. [Minimal edit ranges](devel_docs/37-minimal-edit-ranges.md) — word-aware bounded replacement hunks, typed diagnostics, one guarded correction round, all-round full-note usage, transient retry privacy, and verification evidence.
-38. [Markdown edit safeguards](devel_docs/38-markdown-edit-safeguards.md) — reviewable whole-target backtick replacements, inline/fence/table structural guards, semantic and Track Changes compatibility ranges, affected-row view validation, atomic correction behavior, and 60-scenario real-Obsidian verification with two environment-limited CRLF setups.
+38. [Markdown edit safeguards](devel_docs/38-markdown-edit-safeguards.md) — reviewable whole-target backtick replacements, inline/fence/table structural guards, semantic and Track Changes compatibility ranges, actual composed-row validation at compiled offsets, atomic correction behavior, and 66-scenario real-Obsidian verification with two environment-limited CRLF setups.
 
 ## Verification and release process
 
