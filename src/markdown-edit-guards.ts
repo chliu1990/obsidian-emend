@@ -70,7 +70,7 @@ export function findMarkdownEditViolation(
 		if (operation.operationType === 'insert') {
 			if (fences.some((fence) =>
 				strictlyInside(operation.insertionPoint, fence) ||
-				(!fence.closed && operation.insertionPoint === fence.end && operation.insertionPoint > fence.start)
+				(!fence.closed && !fence.containerEnded && operation.insertionPoint === fence.end && operation.insertionPoint > fence.start)
 			)) {
 				return violation('fenced-code-edit');
 			}
@@ -151,11 +151,16 @@ function scanLines(fullText: string): SourceLine[] {
 
 interface FenceRange extends SourceRange {
 	closed: boolean;
+	containerEnded: boolean;
 }
+
+type ContainerSegment =
+	| { type: 'quote' }
+	| { type: 'indent'; width: number };
 
 interface ContainerOpening {
 	contentStart: number;
-	continuation: string;
+	segments: ContainerSegment[];
 }
 
 function scanFences(lines: readonly SourceLine[]): FenceRange[] {
@@ -177,23 +182,26 @@ function scanFences(lines: readonly SourceLine[]): FenceRange[] {
 		let end = line.end;
 		let closingIndex = index;
 		let closed = false;
+		let containerEnded = false;
 		for (let candidate = index + 1; candidate < lines.length; candidate += 1) {
 			const candidateLine = lines[candidate];
 			if (!candidateLine) {
 				continue;
 			}
+			const contentStart = matchContainer(candidateLine.text, container.segments);
+			if (contentStart === undefined) {
+				containerEnded = true;
+				closingIndex = candidate - 1;
+				break;
+			}
 			end = candidateLine.end;
 			closingIndex = candidate;
-			const content = stripContainer(candidateLine.text, container.continuation);
-			if (
-				content !== undefined &&
-				isFenceClose(content, character ?? '', run.length)
-			) {
+			if (isFenceClose(candidateLine.text.slice(contentStart), character ?? '', run.length)) {
 				closed = true;
 				break;
 			}
 		}
-		fences.push({ start: line.start, end, closed });
+		fences.push({ start: line.start, end, closed, containerEnded });
 		index = closingIndex;
 	}
 	return fences;
@@ -201,13 +209,13 @@ function scanFences(lines: readonly SourceLine[]): FenceRange[] {
 
 function readContainerOpening(text: string): ContainerOpening {
 	let contentStart = 0;
-	let continuation = '';
+	const segments: ContainerSegment[] = [];
 	while (contentStart < text.length) {
 		const remaining = text.slice(contentStart);
 		const quote = /^ {0,3}>[ \t]?/.exec(remaining)?.[0];
 		if (quote) {
 			contentStart += quote.length;
-			continuation += quote;
+			segments.push({ type: 'quote' });
 			continue;
 		}
 		const list = /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]+/.exec(remaining)?.[0];
@@ -215,13 +223,44 @@ function readContainerOpening(text: string): ContainerOpening {
 			break;
 		}
 		contentStart += list.length;
-		continuation += list.replace(/[^ \t]/g, ' ');
+		segments.push({ type: 'indent', width: visualWidth(list) });
 	}
-	return { contentStart, continuation };
+	return { contentStart, segments };
 }
 
-function stripContainer(text: string, continuation: string): string | undefined {
-	return text.startsWith(continuation) ? text.slice(continuation.length) : undefined;
+function matchContainer(text: string, segments: readonly ContainerSegment[]): number | undefined {
+	let contentStart = 0;
+	for (const segment of segments) {
+		if (segment.type === 'quote') {
+			const quote = /^ {0,3}>[ \t]?/.exec(text.slice(contentStart))?.[0];
+			if (!quote) {
+				return undefined;
+			}
+			contentStart += quote.length;
+			continue;
+		}
+		let width = 0;
+		while (width < segment.width) {
+			const character = text[contentStart];
+			if (character === ' ') {
+				width += 1;
+			} else if (character === '\t') {
+				width += 4 - (width % 4);
+			} else {
+				return undefined;
+			}
+			contentStart += 1;
+		}
+	}
+	return contentStart;
+}
+
+function visualWidth(text: string): number {
+	let width = 0;
+	for (const character of text) {
+		width = character === '\t' ? width + 4 - (width % 4) : width + 1;
+	}
+	return width;
 }
 
 function isFenceClose(text: string, character: string, minimumLength: number): boolean {
@@ -297,22 +336,8 @@ function scanTables(lines: readonly SourceLine[], fences: readonly SourceRange[]
 		if (!hasUnescapedPipe(headerLine.text.slice(container.contentStart))) {
 			continue;
 		}
-		const delimiterContent = stripContainer(delimiterLine.text, container.continuation);
-		if (delimiterContent === undefined) {
-			const fallback = readContainerOpening(delimiterLine.text);
-			if (isDelimiterRow(delimiterLine, fallback.contentStart)) {
-				tables.push({
-					start: headerLine.start,
-					end: delimiterLine.end,
-					header: { ...tableRow(headerLine, container.contentStart), cells: [] },
-					delimiter: { start: delimiterLine.start, end: delimiterLine.end },
-					body: [],
-				});
-				index += 1;
-			}
-			continue;
-		}
-		if (!isDelimiterRow(delimiterLine, container.continuation.length)) {
+		const delimiterStart = matchContainer(delimiterLine.text, container.segments);
+		if (delimiterStart === undefined || !isDelimiterRow(delimiterLine, delimiterStart)) {
 			continue;
 		}
 
@@ -325,11 +350,11 @@ function scanTables(lines: readonly SourceLine[], fences: readonly SourceRange[]
 			if (!line || line.text.trim().length === 0 || inAnyRange(line, fences)) {
 				break;
 			}
-			const content = stripContainer(line.text, container.continuation);
-			if (content === undefined || isTableBodyTerminator(content)) {
+			const contentStart = matchContainer(line.text, container.segments);
+			if (contentStart === undefined || isTableBodyTerminator(line.text.slice(contentStart))) {
 				break;
 			}
-			body.push(tableRow(line, container.continuation.length));
+			body.push(tableRow(line, contentStart));
 			end = line.end;
 		}
 		tables.push({

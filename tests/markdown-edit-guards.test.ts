@@ -459,6 +459,65 @@ describe('Markdown scanner review regressions', () => {
 	});
 });
 
+describe('Markdown container identity regressions', () => {
+	it('tracks table bodies across optional blockquote whitespace variations', () => {
+		for (const fullText of [
+			'> | Alpha | Beta |\n> | --- | --- |\n>| one | two |',
+			'> > | Alpha | Beta |\n>> | --- | --- |\n> >| one | two |',
+		]) {
+			expect(findMarkdownEditViolation(fullText, [
+				targetOperation(fullText, '| one | two |'),
+			])).toMatchObject({ code: 'table-structure-edit', line: 3 });
+			expect(findMarkdownEditViolation(fullText, [
+				targetOperation(fullText, 'two', { operationType: 'replace', replacement: 'safe' }),
+			])).toBeUndefined();
+		}
+	});
+
+	it('accepts structurally equivalent container prefixes on fence rows and closers', () => {
+		for (const fullText of [
+			'> ~~~\n> alpha\n>~~~\nAfter',
+			'> > ~~~\n>> alpha\n> >~~~\nAfter',
+			'-\t~~~\n\talpha\n\t~~~\nAfter',
+		]) {
+			expect(findMarkdownEditViolation(fullText, [
+				targetOperation(fullText, 'alpha'),
+			])).toMatchObject({ code: 'fenced-code-edit', line: 2 });
+			expect(findMarkdownEditViolation(fullText, [
+				targetOperation(fullText, 'After'),
+			])).toBeUndefined();
+		}
+	});
+
+	it('ends an unclosed container fence when its container ends', () => {
+		for (const fullText of [
+			'> ~~~\n> alpha\nAfter',
+			'> > ~~~\n>> alpha\nAfter',
+		]) {
+			expect(findMarkdownEditViolation(fullText, [
+				targetOperation(fullText, 'alpha'),
+			])).toMatchObject({ code: 'fenced-code-edit', line: 2 });
+			expect(findMarkdownEditViolation(fullText, [
+				targetOperation(fullText, 'After'),
+			])).toBeUndefined();
+		}
+	});
+
+	it.each([
+		'- Alpha | Beta\n> | --- | --- |\nAfter',
+		'> Alpha | Beta\n- | --- | --- |\nAfter',
+		'> - Alpha | Beta\n> | --- | --- |\nAfter',
+	])('does not invent a table from different containers: %s', (fullText) => {
+		expect(findMarkdownEditViolation(fullText, [
+			targetOperation(fullText, 'Alpha | Beta', {
+				operationType: 'replace',
+				replacement: 'Changed | text',
+			}),
+			targetOperation(fullText, 'After', { operation: 2 }),
+		])).toBeUndefined();
+	});
+});
+
 describe('violation ordering', () => {
 	it('returns the first unsafe operation in request order', () => {
 		const fullText = '`alpha`\n\n| A | B |\n| - | - |\n| c | d |';
