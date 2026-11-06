@@ -42,6 +42,7 @@ export class EmendChatView extends ItemView {
 	private messages: ChatMessage[] = [];
 	private messagesEl: HTMLElement | null = null;
 	private followLatestMessages = true;
+	private responseStartMessageId: string | null = null;
 	private inputEl: HTMLTextAreaElement | null = null;
 	private activeModelEl: HTMLElement | null = null;
 	private isSending = false;
@@ -349,9 +350,10 @@ export class EmendChatView extends ItemView {
 	}
 
 	private renderMessage(containerEl: HTMLElement, message: ChatMessage) {
-		const messageEl = containerEl.createDiv(
-			`emend-chat-message is-${message.role} is-${message.status}`,
-		);
+		const messageEl = containerEl.createDiv({
+			cls: `emend-chat-message is-${message.role} is-${message.status}`,
+			attr: { 'data-message-id': message.id },
+		});
 		const headerEl = messageEl.createDiv('emend-chat-message-header');
 		const labelsEl = headerEl.createDiv('emend-chat-message-labels');
 		labelsEl.createDiv({
@@ -511,8 +513,21 @@ export class EmendChatView extends ItemView {
 		if (this.pendingMarkdownRenders > 0) {
 			return;
 		}
+		const responseStartMessageId = this.responseStartMessageId;
+		this.responseStartMessageId = null;
 		const restore = this.pendingScrollRestore;
 		this.pendingScrollRestore = null;
+		if (responseStartMessageId) {
+			const messageEl = this.messagesEl?.querySelector<HTMLElement>(
+				`[data-message-id="${responseStartMessageId}"]`,
+			);
+			if (this.messagesEl && messageEl) {
+				const scrollerTop = this.messagesEl.getBoundingClientRect().top;
+				const messageTop = messageEl.getBoundingClientRect().top;
+				this.messagesEl.scrollTop += messageTop - scrollerTop;
+			}
+			return;
+		}
 		if (restore) {
 			this.restoreMessageScroll(restore.previousScrollTop, restore.wasFollowing);
 		}
@@ -630,6 +645,7 @@ export class EmendChatView extends ItemView {
 		this.messages.push(loadingMessage);
 		this.activeController = controller;
 		this.isSending = true;
+		this.responseStartMessageId = null;
 		this.followLatestMessages = true;
 		this.render();
 
@@ -701,6 +717,8 @@ export class EmendChatView extends ItemView {
 			}
 			controller.signal.throwIfAborted();
 			loadingMessage.status = 'ready';
+			this.responseStartMessageId = loadingMessage.id;
+			this.followLatestMessages = false;
 			await this.persistMessages(
 				sourcePath,
 				noteMessages.filter((message) => message.status === 'ready'),

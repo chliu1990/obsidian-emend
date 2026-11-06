@@ -1100,6 +1100,81 @@ describe('EmendChatView latest-message scrolling', () => {
 		viewPrototype.renderMessageBody.call(context, message('answer', 'Note.md'));
 		await vi.waitFor(() => expect(scrollMessagesToBottomIfFollowing).toHaveBeenCalledOnce());
 	});
+
+	it('sets the completed response target after following the loading render at bottom', async () => {
+		const followStates: boolean[] = [];
+		const renderTargetStates: Array<string | null> = [];
+		const context = {
+			inputEl: { value: 'Question' },
+			isSending: false,
+			isThreadLoading: false,
+			selectedMode: 'ask' as const,
+			webSearchMode: 'off' as const,
+			messages: [] as ChatMessage[],
+			followLatestMessages: false,
+			responseStartMessageId: 'previous-response' as string | null,
+			plugin: {
+				captureChatContext: () => ({ file: { path: 'Note.md' } }),
+				additionalNotesStore: new AdditionalNotesStore(),
+				requestChatCompletion: vi.fn(async ({ callbacks }: {
+					callbacks: { onContent(text: string): void };
+				}) => {
+					callbacks.onContent('Answer');
+					return { content: 'Answer', reasoning: '' };
+				}),
+			},
+			toProviderHistory: () => [],
+			persistMessages: vi.fn(async () => undefined),
+			render: vi.fn(() => {
+				followStates.push(context.followLatestMessages);
+				renderTargetStates.push(context.responseStartMessageId);
+			}),
+			scheduleMessageRender: vi.fn(),
+			closed: false,
+			activeController: null,
+		};
+
+		await viewPrototype.submitPrompt.call(context);
+
+		expect(context.responseStartMessageId).toBe(context.messages[1]?.id);
+		expect(followStates).toEqual([true, false]);
+		expect(renderTargetStates).toEqual([null, context.messages[1]?.id]);
+	});
+
+	it('aligns the targeted response after Markdown layouts and clears the target', () => {
+		const messagesEl = renderForFooter(message('answer', 'Note.md'));
+		const responseEl = messagesEl.children[0];
+		if (!responseEl) {
+			throw new Error('Response element missing.');
+		}
+		Object.assign(messagesEl, {
+			scrollTop: 40,
+			getBoundingClientRect: () => ({ top: 100 }),
+			querySelector: () => findElements(
+				messagesEl,
+				(element) => element.attributes['data-message-id'] === 'answer',
+			)[0] ?? null,
+		});
+		Object.assign(responseEl, {
+			getBoundingClientRect: () => ({ top: 260 }),
+		});
+		const context = {
+			closed: false,
+			renderGeneration: 4,
+			pendingMarkdownRenders: 0,
+			pendingScrollRestore: { previousScrollTop: 275, wasFollowing: false },
+			responseStartMessageId: 'answer' as string | null,
+			followLatestMessages: false,
+			messagesEl,
+			restoreMessageScroll: (previousScrollTop: number, wasFollowing: boolean) =>
+				viewPrototype.restoreMessageScroll.call(context, previousScrollTop, wasFollowing),
+		};
+
+		viewPrototype.settleMarkdownRender.call(context, 4);
+
+		expect(messagesEl.scrollTop).toBe(200);
+		expect(context.responseStartMessageId).toBeNull();
+	});
 });
 
 
