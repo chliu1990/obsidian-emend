@@ -84,6 +84,12 @@ Reproduce with `node test_vault/emend-web-verify/verify.mjs --issue29`. All test
 
 The compact UI follow-up passed **1/1 real-Obsidian scenario with 4 assertions**: zero `.emend-chat-web-disclosure` bottom blocks, full note-context/billing/local-activity disclosure in the Web selector tooltip, no horizontal overflow at 240px, and a reduced 141.5px composer height. Evidence is in `test_vault/emend-web-verify/evidence-compact-ui/compact-ui-evidence.json` and `compact-ui-240.png`. The verified plugin bundle matched the production root bundle. A separate future UI PR for compact quick-action and additional-note controls is recorded in `future-discovery-and-workflows.md`.
 
+## Completed-response alignment verification
+
+The final long-response real-Obsidian scenario passed **1/1 scenario with 7 assertions**. Loading/streaming followed the bottom at distance zero; the completed message border aligned to the scroller top within `0.28125px`; the opening header/Markdown was visible; unrelated mode re-rendering preserved `scrollTop 91 → 91` and the same border delta; no large disclosure appeared; exactly one completion request occurred; and the synthetic note remained byte-for-byte unchanged.
+
+Two genuine timing defects were found and fixed with RED→GREEN regressions: response-target assignment moved into `finally` after persistence, and render-end settlement now waits for pending Markdown instead of consuming the target before the scroller expands. A later 9px discrepancy was traced to measuring padded header content rather than the message border; the verification script was corrected and the real scenario rerun without editing result JSON. Evidence is in `test_vault/emend-web-verify/evidence-completion-alignment/summary.json` and `completion-alignment-evidence.json`.
+
 ## Clean local gate
 
 Run from the repository root:
@@ -92,4 +98,4 @@ Run from the repository root:
 npm ci && npm test && npm run lint && npm run build && git diff --check
 ```
 
-Result: locked install succeeded; **31 Vitest files and 622 tests passed**; ESLint reported no findings; strict TypeScript and production esbuild succeeded; `git diff --check` reported no whitespace errors. No real-provider smoke was run. All owned mock, Xvfb, and Obsidian processes were stopped after verification.
+Result: locked install succeeded; **31 Vitest files and 623 tests passed**; ESLint reported no findings; strict TypeScript and production esbuild succeeded; `git diff --check` reported no whitespace errors. No real-provider smoke was run. All owned mock, Xvfb, and Obsidian processes were stopped after verification.
