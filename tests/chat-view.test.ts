@@ -395,6 +395,102 @@ describe('EmendChatView edit target control', () => {
 		expect(read).not.toHaveBeenCalled();
 	});
 
+	it('synchronizes Edit controls after quick-action Selection capture fails and preserves the draft', async () => {
+		const {
+			context,
+			contentEl,
+			requestChatCompletion,
+			captureChatContext,
+		} = createEditTargetView({ selectedText: 'beta' });
+		await viewPrototype.refreshTargetNote.call(context);
+		const file = new TFile();
+		file.path = 'A.md';
+		const snapshot = {
+			file,
+			fullText: 'Alpha beta.',
+			selectedText: 'beta',
+			from: 6,
+			to: 10,
+		};
+		const editor = {
+			readCurrentText: () => snapshot.fullText,
+			isTargetCurrent: () => true,
+			replaceRange: vi.fn(),
+		};
+		const captureSelectionEditTarget = vi.fn(() => ({ snapshot, editor }));
+		captureSelectionEditTarget.mockImplementationOnce(() => {
+			throw new Error('Select non-whitespace text first.');
+		});
+		const requestSelectionEdit = vi.fn(async () => ({
+			applied: false,
+			changeCount: 0,
+			usage: { promptTokens: 2, completionTokens: 1, totalTokens: 3, source: 'provider' as const },
+		}));
+		const persistMessages = vi.fn(async () => undefined);
+		Object.assign(context.plugin, {
+			captureSelectionEditTarget,
+			requestSelectionEdit,
+		});
+		Object.assign(context, { persistMessages });
+		captureChatContext.mockReturnValue({
+			file,
+			sourceText: snapshot.fullText,
+			selection: { from: 0, to: 0 },
+			noteLabel: file.path,
+			markdown: snapshot.fullText,
+		});
+		const activeModeIndex = () => findElements(
+			contentEl,
+			(element) => element.className.split(' ').includes('emend-chat-mode-button'),
+		).findIndex((element) => element.className.split(' ').includes('is-active'));
+		const webSelect = () => findElements(
+			contentEl,
+			(element) =>
+				element.tagName === 'select' &&
+				element.attributes['aria-label'] === 'Web search mode',
+		)[0];
+		expect(context.selectedMode).toBe('ask');
+		expect(activeModeIndex()).toBe(0);
+		expect(context.displayedEditTarget).toBe('selection');
+		expect(webSelect()?.disabled).toBe(false);
+		if (context.inputEl) {
+			context.inputEl.value = 'Preserve this draft';
+		}
+
+		const quickAction = findElements(
+			contentEl,
+			(element) => element.attributes['data-action-id'] === 'fix-grammar',
+		)[0];
+		quickAction?.dispatch('click');
+
+		expect(context.selectedMode).toBe('edit');
+		expect(activeModeIndex()).toBe(1);
+		expect(webSelect()?.disabled).toBe(true);
+		expect(context.inputEl?.value).toBe('Preserve this draft');
+		expect(context.inputEl?.attributes.placeholder).toBe(
+			'Edit the note or selection with CriticMarkup...',
+		);
+		expect(requestSelectionEdit).not.toHaveBeenCalled();
+		expect(requestChatCompletion).not.toHaveBeenCalled();
+		expect(context.messages).toEqual([]);
+		expect(persistMessages).not.toHaveBeenCalled();
+		expect(editor.replaceRange).not.toHaveBeenCalled();
+
+		if (context.inputEl) {
+			context.inputEl.value = 'Send using the visible mode';
+		}
+		const send = findElements(
+			contentEl,
+			(element) => element.tagName === 'button' && element.textContent === 'Send',
+		)[0];
+		send?.dispatch('click');
+		await vi.waitFor(() => expect(requestSelectionEdit).toHaveBeenCalledOnce());
+		await vi.waitFor(() => expect(context.isSending).toBe(false));
+
+		expect(requestChatCompletion).not.toHaveBeenCalled();
+		expect(activeModeIndex()).toBe(1);
+	});
+
 	it('clears the selector element reference on close', async () => {
 		const { context } = createEditTargetView();
 		context.editTargetSelectEl = new FakeElement('select');

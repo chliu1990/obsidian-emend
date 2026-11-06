@@ -6,6 +6,8 @@ Issue #24 is implemented on `feature/easier-selection-editing`. The composer now
 
 Submission follows the maintained displayed target rather than recomputing automatic availability. Full note uses the existing full-note coordinator and guarded vault writer. Selection synchronously captures the exact `{ snapshot, editor }` and uses the existing selection coordinator and guarded native editor adapter. Empty, whitespace-only, or vanished Selection capture fails with `Select non-whitespace text first.` before messages, saves, provider calls, or writes; it never silently falls back to Full note.
 
+Quick actions preserve their Edit intent when that capture fails. Only after the failed capture, a draft-preserving render synchronizes the visible mode and Web controls with internal Edit state; it does not render or recompute automatic targeting before capture. The next typed Send therefore follows the newly visible mode and target. The Edit placeholder is target-neutral: `Edit the note or selection with CriticMarkup...`.
+
 ## Selection request and result behavior
 
 Composer Selection and the unchanged Command Palette modal use the same closed Operations protocol, complete untruncated selection, empty provider history, default smart structural context or Stage 09 symmetric opt-out, explicitly selected additional-note snapshots, structural validation, bounded replacement minimization, and one same-provider candidate-validation correction. Only the captured selection can be targeted. One native `editor.replaceRange` performs a changed selection edit, preserving Obsidian undo/redo and Track Changes as the only review surface.
@@ -26,15 +28,17 @@ The locked install succeeded; **36 Vitest files and 864 tests passed**; ESLint r
 
 After the verification and documentation edits, `npm test && npm run lint && npm run build && git diff --check` again passed with **36 files and 864 tests**, no lint findings, a successful strict production build, and no whitespace errors.
 
+The final-review fix wave then passed `npm test`, `npm run build`, `npm run lint`, and `git diff --check` with **36 files and 865 tests**, no lint findings, a successful strict production build, and no whitespace errors before the runtime regression was added. The post-evidence gate results are recorded in the final fix report.
+
 ## Real-Obsidian verification
 
 - Date: 2026-11-07, Asia/Shanghai; Linux only.
-- Implementation head: `b8b9f39ae78bcff8437dabc3aa4949ad82df6378`.
-- Production bundle SHA-256: `b7386742a4aca49760a5dd044af2210c9dcfd5ef90c65cf39ec2821cbfbfda34`, identical to the copy loaded by the verification runtime.
+- Runtime base head: `cc58351e2bdd0e8dd562b2b04a60cc733d5b6c0d` with the final-review fix-wave working tree; the final commit is recorded in the fix report.
+- Production bundle SHA-256: `28c3c1780dfc677534365b62eb9666973dc33d8f7c484244260c9f54833d3881`, identical to the copy loaded by the verification runtime.
 - Runtime: official Obsidian 1.15.0 AppImage, Track Changes 2.3.0, isolated Xvfb `:101`, CDP port `19224`, and a synthetic vault/configuration under ignored `test_vault/emend-selection-chat-verify/runtime/`.
 - Provider: CORS loopback OpenAI-compatible SSE mock at `127.0.0.1:18766`, fragmented content/reasoning events, controlled holds, per-round usage, and a dummy SecretStorage credential. No real account/key, external/paid call, private note, or pre-existing vault/profile was used.
 - Final command: `node --check test_vault/emend-selection-chat-verify/mock-provider.mjs && node --check test_vault/emend-selection-chat-verify/verify.mjs && node test_vault/emend-selection-chat-verify/verify.mjs`.
-- Final result: **13/13 scenarios and 239 assertions passed**, with zero production failures.
+- Final result: **14/14 scenarios and 264 assertions passed**, with zero production failures.
 
 Evidence is under `test_vault/emend-selection-chat-verify/evidence/`:
 
@@ -59,7 +63,8 @@ The final matrix covered:
 10. **Target-note switch:** switching during a held A request aborted it with zero A edits. Automatic targeting recomputed Selection for B, which completed independently; A remained byte-for-byte unchanged.
 11. **Unchanged modal:** the existing editor command opened the same instruction/quick-action/additional-note modal without the new target selector or composer usage/reasoning displays. Its selection edit used one native replacement and created no composer message or chat thread.
 12. **Narrow layout and keyboard evidence:** at an actual 240px right-sidebar width, the composer had no horizontal overflow and kept Edit target and Send visible with both options and the quick-action tooltip. Keyboard events were dispatched to the live composer through CDP.
-13. **Persistence/privacy audit:** actual schema 2 files contained only ready messages and concise Edit results with successful usage/reasoning. Raw operations/candidates, correction diagnostics, rejected reasoning, selection snapshots/content, additional-note content, transient/error/stopped assistant states, and the dummy credential were absent. Fail-closed and modal workflows created no chat thread.
+13. **Quick-action failure/next visible mode:** starting in Ask with displayed Selection and Web Auto enabled, a vanished selection caused Fix grammar capture to fail. The post-capture render kept internal and visible Edit, disabled Web without changing its stored Auto value, preserved the draft, showed the neutral note-or-selection placeholder, and recomputed the now-vanished automatic target as Full note. The failure made zero requests, messages, thread saves, native/vault writes, or note-byte changes. The next typed Send used the newly visible Edit/Full note controls with Web tools off, exactly one guarded vault write, no native replacement, and the normal concise ready result.
+14. **Persistence/privacy audit:** 13 actual schema 2 files contained only ready messages and concise Edit results with successful usage/reasoning. Raw operations/candidates, correction diagnostics, rejected reasoning, selection snapshots/content, additional-note content, transient/error/stopped assistant states, and the dummy credential were absent. Fail-closed and modal workflows created no chat thread; the quick-action failure created no thread before the next successful visible-mode Edit.
 
 Reproduce with `node test_vault/emend-selection-chat-verify/verify.mjs`; it recreates the isolated runtime and evidence and stops its owned mock, Xvfb, and Obsidian processes.
 

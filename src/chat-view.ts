@@ -40,7 +40,7 @@ export const WEB_SEARCH_DISCLOSURE = 'DeepSeek may generate search queries and f
 
 const MODE_PLACEHOLDERS: Record<Mode, string> = {
 	ask: 'Ask about the active note...',
-	edit: 'Edit the complete note with CriticMarkup...',
+	edit: 'Edit the note or selection with CriticMarkup...',
 	discuss: 'Discuss an idea in the active note...',
 	brainstorm: 'Brainstorm ideas for the active note...',
 };
@@ -680,6 +680,11 @@ export class EmendChatView extends ItemView {
 			}
 		} catch (error) {
 			new Notice(`Emend: ${getErrorMessage(error)}`);
+			const draft = this.inputEl?.value ?? '';
+			this.render();
+			if (this.inputEl) {
+				this.inputEl.value = draft;
+			}
 			return;
 		}
 
