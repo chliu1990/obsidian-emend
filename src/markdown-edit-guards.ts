@@ -84,13 +84,16 @@ export function findMarkdownEditViolation(
 			)) {
 				return violation('fenced-code-edit');
 			}
-			const atSemanticOpening = fences.some((fence) =>
+			const semanticOpening = fences.find((fence) =>
 				operation.insertionPoint === fence.start || operation.insertionPoint === fence.openingStart
 			);
-			if (!atSemanticOpening && reviewFenceRanges.some((range) =>
-				strictlyInside(operation.insertionPoint, range) ||
-				(!range.closed && operation.insertionPoint === range.end && operation.insertionPoint > range.start)
-			)) {
+			if (reviewFenceRanges.some((range) => {
+				const sameOpening = semanticOpening !== undefined && range.openingStart === semanticOpening.start;
+				return !sameOpening && (
+					strictlyInside(operation.insertionPoint, range) ||
+					(!range.closed && operation.insertionPoint === range.end && operation.insertionPoint > range.start)
+				);
+			})) {
 				return violation('fenced-code-edit');
 			}
 		} else if (
@@ -252,6 +255,7 @@ function scanFences(lines: readonly SourceLine[]): FenceRange[] {
 
 interface ReviewFenceRange extends SourceRange {
 	closed: boolean;
+	openingStart: number;
 }
 
 function scanTrackChangesFenceRanges(
@@ -287,6 +291,7 @@ function scanTrackChangesFenceRanges(
 			start: line.start > 0 ? line.start - 1 : 0,
 			end,
 			closed,
+			openingStart: line.start,
 		});
 		index = closingIndex;
 	}

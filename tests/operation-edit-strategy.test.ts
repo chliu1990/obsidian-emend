@@ -981,6 +981,36 @@ describe('Track Changes bare-fence compatibility', () => {
 	});
 });
 
+describe('scoped fence opening exemptions', () => {
+	it('rejects a semantic tilde opening nested inside another review-parser shadow', () => {
+		const original = '```alpha```\n~~~\ninside\n~~~\n```\nAfter';
+		expect(() => prepare(original, [
+			{ type: 'insert', anchor: '~~~', position: 'before', text: 'added\n', occurrence: 1 },
+		])).toThrow(expect.objectContaining({ code: 'fenced-code-edit', line: 2 }));
+	});
+
+	it('rejects a blockquote semantic opening nested inside another review-parser shadow', () => {
+		const original = '```alpha```\n> ~~~\n> inside\n> ~~~\n```\nAfter';
+		expect(() => prepare(original, [
+			{ type: 'insert', anchor: '> ~~~', position: 'before', text: 'added\n', occurrence: 1 },
+		])).toThrow(expect.objectContaining({ code: 'fenced-code-edit', line: 2 }));
+	});
+
+	it('preserves safe insertion before a semantic opener outside other review ranges', () => {
+		for (const original of [
+			'Before\n~~~\ninside\n~~~\nAfter',
+			'> ~~~\n> inside\n> ~~~\nAfter',
+		]) {
+			const anchor = original.startsWith('>') ? '> ~~~' : '~~~';
+			const preparation = prepare(original, [
+				{ type: 'insert', anchor, position: 'before', text: 'added\n', occurrence: 1 },
+			]);
+			expect(toRejectView(preparation.annotatedMarkdown)).toBe(original);
+			expect(toAcceptView(preparation.annotatedMarkdown)).toContain('added\n');
+		}
+	});
+});
+
 describe('operation EditStrategy selection boundaries', () => {
 	it('cannot address text outside the selection passed as the original snapshot', () => {
 		expect(() => prepare('beta', [

@@ -867,6 +867,23 @@ describe('EditRequestCoordinator', () => {
 		expect(writer.write).not.toHaveBeenCalled();
 	});
 
+	it('rejects nested semantic openings inside another review shadow with two calls and zero writes', async () => {
+		const sourceText = '```alpha```\n~~~\ninside\n~~~\n```\nAfter';
+		const request = editRequest(JSON.stringify([
+			{ type: 'insert', anchor: '~~~', position: 'before', text: 'added\n', occurrence: 1 },
+		]));
+		const { coordinator, writer } = makeEditCoordinator(request, sourceText);
+		const context = makeContext({ sourceText, markdown: sourceText });
+
+		await expect(coordinator.submit(makeEditSubmission({ context }))).rejects.toMatchObject({
+			code: 'fenced-code-edit',
+			line: 2,
+		});
+		expect(request).toHaveBeenCalledTimes(2);
+		expect(writer.readCurrentText).not.toHaveBeenCalled();
+		expect(writer.write).not.toHaveBeenCalled();
+	});
+
 	it('corrects an unsafe inline-code target to a complete span with bounded feedback', async () => {
 		const sourceText = 'Before `alpha` after';
 		const invalidResponse = JSON.stringify([
