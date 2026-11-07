@@ -2,6 +2,23 @@
 
 All notable changes to Emend are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.0] - 2026-11-07
+
+### Added
+
+- Composer **Edit target** selection defaults to **Selection** for usable selected text and **Full note** otherwise, with an explicit Full note override.
+- Typed Edit requests and the Fix grammar, Make concise, and Add examples quick actions now edit the captured selection through the existing guarded native writer, preserving native Obsidian undo.
+- Concise selection-edit chat results include successful-attempt reasoning and token usage across all attempted rounds.
+
+### Fixed
+
+- Empty, whitespace-only, or vanished selections fail closed before messages, saves, or provider requests, without falling back to the full-note writer.
+- Quick actions keep the visible mode controls and internal Edit intent consistent after failed Selection capture while preserving the composer draft.
+
+### Security
+
+- Preserved the guarded full-note and native-selection writer boundary, read-only modes and additional notes, exact selection targeting, and existing privacy and persistence limits.
+
 ## [2.6.0] - 2026-11-07
 
 ### Added
@@ -105,7 +122,8 @@ All notable changes to Emend are documented here. The format follows [Keep a Cha
 - Strict provider error redaction and bounded error output.
 - Validated anchors, ambiguity/overlap rejection, stale-source/target checks, and abort/unload protection for note writes.
 
-[Unreleased]: https://github.com/chliu1990/obsidian-emend/compare/2.6.0...HEAD
+[Unreleased]: https://github.com/chliu1990/obsidian-emend/compare/2.7.0...HEAD
+[2.7.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.7.0
 [2.6.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.6.0
 [2.5.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.5.0
 [2.4.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.4.0
