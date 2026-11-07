@@ -24,8 +24,8 @@ This launch checklist does not change the distribution decision above: no Commun
 - [ ] Current screenshots and a short demo match the release and show the guarded editing flow.
 - [ ] Announcement and showcase copy is concise and evidence-backed, citing shipped behavior and verification records rather than deferred features.
 - [ ] A clean packaged installation and release verification pass from the release ZIP and release assets in an empty vault.
-- [ ] Tooling, security, and CI cleanup are complete; dependency, action, and lint migrations remain separate PRs rather than bundled with launch features.
-- [ ] Community Directory submission is explicitly decided. The documented decision remains no submission.
+- [ ] Launch-relevant security and CI review is complete. Major TypeScript, lint, and action migrations remain separately tracked and do not block launch unless security- or release-breaking.
+- [ ] Confirm the documented no-submission decision or record a new explicit decision.
 
 Complete this checklist alongside the release checklist; it records launch material and verification, not new runtime behavior.
 

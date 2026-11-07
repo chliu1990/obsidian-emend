@@ -69,10 +69,10 @@ Track: https://github.com/chliu1990/obsidian-emend/issues/12
 
 - [ ] Add an explicit translation action with two allowlisted language settings and automatic A-to-B/B-to-A direction selection.
 - [ ] Support two explicit modes: create a new target-language-suffixed Markdown file, or insert translated blocks below each original paragraph for side-by-side correction.
-- [ ] Send complete source text with empty chat history; preserve Markdown, code, links, and existing CriticMarkup in both modes.
-- [ ] Create exactly one destination only after complete validated output in file mode. Never modify or overwrite the source or an existing destination.
-- [ ] In inline mode, apply translated blocks only through the existing guarded Operations/Track Changes path; do not add a new writer or bypass structural safeguards.
-- [ ] Cover safe suffix/collision behavior, stale source, aborts, empty/large notes, and isolated real-Obsidian verification for both modes.
+- [ ] Both modes send complete source text with empty chat history and preserve Markdown, code, links, and existing CriticMarkup.
+- [ ] In file mode, create exactly one destination only after complete validated output; never modify the source or overwrite an existing destination, and handle collisions and aborts safely.
+- [ ] In inline mode, intentionally modify only the active note by inserting translated blocks through the existing guarded Operations/Track Changes path, preserving the originals and using native undo and stale checks; do not add a new writer or bypass structural safeguards.
+- [ ] Cover safe suffix/collision behavior and aborts in file mode, plus stale-source checks, empty/large notes, and isolated real-Obsidian verification for both modes.
 
 ## 8. Same-device API-key sharing research — issue #13
 
@@ -162,7 +162,7 @@ Track: https://github.com/chliu1990/obsidian-emend/issues/36
 ## Delivery constraints
 
 - Keep every roadmap item and issue in its own focused PR; do not bundle discovery, linked notes, folder selection, mode redesign, translation, multiple sessions, or credential storage into one PR.
-- Keep the public-launch path to three independent PRs: documentation and promotional material, post-edit change summaries, and compact composer controls. Publication preparation does not authorize implementation of deferred features.
-- Keep either translation mode, multiple sessions, and toolchain maintenance out of launch PRs. Toolchain upgrades require their own workflow-authorized PR.
+- Keep the public-launch path to three independent content PRs plus the normal separate release PR: documentation and promotional material, post-edit change summaries, and compact composer controls. Publication preparation does not authorize implementation of deferred features.
+- Keep either translation mode, multiple sessions, and toolchain maintenance out of launch PRs. Toolchain upgrades require their own workflow-authorized PR and are not launch prerequisites unless security- or release-breaking.
 - Preserve explicit actions, local data control, bounded context, credential safety, and the active-target-only write model.
 - Update current documentation only when a feature is actually implemented and verified.
