@@ -1,4 +1,4 @@
-import { TFile } from 'obsidian';
+import { MarkdownView, TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { EmendChatView } from '../src/chat-view';
 import type { ConversationDataAdapter } from '../src/conversation-store';
@@ -254,6 +254,96 @@ describe('EmendPlugin discovered model cache invalidation', () => {
 		expect(persisted?.providers.deepseek.apiKey).toBe('');
 		expect(persisted?.providers.kimi.apiKey).toBe('');
 		expect(persisted?.providers.custom.apiKey).toBe('');
+	});
+});
+
+describe('EmendPlugin selection capture', () => {
+	function makeView(selectedText: string) {
+		const file = new TFile();
+		file.path = 'Selection.md';
+		const fullText = `Before${selectedText}After`;
+		const from = 6;
+		const to = from + selectedText.length;
+		const editor = {
+			getSelection: () => selectedText,
+			getValue: () => fullText,
+			getCursor: (which: 'from' | 'to') => ({
+				offset: which === 'from' ? from : to,
+			}),
+			posToOffset: (position: { offset: number }) => position.offset,
+			offsetToPos: (offset: number) => ({ offset }),
+			replaceRange: vi.fn(),
+		};
+		const view = Object.assign(
+			Object.create(MarkdownView.prototype) as MarkdownView,
+			{ file, editor },
+		);
+		return { file, fullText, from, to, view };
+	}
+
+	it('captures the last open Markdown view when chat has focus', () => {
+		const { file, fullText, from, to, view } = makeView('beta');
+		const otherView = makeView('other').view;
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, {
+			app: {
+				workspace: {
+					getActiveViewOfType: () => null,
+					iterateAllLeaves: (
+						callback: (leaf: { view: MarkdownView }) => void,
+					) => {
+						callback({ view: otherView });
+						callback({ view });
+					},
+				},
+			},
+			lastMarkdownView: view,
+		});
+
+		const target = plugin.captureSelectionEditTarget();
+
+		expect(target.snapshot).toEqual({
+			file,
+			fullText,
+			selectedText: 'beta',
+			from,
+			to,
+		});
+		expect(target.editor.readCurrentText()).toBe(fullText);
+		expect(target.editor.isTargetCurrent()).toBe(true);
+	});
+
+	it('reports only non-whitespace selections as usable', () => {
+		let target: MarkdownView | null = makeView('beta').view;
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, { getTargetMarkdownView: () => target });
+
+		expect(plugin.hasUsableSelection()).toBe(true);
+		target = makeView('').view;
+		expect(plugin.hasUsableSelection()).toBe(false);
+		target = makeView(' \n\t').view;
+		expect(plugin.hasUsableSelection()).toBe(false);
+		target = null;
+		expect(plugin.hasUsableSelection()).toBe(false);
+	});
+
+	it('retains missing-target and selection capture errors', () => {
+		let target: MarkdownView | null = null;
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, { getTargetMarkdownView: () => target });
+
+		expect(() => plugin.captureSelectionEditTarget()).toThrow(
+			'Open a Markdown note first.',
+		);
+		target = makeView(' \n\t').view;
+		expect(() => plugin.captureSelectionEditTarget()).toThrow(
+			'Select non-whitespace text first.',
+		);
+		target = makeView('beta').view;
+		target.file = null;
+		expect(() => plugin.captureSelectionEditTarget()).toThrow(
+			'Open a saved Markdown note first.',
+		);
 	});
 });
 

@@ -436,7 +436,11 @@ describe('shared per-note request isolation', () => {
 				new AbortController().signal,
 				retrySelection.editor,
 			),
-		).resolves.toEqual({ applied: true, changeCount: 1 });
+		).resolves.toMatchObject({
+			applied: true,
+			changeCount: 1,
+			usage: { source: 'estimated' },
+		});
 		expect(fixture.getText('Note.md')).toBe(
 			'Alpha{++ chat++} {~~beta~>delta~~}.',
 		);
@@ -462,13 +466,63 @@ describe('shared per-note request isolation', () => {
 		expect(requestMock).toHaveBeenCalledOnce();
 
 		pendingResponse.finish();
-		await expect(pending).resolves.toEqual({ applied: true, changeCount: 1 });
+		await expect(pending).resolves.toMatchObject({
+			applied: true,
+			changeCount: 1,
+			usage: { source: 'estimated' },
+		});
 		respondWith('Chat answer');
 		await expect(
 			fixture.plugin.requestChatCompletion(
 				makeReadOnlySubmission(fixture, 'Note.md'),
 			),
 		).resolves.toMatchObject({ content: 'Chat answer' });
+	});
+
+	it('holds the same-note lock for a composer-originated selection edit', async () => {
+		const fixture = makePluginFixture({ 'Note.md': 'Alpha beta.' });
+		const selection = makeSelection(fixture, 'Note.md', 'beta');
+		const captureSelectionEditTarget = vi.fn(() => selection);
+		Object.assign(fixture.plugin, { captureSelectionEditTarget });
+		const pendingResponse = holdResponse(JSON.stringify([
+			{ type: 'replace', target: 'beta', replacement: 'delta' },
+		]));
+		const view = Object.create(EmendChatView.prototype) as EmendChatView;
+		Object.assign(view, {
+			plugin: fixture.plugin,
+			inputEl: { value: 'Change beta.' },
+			isSending: false,
+			isThreadLoading: false,
+			selectedMode: 'edit',
+			displayedEditTarget: 'selection',
+			messages: [] as ChatMessage[],
+			activeController: null,
+			closed: false,
+			render: vi.fn(),
+			scheduleMessageRender: vi.fn(),
+			persistMessages: vi.fn(async () => undefined),
+		});
+		const state = view as unknown as { submitPrompt(): Promise<void> };
+
+		const pending = state.submitPrompt();
+		await pendingResponse.started;
+
+		expect(captureSelectionEditTarget).toHaveBeenCalledOnce();
+		await expect(
+			fixture.plugin.requestChatCompletion(
+				makeReadOnlySubmission(fixture, 'Note.md'),
+			),
+		).rejects.toEqual(new Error(PENDING_ERROR));
+		expect(requestMock).toHaveBeenCalledOnce();
+		expect(requestMock.mock.calls[0]?.[0].history).toEqual([]);
+		expect(requestMock.mock.calls[0]?.[0].userPrompt).toContain('Selected text:\nbeta');
+
+		pendingResponse.finish();
+		await pending;
+
+		expect(fixture.getText('Note.md')).toBe('Alpha {~~beta~>delta~~}.');
+		expect(selection.editor.replaceRange).toHaveBeenCalledOnce();
+		expect(fixture.writes).toEqual([]);
 	});
 
 	it('allows independent notes and never applies an old result after a target switch', async () => {

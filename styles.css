@@ -263,6 +263,26 @@
 	margin-top: 6px;
 }
 
+.emend-chat-edit-target {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+.emend-chat-edit-target select {
+	min-width: 0;
+	max-width: 100%;
+	font-size: var(--font-ui-smaller);
+}
+
+.emend-chat-edit-target select:disabled {
+	color: var(--text-muted);
+	cursor: not-allowed;
+}
+
 .emend-chat-active-model {
 	min-width: 0;
 	color: var(--text-muted);
@@ -366,6 +386,18 @@
 	.emend-additional-notes-item {
 		width: 100%;
 		justify-content: space-between;
+	}
+
+	.emend-chat-composer-actions {
+		flex-wrap: wrap;
+	}
+
+	.emend-chat-edit-target {
+		flex: 1 1 100%;
+	}
+
+	.emend-chat-edit-target select {
+		flex: 1 1 auto;
 	}
 }
 

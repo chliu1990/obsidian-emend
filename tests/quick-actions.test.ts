@@ -1,7 +1,12 @@
+import { TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { EmendChatView } from '../src/chat-view';
 import { areQuickActionsDisabled, QUICK_ACTIONS } from '../src/quick-actions';
-import type { ChatMessage, Mode } from '../src/types';
+import type {
+	SelectionEditCallbacks,
+	SelectionEditorAdapter,
+} from '../src/selection-editor';
+import type { ChatMessage, Mode, SelectionSnapshot } from '../src/types';
 
 const viewPrototype = EmendChatView.prototype as unknown as {
 	submitPrompt(this: unknown, prompt?: string): Promise<void>;
@@ -85,6 +90,87 @@ describe('quick action submission', () => {
 		]);
 		expect(savedSnapshots).toHaveLength(2);
 		expect(savedSnapshots[1]?.every((message) => message.status === 'ready')).toBe(true);
+	});
+
+	it.each(QUICK_ACTIONS)('$id follows visible Selection once with Web off', async (action) => {
+		const file = new TFile();
+		file.path = 'Note.md';
+		const snapshot = {
+			file,
+			fullText: 'Alpha beta.',
+			selectedText: 'beta',
+			from: 6,
+			to: 10,
+		};
+		const editor = {
+			readCurrentText: () => snapshot.fullText,
+			isTargetCurrent: () => true,
+			replaceRange: vi.fn(),
+		};
+		const requestSelectionEdit = vi.fn(async (
+			_snapshot: SelectionSnapshot,
+			_prompt: string,
+			_signal: AbortSignal,
+			_editor: SelectionEditorAdapter,
+			_additionalNotePaths: readonly string[],
+			_callbacks?: SelectionEditCallbacks,
+		) => ({
+			applied: true,
+			changeCount: 1,
+			usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4, source: 'provider' as const },
+		}));
+		const requestChatCompletion = vi.fn(async () => ({ applied: false, changeCount: 0 }));
+		const captureChatContext = vi.fn(() => ({ file: { path: 'Note.md' } }));
+		const context = {
+			inputEl: { value: 'Unrelated composer text' },
+			selectedMode: 'ask' as Mode,
+			webSearchMode: 'auto' as const,
+			displayedEditTarget: 'selection' as const,
+			notePath: 'Note.md',
+			isSending: false,
+			isThreadLoading: false,
+			messages: [] as ChatMessage[],
+			plugin: {
+				captureChatContext,
+				captureSelectionEditTarget: vi.fn(() => ({ snapshot, editor })),
+				requestChatCompletion,
+				requestSelectionEdit,
+			},
+			toProviderHistory: () => [],
+			persistMessages: vi.fn(async () => undefined),
+			render: vi.fn(),
+			scheduleMessageRender: vi.fn(),
+			closed: false,
+			activeController: null,
+			submitPrompt: vi.fn(),
+		};
+		context.submitPrompt = vi.fn((prompt?: string) =>
+			viewPrototype.submitPrompt.call(context, prompt),
+		);
+
+		await viewPrototype.submitQuickAction.call(context, action);
+
+		expect(context.submitPrompt).toHaveBeenCalledTimes(1);
+		expect(context.submitPrompt).toHaveBeenCalledWith(action.prompt);
+		expect(context.selectedMode).toBe('edit');
+		expect(requestSelectionEdit).toHaveBeenCalledTimes(1);
+		const args = requestSelectionEdit.mock.calls[0];
+		expect(args?.[0]).toBe(snapshot);
+		expect(args?.[1]).toBe(action.prompt);
+		expect(args?.[2]).toBeInstanceOf(AbortSignal);
+		expect(args?.[3]).toBe(editor);
+		expect(args?.[4]).toEqual([]);
+		expect(typeof args?.[5]?.onReasoning).toBe('function');
+		expect(typeof args?.[5]?.onRetry).toBe('function');
+		expect(requestChatCompletion).not.toHaveBeenCalled();
+		expect(captureChatContext).not.toHaveBeenCalled();
+		expect(context.messages).toHaveLength(2);
+		expect(context.messages[0]).toMatchObject({
+			role: 'user',
+			mode: 'edit',
+			content: action.prompt,
+		});
+		expect(context.messages[0]?.webSearchMode).toBeUndefined();
 	});
 });
 

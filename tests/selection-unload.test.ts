@@ -158,7 +158,11 @@ describe('selection request plugin unload', () => {
 				isTargetCurrent: () => true,
 				replaceRange,
 			},
-		)).resolves.toEqual({ applied: false, changeCount: 0 });
+		)).resolves.toMatchObject({
+			applied: false,
+			changeCount: 0,
+			usage: { source: 'estimated' },
+		});
 		expect(requestAiResponse).toHaveBeenCalledTimes(2);
 		expect(replaceRange).not.toHaveBeenCalled();
 	});

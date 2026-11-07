@@ -11,6 +11,7 @@ import type {
 import { QUICK_ACTIONS } from '../src/quick-actions';
 import {
 	applyPreparedSelectionEdit,
+	captureSelectionEditTarget,
 	captureSelectionSnapshot,
 	createSelectionEditorAdapter,
 	getSelectionContext,
@@ -145,6 +146,56 @@ describe('captureSelectionSnapshot', () => {
 		view.file = null;
 
 		expect(() => captureSelectionSnapshot(view)).toThrow(
+			'Open a saved Markdown note first.',
+		);
+	});
+});
+
+describe('captureSelectionEditTarget', () => {
+	it('returns the exact snapshot and an adapter bound to the same view', () => {
+		const fullText = '# Note\nAlpha beta gamma.\nEnd';
+		const from = fullText.indexOf('beta');
+		const to = from + 4;
+		const { editor, file, view } = makeView(fullText, from, to);
+		const isTargetCurrent = vi.fn(() => true);
+
+		const target = captureSelectionEditTarget(view, isTargetCurrent);
+
+		expect(target.snapshot).toEqual({
+			file,
+			fullText,
+			selectedText: 'beta',
+			from,
+			to,
+		});
+		expect(target.editor.readCurrentText()).toBe(fullText);
+		expect(target.editor.isTargetCurrent()).toBe(true);
+		expect(isTargetCurrent).toHaveBeenCalledExactlyOnceWith(view);
+		target.editor.replaceRange('{~~beta~>delta~~}', from, to);
+		expect(editor.replaceRange).toHaveBeenCalledExactlyOnceWith(
+			'{~~beta~>delta~~}',
+			{ offset: from },
+			{ offset: to },
+		);
+	});
+
+	it.each([
+		['empty', ''],
+		['whitespace', ' \n\t'],
+	])('retains the %s selection error', (_label, selectedText) => {
+		const fullText = `Before${selectedText}After`;
+		const { view } = makeView(fullText, 6, 6 + selectedText.length);
+
+		expect(() => captureSelectionEditTarget(view, () => true)).toThrow(
+			'Select non-whitespace text first.',
+		);
+	});
+
+	it('retains the saved-file error', () => {
+		const { view } = makeView('Alpha beta', 0, 5);
+		view.file = null;
+
+		expect(() => captureSelectionEditTarget(view, () => true)).toThrow(
 			'Open a saved Markdown note first.',
 		);
 	});
@@ -636,7 +687,11 @@ describe('SelectionEditRequestCoordinator', () => {
 
 		const result = await coordinator.submit(makeSelectionSubmission(snapshot));
 
-		expect(result).toEqual({ applied: true, changeCount: 1 });
+		expect(result).toMatchObject({
+			applied: true,
+			changeCount: 1,
+			usage: { source: 'estimated' },
+		});
 		expect(adapter.replaceRange).toHaveBeenCalledExactlyOnceWith(
 			'{~~beta~>delta~~}',
 			snapshot.from,
@@ -723,7 +778,11 @@ describe('SelectionEditRequestCoordinator', () => {
 			coordinator.submit(makeSelectionSubmission(snapshot, {
 				additionalNotePaths: ['Reference.md'],
 			})),
-		).resolves.toEqual({ applied: true, changeCount: 1 });
+		).resolves.toMatchObject({
+			applied: true,
+			changeCount: 1,
+			usage: { source: 'estimated' },
+		});
 
 		expect(adapter.replaceRange).toHaveBeenCalledExactlyOnceWith(
 			'beta{++ changed++}',
@@ -733,7 +792,7 @@ describe('SelectionEditRequestCoordinator', () => {
 		expect(additionalNote.markdown).toBe('Additional only.');
 	});
 
-	it('returns a no-op result without replacing unchanged output', async () => {
+	it('returns a no-op result with usage for modal-style submissions without callbacks', async () => {
 		const snapshot = makeSnapshot();
 		const { adapter, coordinator } = makeSelectionCoordinator(
 			selectionRequest('[]'),
@@ -742,8 +801,140 @@ describe('SelectionEditRequestCoordinator', () => {
 
 		await expect(
 			coordinator.submit(makeSelectionSubmission(snapshot)),
-		).resolves.toEqual({ applied: false, changeCount: 0 });
+		).resolves.toMatchObject({
+			applied: false,
+			changeCount: 0,
+			usage: { source: 'estimated' },
+		});
 		expect(adapter.replaceRange).not.toHaveBeenCalled();
+	});
+
+	it('forwards reasoning and returns provider usage without changing the edit result', async () => {
+		const snapshot = makeSnapshot();
+		const request = vi.fn(async (
+			_request: AiProviderRequest,
+			callbacks: { onEvent(event: StreamEvent): void },
+		): Promise<StreamResult> => {
+			callbacks.onEvent({ type: 'reasoning', text: 'Consider ' });
+			callbacks.onEvent({ type: 'reasoning', text: 'the selection.' });
+			callbacks.onEvent({ type: 'content', text: replaceBetaResponse });
+			return {
+				content: replaceBetaResponse,
+				reasoning: 'Consider the selection.',
+				usage: { promptTokens: 11, completionTokens: 5, totalTokens: 16 },
+			};
+		});
+		const { coordinator } = makeSelectionCoordinator(request, snapshot);
+		const onReasoning = vi.fn();
+		const onRetry = vi.fn();
+
+		const result = await coordinator.submit(makeSelectionSubmission(snapshot, {
+			callbacks: { onReasoning, onRetry },
+		}));
+
+		expect(onReasoning.mock.calls).toEqual([
+			['Consider '],
+			['the selection.'],
+		]);
+		expect(onRetry).not.toHaveBeenCalled();
+		expect(result).toEqual({
+			applied: true,
+			changeCount: 1,
+			usage: {
+				promptTokens: 11,
+				completionTokens: 5,
+				totalTokens: 16,
+				source: 'provider',
+			},
+		});
+		expect(request.mock.calls[0]?.[0].history).toEqual([]);
+	});
+
+	it('notifies retry and sums provider usage across two correction rounds', async () => {
+		const snapshot = makeSnapshot();
+		const request = selectionRequest('not-json')
+			.mockResolvedValueOnce({
+				content: 'not-json',
+				reasoning: 'invalid attempt',
+				usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12 },
+			})
+			.mockResolvedValueOnce({
+				content: replaceBetaResponse,
+				reasoning: 'corrected attempt',
+				usage: { promptTokens: 20, completionTokens: 3, totalTokens: 23 },
+			});
+		const { coordinator } = makeSelectionCoordinator(request, snapshot);
+		const onRetry = vi.fn();
+
+		const result = await coordinator.submit(makeSelectionSubmission(snapshot, {
+			callbacks: { onRetry },
+		}));
+
+		expect(onRetry).toHaveBeenCalledOnce();
+		expect(result).toEqual({
+			applied: true,
+			changeCount: 1,
+			usage: {
+				promptTokens: 30,
+				completionTokens: 5,
+				totalTokens: 35,
+				source: 'provider',
+			},
+		});
+		expect(request).toHaveBeenCalledTimes(2);
+		expect(request.mock.calls.map((call) => call[0].history)).toEqual([[], []]);
+	});
+
+	it('estimates every round when any correction round lacks provider usage', async () => {
+		const snapshot = makeSnapshot();
+		const request = selectionRequest('not-json')
+			.mockResolvedValueOnce({
+				content: 'not-json',
+				reasoning: 'bad',
+				usage: { promptTokens: 999, completionTokens: 999, totalTokens: 1998 },
+			})
+			.mockResolvedValueOnce({
+				content: replaceBetaResponse,
+				reasoning: 'good',
+			});
+		const { coordinator } = makeSelectionCoordinator(request, snapshot);
+
+		const result = await coordinator.submit(makeSelectionSubmission(snapshot));
+
+		const firstRequest = request.mock.calls[0]?.[0];
+		const secondRequest = request.mock.calls[1]?.[0];
+		if (!firstRequest || !secondRequest) {
+			throw new Error('Correction requests missing.');
+		}
+		const firstPromptTokens = Math.max(1, Math.ceil(
+			(firstRequest.systemPrompt.length + firstRequest.userPrompt.length) / 4,
+		));
+		const continuationCharacters = (secondRequest.continuation ?? []).reduce(
+			(sum, message) => sum + message.content.length,
+			0,
+		);
+		const secondPromptTokens = Math.max(1, Math.ceil(
+			(secondRequest.systemPrompt.length + secondRequest.userPrompt.length +
+				continuationCharacters) / 4,
+		));
+		const firstCompletionTokens = Math.max(1, Math.ceil(
+			('not-json'.length + 'bad'.length) / 4,
+		));
+		const secondCompletionTokens = Math.max(1, Math.ceil(
+			(replaceBetaResponse.length + 'good'.length) / 4,
+		));
+		const promptTokens = firstPromptTokens + secondPromptTokens;
+		const completionTokens = firstCompletionTokens + secondCompletionTokens;
+		expect(result).toEqual({
+			applied: true,
+			changeCount: 1,
+			usage: {
+				promptTokens,
+				completionTokens,
+				totalTokens: promptTokens + completionTokens,
+				source: 'estimated',
+			},
+		});
 	});
 
 	it('rejects invalid output before reading or replacing', async () => {
@@ -847,9 +1038,10 @@ describe('SelectionEditRequestCoordinator', () => {
 		]));
 		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
 
-		await expect(coordinator.submit(makeSelectionSubmission(snapshot))).resolves.toEqual({
+		await expect(coordinator.submit(makeSelectionSubmission(snapshot))).resolves.toMatchObject({
 			applied: true,
 			changeCount: 1,
+			usage: { source: 'estimated' },
 		});
 		expect(adapter.replaceRange).toHaveBeenCalledExactlyOnceWith(
 			'{~~`alpha`~>`beta`~~}',
@@ -886,7 +1078,11 @@ describe('SelectionEditRequestCoordinator', () => {
 
 		const result = await coordinator.submit(submission);
 
-		expect(result).toEqual({ applied: true, changeCount: 1 });
+		expect(result).toMatchObject({
+			applied: true,
+			changeCount: 1,
+			usage: { source: 'estimated' },
+		});
 		expect(request).toHaveBeenCalledTimes(2);
 		expect(loadAdditionalNotes).toHaveBeenCalledOnce();
 		expect(loadInstructions).toHaveBeenCalledOnce();

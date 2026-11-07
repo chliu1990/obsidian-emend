@@ -75,7 +75,7 @@ Useful controls:
 
 ## 4. Test a full-note edit
 
-1. Select **Edit** in chat and send:
+1. Select **Edit** in chat. If text is selected, change **Edit target** from its automatic **Selection** value to **Full note**, then send:
 
    ```text
    Correct the grammar mistake and add one short third idea.
@@ -87,21 +87,23 @@ Useful controls:
 
 For quick actions, select **Fix grammar**, **Make concise**, or **Add examples** above the composer. Each switches to Edit and submits one visible request through the same guarded path.
 
-An invalid candidate causes exactly one automatic correction request to the same provider, so one submission can make at most two provider calls. The correction includes the unchanged original request, the invalid response, and bounded actionable validation feedback. A second invalid response writes nothing and shows the final diagnostic. Provider errors, Stop, stale notes, and write failures do not trigger another correction round. Full-note token usage includes every attempted round.
+An invalid candidate causes exactly one automatic correction request to the same provider, so one submission can make at most two provider calls. The correction includes the unchanged original request, the invalid response, and bounded actionable validation feedback. A second invalid response writes nothing and shows the final diagnostic. Provider errors, Stop, stale notes, and write failures do not trigger another correction round. Composer Edit token usage, including Selection, covers every attempted round.
 
 ## 5. Test selection-only editing
 
-1. Select only `This sentence have a small grammar problem.`
-2. Run **Modify selected text with AI** from the Command Palette.
-3. Enter:
+1. Select only `This sentence have a small grammar problem.` and focus Emend chat. **Edit target** automatically displays **Selection**; with no usable selection it displays **Full note**. The automatic choice resets when the actual target note changes, while an explicit choice survives same-note renders and mode switches.
+2. Select **Edit** and enter:
 
    ```text
    Correct the grammar without changing the meaning.
    ```
 
-4. Select **Modify selection**, or use **Fix grammar**, **Make concise**, or **Add examples** in the modal to submit a shared quick-action prompt without typing.
-5. Confirm that only the selected sentence receives CriticMarkup. The heading and idea list must remain unchanged. Selection replacements use the same word-aware multi-hunk minimization and single validation-correction round as full-note Edit.
-6. Review it in Track Changes, or press **Cmd+Z** on macOS (**Ctrl+Z** on Windows/Linux) to undo the editor replacement.
+   Alternatively, use **Fix grammar**, **Make concise**, or **Add examples** above the composer. Each quick action enters Edit and submits once through the same target selection. Choose **Full note** explicitly whenever you want the ordinary whole-note path instead.
+3. Confirm that only the selected sentence receives CriticMarkup. The heading and idea list must remain unchanged. Selection replacements use the same word-aware multi-hunk minimization and single validation-correction round as full-note Edit, with empty provider history, the complete selection, and only surrounding context beyond it.
+4. Confirm that chat shows the concise tracked-change result, reasoning, and token usage rather than the annotated selection. Review it in Track Changes, or press **Cmd+Z** on macOS (**Ctrl+Z** on Windows/Linux) to undo the native editor replacement.
+5. Try submitting with **Selection** explicitly chosen but no selection, a whitespace-only selection, or a selection that vanished before submission. Emend shows `Select non-whitespace text first.` and adds no chat message, saves no message, makes no provider request, and performs neither a selection nor full-note write.
+
+The separate **Modify selected text with AI** Command Palette workflow is unchanged. It opens the existing instruction modal with the same quick actions and additional-note controls, privately buffers the response, and shows its normal result/error notices without adding a composer chat result, usage footer, or retry-status display. It uses the same guarded selection coordinator and native undo.
 
 **Smart selection context** is enabled by default. Emend can send the containing paragraph for context, but it never expands the replacement target.
 
@@ -113,7 +115,7 @@ Structural guards reject partial inline-code targets (`inline-code-range`), fenc
 
 Raw markup shown while the cursor is inside a table cell is upstream Obsidian/Track Changes presentation behavior. Use exact accept/reject results—not that live presentation—to verify correctness.
 
-The minimizer shares a bounded work budget across each response and falls back to one substitution for the changed middle when a detailed diff would be too expensive. Correction requests are transient implementation details: raw operations, rejected candidates, and diagnostic feedback do not appear in ready chats or stored threads. After a retry, full-note chat keeps only the successful attempt's reasoning; selection editing has no usage footer or retry-status UI.
+The minimizer shares a bounded work budget across each response and falls back to one substitution for the changed middle when a detailed diff would be too expensive. Correction requests are transient implementation details: raw operations, rejected candidates, and diagnostic feedback do not appear in ready chats or stored threads. After a retry, composer Edit chat—including Selection—keeps only the successful attempt's reasoning and shows all-round usage. The separate selection modal still has no usage footer or retry-status UI.
 
 ## 7. Test instructions and skills
 
@@ -136,10 +138,10 @@ Send another request. Emend rereads these files on every request and places skil
 ## 8. Verify persistence and privacy behavior
 
 - Ask different questions in two notes, switch between them, and reload the Emend plugin or Obsidian. Each note should restore its own conversation, while its additional-note selections are empty after either reload.
-- Saved chats are under `<Vault>/.obsidian/emend/chats/`. They contain ready chat messages, not API keys, additional-note selections/snapshots, or buffered full-note edit responses.
+- Saved chats are under `<Vault>/.obsidian/emend/chats/`. They contain ready chat messages, not API keys, active/additional-note snapshots, captured selection text or offsets, additional-note selections/snapshots, or buffered edit responses.
 - Additional-note paths are always shown locally in the picker controls so you can review what is selected. With **Include note path** off, provider prompts use only generic labels such as `Additional note 1`; with it on, each section includes `Path: <vault>/<note path>`. Selected content is sent with either setting when you explicitly submit.
 - Enable **Include note path** only if you want the vault/note path sent to the provider for both active and additional notes.
-- Full-note Edit always sends the complete active note. Read-only modes send bounded active-note context; selection editing sends the complete selection plus surrounding context. All three can include separate bounded, read-only additional-note snapshots, but Operations can target only the captured active note or selection.
+- Full-note Edit always sends the complete active note. Read-only modes send bounded active-note context. Composer Selection and Modify Selection send the complete selection plus surrounding context with empty provider history. All can include separate bounded, read-only additional-note snapshots, but Operations can target only the captured active note or selection.
 - Deleting a note does not delete its saved conversation automatically.
 
 ## Verification checklist
@@ -149,7 +151,7 @@ You have completed the quick start when:
 - Ask, Discuss, and Brainstorm stream answers without changing the note.
 - Edit writes reviewable CriticMarkup, not an in-plugin diff.
 - Track Changes can accept or reject the edit.
-- Modify Selection changes only the captured selection and native undo works.
+- Composer Selection and Modify Selection change only the captured selection, native undo works, and Selection capture failures never fall back to Full note.
 - Explicitly selected additional notes appear with their paths, remain read-only, respect context/path limits, and never leak between target notes.
 - Conversations return after switching notes and reloading Obsidian, while additional-note selections clear on Emend plugin or Obsidian reload.
 

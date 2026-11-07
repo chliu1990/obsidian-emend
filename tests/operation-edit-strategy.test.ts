@@ -1294,7 +1294,11 @@ describe('operation strategy coordinator integration', () => {
 			smartSelectionContext: true,
 			additionalNotePaths: [],
 			signal: new AbortController().signal,
-		})).resolves.toEqual({ applied: true, changeCount: 0 });
+		})).resolves.toMatchObject({
+			applied: true,
+			changeCount: 0,
+			usage: { source: 'estimated' },
+		});
 		expect(request.mock.calls[0]?.[0].systemPrompt).toContain('inside the selection');
 		expect(editor.replaceRange).toHaveBeenCalledExactlyOnceWith('beta{>>Review<<}', 6, 10);
 	});

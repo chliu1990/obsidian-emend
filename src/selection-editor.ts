@@ -9,6 +9,7 @@ import type { EditResult } from './note-writer';
 import { canWriteToNote } from './permissions';
 import type { requestAiResponse } from './provider-stream';
 import { buildSmartSelectionContext } from './selection-context';
+import type { TokenUsage } from './token-usage';
 import type {
 	InstructionPromptParts,
 	Mode,
@@ -43,6 +44,15 @@ interface SelectionEditRequestCoordinatorDependencies {
 	editStrategy: EditStrategy;
 }
 
+export interface SelectionEditCallbacks {
+	onReasoning?: (text: string) => void;
+	onRetry?: () => void;
+}
+
+export interface SelectionEditResult extends EditResult {
+	usage: TokenUsage;
+}
+
 export interface SelectionEditSubmission {
 	snapshot: SelectionSnapshot;
 	prompt: string;
@@ -51,6 +61,7 @@ export interface SelectionEditSubmission {
 	additionalNotePaths: readonly string[];
 	notePath?: string;
 	signal: AbortSignal;
+	callbacks?: SelectionEditCallbacks;
 }
 
 export function captureSelectionSnapshot(
@@ -128,6 +139,21 @@ export function createSelectionEditorAdapter(
 	};
 }
 
+export interface SelectionEditTarget {
+	snapshot: SelectionSnapshot;
+	editor: SelectionEditorAdapter;
+}
+
+export function captureSelectionEditTarget(
+	view: MarkdownView,
+	isTargetCurrent: (view: MarkdownView) => boolean,
+): SelectionEditTarget {
+	return {
+		snapshot: captureSelectionSnapshot(view),
+		editor: createSelectionEditorAdapter(view, isTargetCurrent),
+	};
+}
+
 export function applyPreparedSelectionEdit(
 	mode: Mode,
 	snapshot: SelectionSnapshot,
@@ -158,14 +184,14 @@ export class SelectionEditRequestCoordinator {
 		private readonly dependencies: SelectionEditRequestCoordinatorDependencies,
 	) {}
 
-	async submit(submission: SelectionEditSubmission): Promise<EditResult> {
+	async submit(submission: SelectionEditSubmission): Promise<SelectionEditResult> {
 		const additionalNotes = await this.dependencies.loadAdditionalNotes(
 			submission.additionalNotePaths,
 			submission.snapshot.file.path,
 			submission.signal,
 		);
 		const instructions = await this.dependencies.loadInstructions();
-		const { prepared } = await prepareEditResponse({
+		const { prepared, usage } = await prepareEditResponse({
 			original: submission.snapshot.selectedText,
 			sourceContext: submission.snapshot,
 			request: {
@@ -177,14 +203,19 @@ export class SelectionEditRequestCoordinator {
 			editStrategy: this.dependencies.editStrategy,
 			requestRound: this.dependencies.request,
 			signal: submission.signal,
+			onReasoning: submission.callbacks?.onReasoning,
+			onRetry: submission.callbacks?.onRetry,
 		});
-		return applyPreparedSelectionEdit(
-			'edit',
-			submission.snapshot,
-			prepared,
-			this.dependencies.editor,
-			submission.signal,
-		);
+		return {
+			...applyPreparedSelectionEdit(
+				'edit',
+				submission.snapshot,
+				prepared,
+				this.dependencies.editor,
+				submission.signal,
+			),
+			usage,
+		};
 	}
 }
 

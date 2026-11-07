@@ -10,7 +10,7 @@ import { ConversationStore } from './conversation-store';
 import { DeepSeekWebSearchCoordinator } from './deepseek-web';
 import { getEditStrategy } from './edit-strategy';
 import { loadAllInstructions } from './instructions-loader';
-import { createVaultNoteWriter, type EditResult } from './note-writer';
+import { createVaultNoteWriter } from './note-writer';
 import { requestAiResponse } from './provider-stream';
 import {
 	EditRequestCoordinator,
@@ -21,9 +21,12 @@ import {
 	type ReadOnlySubmission,
 } from './request-coordinator';
 import {
-	captureSelectionSnapshot,
+	captureSelectionEditTarget,
 	createSelectionEditorAdapter,
 	SelectionEditRequestCoordinator,
+	type SelectionEditCallbacks,
+	type SelectionEditResult,
+	type SelectionEditTarget,
 } from './selection-editor';
 import { SelectionModal } from './selection-modal';
 import { ApiKeyStorage } from './secret-storage';
@@ -154,8 +157,7 @@ export default class EmendPlugin extends Plugin {
 				}
 
 				try {
-					const snapshot = captureSelectionSnapshot(view);
-					const editor = createSelectionEditorAdapter(
+					const { snapshot, editor } = captureSelectionEditTarget(
 						view,
 						(candidate) => this.getTargetMarkdownView() === candidate,
 					);
@@ -276,6 +278,23 @@ export default class EmendPlugin extends Plugin {
 		return this.getTargetMarkdownView()?.file?.path ?? null;
 	}
 
+	captureSelectionEditTarget(): SelectionEditTarget {
+		const markdownView = this.getTargetMarkdownView();
+		if (!markdownView) {
+			throw new Error('Open a Markdown note first.');
+		}
+		return captureSelectionEditTarget(
+			markdownView,
+			(candidate) => this.getTargetMarkdownView() === candidate,
+		);
+	}
+
+	hasUsableSelection(): boolean {
+		return Boolean(
+			this.getTargetMarkdownView()?.editor.getSelection().trim(),
+		);
+	}
+
 	captureChatContext(): RequestContext {
 		const markdownView = this.getTargetMarkdownView();
 		if (!markdownView) {
@@ -363,7 +382,8 @@ export default class EmendPlugin extends Plugin {
 		signal: AbortSignal,
 		editor: ReturnType<typeof createSelectionEditorAdapter>,
 		additionalNotePaths: readonly string[] = [],
-	): Promise<EditResult> {
+		callbacks?: SelectionEditCallbacks,
+	): Promise<SelectionEditResult> {
 		if (!prompt.trim()) {
 			throw new Error('Enter a prompt first.');
 		}
@@ -398,6 +418,7 @@ export default class EmendPlugin extends Plugin {
 					? `${this.app.vault.getName()}/${snapshot.file.path}`
 					: undefined,
 				signal,
+				callbacks,
 			});
 		});
 	}

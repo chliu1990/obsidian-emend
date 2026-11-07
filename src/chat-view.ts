@@ -11,12 +11,19 @@ import { AdditionalNotesControl } from './additional-notes-ui';
 import { EMEND_BUILD_ID } from './build-info';
 import type EmendPlugin from './main';
 import { getComposerShortcut, getDefaultShortcutLabels } from './chat-shortcuts';
+import type { RequestContext } from './context';
+import {
+	resolveEditTarget,
+	type EditTargetChoice,
+	type ResolvedEditTarget,
+} from './edit-target';
 import { MODES } from './mode';
 import {
 	areQuickActionsDisabled,
 	QUICK_ACTIONS,
 	type QuickAction,
 } from './quick-actions';
+import type { SelectionEditTarget } from './selection-editor';
 import { formatTokenUsage } from './token-usage';
 import type { ChatMessage, Mode, ProviderHistoryMessage } from './types';
 import { WebSearchModal } from './web-search-modal';
@@ -33,7 +40,7 @@ export const WEB_SEARCH_DISCLOSURE = 'DeepSeek may generate search queries and f
 
 const MODE_PLACEHOLDERS: Record<Mode, string> = {
 	ask: 'Ask about the active note...',
-	edit: 'Edit the complete note with CriticMarkup...',
+	edit: 'Edit the note or selection with CriticMarkup...',
 	discuss: 'Discuss an idea in the active note...',
 	brainstorm: 'Brainstorm ideas for the active note...',
 };
@@ -49,6 +56,9 @@ export class EmendChatView extends ItemView {
 	private isThreadLoading = false;
 	private selectedMode: Mode;
 	private webSearchMode: WebSearchMode = 'off';
+	private editTargetChoice: EditTargetChoice = 'auto';
+	private displayedEditTarget: ResolvedEditTarget = 'full-note';
+	private editTargetSelectEl: HTMLSelectElement | null = null;
 	private webReviewModal: WebSearchModal | null = null;
 	private activeController: AbortController | null = null;
 	private pendingRenderFrame: number | null = null;
@@ -109,6 +119,7 @@ export class EmendChatView extends ItemView {
 		this.additionalNotesControl?.destroy();
 		this.additionalNotesControl = null;
 		this.inputEl = null;
+		this.editTargetSelectEl = null;
 		this.contentEl.empty();
 	}
 
@@ -133,6 +144,7 @@ export class EmendChatView extends ItemView {
 	async refreshTargetNote() {
 		const notePath = this.plugin.getActiveNotePath();
 		if (notePath === this.notePath) {
+			this.refreshEditTargetControl();
 			return;
 		}
 
@@ -140,6 +152,7 @@ export class EmendChatView extends ItemView {
 			this.drafts.set(this.notePath, this.inputEl.value);
 		}
 		this.notePath = notePath;
+		this.editTargetChoice = 'auto';
 		this.followLatestMessages = true;
 		const generation = ++this.noteLoadGeneration;
 		if (this.isSending) {
@@ -172,6 +185,19 @@ export class EmendChatView extends ItemView {
 				this.render();
 			}
 		}
+	}
+
+	private refreshEditTargetControl() {
+		if (!this.editTargetSelectEl) {
+			return;
+		}
+		const editTarget = resolveEditTarget(
+			this.editTargetChoice,
+			this.plugin.hasUsableSelection(),
+		);
+		this.displayedEditTarget = editTarget;
+		this.editTargetSelectEl.value = editTarget;
+		this.editTargetSelectEl.disabled = this.isSending || this.isThreadLoading;
 	}
 
 	private render() {
@@ -313,6 +339,29 @@ export class EmendChatView extends ItemView {
 				this.inputEl.value = draft;
 			}
 		});
+		const editTargetLabelEl = actionsEl.createEl('label', {
+			cls: 'emend-chat-edit-target',
+		});
+		editTargetLabelEl.createSpan({ text: 'Edit target' });
+		this.editTargetSelectEl = editTargetLabelEl.createEl('select', {
+			attr: { 'aria-label': 'Edit target' },
+		});
+		// eslint-disable-next-line obsidianmd/ui/sentence-case -- Required Task 2 tooltip.
+		this.editTargetSelectEl.title = 'Applies to Edit and quick actions.';
+		for (const [value, label] of [
+			['full-note', 'Full note'],
+			['selection', 'Selection'],
+		] as const) {
+			this.editTargetSelectEl.createEl('option', { text: label, attr: { value } });
+		}
+		this.editTargetSelectEl.addEventListener('change', () => {
+			const value = this.editTargetSelectEl?.value;
+			if (value !== 'full-note' && value !== 'selection') {
+				return;
+			}
+			this.editTargetChoice = value;
+			this.refreshEditTargetControl();
+		});
 		this.activeModelEl = actionsEl.createDiv({
 			cls: 'emend-chat-active-model',
 			text: this.getActiveModelLabel(),
@@ -333,6 +382,7 @@ export class EmendChatView extends ItemView {
 				void this.submitPrompt();
 			}
 		});
+		this.refreshEditTargetControl();
 		this.pendingScrollRestore = { previousScrollTop, wasFollowing };
 		if (this.pendingMarkdownRenders === 0) {
 			this.settleMarkdownRender(this.renderGeneration);
@@ -603,20 +653,49 @@ export class EmendChatView extends ItemView {
 			return;
 		}
 
-		let context;
+		const requestedMode = this.selectedMode;
+		let capturedTarget:
+			| { type: 'full-note'; mode: 'edit'; context: RequestContext }
+			| { type: 'selection'; mode: 'edit'; target: SelectionEditTarget }
+			| { type: 'read-only'; mode: Exclude<Mode, 'edit'>; context: RequestContext };
 		try {
-			context = this.plugin.captureChatContext();
+			if (requestedMode === 'edit') {
+				capturedTarget = this.displayedEditTarget === 'selection'
+					? {
+						type: 'selection',
+						mode: requestedMode,
+						target: this.plugin.captureSelectionEditTarget(),
+					}
+					: {
+						type: 'full-note',
+						mode: requestedMode,
+						context: this.plugin.captureChatContext(),
+					};
+			} else {
+				capturedTarget = {
+					type: 'read-only',
+					mode: requestedMode,
+					context: this.plugin.captureChatContext(),
+				};
+			}
 		} catch (error) {
 			new Notice(`Emend: ${getErrorMessage(error)}`);
+			const draft = this.inputEl?.value ?? '';
+			this.render();
+			if (this.inputEl) {
+				this.inputEl.value = draft;
+			}
 			return;
 		}
 
 		const history = this.toProviderHistory();
-		const mode = this.selectedMode;
+		const mode = capturedTarget.mode;
 		const webSearchMode: WebSearchMode = mode === 'edit'
 			? 'off'
 			: this.webSearchMode ?? 'off';
-		const sourcePath = context.file.path;
+		const sourcePath = capturedTarget.type === 'selection'
+			? capturedTarget.target.snapshot.file.path
+			: capturedTarget.context.file.path;
 		const additionalNotePaths =
 			this.plugin.additionalNotesStore?.list(sourcePath) ?? [];
 		const noteMessages = this.messages;
@@ -657,33 +736,43 @@ export class EmendChatView extends ItemView {
 				noteMessages.filter((message) => message.status === 'ready'),
 			);
 			controller.signal.throwIfAborted();
-			if (mode === 'edit') {
-				const result = await this.plugin.requestChatCompletion({
-					context,
-					mode,
-					prompt,
-					history,
-					additionalNotePaths,
-					callbacks: {
-						onReasoning: (text) => {
-							loadingMessage.reasoning += text;
-							this.scheduleMessageRender(loadingMessage);
-						},
-						onRetry: () => {
-							loadingMessage.reasoning = '';
-							this.scheduleMessageRender(loadingMessage);
-						},
+			if (capturedTarget.type !== 'read-only') {
+				const callbacks = {
+					onReasoning: (text: string) => {
+						loadingMessage.reasoning += text;
+						this.scheduleMessageRender(loadingMessage);
 					},
-					signal: controller.signal,
-				});
+					onRetry: () => {
+						loadingMessage.reasoning = '';
+						this.scheduleMessageRender(loadingMessage);
+					},
+				};
+				const result = capturedTarget.type === 'selection'
+					? await this.plugin.requestSelectionEdit(
+						capturedTarget.target.snapshot,
+						prompt,
+						controller.signal,
+						capturedTarget.target.editor,
+						additionalNotePaths,
+						callbacks,
+					)
+					: await this.plugin.requestChatCompletion({
+						context: capturedTarget.context,
+						mode: capturedTarget.mode,
+						prompt,
+						history,
+						additionalNotePaths,
+						callbacks,
+						signal: controller.signal,
+					});
 				loadingMessage.content = result.applied
 					? `Edit applied — ${result.changeCount} changes tracked. Review in Track Changes.`
 					: 'No changes were needed.';
 				loadingMessage.usage = result.usage;
 			} else {
 				const result = await this.plugin.requestChatCompletion({
-					context,
-					mode,
+					context: capturedTarget.context,
+					mode: capturedTarget.mode,
 					prompt,
 					history,
 					additionalNotePaths,

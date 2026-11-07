@@ -27,6 +27,7 @@ Stages 1–22 are implemented and reviewed. Each stage record contains **Goal**,
 21. [SecretStorage API keys](21-secret-storage.md) — provider credential migration, request resolution, and sanitized persistence.
 22. [Release verification](22-release-verification.md) — deferred roadmap, current guides, final local and real-Obsidian smoke evidence, review, and CI.
 35. [Additional notes as context](35-additional-notes-context.md) — explicit per-target session selections, bounded read-only snapshots, path privacy, guarded edit integration, clean-gate evidence, and real-Obsidian picker/chat/selection-modal verification.
+39. [Easier selected-text editing](39-easier-selection-editing.md) — automatic and explicit composer targets, fail-closed native selection edits from typed and quick-action submissions, concise usage-bearing chat results, unchanged modal behavior, and real-Obsidian evidence.
 
 ## Publication
 
@@ -37,6 +38,6 @@ Stages 1–22 are implemented and reviewed. Each stage record contains **Goal**,
 - [Context management](future-context-management.md): per-provider context/output limits, honest estimated versus provider usage, category progress display, a configurable 75% compression threshold, explicit privacy/cost behavior, no silent full-note truncation, and Modify Selection fallback.
 - [Web search](future-web-search.md): provider-specific capability detection and schemas, explicit opt-in, citations, errors, privacy, and tests, with no background searches or universal-schema assumption.
 - [Provider and context improvements](future-provider-and-context-features.md): completed explicit provider model-list discovery and additional-note context, plus deferred vision support for embedded note images and provider capability metadata.
-- [Discovery and workflow improvements](future-discovery-and-workflows.md): deferred file-structure/title TOCs, linked-document and folder context, selection workflow/range improvements, permission groups, translation, and same-device API-key research.
+- [Discovery and workflow improvements](future-discovery-and-workflows.md): implemented composer Selection targeting linked to Stage 39, plus deferred file-structure/title TOCs, linked-document and folder context, selection range improvements, permission groups, translation, and same-device API-key research.
 
 Unchecked designs authorize no current runtime behavior. Their implementation requires separate reviewed changes and verification. Checked items refer to implemented behavior and their verification records.
