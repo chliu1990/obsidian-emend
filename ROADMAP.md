@@ -6,7 +6,7 @@ Features have no fixed deadlines. Each independently reviewable behavior gets it
 
 ## Now
 
-- Maintain Emend 2.6.0 with bug fixes, security updates, documentation, and provider compatibility.
+- Maintain Emend 2.7.0 with bug fixes, security updates, documentation, and provider compatibility.
 - Additional-note context is current behavior: explicit per-target selections, visible paths, session-only lifetime, bounded read-only snapshots, and consistent path privacy. See [Stage 35](devel_docs/35-additional-notes-context.md).
 - DeepSeek online search is current behavior for read-only Ask, Discuss, and Brainstorm with `deepseek-flash` and `deepseek-v4-pro`: default-off Off/Review/Auto controls, model-directed multi-round search/fetch, bounded calls/content, and result-backed citations. Kimi/custom adapters remain unsupported. See [Stage 36](devel_docs/36-deepseek-online-search.md).
 - Minimal edit ranges are current behavior for full-note Edit and Modify Selection: bounded Unicode word/segment-level Track Changes hunks, typed diagnostics, and exactly one same-provider candidate-validation correction with transient feedback and all-round full-note usage. Conservative Operations validation and terminal provider/stale/write failures are unchanged. See [Stage 37](devel_docs/37-minimal-edit-ranges.md) and issue [#23](https://github.com/chliu1990/obsidian-emend/issues/23).

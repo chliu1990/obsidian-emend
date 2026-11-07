@@ -21,7 +21,7 @@ Emend is a desktop-only Obsidian plugin. Mobile Obsidian is not supported.
    https://github.com/chliu1990/obsidian-emend
    ```
 
-4. Select the latest release, or choose `2.0.0` if BRAT asks for a specific version.
+4. Select the latest release, or choose `2.7.0` if BRAT asks for a specific version.
 5. After BRAT installs Emend, enable **Emend** and **Track Changes** under **Settings → Community plugins**.
 6. Continue with **Enable the plugins** below, then configure a provider in [QUICK_START.md](QUICK_START.md).
 
@@ -29,7 +29,7 @@ For updates, use BRAT’s update check and review the release notes before updat
 
 ## Install from the release ZIP
 
-1. Open the [GitHub releases page](https://github.com/chliu1990/obsidian-emend/releases) and download `emend-2.0.0.zip`.
+1. Open the [GitHub releases page](https://github.com/chliu1990/obsidian-emend/releases) and download `emend-2.7.0.zip`.
 2. Extract the ZIP into `<Vault>/.obsidian/plugins/`. The archive already contains a top-level `emend/` folder.
 3. Confirm that `main.js`, `manifest.json`, and `styles.css` are directly inside `<Vault>/.obsidian/plugins/emend/`.
 4. Continue with **Enable the plugins** below.
