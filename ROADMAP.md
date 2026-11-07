@@ -15,17 +15,21 @@ Features have no fixed deadlines. Each independently reviewable behavior gets it
 
 ## Next
 
-1. **Post-edit change summaries ([#35](https://github.com/chliu1990/obsidian-emend/issues/35)):** concise bullet summaries derived from the final successfully applied Operations, with correct no-op/failure behavior and sanitized persistence; keep model-generated additional suggestions as a separate follow-up rather than adding a hidden provider call or exposing raw edit protocols.
-2. **Vision inputs:** embedded vault images with strict provider, file-type, size, and capability checks, starting with one provider/model family.
-3. **Context accounting:** per-provider capacity/output reserve and labelled category estimates, without compression.
-4. **Automatic context compression:** separate, default-off behavior using the accounting work, with explicit privacy/cost disclosure and safe edit fallbacks.
+The public-launch path is three independent content PRs plus the normal separate release PR, which contains only CHANGELOG and version updates:
+
+1. **Public documentation and promotional launch materials:** refresh the current README, quick start, and installation guides; add a user-facing privacy/write-safety explainer, a supported platform/provider matrix, current screenshots with a short demo, and concise evidence-backed announcement/showcase copy. Keep Community Directory submission a separate explicit decision. Follow [publication and distribution](devel_docs/publication.md).
+2. **Post-edit change summaries ([#35](https://github.com/chliu1990/obsidian-emend/issues/35)):** concise bullet summaries derived from the final successfully applied Operations, with correct no-op/failure behavior and sanitized persistence; keep model-generated additional suggestions as a separate follow-up rather than adding a hidden provider call or exposing raw edit protocols.
+3. **Compact composer controls:** move quick actions and additional-note controls into smaller icon buttons and dropdown menus beside the composer, preserving the existing safeguards: accessible labels, selected-note paths and remove/clear behavior, shared submission paths, pending/disabled states, target-note isolation, and point-of-action privacy details. Keep this as a separate UI PR.
 
 ## Later
 
+- **Vision inputs:** embedded vault images with strict provider, file-type, size, and capability checks, starting with one provider/model family.
+- **Context accounting:** per-provider capacity/output reserve and labelled category estimates, without compression.
+- **Automatic context compression:** separate, default-off behavior using the accounting work, with explicit privacy/cost disclosure and safe edit fallbacks.
 - **File structures and automatic TOCs:** an explicit mode or action for bounded, read-only file-structure/title discovery and TOC generation, without background vault scans or writes to discovered files.
 - **Linked-document context toggle:** default-off inclusion of outgoing and/or reverse-linked documents with visible paths, deduplication, bounded read-only snapshots, and consistent path privacy.
 - **Folder-based document selection:** explicit folder scopes for opening/including documents, with clear recursion rules, bounded results, and no new write path.
-- **Compact composer controls:** move quick actions and additional-note controls into smaller icon buttons and dropdown menus beside the composer, with accessible labels, pending states, and point-of-action privacy details. Keep this as a separate UI PR.
+- **Multiple chat sessions per note ([#41](https://github.com/chliu1990/obsidian-emend/issues/41)):** explicit new, switch, rename, delete, and reorder controls; latest-session-by-default restore; a versioned persistence migration that preserves existing threads; deterministic pending-request and load guards; and sanitized session summaries only on explicit request, with no hidden provider calls.
 - **Insert-only text enrichment:** an explicit addition action that inserts useful new text at a precise anchor without replacement or deletion, using existing Operations and Track Changes targets.
 - **Follow-up edits to unaccepted suggestions ([#37](https://github.com/chliu1990/obsidian-emend/issues/37)):** deterministic merging into existing CriticMarkup without implicit accept/reject, nested or ambiguous markup, or loss of unaffected suggestions; preserve exact accept/reject bytes and Stage 38 structural safeguards.
 - **Track Changes dependency strategy ([#36](https://github.com/chliu1990/obsidian-emend/issues/36)):** evaluate the documented upstream limitations and whether a focused fork or custom renderer is justified, without bundling that research into edit workflow features.
@@ -33,9 +37,10 @@ Features have no fixed deadlines. Each independently reviewable behavior gets it
 - **Independent search and fetch providers ([#32](https://github.com/chliu1990/obsidian-emend/issues/32)):** opt-in third-party retrieval settings, such as Exa, with independent Search/Fetch selection, SecretStorage credentials, bounded results, verifiable citations, and provider-specific privacy review.
 - **Streaming investigation on macOS:** investigate a report that responses appear all at once on Mac, distinguishing provider/SSE delivery from Emend's web-round and final-response buffering, with real Obsidian measurements before changing behavior.
 - **Permission-grouped modes ([#25](https://github.com/chliu1990/obsidian-emend/issues/25)):** evaluate read-only, file-modify, and file-create groups without weakening current permission checks or independent feature PR boundaries.
-- **Bilingual full-note translation ([#12](https://github.com/chliu1990/obsidian-emend/issues/12)):** an explicit language-pair action that creates one suffixed Markdown file, preserves the source, and has safe collision/stale/abort behavior.
+- **Bilingual translation ([#12](https://github.com/chliu1990/obsidian-emend/issues/12)):** an explicit language-pair action with two modes. File mode creates exactly one new target-language Markdown file only after complete validated output, rejects collisions, and never modifies the source or overwrites an existing destination. Inline mode inserts translated blocks below each original paragraph in the active note through the existing guarded Operations/Track Changes path, preserving the originals and relying on native undo and stale checks rather than a new writer. Both modes send complete source text with empty chat history and preserve Markdown, code, links, and existing CriticMarkup.
 - **Same-device API-key sharing research ([#13](https://github.com/chliu1990/obsidian-emend/issues/13)):** default-off OS-backed encrypted sharing with migration confirmation and no plaintext or cross-device claims.
 - **Other-provider online search:** independent Kimi and custom-provider adapters with their own capability contracts, privacy disclosures, citations, tests, and reviews; no universal schema or silent fallback.
+- **Toolchain maintenance:** adopt TypeScript 7 when typescript-eslint peer support exists, migrate to eslint-plugin-obsidianmd 0.4 scanner rules, and upgrade checkout/setup-node/release actions through a workflow-authorized PR. These migrations are not launch blockers unless they become security- or release-breaking, and they must not be bundled with launch features.
 - Additional multimodal file types and provider-specific capabilities.
 - Broader community and contributor workflows when maintenance capacity allows.
 
@@ -45,7 +50,7 @@ Features have no fixed deadlines. Each independently reviewable behavior gets it
 - Hidden telemetry, vault scans, uploads, or context sharing.
 - A universal provider schema for search, vision, or other advanced capabilities.
 - Large PRs that bundle unrelated features.
-- Community Directory submission at this time.
+- Community Directory submission at this time; any submission remains a separate explicit decision.
 
 ## Detailed designs
 
