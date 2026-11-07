@@ -63,14 +63,16 @@ Track: https://github.com/chliu1990/obsidian-emend/issues/25
 - [ ] Design explicit read-only, file-modify, and file-create permission groups without weakening current code-level write contracts.
 - [ ] Keep any file-creation workflow independent from full-note Edit and require guarded destination/collision behavior.
 
-## 7. Bilingual full-note translation — issue #12
+## 7. Bilingual translation — issue #12
 
 Track: https://github.com/chliu1990/obsidian-emend/issues/12
 
 - [ ] Add an explicit translation action with two allowlisted language settings and automatic A-to-B/B-to-A direction selection.
-- [ ] Send complete source text with empty chat history; preserve Markdown, code, links, and existing CriticMarkup.
-- [ ] Create exactly one target-language-suffixed Markdown file only after complete validated output. Never modify the source or overwrite an existing destination.
-- [ ] Cover safe suffix/collision behavior, stale source, aborts, empty/large notes, and isolated real-Obsidian verification.
+- [ ] Support two explicit modes: create a new target-language-suffixed Markdown file, or insert translated blocks below each original paragraph for side-by-side correction.
+- [ ] Send complete source text with empty chat history; preserve Markdown, code, links, and existing CriticMarkup in both modes.
+- [ ] Create exactly one destination only after complete validated output in file mode. Never modify or overwrite the source or an existing destination.
+- [ ] In inline mode, apply translated blocks only through the existing guarded Operations/Track Changes path; do not add a new writer or bypass structural safeguards.
+- [ ] Cover safe suffix/collision behavior, stale source, aborts, empty/large notes, and isolated real-Obsidian verification for both modes.
 
 ## 8. Same-device API-key sharing research — issue #13
 
@@ -106,7 +108,18 @@ Track: https://github.com/chliu1990/obsidian-emend/issues/31
 - [ ] Regenerate from the captured user prompt and permitted context, with pending/abort/stale-target guards and no silent retry.
 - [ ] Delete the pair from both the visible thread and provider history, persist the updated thread atomically, and handle missing/latest/already-deleted states safely.
 
-## 12. Independent search and fetch providers — issue #32
+## 12. Multiple chat sessions per note — issue #41
+
+Track: https://github.com/chliu1990/obsidian-emend/issues/41
+
+- [ ] Add explicit new, switch, rename, delete, and reorder controls for per-note chat sessions; no hidden session creation beyond an initial session for a note without history.
+- [ ] Restore the latest session by default when a note with history is opened, while keeping explicit switching available.
+- [ ] Migrate conversation persistence to a versioned multi-session schema that preserves existing single-thread data and refuses unsupported versions.
+- [ ] Guard pending requests, aborts, stale loads, and target-note switches deterministically so no stale session is loaded or written.
+- [ ] Generate session summaries only on explicit request from sanitized ready messages; never issue hidden provider calls or persist summary request artifacts.
+- [ ] Verify session isolation, delete/reorder behavior, restoration after reload, note rename/delete, and guarded failure paths in real Obsidian.
+
+## 13. Independent search and fetch providers — issue #32
 
 Track: https://github.com/chliu1990/obsidian-emend/issues/32
 
@@ -114,7 +127,7 @@ Track: https://github.com/chliu1990/obsidian-emend/issues/32
 - [ ] Store third-party keys in Obsidian SecretStorage, document recipient paths/costs, and require bounded results and verifiable citations.
 - [ ] Keep provider-specific adapters independent; do not add a universal schema, silent fallback, or web access to editing paths without separate review.
 
-## 13. Streaming investigation on macOS
+## 14. Streaming investigation on macOS
 
 Requested in the maintainer's platform review.
 
@@ -122,7 +135,7 @@ Requested in the maintainer's platform review.
 - [ ] Distinguish ordinary streaming from web-tool-round/final-response buffering and completed-response alignment; do not assume a platform cause before measurement.
 - [ ] Add a focused real-Obsidian macOS verification scenario before changing the current rendering behavior.
 
-## 14. Post-edit change summaries — issue #35
+## 15. Post-edit change summaries — issue #35
 
 Track: https://github.com/chliu1990/obsidian-emend/issues/35
 
@@ -130,7 +143,7 @@ Track: https://github.com/chliu1990/obsidian-emend/issues/35
 - [ ] Handle no-op, comment-only, failed, stale, stopped, and selection outcomes explicitly without exposing rejected candidates or raw correction feedback.
 - [ ] Persist only sanitized ready summaries; keep model-generated additional suggestions in a separate reviewed follow-up with explicit cost/privacy behavior rather than adding a hidden provider call or changing the closed Operations schema.
 
-## 15. Follow-up edits to unaccepted suggestions — issue #37
+## 16. Follow-up edits to unaccepted suggestions — issue #37
 
 Track: https://github.com/chliu1990/obsidian-emend/issues/37
 
@@ -138,7 +151,7 @@ Track: https://github.com/chliu1990/obsidian-emend/issues/37
 - [ ] Define insertion/deletion/substitution/comment merge behavior, repeated anchors, sequential follow-ups, and full-note versus selection scope without nested or ambiguous markup.
 - [ ] Preserve exact accept/reject bytes, stale guards, native undo, minimal ranges, and Stage 38 structural safeguards with real-Obsidian verification.
 
-## 16. Track Changes dependency strategy — issue #36
+## 17. Track Changes dependency strategy — issue #36
 
 Track: https://github.com/chliu1990/obsidian-emend/issues/36
 
@@ -148,6 +161,8 @@ Track: https://github.com/chliu1990/obsidian-emend/issues/36
 
 ## Delivery constraints
 
-- Keep each issue and each of the three maintainer roadmap requests independent; do not bundle discovery, linked notes, folder selection, mode redesign, translation, or credential storage into one PR.
+- Keep every roadmap item and issue in its own focused PR; do not bundle discovery, linked notes, folder selection, mode redesign, translation, multiple sessions, or credential storage into one PR.
+- Keep the public-launch path to three independent PRs: documentation and promotional material, post-edit change summaries, and compact composer controls. Publication preparation does not authorize implementation of deferred features.
+- Keep either translation mode, multiple sessions, and toolchain maintenance out of launch PRs. Toolchain upgrades require their own workflow-authorized PR.
 - Preserve explicit actions, local data control, bounded context, credential safety, and the active-target-only write model.
 - Update current documentation only when a feature is actually implemented and verified.
