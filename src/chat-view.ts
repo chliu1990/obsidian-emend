@@ -38,6 +38,8 @@ import type {
 export const EMEND_CHAT_VIEW_TYPE = 'emend-chat-view';
 export const WEB_SEARCH_DISCLOSURE = 'DeepSeek may generate search queries and fetch URLs from note context. Review asks before each batch; Auto runs directly. Successful search/fetch calls may be billed separately. Queries, URLs, and outcomes are stored locally with ready chats.';
 
+const WEB_CONTENT_BUDGET_WARNING = 'Web retrieval reached its 40,000-character content budget. Some retrieved content was omitted; the answer may be incomplete.';
+
 const MODE_PLACEHOLDERS: Record<Mode, string> = {
 	ask: 'Ask about the active note...',
 	edit: 'Edit the note or selection with CriticMarkup...',
@@ -808,6 +810,9 @@ export class EmendChatView extends ItemView {
 				const unreadPages = getUnreadPageCount(result.activities);
 				if (unreadPages > 0) {
 					loadingMessage.content += `${loadingMessage.content ? '\n\n' : ''}Emend could not read ${unreadPages} requested page${unreadPages === 1 ? '' : 's'}. The answer may be incomplete.`;
+				}
+				if (result.contentBudgetExhausted) {
+					loadingMessage.content += `${loadingMessage.content ? '\n\n' : ''}${WEB_CONTENT_BUDGET_WARNING}`;
 				}
 			}
 			controller.signal.throwIfAborted();

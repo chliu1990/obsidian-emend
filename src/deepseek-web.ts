@@ -90,7 +90,7 @@ export class DeepSeekWebSearchCoordinator {
 		const rounds: WebToolLoopResult['rounds'] = [];
 		const activities: WebActivityRecord[] = [];
 		const sources = new WebSourceRegistry();
-		const budget = { remaining: WEB_CONTENT_BUDGET };
+		const budget = { remaining: WEB_CONTENT_BUDGET, exhausted: false };
 		let continuation = request.continuation ?? [];
 		let reasoning = '';
 		let requestedCalls = 0;
@@ -121,7 +121,14 @@ export class DeepSeekWebSearchCoordinator {
 				if (result.content) {
 					options.callbacks.onEvent({ type: 'content', text: result.content });
 				}
-				return { content: result.content, reasoning, sources: sources.list(), activities, rounds };
+				return {
+					content: result.content,
+					reasoning,
+					sources: sources.list(),
+					activities,
+					contentBudgetExhausted: budget.exhausted,
+					rounds,
+				};
 			}
 
 			const proposed = rawCalls.map(parseWebToolCall);
@@ -155,12 +162,13 @@ export class DeepSeekWebSearchCoordinator {
 	private async executeCall(
 		call: WebToolCall,
 		sources: WebSourceRegistry,
-		budget: { remaining: number },
+		budget: { remaining: number; exhausted: boolean },
 		options: WebSearchRunOptions,
 	): Promise<{ content: string; activity: WebActivityRecord }> {
 		const type = call.name === 'web_search' ? 'search' : 'fetch';
 		const target = call.name === 'web_search' ? call.query : call.url;
 		if (budget.remaining <= 0) {
+			budget.exhausted = true;
 			options.onActivity({ status: 'complete', label: `Skipped (content budget exhausted): ${target}` });
 			return {
 				content: JSON.stringify({ error: 'Web content budget exhausted. Finish from already retrieved evidence.', truncated: true }),
@@ -336,9 +344,10 @@ class WebSourceRegistry {
 
 function takeWebText(
 	value: string,
-	budget: { remaining: number },
+	budget: { remaining: number; exhausted: boolean },
 	limit = budget.remaining,
 ) {
+	budget.exhausted ||= value.length > budget.remaining;
 	const allowed = Math.max(0, Math.min(limit, budget.remaining));
 	const included = value.slice(0, allowed);
 	budget.remaining -= included.length;

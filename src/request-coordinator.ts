@@ -83,6 +83,7 @@ export interface ChatStreamResult extends Omit<StreamResult, 'usage'> {
 	usage: TokenUsage;
 	sources?: WebSource[];
 	activities?: WebActivityRecord[];
+	contentBudgetExhausted: boolean;
 }
 
 export interface EditRequestResult extends EditResult {
@@ -134,6 +135,7 @@ export class ReadOnlyRequestCoordinator {
 				reasoning: result.reasoning,
 				sources: result.sources,
 				activities: result.activities,
+				contentBudgetExhausted: result.contentBudgetExhausted,
 				usage: resolveRoundTokenUsage(result.rounds),
 			};
 		}
@@ -143,7 +145,7 @@ export class ReadOnlyRequestCoordinator {
 			callbacks,
 			submission.signal,
 		);
-		return { ...result, usage: resolveTokenUsage(request, result) };
+		return { ...result, contentBudgetExhausted: false, usage: resolveTokenUsage(request, result) };
 	}
 }
 

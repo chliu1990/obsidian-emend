@@ -1084,6 +1084,7 @@ describe('ReadOnlyRequestCoordinator web routing', () => {
 				reasoning: '',
 				sources: [{ id: 'S1', title: 'Source', url: 'https://example.test/source' }],
 				activities: [],
+				contentBudgetExhausted: true,
 				rounds: [{
 					request,
 					result: {
@@ -1114,6 +1115,7 @@ describe('ReadOnlyRequestCoordinator web routing', () => {
 		expect(webSubmit).toHaveBeenCalledOnce();
 		expect(webSubmit.mock.calls[0]?.[1]).toMatchObject({ mode, maxToolCalls: 7, reviewCalls, onActivity });
 		expect(result.content).toBe('Web answer');
+		expect(result.contentBudgetExhausted).toBe(true);
 		expect(result.sources).toEqual([{ id: 'S1', title: 'Source', url: 'https://example.test/source' }]);
 		expect(result.usage).toEqual({ promptTokens: 10, completionTokens: 2, totalTokens: 12, source: 'provider' });
 	});

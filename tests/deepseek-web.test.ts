@@ -233,6 +233,7 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		const result = await coordinator.submit(aiRequest(), options());
 
 		expect(result.content).toBe('No research needed');
+		expect(result.contentBudgetExhausted).toBe(false);
 		expect(result.sources).toEqual([]);
 		expect(request).toHaveBeenCalledOnce();
 		expect(search).not.toHaveBeenCalled();
@@ -324,6 +325,7 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		const result = await coordinator.submit(aiRequest(), options({ maxToolCalls: 20 }));
 
 		expect(result.content).toBe('Answer from truncated evidence');
+		expect(result.contentBudgetExhausted).toBe(true);
 		expect(search).toHaveBeenCalledTimes(2);
 		expect(search.mock.calls.map((call) => call[0].query)).toEqual(['first-heavy', 'second-heavy']);
 		expect(request).toHaveBeenCalledTimes(3);
@@ -411,6 +413,7 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		expect(searchTool?.role === 'tool' && searchTool.content).toContain('"truncated":true');
 		expect(skippedTool?.role === 'tool' && skippedTool.content).toContain('budget exhausted');
 		expect(result.sources).toHaveLength(1);
+		expect(result.contentBudgetExhausted).toBe(true);
 	});
 
 	it('applies the 12,000-character per-fetch limit while budget remains', async () => {
@@ -421,7 +424,8 @@ describe('DeepSeekWebSearchCoordinator', () => {
 			finalRound(),
 		], search, fetchPage);
 
-		await coordinator.submit(aiRequest(), options());
+		const result = await coordinator.submit(aiRequest(), options());
+		expect(result.contentBudgetExhausted).toBe(false);
 
 		const toolMessage = request.mock.calls[1]?.[0].continuation?.find((message) => message.role === 'tool');
 		const payload = JSON.parse(toolMessage?.role === 'tool' ? toolMessage.content : '{}') as {
@@ -532,7 +536,8 @@ describe('DeepSeek search-first retrieval', () => {
 			finalRound('Search content was sufficient; no fetch is needed.'),
 		], search);
 
-		await coordinator.submit(aiRequest(), options());
+		const result = await coordinator.submit(aiRequest(), options());
+		expect(result.contentBudgetExhausted).toBe(false);
 
 		const toolMessage = request.mock.calls[1]?.[0].continuation?.find(
 			(message) => message.role === 'tool',

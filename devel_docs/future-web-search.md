@@ -2,13 +2,13 @@
 
 ## Status and current baseline
 
-DeepSeek online search is current behavior; this document now covers only unimplemented follow-up work. See [Stage 36](36-deepseek-online-search.md) for the implementation record. Kimi/custom search adapters and additional fetch capabilities are not implemented or approved by this roadmap.
+DeepSeek online search is current behavior; this document now covers only unimplemented follow-up work. See [Stage 36](36-deepseek-online-search.md) for the implementation record and [Stage 40](40-web-content-budget-diagnostics.md) for shared-content-budget diagnostics. Kimi/custom search adapters and additional fetch capabilities are not implemented or approved by this roadmap.
 
 The current DeepSeek implementation provides:
 
 - A per-view composer **Web** control with **Off** (the default), **Review**, and **Auto** for Ask, Discuss, and Brainstorm using `deepseek-flash` or `deepseek-v4-pro`.
 - Model-directed `web_search` and `web_fetch` calls across multiple rounds, with calls in each batch executed sequentially. Review permits editing each proposed query or URL before that batch runs; Auto runs validated calls directly.
-- A default eight-call setting, normalized to 1–20 model-requested calls per submission; a 40,000-character shared retrieved-content budget; and a 12,000-character per-fetch limit.
+- A default eight-call setting, normalized to 1–20 model-requested calls per submission without changing the separate 40,000-character shared retrieved-content budget; a 6,000-character per-Search-result content limit; and a 12,000-character per-fetch limit. Shared-budget omissions add one persistent ready-answer warning, while ordinary per-result/per-fetch truncation alone does not.
 - Stable source IDs and safe citations derived only from actual HTTP(S) retrieval results, plus conversation schema 2 persistence for ready Web badges, sanitized citation metadata, and folded query/URL/outcome activity.
 - Search returns bounded page content before Fetch is needed. Expected Fetch failures become visible unread-page outcomes rather than failing the whole answer; credential/account errors and Search failures remain fatal.
 - Read-only behavior with no note writer, no automatic retry, and no silent fallback to an unsearched answer. Kimi and custom providers and unsupported DeepSeek models produce a clear unsupported-capability error.

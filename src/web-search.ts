@@ -34,6 +34,7 @@ export interface WebToolLoopResult {
 	reasoning: string;
 	sources: WebSource[];
 	activities: WebActivityRecord[];
+	contentBudgetExhausted: boolean;
 	rounds: Array<{ request: AiProviderRequest; result: StreamResult }>;
 }
 

@@ -1926,6 +1926,53 @@ describe('EmendChatView web research', () => {
 		);
 	});
 
+	it('appends one shared-content-budget warning and persists it with the ready answer', async () => {
+		const warning = 'Web retrieval reached its 40,000-character content budget. Some retrieved content was omitted; the answer may be incomplete.';
+		const requestChatCompletion = vi.fn(async (submission: {
+			callbacks: { onContent(text: string): void };
+		}) => {
+			submission.callbacks.onContent('Answer from truncated evidence');
+			return {
+				content: 'Answer from truncated evidence',
+				reasoning: '',
+				contentBudgetExhausted: true,
+				usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4, source: 'provider' as const },
+			};
+		});
+		const persistMessages = vi.fn(async (_notePath: string, _messages: ChatMessage[]) => undefined);
+		const context = {
+			inputEl: { value: 'Research' },
+			isSending: false,
+			isThreadLoading: false,
+			selectedMode: 'ask' as const,
+			webSearchMode: 'auto' as const,
+			messages: [] as ChatMessage[],
+			plugin: {
+				settings: { maxWebToolCalls: 20 },
+				captureChatContext: () => ({ file: { path: 'Note.md' } }),
+				additionalNotesStore: new AdditionalNotesStore(),
+				requestChatCompletion,
+			},
+			toProviderHistory: () => [],
+			persistMessages,
+			render: vi.fn(),
+			scheduleMessageRender: vi.fn(),
+			closed: false,
+			activeController: null,
+			webReviewModal: null,
+		};
+
+		await viewPrototype.submitPrompt.call(context);
+
+		const expectedContent = `Answer from truncated evidence\n\n${warning}`;
+		expect(context.messages[1]?.status).toBe('ready');
+		expect(context.messages[1]?.content).toBe(expectedContent);
+		expect(context.messages[1]?.content.split(warning)).toHaveLength(2);
+		const finalSave = persistMessages.mock.calls.at(-1)?.[1];
+		expect(finalSave?.[1]?.content).toBe(expectedContent);
+		expect(finalSave?.[1]?.content.split(warning)).toHaveLength(2);
+	});
+
 	it('does not submit web options in Edit even when Auto is selected', async () => {
 		const requestChatCompletion = vi.fn(async (_submission: unknown) => ({
 			applied: false,
