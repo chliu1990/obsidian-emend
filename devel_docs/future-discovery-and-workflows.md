@@ -159,9 +159,21 @@ Track: https://github.com/chliu1990/obsidian-emend/issues/36
 - [ ] Evaluate whether a focused fork or custom renderer is justified by maintenance cost, compatibility, security, and user value. This is research only, not approval for a renderer implementation.
 - [ ] Keep any resulting fork/renderer design independent from post-edit summaries, follow-up edit merging, and other workflow PRs.
 
+## 18. Review-change attribution — issue #44
+
+Track: https://github.com/chliu1990/obsidian-emend/issues/44
+
+- [ ] Label Emend-generated review comments and, where the representation permits, modifications so Track Changes shows Emend instead of a default author.
+- [ ] Identify Emend-generated changes deterministically from the applied Operations and captured source, not from prose, provider metadata, or a hidden marker added to user text. Apply one rule across full-note Edit, composer Selection, and Modify Selection.
+- [ ] Investigate Track Changes author-presentation constraints first: what the current dependency accepts, renders, and preserves for comments and modifications, and what survives accept/reject and round-trip edits. Record the findings before choosing a representation.
+- [ ] Preserve exact CriticMarkup accept/reject bytes, current parsing and validation, sequential edits against prior annotated sources, and Stage 38 structural safeguards. Do not add nested markup.
+- [ ] Keep Track Changes as the only review UI and do not change accept/reject semantics or add an in-plugin review surface.
+- [ ] Treat any later user discussion or guideline extension as a separate design with explicit user action, no hidden provider calls, and no bundling into attribution.
+
 ## Delivery constraints
 
-- Keep every roadmap item and issue in its own focused PR; do not bundle discovery, linked notes, folder selection, mode redesign, translation, multiple sessions, or credential storage into one PR.
+- Keep every roadmap item and issue in its own focused PR; do not bundle discovery, linked notes, folder selection, mode redesign, translation, multiple sessions, review-change attribution, or credential storage into one PR.
+- Keep review-change attribution independent from post-edit change summaries, follow-up-edit merging, Track Changes dependency research, and other workflow PRs; attribution must not depend on or block those changes.
 - Keep the public-launch path to three independent content PRs plus the normal separate release PR: documentation and promotional material, post-edit change summaries, and compact composer controls. Publication preparation does not authorize implementation of deferred features.
 - Keep either translation mode, multiple sessions, and toolchain maintenance out of launch PRs. Toolchain upgrades require their own workflow-authorized PR and are not launch prerequisites unless security- or release-breaking.
 - Preserve explicit actions, local data control, bounded context, credential safety, and the active-target-only write model.
