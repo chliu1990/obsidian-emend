@@ -303,6 +303,91 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		expect(request).toHaveBeenCalledOnce();
 	});
 
+	it('allows two content-heavy searches at the 20-call limit and truncates the second shared-budget round', async () => {
+		const search = vi.fn(async (call: Extract<WebToolCall, { name: 'web_search' }>) => {
+			const round = call.query === 'first-heavy' ? 1 : 2;
+			return Array.from({ length: 5 }, (_, index) => ({
+				...parsedSearchResult,
+				title: `Round ${round} result ${index + 1}`,
+				url: `https://example.test/round-${round}/result-${index + 1}`,
+				snippet: '',
+				summary: '',
+				content: `${round}-${index}-${'x'.repeat(5996)}`,
+			}));
+		});
+		const { coordinator, request } = coordinatorWith([
+			toolRound([{ id: 'call-1', name: 'web_search', arguments: '{"query":"first-heavy"}' }]),
+			toolRound([{ id: 'call-2', name: 'web_search', arguments: '{"query":"second-heavy"}' }]),
+			finalRound('Answer from truncated evidence'),
+		], search);
+
+		const result = await coordinator.submit(aiRequest(), options({ maxToolCalls: 20 }));
+
+		expect(result.content).toBe('Answer from truncated evidence');
+		expect(search).toHaveBeenCalledTimes(2);
+		expect(search.mock.calls.map((call) => call[0].query)).toEqual(['first-heavy', 'second-heavy']);
+		expect(request).toHaveBeenCalledTimes(3);
+		expect(result.sources).toHaveLength(10);
+		const toolMessages = request.mock.calls[2]?.[0].continuation?.filter(
+			(message) => message.role === 'tool',
+		) ?? [];
+		expect(toolMessages).toHaveLength(2);
+		const payloads = toolMessages.map((message) => JSON.parse(
+			message.role === 'tool' ? message.content : '{}',
+		) as {
+			results: Array<{ content: string; contentTruncated: boolean }>;
+			truncated: boolean;
+		});
+		expect(payloads[0]?.truncated).toBe(false);
+		expect(payloads[0]?.results.map((entry) => entry.content)).toHaveLength(5);
+		expect(payloads[0]?.results.every((entry) => entry.content.length === 6000)).toBe(true);
+		expect(payloads[1]?.truncated).toBe(true);
+		expect(payloads[1]?.results.map((entry) => entry.content.length)).toEqual([6000, 4005, 5, 5, 5]);
+		expect(payloads[1]?.results.map((entry) => entry.contentTruncated)).toEqual([
+			false, true, true, true, true,
+		]);
+		expect(payloads[1]?.results.slice(1).every((entry) => entry.content.endsWith('[...]'))).toBe(true);
+	});
+
+	it('allows exactly 20 proposed calls', async () => {
+		const calls = Array.from({ length: 20 }, (_, index) => ({
+			id: `call-${index + 1}`,
+			name: 'web_search',
+			arguments: JSON.stringify({ query: `query ${index + 1}` }),
+		}));
+		const { coordinator, request, search } = coordinatorWith([
+			toolRound(calls),
+			finalRound('Twenty calls completed'),
+		]);
+
+		const result = await coordinator.submit(aiRequest(), options({ maxToolCalls: 20 }));
+
+		expect(result.content).toBe('Twenty calls completed');
+		expect(search).toHaveBeenCalledTimes(20);
+		expect(result.activities).toHaveLength(20);
+		expect(request).toHaveBeenCalledTimes(2);
+	});
+
+	it('rejects the 21st proposed call without executing its final batch', async () => {
+		const firstBatch = Array.from({ length: 20 }, (_, index) => ({
+			id: `call-${index + 1}`,
+			name: 'web_search',
+			arguments: JSON.stringify({ query: `query ${index + 1}` }),
+		}));
+		const { coordinator, request, search } = coordinatorWith([
+			toolRound(firstBatch),
+			toolRound([{ id: 'call-21', name: 'web_search', arguments: '{"query":"over limit"}' }]),
+			finalRound('Must not be returned'),
+		]);
+
+		await expect(coordinator.submit(aiRequest(), options({ maxToolCalls: 20 }))).rejects.toThrow(
+			'The model exceeded the 20-call web tool call limit. No calls in the final batch were executed.',
+		);
+		expect(search).toHaveBeenCalledTimes(20);
+		expect(search.mock.calls.map((call) => call[0].query)).not.toContain('over limit');
+		expect(request).toHaveBeenCalledTimes(2);
+	});
+
 	it('caps fetch content, marks truncation, and skips retrieval after the shared budget is exhausted', async () => {
 		const huge = 'x'.repeat(40001);
 		const search = vi.fn(async () => [{ ...parsedSearchResult, snippet: huge, summary: '' }]);
