@@ -2,54 +2,57 @@
 
 ## Status and current baseline
 
-DeepSeek online search is current behavior; this document now covers only unimplemented follow-up work. See [Stage 36](36-deepseek-online-search.md) for the implementation record and [Stage 40](40-web-content-budget-diagnostics.md) for shared-content-budget diagnostics. Kimi/custom search adapters and additional fetch capabilities are not implemented or approved by this roadmap.
+DeepSeek online search and per-query AI extraction are current behavior. See [Stage 36](36-deepseek-online-search.md) for the provider integration and [Stage 40](40-web-content-budget-diagnostics.md) for the reader, budget, diagnostics, and verification record. This document covers only unimplemented follow-up work; Kimi/custom search adapters and additional retrieval capabilities are not implemented or approved by this roadmap.
 
 The current DeepSeek implementation provides:
 
 - A per-view composer **Web** control with **Off** (the default), **Review**, and **Auto** for Ask, Discuss, and Brainstorm using `deepseek-flash` or `deepseek-v4-pro`.
-- Model-directed `web_search` and `web_fetch` calls across multiple rounds, with calls in each batch executed sequentially. Review permits editing each proposed query or URL before that batch runs; Auto runs validated calls directly.
-- A default eight-call setting, normalized to 1–20 model-requested calls per submission without changing the separate 40,000-character shared retrieved-content budget; a 6,000-character per-Search-result content limit; and a 12,000-character per-fetch limit. Shared-budget omissions add one persistent ready-answer warning, while ordinary per-result/per-fetch truncation alone does not.
-- Stable source IDs and safe citations derived only from actual HTTP(S) retrieval results, plus conversation schema 2 persistence for ready Web badges, sanitized citation metadata, and folded query/URL/outcome activity.
-- Search returns bounded page content before Fetch is needed. Expected Fetch failures become visible unread-page outcomes rather than failing the whole answer; credential/account errors and Search failures remain fatal.
-- Read-only behavior with no note writer, no automatic retry, and no silent fallback to an unsearched answer. Kimi and custom providers and unsupported DeepSeek models produce a clear unsupported-capability error.
-- Disclosure that model-generated arguments can contain note-derived text and that successful DeepSeek search/fetch calls may be billed separately.
+- Model-directed `web_search` and `web_fetch` calls across multiple rounds, with calls in each batch executed sequentially and a required extraction goal per call. Review permits editing each query/URL and goal before that batch runs; Auto runs validated calls directly.
+- A default eight-call setting normalized to 1–20 model-requested calls. A separate per-call serialized-output cap defaults to 20,000 characters and normalizes to 1,000–100,000; `N` calls contribute at most `C × N` characters with no independent total cap.
+- Exactly one bounded AI reader for every readable Search/Fetch result. The reader receives the current question, extraction goal, target, and source catalog, then uses local literal grep/ranged-read tools for at most 6 model rounds, 4 local calls per round, 16 local calls total, and 4,000 characters per local result. It has no note context, chat history, instructions/skills, additional notes, vault access, or network tools.
+- Closed source-grounded extracted facts and verbatim evidence for the main model, which never receives raw retrieval. Stable citations derive only from successfully represented actual HTTP(S) results. Reader reasoning, payloads, and evidence extracts remain transient.
+- Distinct unread-Fetch and aggregate extraction-failure warnings. Non-abort reader failures never fall back to raw content; aborts cancel the whole submission, and fatal Search/Fetch status behavior is preserved.
+- All-round main+reader provider-versus-estimated usage, possible separate retrieval/reader charges, and schema-2 persistence limited to ready Web badges, sanitized citation metadata, folded activity, main reasoning, and usage.
+- Read-only behavior with no note writer, automatic retry, or silent fallback to an unsearched answer. Kimi/custom providers and unsupported DeepSeek models produce a clear unsupported-capability error.
 
-Changing the control, opening a note, loading a thread, or rendering citations performs no retrieval. Raw Search/Fetch arguments, tool results, and retrieved content are not persisted; only sanitized query/URL/outcome metadata is retained locally for folded review. Retrieved text remains untrusted external data and never becomes a vault write, instruction, or skill.
+Changing the control, opening a note, loading a thread, or rendering citations performs no retrieval. Retrieved text remains untrusted external data and never becomes a vault write, instruction, or skill.
 
 ## Deferred provider adapters
 
-Kimi and custom providers require independent, source-backed capability declarations, request/response parsers, privacy review, and tests. An OpenAI-compatible chat-completions endpoint does not imply a common web-search schema. Never copy DeepSeek's `tools`, `tool_choice`, retrieval endpoints, citation events, or response shapes into another provider's request.
+Kimi and custom providers require independent, source-backed capability declarations, request/response parsers, privacy review, and tests. An OpenAI-compatible chat-completions endpoint does not imply a common web-search schema. Never copy DeepSeek's tools, tool choice, retrieval endpoints, reader protocol, citation events, or response shapes into another provider's request.
 
 A future adapter must define:
 
 - The exact supported provider/model combinations and whether retrieval is server-side, a client tool loop, or unsupported.
 - Provider-specific request fields, streaming events, result parsing, and credential-safe errors.
-- Every retrieval recipient and any separate third-party service or charge.
+- Every retrieval and extraction recipient and any separate third-party service or charge.
 - Local declarative capability detection, or detection only during an explicit opted-in submission. Background discovery, speculative probes, and periodic refreshes remain prohibited.
 
 Unknown or unsupported capabilities must produce a clear error rather than a best-effort shared payload or an ordinary unsearched response. A deliberate later submission with **Web: Off** is a separate user choice.
 
-## Deferred retrieval enhancements
+## Deferred retrieval and measurement enhancements
 
-Changes to page extraction, pagination, source filtering, retrieval budgets, or other fetch behavior require their own design, privacy analysis, and verification. Stage 36 does not implement those enhancements, a general browsing agent, a universal provider tool schema, or configurable third-party retrieval services.
+Changes to page extraction, pagination, source filtering, reader behavior, retrieval budgets, or other fetch behavior require their own design, privacy analysis, and verification. Current per-call caps do not reserve provider context capacity; the separate context-management design remains responsible for actual assembled-request accounting and output reserve.
 
-Any follow-up must preserve sequential validated calls, explicit opt-in, Stop/abort behavior, bounded content, credential redaction, and the absence of automatic retries or fallback providers. Search remains unavailable to Edit, quick actions, and Modify Selection unless a separate editing-specific design explicitly changes that boundary.
+`measureWebContent` currently measures UTF-16 characters, not tokens. A future exact-token cap requires a deliberately compatible tokenizer, a visible token-denominated setting/migration, and tests for the selected model. Unknown model tokenizers must not silently borrow another encoding, and the existing character-based usage estimate must not be presented as exact tokenization.
+
+Any follow-up must preserve sequential validated calls, explicit opt-in, current-question/goal privacy, Stop/abort behavior, bounded content and reader loops, credential redaction, and the absence of automatic retries, raw fallbacks, or fallback providers. Search remains unavailable to Edit, quick actions, and Modify Selection unless a separate editing-specific design explicitly changes that boundary.
 
 ## Privacy, citations, and persistence requirements for follow-ups
 
-Search can disclose note-derived text through model-generated queries and fetch URLs, and a provider may involve a separate retrieval service. Each adapter must disclose its actual recipient path and possible separate charges before calls run. Model rounds continue to send the ordinary captured note context, recent ready history, selected additional-note snapshots, and instructions/skills only after submission.
+Search can disclose note-derived text through model-generated queries and fetch URLs, and a provider may involve separate retrieval and reader services. Each adapter must disclose its actual recipient paths and possible charges before calls run. Main model rounds continue to send ordinary captured context only after submission; extraction readers must not inherit note context, history, instructions/skills, additional notes, or vault access by default.
 
-Citations must come only from actual provider/tool results with normalized credentialess HTTP(S) URLs. Never invent a URL, treat a model-written link as retrieved evidence, or execute retrieved markup or instructions. Preserve safe Obsidian DOM rendering, the no-`innerHTML` rule, stable source IDs, and citation sanitization on load.
+Citations must come only from actual provider/tool results with normalized credentialess HTTP(S) URLs and successful source representation. Never invent a URL, treat a model-written link as retrieved evidence, or execute retrieved markup or instructions. Preserve safe Obsidian DOM rendering, the no-`innerHTML` rule, stable source IDs, and citation sanitization on load.
 
-Ready messages may persist only explicitly whitelisted Web badges, citation metadata, and sanitized query/URL/outcome activity. Do not persist credentials, raw request bodies/tool arguments/results, retrieved content, note snapshots, or transient activity. Preserve schema-version protection, malformed-file backups, and existing thread retention when notes are deleted.
+Ready messages may persist only explicitly whitelisted Web badges, citation metadata, sanitized query/URL/outcome activity, main reasoning, and usage. Do not persist credentials, raw request bodies/tool arguments/results, retrieved content, reader payloads/evidence/reasoning, note snapshots, or transient activity. Preserve schema-version protection, malformed-file backups, and existing thread retention when notes are deleted.
 
 ## Required future tests
 
 - Provider capability: each supported/unsupported provider-model combination, no shared-schema assumption, no background detection, and no silent unsearched fallback.
-- Opt-in/privacy: zero network activity while off or while opening/reloading chat; disclosed note-derived arguments and retrieval recipients; no secret/header leakage; no search during Edit, quick actions, or Modify Selection.
-- Streaming and retrieval: provider-specific events, sequential calls, Stop/abort, malformed events, HTTP/search errors, bounded content, no automatic retry, and unchanged note bytes.
-- Citations and state: only returned sources render, malformed/missing URLs are rejected, safe schema round trips, absent-citation behavior, and transient/error/stopped states remain unpersisted.
-- Integration: real Obsidian with CORS-enabled local provider/search mocks for every new adapter before it is described as verified. Do not make external or paid verification calls without explicit authorization.
+- Opt-in/privacy: zero network activity while off or while opening/reloading chat; disclosed note-derived arguments, current-question reader sharing, retrieval/reader recipients, and charges; no secret/header leakage; no search during Edit, quick actions, or Modify Selection.
+- Streaming and retrieval: provider-specific events, sequential calls, Stop/abort, malformed events, HTTP/search errors, per-call and reader bounds, grounded output, no automatic retry/raw fallback, and unchanged note bytes.
+- Citations and state: only successfully represented returned sources render, malformed/missing URLs are rejected, safe schema round trips, absent-citation behavior, and transient/error/stopped states remain unpersisted.
+- Integration: real Obsidian with CORS-enabled local provider/search/reader mocks for every new adapter before it is described as verified. Do not make external or paid verification calls without explicit authorization.
 
 ## Non-goals
 
