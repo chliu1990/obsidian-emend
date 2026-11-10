@@ -12,7 +12,7 @@ This revises open PR #47 before merge. Later feature branches remain paused unti
 - Invoke a separate AI extraction reader for every Search/Fetch call, regardless of raw result size; the main answering model receives no raw retrieved content.
 - Give the reader a concise, reviewable `extractionGoal` supplied with the main model's Search/Fetch call so it extracts goal-relevant information rather than producing a generic summary.
 - Let the reader inspect full temporary retrieval content through bounded local grep/read tools rather than receiving one giant prompt or truncating unread content.
-- Return compact, source-labelled extracted facts and verbatim evidence whose complete serialized tool response is within the per-call cap.
+- Return compact, source-labelled, goal-relevant verbatim evidence without intermediate AI-generated facts, whose complete serialized tool response is within the per-call cap.
 - Preserve actual-result citations, sequential retrieval, Review/Auto behavior, Stop/abort, sanitized errors, read-only notes, and bounded provider activity.
 - Include every reader model round in usage accounting and disclose possible extra provider charges.
 - Preserve schema-2 conversation data and persist only existing sanitized ready-message content, citations, and activity metadata.
@@ -60,11 +60,11 @@ Add a per-provider-independent setting, tentatively named `maxWebContentCharacte
 - The current unit is explicitly **characters**, not tokens. Isolate all cap checks and output-length calculations behind one measurement interface that returns both the value and its unit. Do not present the existing `ceil(characters / 4)` usage estimate as an exact tokenizer.
 - When a compatible local tokenizer is deliberately added, use exact token length for this boundary and expose a token-denominated setting/migration with the unit visible in settings and diagnostics. Unknown model tokenizers must not silently borrow another model's encoding. This PR implements only the token-ready interface and character fallback, not a tokenizer dependency.
 - Apply the same cap to Search and Fetch.
-- The cap covers the complete serialized tool message returned to the main model, including source IDs, titles, URLs, extracted facts/evidence, JSON punctuation, and diagnostic fields—not just extracted prose. It is a maximum, not a target length.
+- The cap covers the complete serialized tool message returned to the main model, including source IDs, titles, URLs, verbatim evidence, JSON punctuation, and diagnostic fields. It is a maximum, not a target length.
 - Remove the existing shared `WEB_CONTENT_BUDGET`, shared-pool skip behavior, and its `contentBudgetExhausted` warning.
 - Remove the existing fixed 6,000-character Search-result and 12,000-character Fetch hard truncation. Raw content is inspected only through the reader and is never sliced to fit or passed directly to the main answering model.
 
-For per-call cap `C` and `N` executed Search/Fetch calls, retrieval tool messages contribute at most `C × N` characters. The configured worst case is `C × maxToolCalls`; there is no separate total-cap input. The existing 1–20 model-requested call limit and atomic over-limit batch rejection remain unchanged.
+For per-call cap `C` and `N` executed Search/Fetch calls, retrieval tool messages contribute at most `C × N` characters. The configured worst case is `C × maxToolCalls`; there is no separate total-cap input. The existing 1–20 normalization caps executed Search/Fetch calls, with partial execution, skipped excess calls, and a forced no-tools answer as specified below.
 
 The planned context-accounting PR remains responsible for checking each actual assembled provider request against the explicitly configured provider context window and output reserve. A 1M-token window may be configured by the user but must not be inferred from a model name.
 
@@ -74,7 +74,7 @@ The planned context-accounting PR remains responsible for checking each actual a
 2. Calls execute sequentially. Raw Search/Fetch responses are parsed and held only for the current call/submission.
 3. Emend creates the canonical source catalog without truncating content and invokes one reader for every call. The main answering model never receives the raw payload.
 4. A valid reader response becomes the bounded tool payload and registers only the sources represented successfully in that response. Activities identify extraction and its outcome.
-5. The main loop continues with the extracted-facts tool response. Terminal answering behavior remains unchanged.
+5. The main loop continues with the verbatim-evidence tool response and synthesizes the final answer from those extracts and actual source metadata.
 
 Search and Fetch error behavior that is currently fatal remains fatal before extraction. Expected Fetch failures still produce explicit unread outcomes. Stop aborts retrieval, reader, and answering requests.
 
@@ -122,15 +122,16 @@ The reader's terminal response must be a bare closed-JSON object with exactly:
 
 With `outcome: 'evidence'`, `results` is nonempty and each item contains only:
 
-- `sourceId` from the supplied catalog;
-- `extractedFacts`: a nonempty array of concise, goal-relevant factual statements supported by that source; and
-- `evidence`: a nonempty array of short verbatim supporting extracts from that source's canonical text.
+- `sourceId` from the supplied catalog; and
+- `evidence`: a nonempty array of short, goal-relevant verbatim extracts from that source's canonical text.
+
+There is no `extractedFacts` field and no AI-generated paraphrase, factual statement, or link-label description in the reader result. The reader selects evidence only; it does not summarize it. Any additional result field is invalid.
 
 With `outcome: 'no_relevant_evidence'`, `results` must be empty and Emend returns an explicit no-relevant-evidence tool outcome rather than registering sources from that reader response.
 
-Emend validates the closed shape and outcome consistency, unique known IDs, nonempty extracted-fact/evidence arrays and strings, verbatim occurrence of every extract in the corresponding canonical source, and a complete serialized main-loop tool payload within the user cap. Missing, malformed, invented, duplicated, ungrounded, or over-cap output fails closed as unread; Emend never truncates it.
+Emend validates the closed shape and outcome consistency, unique known IDs, nonempty evidence arrays and strings, verbatim occurrence of every extract in the corresponding canonical source, and a complete serialized main-loop tool payload within the user cap. Missing, malformed, invented, duplicated, ungrounded, or over-cap output fails closed as unread; Emend never truncates it.
 
-The extracted payload includes the reader outcome and labels extracted facts as AI-extracted, untrusted external evidence. The main answering model continues to cite only supplied source IDs. Actual normalized source URLs remain the basis of citations; reader-written URLs do not create sources.
+The extracted payload includes the reader outcome and labels the evidence as untrusted external source text. The main answering model synthesizes the final answer only from these verbatim extracts and actual source metadata, continuing to cite only supplied source IDs. Actual normalized source URLs remain the basis of citations; reader-written URLs do not create sources. This removes the intermediate layer of AI-generated facts that could drift away from a genuine but unrelated quote; final-answer claims must still be grounded in the supplied evidence.
 
 Reader reasoning is used only for transient request/response usage accounting. It is not appended to main-answer reasoning, displayed, or persisted, because it may contain retrieved content or evidence extracts.
 

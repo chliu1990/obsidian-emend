@@ -19,7 +19,7 @@
 - The current unit is characters, not tokens. Keep measurement behind the Task 1 interface; do not add a tokenizer dependency or represent `ceil(characters / 4)` as exact tokenization.
 - Every Web call requires a nonempty reviewable `extractionGoal`. The reader receives the current ready user question and that goal, but never the note snapshot/path, earlier chat history, instructions/skills, additional notes, or vault content.
 - Reader tools are local-only, closed, validated literal grep/ranged read operations. Limit each reader to **6 model rounds**, **4 local calls per round**, **16 local calls total**, and **4,000 characters per local tool result**.
-- Reader output is closed JSON with source IDs, nonempty extracted-fact/evidence arrays, and verbatim evidence from canonical source text. Invalid/over-cap output becomes `extraction_failed`, never a truncated result.
+- Reader output is closed JSON with source IDs and nonempty arrays of goal-relevant verbatim evidence from canonical source text; there is no `extractedFacts` or other AI-generated factual/paraphrase field. Invalid/over-cap output becomes `extraction_failed`, never a truncated result.
 - Every abort cancels the whole submission. Non-abort reader failures allow a degraded answer from other evidence with one deterministic warning. Existing fatal Search and Fetch HTTP 400/401/402/413 behavior remains unchanged.
 - Full-note and selection writers, note bytes, pending locks, SecretStorage, provider capability checks, sequential retrieval, and the 1–20 main Web call limit remain unchanged. No background requests, real providers, telemetry, raw retrieval/reader persistence, or reader-reasoning display/persistence.
 - Manual verification uses only ignored `test_vault/`, synthetic content, loopback mocks, and dummy credentials. Do not merge, tag, publish a release, or resume another feature without user authorization.
@@ -233,6 +233,33 @@
 - [ ] **Step 5: Run real-Obsidian over-limit verification and commit**
   - On both supported models exercise Auto and Review batches that partially execute and skip excess calls, including a 20/21 boundary and no-evidence completion. Assert exact request order, no tools in the final request, skipped activity/warning persistence, citations/usage, unchanged notes, and Stop/retry.
   - Run `npm ci && npm test && npm run lint && npm run build && git diff --check`; record final evidence in Stage 40 and commit with `git commit -m "feat: answer after web call limits"`.
+
+### Task 8: Verbatim-only Reader Output
+
+**Files:**
+- Modify: `src/web-extraction.ts`, `src/web-extraction-reader.ts`, `src/deepseek-web.ts`, `AGENTS.md`, `IMPLEMENTATION_PLAN.md`, `README.md`, `devel_docs/36-deepseek-online-search.md`, `devel_docs/40-web-content-budget-diagnostics.md`, `test_vault/emend-web-verify/`
+- Test: `tests/web-extraction.test.ts`, `tests/web-extraction-reader.test.ts`, `tests/deepseek-web.test.ts`, `tests/conversation-store.test.ts`
+
+**Interfaces:**
+- `WebExtractionResult` becomes `{sourceId: string; evidence: string[]}`. Remove `extractedFacts` and every other AI-generated factual/paraphrase/link-label field from reader results and mapped payloads.
+- The reader selects goal-relevant verbatim passages only. The main answering model synthesizes from those passages and actual source metadata; no intermediate AI-generated facts are accepted.
+
+- [ ] **Step 1: Write failing grounding tests**
+  - Require closed `{sourceId, evidence}` results with nonempty verbatim evidence and reject `extractedFacts`, summaries, wrong link labels, and every extra field, even when the supplied quote is genuine but unrelated.
+  - Assert mapped payloads contain only source metadata and verbatim evidence, with exact-cap behavior and no canonical-body leakage. Update reader prompt/terminal fixtures to require extraction-only selection without paraphrase.
+  - Assert main continuations and final source registration contain no AI-generated facts; no-relevant-evidence, failure warnings, usage, over-limit completion, and persistence remain unchanged.
+- [ ] **Step 2: Verify RED**
+  - Run: `npm test -- tests/web-extraction.test.ts tests/web-extraction-reader.test.ts tests/deepseek-web.test.ts tests/conversation-store.test.ts`
+  - Expected: existing extractedFacts fixtures fail the new closed schema and reader prompt/payload assertions.
+- [ ] **Step 3: Implement verbatim-only parsing, prompting, and payloads**
+  - Remove the field from the TypeScript result, closed parser, and payload builder. Require nonempty verbatim evidence arrays and reject every additional key. Change the reader system prompt to select relevant verbatim passages without summarizing or generating facts.
+  - Update main-model guidance to synthesize only from supplied evidence and actual metadata. Preserve all caps, rounds, source staging, warnings, aborts, and no-raw fallback.
+- [ ] **Step 4: Verify GREEN and update current docs**
+  - Run focused tests and `npm test && npm run lint && npm run build && git diff --check`.
+  - Remove extracted-facts contracts from current guides and explain verbatim-only grounding, including that final-answer claims must still be supported by the supplied evidence.
+- [ ] **Step 5: Run real-Obsidian drift verification and commit**
+  - On both supported models exercise accurate extraction and a reader attempting to return an invented fact/wrong link label alongside a genuine quote. Assert rejection without the invented text reaching the main model, then successful verbatim-only retry and final synthesis with correct metadata/citations.
+  - Run `npm ci && npm test && npm run lint && npm run build && git diff --check`; record evidence in Stage 40 and commit with `git commit -m "fix: require verbatim web extraction"`.
 
 ## Completion and Review
 
