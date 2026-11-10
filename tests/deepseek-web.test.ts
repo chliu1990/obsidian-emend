@@ -452,7 +452,13 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		}]);
 		expect(result.activities).toEqual([
 			{ type: 'search', target: 'success', status: 'completed' },
-			{ type: 'search', target: 'failure', status: 'failed' },
+			{
+				type: 'search',
+				target: 'failure',
+				status: 'failed',
+				failureKind: 'extraction',
+				failureReason: 'reader',
+			},
 			{ type: 'search', target: 'no-relevant', status: 'completed' },
 		]);
 		const toolMessages = request.mock.calls[1]?.[0].continuation?.filter(
@@ -692,6 +698,8 @@ describe('DeepSeekWebSearchCoordinator', () => {
 			type: 'search',
 			target: 'format-failure',
 			status: 'failed',
+			failureKind: 'extraction',
+			failureReason: 'reader',
 		}]);
 		const mainRequests = request.mock.calls
 			.map((call) => call[0])
@@ -1089,8 +1097,8 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		expect(request).toHaveBeenCalledOnce();
 	});
 
-	it('propagates retrieval failure without extraction, another model round, or retry', async () => {
-		const failure = new Error('Search unavailable');
+	it('propagates a fatal Search HTTP 400 without extraction, another model round, or retry', async () => {
+		const failure = Object.assign(new Error('HTTP 400'), { status: 400 });
 		const search = vi.fn(async () => { throw failure; });
 		const reader = successfulReader();
 		const { coordinator, request } = coordinatorWith([
@@ -1246,11 +1254,12 @@ describe('DeepSeek web follow-up behavior', () => {
 			target: 'https://example.test/extracted',
 			status: 'failed',
 			failureKind: 'extraction',
+			failureReason: 'reader',
 		}]);
 	});
 
 	it('returns fetch failures as unread outcomes without invoking the reader', async () => {
-		const failure = new Error('HTTP 403 from GitHub');
+		const failure = Object.assign(new Error('HTTP 403 from GitHub'), { status: 403 });
 		const fetchPage = vi.fn(async () => { throw failure; });
 		const reader = successfulReader();
 		const { coordinator, request } = coordinatorWith([
@@ -1263,10 +1272,12 @@ describe('DeepSeek web follow-up behavior', () => {
 		expect(result.content).toContain('could not be read');
 		expect(result.failedExtractions).toBe(0);
 		expect(result.sources).toEqual([]);
+		expect(fetchPage).toHaveBeenCalledOnce();
 		expect(result.activities).toEqual([{
 			type: 'fetch',
 			target: 'https://github.com/example/repo',
 			status: 'failed',
+			failureReason: 'http',
 		}]);
 		expect(reader.extract).not.toHaveBeenCalled();
 		const toolMessage = request.mock.calls[1]?.[0].continuation?.find((message) => message.role === 'tool');
@@ -1287,7 +1298,13 @@ describe('DeepSeek web follow-up behavior', () => {
 		const result = await coordinator.submit(aiRequest(), options({ maxContentCharactersPerCall: 1000 }));
 
 		expect(result.failedExtractions).toBe(0);
-		expect(result.activities).toEqual([{ type: 'fetch', target: longUrl, status: 'failed' }]);
+		expect(fetchPage).toHaveBeenCalledTimes(2);
+		expect(result.activities).toEqual([{
+			type: 'fetch',
+			target: longUrl,
+			status: 'failed',
+			failureReason: 'network',
+		}]);
 		expect(reader.extract).not.toHaveBeenCalled();
 		const toolMessage = request.mock.calls[1]?.[0].continuation?.find((message) => message.role === 'tool');
 		const content = toolMessage?.role === 'tool' ? toolMessage.content : '';
@@ -1307,6 +1324,7 @@ describe('DeepSeek web follow-up behavior', () => {
 		], vi.fn(async () => []), fetchPage, reader);
 
 		await expect(coordinator.submit(aiRequest(), options())).rejects.toBe(failure);
+		expect(fetchPage).toHaveBeenCalledOnce();
 		expect(reader.extract).not.toHaveBeenCalled();
 		expect(request).toHaveBeenCalledOnce();
 	});
@@ -1322,10 +1340,12 @@ describe('DeepSeek web follow-up behavior', () => {
 		const result = await coordinator.submit(aiRequest(), options());
 
 		expect(result.failedExtractions).toBe(0);
+		expect(fetchPage).toHaveBeenCalledTimes(2);
 		expect(result.activities).toEqual([{
 			type: 'fetch',
 			target: 'https://example.test/empty',
 			status: 'failed',
+			failureReason: 'empty',
 		}]);
 		expect(result.sources).toEqual([]);
 		expect(reader.extract).not.toHaveBeenCalled();
@@ -1343,7 +1363,12 @@ describe('DeepSeek web follow-up behavior', () => {
 		const result = await coordinator.submit(aiRequest(), options({ maxContentCharactersPerCall: 1000 }));
 
 		expect(result.failedExtractions).toBe(0);
-		expect(result.activities).toEqual([{ type: 'fetch', target: longUrl, status: 'failed' }]);
+		expect(result.activities).toEqual([{
+			type: 'fetch',
+			target: longUrl,
+			status: 'failed',
+			failureReason: 'empty',
+		}]);
 		expect(result.sources).toEqual([]);
 		expect(reader.extract).not.toHaveBeenCalled();
 		const toolMessage = request.mock.calls[1]?.[0].continuation?.find((message) => message.role === 'tool');
@@ -1351,5 +1376,310 @@ describe('DeepSeek web follow-up behavior', () => {
 		expect(content).toBe('{"error":{"kind":"fetch_failed"}}');
 		expect(content.length).toBeLessThanOrEqual(1000);
 		expect(content).not.toContain(longUrl);
+	});
+});
+
+describe('DeepSeek web transport retry and search degradation', () => {
+	function httpFailure(status: number) {
+		return Object.assign(new Error(`HTTP ${status}`), { status });
+	}
+
+	it.each([429, 500, 503])('retries one transient Fetch HTTP %s immediately and completes', async (status) => {
+		const target = 'https://example.test/flaky';
+		const fetchPage = vi.fn()
+			.mockRejectedValueOnce(httpFailure(status))
+			.mockResolvedValueOnce({ title: 'Recovered', content: 'Recovered body' });
+		const reader = successfulReader();
+		const activity: Array<{ status: string; label: string }> = [];
+		const { coordinator } = coordinatorWith([
+			toolRound([fetchCall('call-fetch', target)]),
+			finalRound('Answer from the recovered page'),
+		], vi.fn(async () => []), fetchPage, reader);
+
+		const result = await coordinator.submit(aiRequest(), options({
+			onActivity: (event) => activity.push(event),
+		}));
+
+		expect(fetchPage).toHaveBeenCalledTimes(2);
+		expect(reader.extract).toHaveBeenCalledOnce();
+		expect(result.content).toBe('Answer from the recovered page');
+		expect(result.activities).toEqual([{ type: 'fetch', target, status: 'completed' }]);
+		expect(result.failedExtractions).toBe(0);
+		expect(result.failedSearches).toBe(0);
+		expect(activity.map((event) => event.label)).toEqual([
+			`Fetching: ${target}`,
+			`Retrying fetch: ${target}`,
+			`Fetch complete: ${target}`,
+		]);
+	});
+
+	it('retries one Fetch transport failure without a status and completes', async () => {
+		const target = 'https://example.test/socket';
+		const fetchPage = vi.fn()
+			.mockRejectedValueOnce(new Error('socket hang up'))
+			.mockResolvedValueOnce({ title: 'Recovered', content: 'Recovered body' });
+		const reader = successfulReader();
+		const { coordinator } = coordinatorWith([
+			toolRound([fetchCall('call-fetch', target)]),
+			finalRound('Answer from the retried page'),
+		], vi.fn(async () => []), fetchPage, reader);
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(fetchPage).toHaveBeenCalledTimes(2);
+		expect(reader.extract).toHaveBeenCalledOnce();
+		expect(result.activities).toEqual([{ type: 'fetch', target, status: 'completed' }]);
+		expect(result.failedSearches).toBe(0);
+	});
+
+	it('reports an http failure after the single Fetch retry is exhausted', async () => {
+		const target = 'https://example.test/unavailable';
+		const fetchPage = vi.fn(async () => { throw httpFailure(503); });
+		const reader = successfulReader();
+		const { coordinator, request } = coordinatorWith([
+			toolRound([fetchCall('call-fetch', target)]),
+			finalRound('The page stayed unavailable.'),
+		], vi.fn(async () => []), fetchPage, reader);
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(fetchPage).toHaveBeenCalledTimes(2);
+		expect(reader.extract).not.toHaveBeenCalled();
+		expect(result.activities).toEqual([{
+			type: 'fetch',
+			target,
+			status: 'failed',
+			failureReason: 'http',
+		}]);
+		expect(result.failedExtractions).toBe(0);
+		expect(result.failedSearches).toBe(0);
+		const toolMessage = request.mock.calls[1]?.[0].continuation?.find((message) => message.role === 'tool');
+		expect(toolMessage?.role === 'tool' && toolMessage.content).toBe('{"error":{"kind":"fetch_failed"}}');
+	});
+
+	it('retries an empty Fetch page once and uses the second response', async () => {
+		const target = 'https://example.test/rendered';
+		const fetchPage = vi.fn()
+			.mockResolvedValueOnce({ title: 'Empty shell', content: '   ' })
+			.mockResolvedValueOnce({ title: 'Rendered', content: 'Rendered body' });
+		const reader = successfulReader();
+		const activity: Array<{ status: string; label: string }> = [];
+		const { coordinator } = coordinatorWith([
+			toolRound([fetchCall('call-fetch', target)]),
+			finalRound('Answer from the rendered page'),
+		], vi.fn(async () => []), fetchPage, reader);
+
+		const result = await coordinator.submit(aiRequest(), options({
+			onActivity: (event) => activity.push(event),
+		}));
+
+		expect(fetchPage).toHaveBeenCalledTimes(2);
+		expect(reader.extract).toHaveBeenCalledOnce();
+		expect(result.activities).toEqual([{ type: 'fetch', target, status: 'completed' }]);
+		expect(activity.map((event) => event.label)).toContain(`Retrying fetch: ${target}`);
+	});
+
+	it.each([403, 404])('does not retry a Fetch HTTP %s failure', async (status) => {
+		const target = 'https://example.test/blocked';
+		const fetchPage = vi.fn(async () => { throw httpFailure(status); });
+		const reader = successfulReader();
+		const { coordinator } = coordinatorWith([
+			toolRound([fetchCall('call-fetch', target)]),
+			finalRound('The page could not be read.'),
+		], vi.fn(async () => []), fetchPage, reader);
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(fetchPage).toHaveBeenCalledOnce();
+		expect(result.activities).toEqual([{
+			type: 'fetch',
+			target,
+			status: 'failed',
+			failureReason: 'http',
+		}]);
+	});
+
+	it('does not retry a Fetch abort', async () => {
+		const reason = new DOMException('Stopped', 'AbortError');
+		const fetchPage = vi.fn(async () => { throw reason; });
+		const reader = successfulReader();
+		const { coordinator, request } = coordinatorWith([
+			toolRound([fetchCall('call-fetch', 'https://example.test/abort')]),
+			finalRound('Must not be returned'),
+		], vi.fn(async () => []), fetchPage, reader);
+
+		await expect(coordinator.submit(aiRequest(), options({
+			signal: new AbortController().signal,
+		}))).rejects.toBe(reason);
+		expect(fetchPage).toHaveBeenCalledOnce();
+		expect(reader.extract).not.toHaveBeenCalled();
+		expect(request).toHaveBeenCalledOnce();
+	});
+
+	it('retries one transient Search failure and continues with extracted evidence', async () => {
+		const search = vi.fn()
+			.mockRejectedValueOnce(new Error('network down'))
+			.mockResolvedValueOnce([parsedSearchResult]);
+		const reader = successfulReader();
+		const activity: Array<{ status: string; label: string }> = [];
+		const { coordinator } = coordinatorWith([
+			toolRound([searchCall('call-1', 'flaky search')]),
+			finalRound('Answer [S1]'),
+		], search, undefined, reader);
+
+		const result = await coordinator.submit(aiRequest(), options({
+			onActivity: (event) => activity.push(event),
+		}));
+
+		expect(search).toHaveBeenCalledTimes(2);
+		expect(reader.extract).toHaveBeenCalledOnce();
+		expect(result.content).toBe('Answer [S1]');
+		expect(result.failedSearches).toBe(0);
+		expect(result.failedExtractions).toBe(0);
+		expect(result.activities).toEqual([{ type: 'search', target: 'flaky search', status: 'completed' }]);
+		expect(result.sources.map((source) => source.id)).toEqual(['S1']);
+		expect(activity.map((event) => event.label)).toEqual([
+			'Searching: flaky search',
+			'Retrying search: flaky search',
+			'Search complete: flaky search',
+		]);
+	});
+
+	it('degrades an exhausted Search retry to search_failed without failing the answer', async () => {
+		const search = vi.fn(async () => { throw new Error('Search unavailable'); });
+		const reader = successfulReader();
+		const { coordinator, request } = coordinatorWith([
+			toolRound([searchCall('call-1', 'down')]),
+			finalRound('Answer from other evidence'),
+		], search, undefined, reader);
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(search).toHaveBeenCalledTimes(2);
+		expect(reader.extract).not.toHaveBeenCalled();
+		expect(result.content).toBe('Answer from other evidence');
+		expect(result.failedSearches).toBe(1);
+		expect(result.failedExtractions).toBe(0);
+		expect(result.sources).toEqual([]);
+		expect(result.activities).toEqual([{
+			type: 'search',
+			target: 'down',
+			status: 'failed',
+			failureReason: 'network',
+		}]);
+		const toolMessages = request.mock.calls[1]?.[0].continuation?.filter(
+			(message) => message.role === 'tool',
+		) ?? [];
+		expect(toolMessages.map((message) => message.role === 'tool'
+			? [message.toolCallId, message.content]
+			: [])).toEqual([
+			['call-1', '{"error":{"kind":"search_failed"}}'],
+		]);
+	});
+
+	it('does not retry a Search HTTP 403 failure and degrades it', async () => {
+		const search = vi.fn(async () => { throw httpFailure(403); });
+		const reader = successfulReader();
+		const { coordinator } = coordinatorWith([
+			toolRound([searchCall('call-1', 'forbidden')]),
+			finalRound('Answer without that search'),
+		], search, undefined, reader);
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(search).toHaveBeenCalledOnce();
+		expect(reader.extract).not.toHaveBeenCalled();
+		expect(result.failedSearches).toBe(1);
+		expect(result.activities).toEqual([{
+			type: 'search',
+			target: 'forbidden',
+			status: 'failed',
+			failureReason: 'http',
+		}]);
+	});
+
+	it.each([400, 401, 402, 413])('keeps Search account/request HTTP %s fatal', async (status) => {
+		const failure = httpFailure(status);
+		const search = vi.fn(async () => { throw failure; });
+		const reader = successfulReader();
+		const { coordinator, request } = coordinatorWith([
+			toolRound([searchCall('call-1', 'fatal')]),
+			finalRound('Must not be returned'),
+		], search, undefined, reader);
+
+		await expect(coordinator.submit(aiRequest(), options())).rejects.toBe(failure);
+		expect(search).toHaveBeenCalledOnce();
+		expect(reader.extract).not.toHaveBeenCalled();
+		expect(request).toHaveBeenCalledOnce();
+	});
+
+	it('does not retry or degrade a Search abort', async () => {
+		const reason = new DOMException('Stopped', 'AbortError');
+		const search = vi.fn(async () => { throw reason; });
+		const { coordinator, request } = coordinatorWith([
+			toolRound([searchCall('call-1', 'abort')]),
+			finalRound('Must not be returned'),
+		], search);
+
+		await expect(coordinator.submit(aiRequest(), options({
+			signal: new AbortController().signal,
+		}))).rejects.toBe(reason);
+		expect(search).toHaveBeenCalledOnce();
+		expect(request).toHaveBeenCalledOnce();
+	});
+
+	it('separates a Search extraction failure from a Search transport failure', async () => {
+		const reader = successfulReader();
+		reader.extract.mockRejectedValue(new Error('Reader unavailable'));
+		const search = vi.fn(async () => [parsedSearchResult]);
+		const { coordinator, request } = coordinatorWith([
+			toolRound([searchCall('call-1', 'extraction fails')]),
+			finalRound('Degraded answer'),
+		], search, undefined, reader);
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(search).toHaveBeenCalledOnce();
+		expect(result.failedSearches).toBe(0);
+		expect(result.failedExtractions).toBe(1);
+		expect(result.activities).toEqual([{
+			type: 'search',
+			target: 'extraction fails',
+			status: 'failed',
+			failureKind: 'extraction',
+			failureReason: 'reader',
+		}]);
+		const toolMessage = request.mock.calls[1]?.[0].continuation?.find((message) => message.role === 'tool');
+		expect(toolMessage?.role === 'tool' && toolMessage.content).toBe('{"error":"extraction_failed"}');
+	});
+
+	it('keeps one retry per call and preserves call order across a mixed batch', async () => {
+		const search = vi.fn(async (call: Extract<WebToolCall, { name: 'web_search' }>) => {
+			throw new Error(`network down ${call.query}`);
+		});
+		const fetchPage = vi.fn(async () => ({ title: 'Page', content: 'Body' }));
+		const reader = successfulReader();
+		const { coordinator } = coordinatorWith([
+			toolRound([
+				searchCall('call-1', 'first'),
+				fetchCall('call-2', 'https://example.test/two'),
+				searchCall('call-3', 'third'),
+			]),
+			finalRound('Answer without the failed searches'),
+		], search, fetchPage, reader);
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(search.mock.calls.map((call) => call[0].query)).toEqual([
+			'first', 'first', 'third', 'third',
+		]);
+		expect(fetchPage).toHaveBeenCalledOnce();
+		expect(reader.extract).toHaveBeenCalledOnce();
+		expect(result.failedSearches).toBe(2);
+		expect(result.activities).toEqual([
+			{ type: 'search', target: 'first', status: 'failed', failureReason: 'network' },
+			{ type: 'fetch', target: 'https://example.test/two', status: 'completed' },
+			{ type: 'search', target: 'third', status: 'failed', failureReason: 'network' },
+		]);
 	});
 });

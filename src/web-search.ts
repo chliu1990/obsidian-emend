@@ -25,11 +25,14 @@ export interface WebSearchRunOptions {
 	signal: AbortSignal;
 }
 
+export type WebFailureReason = 'network' | 'http' | 'empty' | 'reader';
+
 export interface WebActivityRecord {
 	type: 'search' | 'fetch';
 	target: string;
 	status: 'completed' | 'failed' | 'skipped';
 	failureKind?: 'extraction';
+	failureReason?: WebFailureReason;
 }
 
 export interface WebToolLoopResult {
@@ -38,6 +41,7 @@ export interface WebToolLoopResult {
 	sources: WebSource[];
 	activities: WebActivityRecord[];
 	failedExtractions: number;
+	failedSearches: number;
 	skippedWebCalls: number;
 	rounds: Array<{ request: AiProviderRequest; result: StreamResult }>;
 }

@@ -4,7 +4,7 @@
 
 The per-query Web extraction loop is implemented and verified locally on `fix/web-content-budget-diagnostics`. It replaces the former shared retrieval pool and raw-result truncation with independent, goal-directed extraction for every readable DeepSeek Search/Fetch result. No real-provider verification, external publishing, or GitHub CI run was performed for this revision.
 
-Stage 36's provider and read-only boundaries remain intact. Web is available only for DeepSeek `deepseek-flash` and `deepseek-v4-pro` in Ask, Discuss, and Brainstorm. Retrieval never gains a note writer, raw fallback, or fallback provider. There is no silent transport retry; the extractor's single format-correction round and its verifier/up-to-two-refine rounds are bounded model requests defined below.
+Stage 36's provider and read-only boundaries remain intact. Web is available only for DeepSeek `deepseek-flash` and `deepseek-v4-pro` in Ask, Discuss, and Brainstorm. Retrieval never gains a note writer, raw fallback, or fallback provider. The only transport retry is the single Task 10 Search/Fetch retry below; the extractor's single format-correction round and its verifier/up-to-two-refine rounds are bounded model requests defined below.
 
 ## Current behavior
 
@@ -37,7 +37,7 @@ Only actual normalized credentialess HTTP(S) sources represented by successful e
 
 ### Failures, usage, and persistence
 
-Expected Fetch retrieval failures and empty pages retain their explicit unread outcome and unread-page warning; they do not invoke a reader. Both return the deterministic 33-character `{"error":{"kind":"fetch_failed"}}` payload without a provider message or URL, and Emend asserts the final serialized outcome against the configured per-call cap before continuing. Search failures and Fetch HTTP 400/401/402/413 remain fatal. Every abort cancels the whole submission.
+Expected Fetch retrieval failures and empty pages retain their explicit unread outcome and unread-page warning; they do not invoke a reader. Both return the deterministic 33-character `{"error":{"kind":"fetch_failed"}}` payload without a provider message or URL, and Emend asserts the final serialized outcome against the configured per-call cap before continuing. Search failures degrade to a per-call `search_failed` outcome after one retry, while Search/Fetch HTTP 400/401/402/413 and aborts remain fatal (Task 10 below). Every abort cancels the whole submission.
 
 A non-abort extractor provider/format/limit failure returns only `{"error":"extraction_failed"}`, excludes that query's unextracted sources, and allows the main model to use other successful evidence. Chat appends exactly one aggregate warning:
 
@@ -45,7 +45,7 @@ A non-abort extractor provider/format/limit failure returns only `{"error":"extr
 Emend could not extract information from N web query. The answer may be incomplete.
 ```
 
-For multiple failures, `query` becomes `queries`. The warning persists as ordinary ready content. Verification failure never becomes `extraction_failed`: the loop stops with any verified claims collected so far, or with the extractor's quotes-only outcome when none were verified. Oversized payloads are deterministically fitted rather than failing the call. There is no transport retry and no raw-content fallback.
+For multiple failures, `query` becomes `queries`. The warning persists as ordinary ready content. Verification failure never becomes `extraction_failed`: the loop stops with any verified claims collected so far, or with the extractor's quotes-only outcome when none were verified. Oversized payloads are deterministically fitted rather than failing the call. The only transport retry is the single Task 10 Search/Fetch retry, and there is no raw-content fallback.
 
 Usage covers every main, extractor, correction, verifier, and refine model round in chronological order. Provider-sourced totals require complete valid usage triplets from every round; otherwise every round is independently estimated and the total is labelled **Estimated**. Extractor, verifier, and refine reasoning is not displayed or persisted, but its transient round data participates in fallback estimation. Retrieval, Search, and reader prices or token counts are not invented.
 
@@ -160,6 +160,16 @@ Final follow-up removed the reader's duplicate fit: the reader returns only the 
 
 JSON-mode compatibility with streaming, tool declarations, and `stream_options.include_usage` was verified live against `deepseek-flash` and `deepseek-v4-pro` on 2026-11-10 (recorded in the PR1 resilience design) and was not repeated. Task 9 used unit tests and local doubles only: no real provider call, paid request, or real-Obsidian loopback was performed. Real-provider extraction quality, verifier reliability, refine usefulness, latency, and billing remain unverified.
 
+### Task 10 transport retry and Search degradation
+
+Task 10 adds bounded transport resilience without changing the extraction loop. Search and Fetch each get exactly one immediate retry with no delay, backoff, or setting. A retry happens only for a failure without an HTTP status (transport/DNS/TLS failure or malformed/non-JSON response), status `429`, status `500`–`599`, or an empty Fetch page. Any other HTTP status, including `403` and `404`, is not retried. The retry emits one pending activity, `Retrying search: <query>` or `Retrying fetch: <url>`; a successful retry produces the ordinary completed activity and no warning.
+
+HTTP `400`, `401`, `402`, `413`, and every abort remain fatal and throw without a retry. Every other failure becomes a per-call outcome. An exhausted Search retry returns `{"error":{"kind":"search_failed"}}`, records a failed activity, increments the new `failedSearches` count, and lets the model continue with other evidence. An exhausted Fetch retry keeps the existing `{"error":{"kind":"fetch_failed"}}` unread outcome. A Search that succeeds and then fails extraction remains an extraction failure: it increments `failedExtractions` and records `failureKind: 'extraction'` with `failureReason: 'reader'`, and does not increment `failedSearches`.
+
+Failed activities carry transient `failureReason` metadata: `network` (no HTTP status), `http` (non-fatal status), `empty` (empty Fetch page), or `reader` (extraction reader failure). These reasons are not rendered in this task; `failedSearches` is propagated through `ReadOnlyRequestCoordinator` and set to `0` for ordinary chat so a later task can surface the warning. Raw provider messages remain excluded from payloads, activities, and persistence.
+
+TDD: the focused RED run failed **2 files / 25 tests with 94 passing**. RED covered the retry/exhaustion matrix, empty-page retry, non-retryable `403`/`404`, Search degradation and `search_failed` continuation, reader failure reasons, and `failedSearches` propagation. The focused GREEN run passed **2 files / 119 tests**; the full local gate passed **39 Vitest files / 1039 tests**, ESLint, strict TypeScript/production build, and `git diff --check`. This task used unit tests only: no real provider call, paid request, or real-Obsidian loopback was performed.
+
 ## Environment limits
 
-All provider behavior was deterministic loopback behavior on Linux/Xvfb, not a real DeepSeek response. The mock exercised both model names and real Obsidian UI/runtime paths, but cannot establish real-provider extraction quality, final-answer grounding, verifier reliability, pricing, tokenization, model behavior, or real-provider forced-limit compliance. Character measurement and the extraction/verification contract are unit-verified; no tokenizer or real-provider correctness is claimed. Every requested Task 6, final unread-Fetch, Task 7, and Task 8 scenario was exercised; Task 9 was covered by unit tests and local doubles only.
+All provider behavior was deterministic loopback behavior on Linux/Xvfb, not a real DeepSeek response. The mock exercised both model names and real Obsidian UI/runtime paths, but cannot establish real-provider extraction quality, final-answer grounding, verifier reliability, pricing, tokenization, model behavior, or real-provider forced-limit compliance. Character measurement and the extraction/verification contract are unit-verified; no tokenizer or real-provider correctness is claimed. Every requested Task 6, final unread-Fetch, Task 7, and Task 8 scenario was exercised; Tasks 9 and 10 were covered by unit tests and local doubles only.
