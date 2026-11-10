@@ -15,13 +15,13 @@ Stage 36's provider and read-only boundaries remain intact. Web is available onl
 - After any skipped calls, exactly one forced terminal main-model request omits Web tools and instructs the model to answer from current note/chat and successful evidence. A ready answer may have no evidence but cannot invent citations. Further tool calls in that forced round fail without retrieval or retry.
 - Chat appends `Web retrieval reached the <limit>-call limit. N proposed calls were skipped; the answer may be incomplete.` for multiple skips, or `1 proposed call was skipped` for one. This warning occurs once, coexists with unread/extraction warnings, and persists as ordinary ready content. Exact-limit completion has no skipped-call warning.
 - Every call requires a nonempty `extractionGoal` of 1–1000 Unicode code points. Review permits editing the goal and query/URL while preserving call IDs and tool names; an invalid goal blocks the batch before retrieval. Auto validates the same fields without the review pause.
-- `maxWebContentCharactersPerCall` defaults to 20,000 and normalizes to integers from 1,000 through 100,000, restoring 20,000 for malformed values. It caps the complete serialized extraction tool response, including source metadata, facts, evidence, and JSON syntax.
+- `maxWebContentCharactersPerCall` defaults to 20,000 and normalizes to integers from 1,000 through 100,000, restoring 20,000 for malformed values. It caps the complete serialized extraction tool response, including actual source metadata, verbatim evidence, and JSON syntax.
 - Each call has an independent cap. For cap `C` and `N` executed calls, the payloads contribute at most `C × N` characters; there is no independent total retrieval-character cap.
 - `measureWebContent` currently measures UTF-16 `string.length` and returns an explicit character unit behind a token-ready interface. It does not tokenize, and the separate `ceil(characters / 4)` usage fallback is an estimate rather than provider billing data.
 
 ### Reader isolation, tools, and grounding
 
-Every readable Search/Fetch result invokes exactly one reader using the same configured DeepSeek provider/model and streaming transport. Canonical title, snippet, summary, and content remain temporarily available without a raw-result size cap. The main answering model never receives raw retrieval; it receives only validated source-grounded extracted facts and verbatim evidence.
+Every readable Search/Fetch result invokes exactly one reader using the same configured DeepSeek provider/model and streaming transport. Canonical title, snippet, summary, and content remain temporarily available without a raw-result size cap. The reader selects goal-relevant verbatim passages only and does not generate facts, summaries, paraphrases, or link labels. The main answering model never receives raw retrieval or intermediate AI-generated facts; it receives only actual source metadata and validated verbatim evidence.
 
 The reader receives only the current typed question, extraction goal, reviewed target, and source catalog, followed by any bounded local tool continuations. It has empty chat history and receives no active-note snapshot/path, earlier chat, instructions/skills, additional notes, or vault content. Main model rounds continue to receive their ordinary captured context. Review and Auto disclose current-question reader sharing, up to 6 reader model rounds, and possible separate retrieval/reader charges.
 
@@ -31,9 +31,9 @@ Reader tools are local-only closed operations over temporary canonical documents
 - UTF-16 ranged read with actual offsets and bounded chunks;
 - at most 6 reader model rounds, 4 local calls per round, 16 local calls total, and 4,000 characters per local tool result.
 
-The reader has no network, vault, or note-writing tool. Its terminal response must be closed JSON with either nonempty grounded evidence or `no_relevant_evidence`. Emend validates source IDs, nonempty facts/evidence, and verbatim evidence occurrence, then rebuilds the payload with actual source IDs and enforces the per-call cap. Malformed, duplicate, invented, ungrounded, or over-cap output fails without slicing or raw passthrough.
+The reader has no network, vault, or note-writing tool. Its terminal response must be closed JSON with either nonempty grounded evidence or `no_relevant_evidence`. Each evidence result contains exactly `sourceId` and a nonempty `evidence` array of goal-relevant verbatim canonical passages. `extractedFacts`, summaries, paraphrases, wrong link labels, and every additional result field are rejected even alongside genuine evidence. Emend validates source IDs, nonempty evidence, and verbatim occurrence, then rebuilds the payload with actual source IDs/titles/URLs and enforces the per-call cap. Malformed, duplicate, invented, ungrounded, or over-cap output fails without slicing or raw passthrough.
 
-Only actual normalized credentialess HTTP(S) sources represented by successful extraction become stable `S1`, `S2`, ... citations. Staged sources commit only after final mapping/cap/abort checks, preserving retrieval order and contiguous IDs.
+Only actual normalized credentialess HTTP(S) sources represented by successful extraction become stable `S1`, `S2`, ... citations. Staged sources commit only after final mapping/cap/abort checks, preserving retrieval order and contiguous IDs. The main model synthesizes only from supplied verbatim evidence and actual source metadata; every final-answer claim must still be supported by that evidence.
 
 ### Failures, usage, and persistence
 
@@ -57,7 +57,9 @@ Tasks 1–5 used regression-first coverage for character measurement and normali
 
 Task 7 replaced the old over-limit terminal-error expectation with failing partial-execution tests before implementation. The focused RED run failed 14 intended tests; the focused GREEN run passed **4 files and 236 tests**. The final locked-install gate passed **39 Vitest files and 979 tests**, ESLint, strict TypeScript/production build, and `git diff --check`.
 
-Focused runtime tests cover small/large Search/Fetch, exact serialized-cap boundaries, independent heavy calls, mixed success/failure/no-evidence outcomes, failed-round accounting, unread-Fetch versus extraction diagnostics, contiguous citations, no raw continuation, prompt-injection-shaped content, aborts, provider errors, Review/Auto, partial execution and forced no-tools completion, zero remaining slots, exact 20 and skipped 21, malformed forced-round calls, skipped counts and exact singular/plural warnings, provider-versus-estimated usage, and sanitized reload persistence.
+Task 8 introduced closed verbatim-only fixtures and genuine-quote drift rejection tests before implementation. The focused RED run failed 10 intended tests while 126 passed, including acceptance of `extractedFacts` beside genuine evidence and missing reader/main-model guidance. The focused GREEN run passed **4 files and 136 tests**. A self-review follow-up changed the Review/Auto disclosure expectations first, watched two intended failures, then passed **2 files and 90 tests** with verbatim-selection wording. The final `npm ci` locked-install gate passed **39 Vitest files and 986 tests**, ESLint, strict TypeScript/production build, and `git diff --check`.
+
+Focused runtime tests cover the exact `{sourceId,evidence}` result shape, rejection of `extractedFacts`/summaries/paraphrases/wrong link labels/arbitrary extra fields beside genuine evidence, exact metadata-plus-evidence payloads, reader selection-only and main evidence-synthesis prompts, small/large Search/Fetch, exact serialized-cap boundaries, independent heavy calls, mixed success/failure/no-evidence outcomes, failed-round accounting, unread-Fetch versus extraction diagnostics, contiguous citations, no raw continuation, prompt-injection-shaped content, aborts, provider errors, Review/Auto, partial execution and forced no-tools completion, zero remaining slots, exact 20 and skipped 21, malformed forced-round calls, skipped counts and exact singular/plural warnings, provider-versus-estimated usage, and sanitized reload persistence.
 
 ## Real-Obsidian loopback evidence
 
@@ -119,6 +121,31 @@ Every Task 7 scenario asserted byte-for-byte unchanged notes and schema-2 persis
 
 The first Task 7 harness attempt passed Review and 20/21 on both models but exposed two verifier-only fixture mistakes: it expected empty `webSources` to serialize as an array and clicked Stop before the held reader started. The final verifier accepts the existing omitted-empty-sources schema and waits for the reader request before Stop. No runtime code was changed for those corrections, and the final passing evidence was regenerated rather than edited.
 
+### Task 8 verbatim-only reader output
+
+- Date: 2026-11-10, Asia/Shanghai.
+- Runtime: the same official Obsidian 1.15.0 AppImage assets, isolated Xvfb `:99`, CDP `19222`, and CORS loopback chat/Search mock at `127.0.0.1:8765`.
+- Data: only synthetic notes, configuration, and a dummy SecretStorage credential under ignored `test_vault/emend-web-verify/runtime-verbatim/`. No real provider/account/key, external or paid request, other vault, fallback, or note write was used.
+- Bundle: root and tested `main.js` SHA-256 were both `73cca5f84f44f1b2b049d661aa33ab4169f2fca16571b55ada76000428e7c5cb`.
+- Command: `node test_vault/emend-web-verify/verify.mjs --verbatim` using `mock-reader.mjs` for fragmented main and reader SSE rounds.
+- Result: **6/6 scenarios and 48/48 assertions passed**, covering both supported models. The request audit covered six captured logs and 24 entries with zero header violations and zero dummy-credential leaks. Owned Obsidian, Xvfb, and mock processes were stopped after the run.
+
+For each of `deepseek-flash` and `deepseek-v4-pro`, three fresh Auto submissions ran in exact main → Search → reader → terminal-main order with exactly one reader and no automatic reader retry:
+
+1. **Accurate extraction:** the reader returned exactly `sourceId` and the verbatim release-day passage. The terminal continuation contained only `S1`, the actual title/URL, and that passage. Final synthesis used the actual source title with one correct citation and no extraction warning.
+2. **Invented-fact/wrong-label drift:** the reader returned a genuine Monday quote alongside an invented Tuesday `extractedFacts` statement and `WRONG_LINK_LABEL`. Closed validation rejected the result. The terminal main request contained only `{"error":"extraction_failed"}` for that call; neither invented marker nor the genuine quote reached any main-model request. The ready answer had exactly one extraction warning and no citation.
+3. **Fresh verbatim-only retry:** a separate new submission returned exact verbatim retry evidence and completed final synthesis with the actual retry source title/URL and one correct citation.
+
+Every scenario asserted main-model evidence-only/supported-claim guidance, isolated reader inputs, schema-2 persistence without reader payloads/evidence/reasoning, and byte-for-byte unchanged notes. Evidence is retained under ignored paths:
+
+- `test_vault/emend-web-verify/evidence-verbatim/summary.json`
+- `test_vault/emend-web-verify/evidence-verbatim/verbatim-evidence.json`
+- `test_vault/emend-web-verify/evidence-verbatim/request-log.json`
+- `test_vault/emend-web-verify/evidence-verbatim/logs/`
+- `test_vault/emend-web-verify/evidence-verbatim/verbatim-*.png`
+
+The first Task 8 harness run passed accurate/retry on both models but failed the drift assertion because it compared rendered DOM text with raw Markdown newlines. The persisted content already exactly matched the expected answer plus one warning. The verifier now checks rendered warning presence and exact persisted content separately; no runtime code was changed for that correction, and the final passing evidence was regenerated.
+
 ## Environment limits
 
-All provider behavior was deterministic loopback behavior on Linux/Xvfb, not a real DeepSeek response. The mock exercised both model names and real Obsidian UI/runtime paths, but cannot establish real-provider extraction quality, pricing, tokenization, model behavior, or real-provider forced-limit compliance. Character measurement is verified; no tokenizer or real-provider verification is claimed. Every requested Task 6, final unread-Fetch, and Task 7 scenario was exercised; no requested scenario was skipped.
+All provider behavior was deterministic loopback behavior on Linux/Xvfb, not a real DeepSeek response. The mock exercised both model names and real Obsidian UI/runtime paths, but cannot establish real-provider extraction quality, final-answer grounding, pricing, tokenization, model behavior, or real-provider forced-limit compliance. Character measurement and closed-schema drift rejection are verified; no tokenizer or real-provider correctness is claimed. Every requested Task 6, final unread-Fetch, Task 7, and Task 8 scenario was exercised; no requested scenario was skipped.

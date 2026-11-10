@@ -10,7 +10,6 @@ export interface WebExtractionDocument {
 
 export interface WebExtractionResult {
 	sourceId: string;
-	extractedFacts: string[];
 	evidence: string[];
 }
 
@@ -183,7 +182,7 @@ export function parseWebExtractionOutcome(
 	const documentsById = new Map(documents.map((document) => [document.sourceId, document]));
 	const seenSourceIds = new Set<string>();
 	const results: WebExtractionResult[] = parsed.results.map((candidate: unknown) => {
-		if (!isRecord(candidate) || !hasExactKeys(candidate, ['sourceId', 'extractedFacts', 'evidence'])) {
+		if (!isRecord(candidate) || !hasExactKeys(candidate, ['sourceId', 'evidence'])) {
 			throw new Error('Web extraction result has an invalid shape.');
 		}
 		if (typeof candidate.sourceId !== 'string' || seenSourceIds.has(candidate.sourceId)) {
@@ -193,8 +192,8 @@ export function parseWebExtractionOutcome(
 		if (!document) {
 			throw new Error(`Unknown extraction source: ${candidate.sourceId}`);
 		}
-		if (!isNonemptyStringArray(candidate.extractedFacts) || !isNonemptyStringArray(candidate.evidence)) {
-			throw new Error('Extraction facts and evidence must be nonempty string arrays.');
+		if (!isNonemptyStringArray(candidate.evidence)) {
+			throw new Error('Extraction evidence must be a nonempty string array.');
 		}
 		if (candidate.evidence.some((evidence) => !document.canonicalText.includes(evidence))) {
 			throw new Error('Extraction evidence must be verbatim source text.');
@@ -202,7 +201,6 @@ export function parseWebExtractionOutcome(
 		seenSourceIds.add(candidate.sourceId);
 		return {
 			sourceId: candidate.sourceId,
-			extractedFacts: [...candidate.extractedFacts],
 			evidence: [...candidate.evidence],
 		};
 	});
@@ -225,7 +223,6 @@ export function buildWebExtractionToolPayload(
 			sourceId,
 			title: document.title,
 			url: document.url,
-			extractedFacts: result.extractedFacts,
 			evidence: result.evidence,
 		};
 	});

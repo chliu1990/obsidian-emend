@@ -198,7 +198,6 @@ function readerResult(
 			sourceId: result.sourceId,
 			title: document?.title ?? '',
 			url: document?.url ?? '',
-			extractedFacts: result.extractedFacts,
 			evidence: result.evidence,
 		};
 	});
@@ -231,7 +230,6 @@ function successfulReader() {
 					outcome: 'evidence',
 					results: [{
 						sourceId: document.sourceId,
-						extractedFacts: ['Extracted fact'],
 						evidence: ['Title:'],
 					}],
 				}
@@ -334,6 +332,9 @@ describe('DeepSeekWebSearchCoordinator', () => {
 				? `Title: ${expectedTitle}\nSnippet: ${snippet}\nSummary: ${summary}\nContent: ${rawContent}`
 				: `Title: ${expectedTitle}\nSnippet: \nSummary: \nContent: ${rawContent}`,
 		}]);
+		const mainSystemPrompt = request.mock.calls[0]?.[0].systemPrompt ?? '';
+		expect(mainSystemPrompt).toContain('Synthesize only from the supplied verbatim evidence and actual source metadata');
+		expect(mainSystemPrompt).toContain('Every final-answer claim must be supported by the supplied evidence');
 		const continuation = request.mock.calls[1]?.[0].continuation ?? [];
 		const toolMessage = continuation.find((message) => message.role === 'tool');
 		const payload = JSON.parse(toolMessage?.role === 'tool' ? toolMessage.content : '{}') as {
@@ -341,7 +342,6 @@ describe('DeepSeekWebSearchCoordinator', () => {
 				sourceId: string;
 				title?: string;
 				url?: string;
-				extractedFacts?: string[];
 				evidence?: string[];
 			}>;
 		};
@@ -352,7 +352,6 @@ describe('DeepSeekWebSearchCoordinator', () => {
 				sourceId: 'S1',
 				title: expectedTitle,
 				url: 'https://example.test/emend',
-				extractedFacts: ['Extracted fact'],
 				evidence: ['Title:'],
 			}],
 		});
@@ -384,8 +383,7 @@ describe('DeepSeekWebSearchCoordinator', () => {
 			outcome: 'evidence',
 			results: [{
 				sourceId: 'R1',
-				extractedFacts: ['x'.repeat(300)],
-				evidence: ['Title:'],
+				evidence: ['Title:', 'x'.repeat(300)],
 			}],
 		}));
 		const { coordinator, request } = coordinatorWith([
@@ -441,7 +439,7 @@ describe('DeepSeekWebSearchCoordinator', () => {
 			}
 			return readerResult(input, {
 				outcome: 'evidence',
-				results: [{ sourceId: 'R1', extractedFacts: ['Usable fact'], evidence: ['Title:'] }],
+				results: [{ sourceId: 'R1', evidence: ['Title:'] }],
 			});
 		});
 		const { coordinator, request } = coordinatorWith([
@@ -478,7 +476,7 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		]));
 		expect(JSON.parse(byId.get('call-success') ?? '{}')).toMatchObject({
 			outcome: 'evidence',
-			results: [{ sourceId: 'S1', extractedFacts: ['Usable fact'] }],
+			results: [{ sourceId: 'S1', evidence: ['Title:'] }],
 		});
 		expect(byId.get('call-failure')).toBe('{"error":"extraction_failed"}');
 		expect(JSON.parse(byId.get('call-none') ?? '{}')).toEqual({
@@ -500,8 +498,8 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		reader.extract.mockImplementation(async (input) => readerResult(input, {
 			outcome: 'evidence',
 			results: [
-				{ sourceId: 'R2', extractedFacts: ['Second fact'], evidence: ['Title:'] },
-				{ sourceId: 'R1', extractedFacts: ['First fact'], evidence: ['Title:'] },
+				{ sourceId: 'R2', evidence: ['Title:'] },
+				{ sourceId: 'R1', evidence: ['Title:'] },
 			],
 		}));
 		const { coordinator, request } = coordinatorWith([
@@ -521,7 +519,6 @@ describe('DeepSeekWebSearchCoordinator', () => {
 				sourceId: string;
 				title?: string;
 				url?: string;
-				extractedFacts?: string[];
 				evidence?: string[];
 			}>;
 		};
@@ -532,7 +529,7 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		const reader = successfulReader();
 		reader.extract.mockImplementation(async (input) => readerResult(input, {
 			outcome: 'evidence',
-			results: [{ sourceId: 'R1', extractedFacts: ['x'.repeat(200)], evidence: ['Title:'] }],
+			results: [{ sourceId: 'R1', evidence: ['Title:', 'x'.repeat(200)] }],
 		}));
 		const { coordinator, request } = coordinatorWith([
 			toolRound([searchCall('call-1', 'over-cap')]),
@@ -558,7 +555,7 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		reader.extract.mockImplementation(async (input) => {
 			const extracted = readerResult(input, {
 				outcome: 'evidence',
-				results: [{ sourceId: 'R1', extractedFacts: ['Fact'], evidence: ['Title:'] }],
+				results: [{ sourceId: 'R1', evidence: ['Title:'] }],
 			});
 			return {
 				...extracted,
@@ -656,7 +653,7 @@ describe('DeepSeekWebSearchCoordinator', () => {
 			controller.abort(reason);
 			return readerResult(input, {
 				outcome: 'evidence',
-				results: [{ sourceId: 'R1', extractedFacts: ['Fact'], evidence: ['Title:'] }],
+				results: [{ sourceId: 'R1', evidence: ['Title:'] }],
 			});
 		});
 		const { coordinator, request } = coordinatorWith([
@@ -767,7 +764,7 @@ describe('DeepSeekWebSearchCoordinator', () => {
 			return readerResult(input, document
 				? {
 					outcome: 'evidence',
-					results: [{ sourceId: document.sourceId, extractedFacts: ['Fact'], evidence: ['Title:'] }],
+					results: [{ sourceId: document.sourceId, evidence: ['Title:'] }],
 				}
 				: { outcome: 'no_relevant_evidence', results: [] });
 		});

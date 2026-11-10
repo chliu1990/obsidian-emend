@@ -569,6 +569,9 @@ describe('ConversationStore web citation migration', () => {
 			requestBody: '{"messages":[]}',
 			failedExtractions: 2,
 			readerReasoning: 'Private reader reasoning',
+			extractedFacts: ['INVENTED_FACT'],
+			readerSummary: 'INVENTED_SUMMARY',
+			linkLabel: 'WRONG_LINK_LABEL',
 			extractionPayload: '{"evidence":["private evidence extract"]}',
 			evidenceExtract: 'private evidence extract',
 		} as Partial<ChatMessage>);
@@ -586,6 +589,9 @@ describe('ConversationStore web citation migration', () => {
 		expect(raw).not.toContain('webActivity');
 		expect(raw).not.toContain('failedExtractions');
 		expect(raw).not.toContain('Private reader reasoning');
+		expect(raw).not.toContain('INVENTED_FACT');
+		expect(raw).not.toContain('INVENTED_SUMMARY');
+		expect(raw).not.toContain('WRONG_LINK_LABEL');
 		expect(raw).not.toContain('private evidence extract');
 		expect(raw).not.toContain('extractionPayload');
 		expect(raw).not.toContain('failureKind');

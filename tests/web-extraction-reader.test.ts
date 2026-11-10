@@ -31,7 +31,6 @@ const groundedContent = JSON.stringify({
 	outcome: 'evidence',
 	results: [{
 		sourceId: 'R1',
-		extractedFacts: ['The body contains the needle.'],
 		evidence: ['needle body'],
 	}],
 });
@@ -43,7 +42,6 @@ const expectedPayload = JSON.stringify({
 		sourceId: 'R1',
 		title: 'Public title',
 		url: 'https://example.test/source',
-		extractedFacts: ['The body contains the needle.'],
 		evidence: ['needle body'],
 	}],
 });
@@ -150,6 +148,10 @@ describe('WebExtractionReader', () => {
 		expect(initial.userPrompt).toContain('What does the current user question ask?');
 		expect(initial.userPrompt).toContain('Find only the needle fact.');
 		expect(initial.userPrompt).toContain('needle query');
+		expect(initial.systemPrompt).toContain('Select only goal-relevant verbatim passages');
+		expect(initial.systemPrompt).toContain('Do not summarize, paraphrase, or generate facts');
+		expect(initial.systemPrompt).toContain('only sourceId and evidence');
+		expect(initial.systemPrompt).not.toContain('extractedFacts');
 		expect(initial.userPrompt).toContain(JSON.stringify([{
 			sourceId: 'R1',
 			title: 'Public title',
@@ -230,11 +232,23 @@ describe('WebExtractionReader', () => {
 		['malformed JSON', '{'],
 		['ungrounded evidence', JSON.stringify({
 			outcome: 'evidence',
-			results: [{ sourceId: 'R1', extractedFacts: ['Invented'], evidence: ['not in the source'] }],
+			results: [{ sourceId: 'R1', evidence: ['not in the source'] }],
 		})],
 		['an unknown source', JSON.stringify({
 			outcome: 'evidence',
-			results: [{ sourceId: 'R9', extractedFacts: ['Invented'], evidence: ['needle body'] }],
+			results: [{ sourceId: 'R9', evidence: ['needle body'] }],
+		})],
+		['an invented fact beside a genuine quote', JSON.stringify({
+			outcome: 'evidence',
+			results: [{ sourceId: 'R1', extractedFacts: ['INVENTED_FACT'], evidence: ['needle body'] }],
+		})],
+		['a summary beside a genuine quote', JSON.stringify({
+			outcome: 'evidence',
+			results: [{ sourceId: 'R1', summary: 'INVENTED_SUMMARY', evidence: ['needle body'] }],
+		})],
+		['a wrong link label beside a genuine quote', JSON.stringify({
+			outcome: 'evidence',
+			results: [{ sourceId: 'R1', linkLabel: 'WRONG_LINK_LABEL', evidence: ['needle body'] }],
 		})],
 	])('rejects %s terminal output without retrying', async (_label, content) => {
 		const { reader, request } = readerWith([terminalRound(content), terminalRound()]);
