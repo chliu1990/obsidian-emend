@@ -1929,10 +1929,27 @@ describe('EmendChatView web research', () => {
 	});
 
 	it.each([
-		{ failedExtractions: 1, activities: [], unreadWarning: '' },
+		{
+			failedExtractions: 1,
+			activities: [{
+				type: 'fetch' as const,
+				target: 'https://example.test/extraction-failed',
+				status: 'failed' as const,
+				failureKind: 'extraction' as const,
+			}],
+			unreadWarning: '',
+		},
 		{
 			failedExtractions: 2,
-			activities: [{ type: 'fetch' as const, target: 'https://example.test/unread', status: 'failed' as const }],
+			activities: [
+				{ type: 'fetch' as const, target: 'https://example.test/unread', status: 'failed' as const },
+				{
+					type: 'fetch' as const,
+					target: 'https://example.test/extraction-failed',
+					status: 'failed' as const,
+					failureKind: 'extraction' as const,
+				},
+			],
 			unreadWarning: 'Emend could not read 1 requested page. The answer may be incomplete.\n\n',
 		},
 	])('appends and persists one exact extraction warning for $failedExtractions failures', async ({ failedExtractions, activities, unreadWarning }) => {
@@ -2270,6 +2287,20 @@ describe('EmendChatView completion relayout and unread pages', () => {
 		])).toBe(0);
 		expect(getUnreadPageCount([
 			{ type: 'fetch', target: 'https://example.test/other', status: 'failed' },
+		])).toBe(1);
+	});
+
+	it('excludes extraction failures from lone and mixed unread-page counts', () => {
+		const extractionFailure = {
+			type: 'fetch' as const,
+			target: 'https://example.test/extraction-failed',
+			status: 'failed' as const,
+			failureKind: 'extraction' as const,
+		};
+		expect(getUnreadPageCount([extractionFailure])).toBe(0);
+		expect(getUnreadPageCount([
+			{ type: 'fetch', target: 'https://example.test/unread', status: 'failed' },
+			extractionFailure,
 		])).toBe(1);
 	});
 });

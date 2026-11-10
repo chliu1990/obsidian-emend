@@ -301,6 +301,24 @@ describe('WebExtractionReader', () => {
 		expect(request).toHaveBeenCalledOnce();
 	});
 
+	it('exposes completed rounds through a structured error after a later validation failure', async () => {
+		const first = toolRound([grepCall('grep-1')]);
+		const second = terminalRound('{');
+		const { reader, request } = readerWith([first, second]);
+
+		const failure: unknown = await reader.extract(options()).catch((error: unknown) => error);
+
+		expect(failure).toMatchObject({
+			name: 'WebExtractionReaderError',
+			rounds: [
+				{ request: request.mock.calls[0]?.[0], result: first },
+				{ request: request.mock.calls[1]?.[0], result: second },
+			],
+		});
+		expect(failure).toHaveProperty('cause');
+		expect(request).toHaveBeenCalledTimes(2);
+	});
+
 	it('propagates the identical provider error without retrying', async () => {
 		const failure = new Error('Provider failed');
 		const request = vi.fn(async () => {

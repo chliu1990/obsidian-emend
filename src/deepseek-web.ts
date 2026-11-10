@@ -16,6 +16,7 @@ import {
 } from './web-extraction';
 import {
 	WebExtractionReader,
+	WebExtractionReaderError,
 	type WebExtractionReaderRound,
 } from './web-extraction-reader';
 import {
@@ -301,6 +302,9 @@ export class DeepSeekWebSearchCoordinator {
 				readerRounds,
 			};
 		} catch (error) {
+			if (error instanceof WebExtractionReaderError) {
+				readerRounds = error.rounds;
+			}
 			if (options.signal.aborted) {
 				options.signal.throwIfAborted();
 			}
@@ -310,7 +314,12 @@ export class DeepSeekWebSearchCoordinator {
 			options.onActivity({ status: 'complete', label: `Extraction failed: ${target}` });
 			return {
 				content: JSON.stringify({ error: 'extraction_failed' }),
-				activity: { type, target, status: 'failed' },
+				activity: {
+					type,
+					target,
+					status: 'failed',
+					...(type === 'fetch' ? { failureKind: 'extraction' as const } : {}),
+				},
 				failedExtraction: true,
 				readerRounds,
 			};

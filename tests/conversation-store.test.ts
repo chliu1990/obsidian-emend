@@ -553,7 +553,15 @@ describe('ConversationStore web citation migration', () => {
 			content: `Answer\n\n${warning}`,
 			reasoning: 'Main reasoning only',
 			webSources: [{ id: 'S1', title: 'Actual', url: 'https://example.test/source' }],
-			webActivities: [{ type: 'search', target: 'activity query', status: 'completed' }],
+			webActivities: [
+				{ type: 'search', target: 'activity query', status: 'completed' },
+				{
+					type: 'fetch',
+					target: 'https://example.test/extraction-failed',
+					status: 'failed',
+					failureKind: 'extraction',
+				},
+			],
 			webActivity: 'Searching: private query',
 			searchQuery: 'private query',
 			toolArguments: '{"query":"private query"}',
@@ -580,11 +588,19 @@ describe('ConversationStore web citation migration', () => {
 		expect(raw).not.toContain('Private reader reasoning');
 		expect(raw).not.toContain('private evidence extract');
 		expect(raw).not.toContain('extractionPayload');
+		expect(raw).not.toContain('failureKind');
 		expect(await store.load('Note.md')).toEqual([readyMessage({
 			content: `Answer\n\n${warning}`,
 			reasoning: 'Main reasoning only',
 			webSources: [{ id: 'S1', title: 'Actual', url: 'https://example.test/source' }],
-			webActivities: [{ type: 'search', target: 'activity query', status: 'completed' }],
+			webActivities: [
+				{ type: 'search', target: 'activity query', status: 'completed' },
+				{
+					type: 'fetch',
+					target: 'https://example.test/extraction-failed',
+					status: 'failed',
+				},
+			],
 		})]);
 	});
 });

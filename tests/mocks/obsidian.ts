@@ -117,6 +117,7 @@ export class Setting {
 	readonly dropdowns: DropdownComponent[] = [];
 	readonly nameEl = { createSpan: () => ({}) };
 	name = '';
+	description = '';
 
 	constructor(_containerEl: unknown) {
 		Setting.instances.push(this);
@@ -127,7 +128,8 @@ export class Setting {
 		return this;
 	}
 
-	setDesc(_description: string) {
+	setDesc(description: string) {
+		this.description = description;
 		return this;
 	}
 

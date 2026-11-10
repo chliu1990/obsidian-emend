@@ -80,6 +80,16 @@ export interface WebExtractionReaderResult {
 	rounds: WebExtractionReaderRound[];
 }
 
+export class WebExtractionReaderError extends Error {
+	constructor(
+		readonly cause: unknown,
+		readonly rounds: WebExtractionReaderRound[],
+	) {
+		super(cause instanceof Error ? cause.message : String(cause));
+		this.name = 'WebExtractionReaderError';
+	}
+}
+
 interface WebExtractionReaderDependencies {
 	provider: ProviderConfig;
 	request: typeof requestAiResponse;
@@ -90,60 +100,70 @@ export class WebExtractionReader {
 
 	async extract(options: WebExtractionReaderOptions): Promise<WebExtractionReaderResult> {
 		const rounds: WebExtractionReaderRound[] = [];
-		const userPrompt = buildReaderUserPrompt(options);
-		let continuation: ProviderContinuationMessage[] | undefined;
-		let totalCalls = 0;
+		try {
+			const userPrompt = buildReaderUserPrompt(options);
+			let continuation: ProviderContinuationMessage[] | undefined;
+			let totalCalls = 0;
 
-		for (let roundIndex = 0; roundIndex < MAX_MODEL_ROUNDS; roundIndex += 1) {
-			options.signal.throwIfAborted();
-			const request: AiProviderRequest = {
-				provider: this.dependencies.provider,
-				systemPrompt: READER_SYSTEM_PROMPT,
-				userPrompt,
-				history: [],
-				tools: LOCAL_TOOL_DEFINITIONS,
-				...(continuation === undefined ? {} : { continuation }),
-			};
-			const result = await this.dependencies.request(request, { onEvent: () => undefined }, options.signal);
-			options.signal.throwIfAborted();
-			rounds.push({ request, result });
-
-			const calls = result.toolCalls ?? [];
-			if (calls.length === 0) {
-				const outcome = parseWebExtractionOutcome(result.content, options.documents);
-				const identity = new Map(options.documents.map((document) => [document.sourceId, document.sourceId]));
-				const payload = buildWebExtractionToolPayload(outcome, options.documents, identity);
-				assertWebExtractionWithinCap(payload, options.maxOutputCharacters);
-				return { outcome, payload, rounds };
-			}
-			if (roundIndex === MAX_MODEL_ROUNDS - 1) {
-				throw new Error(`The web extraction reader exceeded the ${MAX_MODEL_ROUNDS}-round limit.`);
-			}
-			if (calls.length > MAX_CALLS_PER_ROUND) {
-				throw new Error(`The web extraction reader exceeded the ${MAX_CALLS_PER_ROUND}-call per-round limit.`);
-			}
-			totalCalls += calls.length;
-			if (totalCalls > MAX_TOTAL_CALLS) {
-				throw new Error(`The web extraction reader exceeded the ${MAX_TOTAL_CALLS}-call total limit.`);
-			}
-
-			continuation = [
-				...(continuation ?? []),
-				{ role: 'assistant', content: result.content, toolCalls: calls },
-			];
-			for (const call of calls) {
+			for (let roundIndex = 0; roundIndex < MAX_MODEL_ROUNDS; roundIndex += 1) {
 				options.signal.throwIfAborted();
-				const content = executeLocalCall(call, options.documents);
-				if (content.length > MAX_TOOL_OUTPUT_CHARACTERS) {
-					throw new Error(`A local retrieval result exceeded ${MAX_TOOL_OUTPUT_CHARACTERS} characters.`);
+				const request: AiProviderRequest = {
+					provider: this.dependencies.provider,
+					systemPrompt: READER_SYSTEM_PROMPT,
+					userPrompt,
+					history: [],
+					tools: LOCAL_TOOL_DEFINITIONS,
+					...(continuation === undefined ? {} : { continuation }),
+				};
+				const result = await this.dependencies.request(request, { onEvent: () => undefined }, options.signal);
+				options.signal.throwIfAborted();
+				rounds.push({ request, result });
+
+				const calls = result.toolCalls ?? [];
+				if (calls.length === 0) {
+					const outcome = parseWebExtractionOutcome(result.content, options.documents);
+					const identity = new Map(options.documents.map((document) => [document.sourceId, document.sourceId]));
+					const payload = buildWebExtractionToolPayload(outcome, options.documents, identity);
+					assertWebExtractionWithinCap(payload, options.maxOutputCharacters);
+					return { outcome, payload, rounds };
 				}
+				if (roundIndex === MAX_MODEL_ROUNDS - 1) {
+					throw new Error(`The web extraction reader exceeded the ${MAX_MODEL_ROUNDS}-round limit.`);
+				}
+				if (calls.length > MAX_CALLS_PER_ROUND) {
+					throw new Error(`The web extraction reader exceeded the ${MAX_CALLS_PER_ROUND}-call per-round limit.`);
+				}
+				totalCalls += calls.length;
+				if (totalCalls > MAX_TOTAL_CALLS) {
+					throw new Error(`The web extraction reader exceeded the ${MAX_TOTAL_CALLS}-call total limit.`);
+				}
+
 				continuation = [
-					...continuation,
-					{ role: 'tool', toolCallId: call.id, content },
+					...(continuation ?? []),
+					{ role: 'assistant', content: result.content, toolCalls: calls },
 				];
+				for (const call of calls) {
+					options.signal.throwIfAborted();
+					const content = executeLocalCall(call, options.documents);
+					if (content.length > MAX_TOOL_OUTPUT_CHARACTERS) {
+						throw new Error(`A local retrieval result exceeded ${MAX_TOOL_OUTPUT_CHARACTERS} characters.`);
+					}
+					continuation = [
+						...continuation,
+						{ role: 'tool', toolCallId: call.id, content },
+					];
+				}
 			}
+			throw new Error(`The web extraction reader exceeded the ${MAX_MODEL_ROUNDS}-round limit.`);
+		} catch (error) {
+			if (options.signal.aborted) {
+				options.signal.throwIfAborted();
+			}
+			if ((error instanceof Error && error.name === 'AbortError') || rounds.length === 0) {
+				throw error;
+			}
+			throw new WebExtractionReaderError(error, rounds);
 		}
-		throw new Error(`The web extraction reader exceeded the ${MAX_MODEL_ROUNDS}-round limit.`);
 	}
 }
 

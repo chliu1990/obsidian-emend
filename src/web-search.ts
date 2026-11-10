@@ -29,6 +29,7 @@ export interface WebActivityRecord {
 	type: 'search' | 'fetch';
 	target: string;
 	status: 'completed' | 'failed' | 'skipped';
+	failureKind?: 'extraction';
 }
 
 export interface WebToolLoopResult {

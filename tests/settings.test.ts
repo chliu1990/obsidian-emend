@@ -517,6 +517,16 @@ describe('EmendSettingTab web output cap', () => {
 		settingInstances.length = 0;
 	});
 
+	it('describes independent per-call output caps and cap-times-calls growth', () => {
+		const { tab } = createModelSettingsTab();
+		displaySettings(tab);
+
+		const description = latestSetting('Web tool call limit').description;
+		expect(description).toContain('independent output cap');
+		expect(description).toContain('cap × calls');
+		expect(description).not.toContain('40,000-character content budget');
+	});
+
 	it('normalizes and saves the numeric per-call cap without changing provider configs', async () => {
 		const { plugin, tab } = createModelSettingsTab();
 		displaySettings(tab);

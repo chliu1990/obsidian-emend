@@ -919,6 +919,7 @@ export function getUnreadPageCount(activities: WebActivityRecord[] | undefined) 
 			.filter((activity) =>
 				activity.type === 'fetch' &&
 				activity.status === 'failed' &&
+				activity.failureKind !== 'extraction' &&
 				!completedTargets.has(activity.target)
 			)
 			.map((activity) => activity.target),

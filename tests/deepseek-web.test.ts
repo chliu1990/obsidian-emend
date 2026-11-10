@@ -11,6 +11,7 @@ import type {
 	StreamEvent,
 	StreamResult,
 } from '../src/provider-stream';
+import { resolveRoundTokenUsage } from '../src/token-usage';
 import type { ProviderConfig } from '../src/types';
 import type { WebExtractionOutcome } from '../src/web-extraction';
 import type {
@@ -583,6 +584,69 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		expect(onEvent).not.toHaveBeenCalledWith({ type: 'reasoning', text: 'Reader private two' });
 	});
 
+	it.each(['complete', 'missing'] as const)('retains a completed reader round for %s usage after a later reader provider failure', async (usageCase) => {
+		const mainRounds = [
+			{
+				...toolRound([searchCall('call-1', 'reader failure')]),
+				usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12 },
+			},
+			{
+				...finalRound('Degraded answer'),
+				usage: { promptTokens: 30, completionTokens: 7, totalTokens: 37 },
+			},
+		];
+		const failure = new Error('Reader provider failed after one round');
+		let mainIndex = 0;
+		let readerCalls = 0;
+		const request = vi.fn(async (roundRequest: AiProviderRequest): Promise<StreamResult> => {
+			if (roundRequest.tools?.some((tool) => tool.function.name === 'retrieval_grep')) {
+				readerCalls += 1;
+				if (readerCalls === 2) throw failure;
+				return {
+					content: '',
+					reasoning: 'Private reader reasoning',
+					finishReason: 'tool_calls',
+					toolCalls: [{ id: 'grep-1', name: 'retrieval_grep', arguments: '{"query":"evidence"}' }],
+					...(usageCase === 'complete'
+						? { usage: { promptTokens: 20, completionTokens: 5, totalTokens: 25 } }
+						: {}),
+				};
+			}
+			const result = mainRounds[mainIndex];
+			mainIndex += 1;
+			if (!result) throw new Error('Unexpected main model round');
+			return result;
+		});
+		const coordinator = new DeepSeekWebSearchCoordinator({
+			provider,
+			request,
+			search: vi.fn(async () => [parsedSearchResult]),
+		});
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(result.content).toBe('Degraded answer');
+		expect(result.failedExtractions).toBe(1);
+		expect(result.sources).toEqual([]);
+		expect(result.rounds).toHaveLength(3);
+		expect(result.rounds[1]?.request.tools?.map((tool) => tool.function.name)).toEqual([
+			'retrieval_grep',
+			'retrieval_read',
+		]);
+		expect(result.reasoning).not.toContain('Private reader reasoning');
+		const usage = resolveRoundTokenUsage(result.rounds);
+		if (usageCase === 'complete') {
+			expect(usage).toEqual({
+				promptTokens: 60,
+				completionTokens: 14,
+				totalTokens: 74,
+				source: 'provider',
+			});
+		} else {
+			expect(usage.source).toBe('estimated');
+		}
+	});
+
 	it.each(['reject', 'resolve'] as const)('rejects the entire submission when a reader %s aborts', async (behavior) => {
 		const controller = new AbortController();
 		const reason = new DOMException('Stopped', 'AbortError');
@@ -802,6 +866,25 @@ describe('DeepSeekWebSearchCoordinator', () => {
 });
 
 describe('DeepSeek web follow-up behavior', () => {
+	it('marks a lone Fetch extraction failure separately from an unread retrieval failure', async () => {
+		const reader = successfulReader();
+		reader.extract.mockRejectedValue(new Error('Reader provider unavailable'));
+		const { coordinator } = coordinatorWith([
+			toolRound([fetchCall('call-fetch', 'https://example.test/extracted')]),
+			finalRound('Answer without extracted evidence'),
+		], undefined, undefined, reader);
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(result.failedExtractions).toBe(1);
+		expect(result.activities).toEqual([{
+			type: 'fetch',
+			target: 'https://example.test/extracted',
+			status: 'failed',
+			failureKind: 'extraction',
+		}]);
+	});
+
 	it('returns fetch failures as unread outcomes without invoking the reader', async () => {
 		const failure = new Error('HTTP 403 from GitHub');
 		const fetchPage = vi.fn(async () => { throw failure; });
