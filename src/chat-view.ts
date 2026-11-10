@@ -27,6 +27,7 @@ import type { SelectionEditTarget } from './selection-editor';
 import { formatTokenUsage } from './token-usage';
 import type { ChatMessage, Mode, ProviderHistoryMessage } from './types';
 import { WebSearchModal } from './web-search-modal';
+import { WEB_EXTRACTION_DISCLOSURE } from './web-search';
 import type {
 	WebActivityRecord,
 	WebSearchActivity,
@@ -36,7 +37,7 @@ import type {
 } from './web-search';
 
 export const EMEND_CHAT_VIEW_TYPE = 'emend-chat-view';
-export const WEB_SEARCH_DISCLOSURE = 'DeepSeek may generate search queries and fetch URLs from note context. Review asks before each batch; Auto runs directly. Successful search/fetch calls may be billed separately. Queries, URLs, and outcomes are stored locally with ready chats.';
+export const WEB_SEARCH_DISCLOSURE = `DeepSeek may generate search queries and fetch URLs from note context. Review asks before each batch; Auto runs directly. Successful search/fetch calls may be billed separately. Queries, URLs, and outcomes are stored locally with ready chats. ${WEB_EXTRACTION_DISCLOSURE}`;
 
 const WEB_CONTENT_BUDGET_WARNING = 'Web retrieval reached its 40,000-character content budget. Some retrieved content was omitted; the answer may be incomplete.';
 

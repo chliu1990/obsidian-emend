@@ -38,9 +38,11 @@ export interface WebToolLoopResult {
 	rounds: Array<{ request: AiProviderRequest; result: StreamResult }>;
 }
 
+export const WEB_EXTRACTION_DISCLOSURE = 'Each web call uses an AI reader to extract relevant facts. The reader receives your current question and extraction goal, may use up to 6 model rounds, and may incur separate charges.';
+
 export type WebToolCall =
-	| { id: string; name: 'web_search'; query: string }
-	| { id: string; name: 'web_fetch'; url: string };
+	| { id: string; name: 'web_search'; query: string; extractionGoal: string }
+	| { id: string; name: 'web_fetch'; url: string; extractionGoal: string };
 
 export interface WebSource {
 	id: string;
@@ -63,26 +65,52 @@ export function parseWebToolCall(raw: ProviderToolCall): WebToolCall {
 		throw new Error('The web tool arguments must be an object.');
 	}
 	if (raw.name === 'web_search') {
-		if (Object.keys(args).length !== 1 || typeof args.query !== 'string') {
-			throw new Error('web_search requires only a query string.');
+		if (
+			Object.keys(args).length !== 2 ||
+			typeof args.query !== 'string' ||
+			typeof args.extractionGoal !== 'string'
+		) {
+			throw new Error('web_search requires only query and extractionGoal strings.');
 		}
 		const query = args.query.trim();
 		if (!query || /[\r\n]/.test(query) || Array.from(query).length > 128) {
 			throw new Error('The search query must be a single line with 1 to 128 characters.');
 		}
-		return { id: raw.id, name: 'web_search', query };
+		return {
+			id: raw.id,
+			name: 'web_search',
+			query,
+			extractionGoal: parseExtractionGoal(args.extractionGoal),
+		};
 	}
 	if (raw.name === 'web_fetch') {
-		if (Object.keys(args).length !== 1 || typeof args.url !== 'string') {
-			throw new Error('web_fetch requires only a URL string.');
+		if (
+			Object.keys(args).length !== 2 ||
+			typeof args.url !== 'string' ||
+			typeof args.extractionGoal !== 'string'
+		) {
+			throw new Error('web_fetch requires only url and extractionGoal strings.');
 		}
 		const url = normalizeWebUrl(args.url.trim());
 		if (!url || url.length > 8192) {
 			throw new Error('The fetch URL must be a credentialess HTTP(S) URL of at most 8192 characters.');
 		}
-		return { id: raw.id, name: 'web_fetch', url };
+		return {
+			id: raw.id,
+			name: 'web_fetch',
+			url,
+			extractionGoal: parseExtractionGoal(args.extractionGoal),
+		};
 	}
 	throw new Error(`Unsupported web tool: ${raw.name}.`);
+}
+
+function parseExtractionGoal(value: string): string {
+	const extractionGoal = value.trim();
+	if (!extractionGoal || Array.from(extractionGoal).length > 1000) {
+		throw new Error('The extraction goal must contain 1 to 1000 Unicode code points.');
+	}
+	return extractionGoal;
 }
 
 export function normalizeWebUrl(value: string): string | undefined {

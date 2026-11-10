@@ -57,7 +57,7 @@ describe('DeepSeek retrieval clients', () => {
 		vi.stubGlobal('fetch', fetchMock);
 
 		const results = await searchDeepSeek(
-			{ id: 'call-1', name: 'web_search', query: 'Emend plugin' },
+			{ id: 'call-1', name: 'web_search', query: 'Emend plugin', extractionGoal: 'Find streaming request fields.' },
 			provider,
 			new AbortController().signal,
 		);
@@ -77,7 +77,7 @@ describe('DeepSeek retrieval clients', () => {
 		vi.stubGlobal('fetch', fetchMock);
 
 		const page = await fetchDeepSeekPage(
-			{ id: 'call-2', name: 'web_fetch', url: 'https://example.test/docs' },
+			{ id: 'call-2', name: 'web_fetch', url: 'https://example.test/docs', extractionGoal: 'Extract the documentation facts.' },
 			{ ...provider, baseUrl: 'https://proxy.example.test/v1/' },
 			new AbortController().signal,
 		);
@@ -114,7 +114,7 @@ describe('DeepSeek retrieval clients', () => {
 		vi.stubGlobal('fetch', fetchMock);
 
 		await expect(searchDeepSeek(
-			{ id: 'call-1', name: 'web_search', query: 'Emend' },
+			{ id: 'call-1', name: 'web_search', query: 'Emend', extractionGoal: 'Find relevant evidence.' },
 			provider,
 			new AbortController().signal,
 		)).rejects.toThrow('[redacted]');
@@ -127,7 +127,7 @@ describe('DeepSeek retrieval clients', () => {
 		}), { status: 401 })));
 
 		await expect(fetchDeepSeekPage(
-			{ id: 'call-2', name: 'web_fetch', url: 'https://example.test/private' },
+			{ id: 'call-2', name: 'web_fetch', url: 'https://example.test/private', extractionGoal: 'Extract the private-page error evidence.' },
 			provider,
 			new AbortController().signal,
 		)).rejects.toMatchObject({
@@ -143,7 +143,7 @@ describe('DeepSeek retrieval clients', () => {
 		vi.stubGlobal('fetch', vi.fn().mockRejectedValue(reason));
 
 		await expect(fetchDeepSeekPage(
-			{ id: 'call-2', name: 'web_fetch', url: 'https://example.test/docs' },
+			{ id: 'call-2', name: 'web_fetch', url: 'https://example.test/docs', extractionGoal: 'Extract the documentation facts.' },
 			provider,
 			controller.signal,
 		)).rejects.toBe(reason);
@@ -206,7 +206,7 @@ function coordinatorWith(
 describe('DeepSeekWebSearchCoordinator', () => {
 	it('allows a terminal answer without retrieval and emits only final content', async () => {
 		const { coordinator, request, search } = coordinatorWith([
-			toolRound([{ id: 'call-1', name: 'web_search', arguments: '{"query":"intermediate"}' }], 'Do not show this'),
+			toolRound([{ id: 'call-1', name: 'web_search', arguments: '{"query":"intermediate","extractionGoal":"Find relevant evidence."}' }], 'Do not show this'),
 			finalRound('Terminal answer', 'Reasoning'),
 		]);
 		const onEvent = vi.fn();
@@ -220,10 +220,21 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		expect(result.rounds).toHaveLength(2);
 		expect(onEvent).toHaveBeenCalledWith({ type: 'content', text: 'Terminal answer' });
 		expect(onEvent).not.toHaveBeenCalledWith({ type: 'content', text: 'Do not show this' });
-		expect(request.mock.calls[0]?.[0].tools?.map((tool) => tool.function.name)).toEqual([
+		const tools = request.mock.calls[0]?.[0].tools;
+		expect(tools?.map((tool) => tool.function.name)).toEqual([
 			'web_search',
 			'web_fetch',
 		]);
+		const parameters = tools?.map((tool) => tool.function.parameters) ?? [];
+		expect(parameters.map((value) => Object.keys(value.properties as Record<string, unknown>))).toEqual([
+			['query', 'extractionGoal'],
+			['url', 'extractionGoal'],
+		]);
+		expect(parameters.map((value) => value.required)).toEqual([
+			['query', 'extractionGoal'],
+			['url', 'extractionGoal'],
+		]);
+		expect(parameters.map((value) => value.additionalProperties)).toEqual([false, false]);
 		expect(search).toHaveBeenCalledOnce();
 	});
 
@@ -245,10 +256,10 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		const fetchPage = vi.fn(async () => ({ title: 'Fetched page', content: 'Fetched content' }));
 		const { coordinator, request } = coordinatorWith([
 			toolRound([
-				{ id: 'call-1', name: 'web_search', arguments: '{"query":"first"}' },
-				{ id: 'call-2', name: 'web_search', arguments: '{"query":"second"}' },
+				{ id: 'call-1', name: 'web_search', arguments: '{"query":"first","extractionGoal":"Find relevant evidence."}' },
+				{ id: 'call-2', name: 'web_search', arguments: '{"query":"second","extractionGoal":"Find relevant evidence."}' },
 			]),
-			toolRound([{ id: 'call-3', name: 'web_fetch', arguments: '{"url":"https://example.test/emend"}' }]),
+			toolRound([{ id: 'call-3', name: 'web_fetch', arguments: '{"url":"https://example.test/emend","extractionGoal":"Find relevant evidence."}' }]),
 			finalRound(),
 		], search, fetchPage);
 		const activity: Array<{ status: string; label: string }> = [];
@@ -276,24 +287,45 @@ describe('DeepSeekWebSearchCoordinator', () => {
 	});
 
 	it('uses validated Review edits and skips review only in Auto', async () => {
-		const edited: WebToolCall[] = [{ id: 'call-1', name: 'web_search', query: 'edited query' }];
+		const edited: WebToolCall[] = [{
+			id: 'call-1',
+			name: 'web_search',
+			query: 'edited query',
+			extractionGoal: 'Extract edited evidence.',
+		}];
 		const reviewCalls = vi.fn(async () => edited);
-		const { coordinator, search } = coordinatorWith([
-			toolRound([{ id: 'call-1', name: 'web_search', arguments: '{"query":"original"}' }]),
+		const { coordinator, request, search } = coordinatorWith([
+			toolRound([{ id: 'call-1', name: 'web_search', arguments: '{"query":"original","extractionGoal":"Find relevant evidence."}' }]),
 			finalRound(),
 		]);
 
 		await coordinator.submit(aiRequest(), options({ mode: 'review', reviewCalls }));
 
-		expect(reviewCalls).toHaveBeenCalledWith([{ id: 'call-1', name: 'web_search', query: 'original' }]);
-		expect(search.mock.calls[0]?.[0].query).toBe('edited query');
+		expect(reviewCalls).toHaveBeenCalledWith([{
+			id: 'call-1',
+			name: 'web_search',
+			query: 'original',
+			extractionGoal: 'Find relevant evidence.',
+		}]);
+		expect(search.mock.calls[0]?.[0]).toMatchObject({
+			query: 'edited query',
+			extractionGoal: 'Extract edited evidence.',
+		});
+		const continuation = request.mock.calls[1]?.[0].continuation?.find(
+			(message) => message.role === 'assistant',
+		);
+		expect(continuation && 'toolCalls' in continuation ? continuation.toolCalls : undefined).toEqual([{
+			id: 'call-1',
+			name: 'web_search',
+			arguments: '{"query":"edited query","extractionGoal":"Extract edited evidence."}',
+		}]);
 	});
 
 	it('rejects an over-cap batch before executing any call in it', async () => {
 		const { coordinator, request, search } = coordinatorWith([
 			toolRound([
-				{ id: 'call-1', name: 'web_search', arguments: '{"query":"first"}' },
-				{ id: 'call-2', name: 'web_search', arguments: '{"query":"second"}' },
+				{ id: 'call-1', name: 'web_search', arguments: '{"query":"first","extractionGoal":"Find relevant evidence."}' },
+				{ id: 'call-2', name: 'web_search', arguments: '{"query":"second","extractionGoal":"Find relevant evidence."}' },
 			]),
 		]);
 
@@ -317,8 +349,8 @@ describe('DeepSeekWebSearchCoordinator', () => {
 			}));
 		});
 		const { coordinator, request } = coordinatorWith([
-			toolRound([{ id: 'call-1', name: 'web_search', arguments: '{"query":"first-heavy"}' }]),
-			toolRound([{ id: 'call-2', name: 'web_search', arguments: '{"query":"second-heavy"}' }]),
+			toolRound([{ id: 'call-1', name: 'web_search', arguments: '{"query":"first-heavy","extractionGoal":"Find relevant evidence."}' }]),
+			toolRound([{ id: 'call-2', name: 'web_search', arguments: '{"query":"second-heavy","extractionGoal":"Find relevant evidence."}' }]),
 			finalRound('Answer from truncated evidence'),
 		], search);
 
@@ -355,7 +387,7 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		const calls = Array.from({ length: 20 }, (_, index) => ({
 			id: `call-${index + 1}`,
 			name: 'web_search',
-			arguments: JSON.stringify({ query: `query ${index + 1}` }),
+			arguments: JSON.stringify({ query: `query ${index + 1}`, extractionGoal: `goal ${index + 1}` }),
 		}));
 		const { coordinator, request, search } = coordinatorWith([
 			toolRound(calls),
@@ -374,11 +406,11 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		const firstBatch = Array.from({ length: 20 }, (_, index) => ({
 			id: `call-${index + 1}`,
 			name: 'web_search',
-			arguments: JSON.stringify({ query: `query ${index + 1}` }),
+			arguments: JSON.stringify({ query: `query ${index + 1}`, extractionGoal: `goal ${index + 1}` }),
 		}));
 		const { coordinator, request, search } = coordinatorWith([
 			toolRound(firstBatch),
-			toolRound([{ id: 'call-21', name: 'web_search', arguments: '{"query":"over limit"}' }]),
+			toolRound([{ id: 'call-21', name: 'web_search', arguments: '{"query":"over limit","extractionGoal":"Find relevant evidence."}' }]),
 			finalRound('Must not be returned'),
 		]);
 
@@ -396,8 +428,8 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		const fetchPage = vi.fn(async () => ({ title: 'Huge', content: 'y'.repeat(13000) }));
 		const { coordinator, request } = coordinatorWith([
 			toolRound([
-				{ id: 'call-1', name: 'web_search', arguments: '{"query":"huge"}' },
-				{ id: 'call-2', name: 'web_fetch', arguments: '{"url":"https://example.test/large"}' },
+				{ id: 'call-1', name: 'web_search', arguments: '{"query":"huge","extractionGoal":"Find relevant evidence."}' },
+				{ id: 'call-2', name: 'web_fetch', arguments: '{"url":"https://example.test/large","extractionGoal":"Find relevant evidence."}' },
 			]),
 			finalRound(),
 		], search, fetchPage);
@@ -420,7 +452,7 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		const search = vi.fn(async () => []);
 		const fetchPage = vi.fn(async () => ({ title: 'Huge', content: 'y'.repeat(13000) }));
 		const { coordinator, request } = coordinatorWith([
-			toolRound([{ id: 'call-1', name: 'web_fetch', arguments: '{"url":"https://example.test/large"}' }]),
+			toolRound([{ id: 'call-1', name: 'web_fetch', arguments: '{"url":"https://example.test/large","extractionGoal":"Find relevant evidence."}' }]),
 			finalRound(),
 		], search, fetchPage);
 
@@ -441,7 +473,7 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		const failure = new Error('Search unavailable');
 		const search = vi.fn(async () => { throw failure; });
 		const { coordinator, request } = coordinatorWith([
-			toolRound([{ id: 'call-1', name: 'web_search', arguments: '{"query":"failure"}' }]),
+			toolRound([{ id: 'call-1', name: 'web_search', arguments: '{"query":"failure","extractionGoal":"Find relevant evidence."}' }]),
 			finalRound(),
 		], search);
 
@@ -457,7 +489,7 @@ describe('DeepSeekWebSearchCoordinator', () => {
 			return [] as WebToolCall[];
 		});
 		const { coordinator, search } = coordinatorWith([
-			toolRound([{ id: 'call-1', name: 'web_search', arguments: '{"query":"cancel"}' }]),
+			toolRound([{ id: 'call-1', name: 'web_search', arguments: '{"query":"cancel","extractionGoal":"Find relevant evidence."}' }]),
 			finalRound(),
 		]);
 
@@ -476,7 +508,7 @@ describe('DeepSeek web follow-up behavior', () => {
 		const failure = new Error('HTTP 403 from GitHub');
 		const fetchPage = vi.fn(async () => { throw failure; });
 		const { coordinator, request } = coordinatorWith([
-			toolRound([{ id: 'call-fetch', name: 'web_fetch', arguments: '{"url":"https://github.com/example/repo"}' }]),
+			toolRound([{ id: 'call-fetch', name: 'web_fetch', arguments: '{"url":"https://github.com/example/repo","extractionGoal":"Find relevant evidence."}' }]),
 			finalRound('Search summaries answered part of the question; the GitHub page could not be read.'),
 		], vi.fn(async () => [parsedSearchResult]), fetchPage);
 
@@ -510,8 +542,8 @@ describe('DeepSeek web follow-up behavior', () => {
 
 	it('records completed search and fetch activity for folded review', async () => {
 		const { coordinator } = coordinatorWith([
-			toolRound([{ id: 'call-search', name: 'web_search', arguments: '{"query":"activity query"}' }]),
-			toolRound([{ id: 'call-fetch', name: 'web_fetch', arguments: '{"url":"https://example.test/page"}' }]),
+			toolRound([{ id: 'call-search', name: 'web_search', arguments: '{"query":"activity query","extractionGoal":"Find relevant evidence."}' }]),
+			toolRound([{ id: 'call-fetch', name: 'web_fetch', arguments: '{"url":"https://example.test/page","extractionGoal":"Find relevant evidence."}' }]),
 			finalRound(),
 		]);
 
@@ -532,7 +564,7 @@ describe('DeepSeek search-first retrieval', () => {
 			content: 'z'.repeat(7000),
 		}]);
 		const { coordinator, request } = coordinatorWith([
-			toolRound([{ id: 'call-search', name: 'web_search', arguments: '{"query":"full content"}' }]),
+			toolRound([{ id: 'call-search', name: 'web_search', arguments: '{"query":"full content","extractionGoal":"Find relevant evidence."}' }]),
 			finalRound('Search content was sufficient; no fetch is needed.'),
 		], search);
 
@@ -554,7 +586,7 @@ describe('DeepSeek search-first retrieval', () => {
 		const failure = Object.assign(new Error(`HTTP ${status}`), { status });
 		const fetchPage = vi.fn(async () => { throw failure; });
 		const { coordinator, request } = coordinatorWith([
-			toolRound([{ id: 'call-fetch', name: 'web_fetch', arguments: '{"url":"https://example.test/private"}' }]),
+			toolRound([{ id: 'call-fetch', name: 'web_fetch', arguments: '{"url":"https://example.test/private","extractionGoal":"Find relevant evidence."}' }]),
 			finalRound('Must not be returned'),
 		], vi.fn(async () => []), fetchPage);
 
@@ -565,7 +597,7 @@ describe('DeepSeek search-first retrieval', () => {
 	it('treats an empty fetched page as unread rather than evidence', async () => {
 		const fetchPage = vi.fn(async () => ({ title: 'Empty', content: '  ' }));
 		const { coordinator } = coordinatorWith([
-			toolRound([{ id: 'call-fetch', name: 'web_fetch', arguments: '{"url":"https://example.test/empty"}' }]),
+			toolRound([{ id: 'call-fetch', name: 'web_fetch', arguments: '{"url":"https://example.test/empty","extractionGoal":"Find relevant evidence."}' }]),
 			finalRound('The requested page was unavailable.'),
 		], vi.fn(async () => []), fetchPage);
 

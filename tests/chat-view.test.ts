@@ -2265,8 +2265,9 @@ describe('EmendChatView completion relayout and unread pages', () => {
 
 
 describe('EmendChatView compact Web disclosure', () => {
-	it('keeps disclosure on the Web selector tooltip without a large bottom block', async () => {
+	it('keeps the shared disclosure on the Web selector tooltip without requests or a large bottom block', async () => {
 		const contentEl = new FakeElement();
+		const requestChatCompletion = vi.fn();
 		const context = {
 			app: {},
 			contentEl,
@@ -2276,6 +2277,7 @@ describe('EmendChatView compact Web disclosure', () => {
 				hasUsableSelection: () => false,
 				conversationStore: { load: vi.fn(async () => []) },
 				additionalNotesStore: new AdditionalNotesStore(),
+				requestChatCompletion,
 				settings: {
 					activeProvider: 'deepseek',
 					providers: { deepseek: { name: 'DeepSeek', model: 'deepseek-flash' } },
@@ -2311,6 +2313,14 @@ describe('EmendChatView compact Web disclosure', () => {
 		expect(disclosure).toHaveLength(0);
 		expect(webSelect?.title).toContain('note context');
 		expect(webSelect?.title).toContain('stored locally with ready chats');
+		expect(webSelect?.title).toContain('Each web call uses an AI reader to extract relevant facts. The reader receives your current question and extraction goal, may use up to 6 model rounds, and may incur separate charges.');
+		if (webSelect) {
+			webSelect.value = 'review';
+			webSelect.dispatch('change');
+			webSelect.value = 'auto';
+			webSelect.dispatch('change');
+		}
+		expect(requestChatCompletion).not.toHaveBeenCalled();
 	});
 });
 

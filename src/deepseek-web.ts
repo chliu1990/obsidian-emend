@@ -28,8 +28,11 @@ const WEB_TOOL_DEFINITIONS: ProviderToolDefinition[] = [
 			description: 'Search the web for current evidence. Use only when online retrieval would improve the answer.',
 			parameters: {
 				type: 'object',
-				properties: { query: { type: 'string', description: 'One specific search query, at most 128 characters.' } },
-				required: ['query'],
+				properties: {
+					query: { type: 'string', description: 'One specific search query, at most 128 characters.' },
+					extractionGoal: { type: 'string', description: 'The relevant facts the AI reader should extract, from 1 to 1000 Unicode code points.' },
+				},
+				required: ['query', 'extractionGoal'],
 				additionalProperties: false,
 			},
 		},
@@ -41,8 +44,11 @@ const WEB_TOOL_DEFINITIONS: ProviderToolDefinition[] = [
 			description: 'Fetch one web page as Markdown only when the user explicitly asks for page contents or search summaries cannot answer a necessary detail. Do not fetch merely because a search result exists; prefer summaries and avoid routine GitHub/code-host fetches.',
 			parameters: {
 				type: 'object',
-				properties: { url: { type: 'string', description: 'A credentialess HTTP(S) URL.' } },
-				required: ['url'],
+				properties: {
+					url: { type: 'string', description: 'A credentialess HTTP(S) URL.' },
+					extractionGoal: { type: 'string', description: 'The relevant facts the AI reader should extract, from 1 to 1000 Unicode code points.' },
+				},
+				required: ['url', 'extractionGoal'],
 				additionalProperties: false,
 			},
 		},
@@ -378,8 +384,8 @@ function toProviderToolCall(call: WebToolCall): ProviderToolCall {
 		id: call.id,
 		name: call.name,
 		arguments: JSON.stringify(call.name === 'web_search'
-			? { query: call.query }
-			: { url: call.url }),
+			? { query: call.query, extractionGoal: call.extractionGoal }
+			: { url: call.url, extractionGoal: call.extractionGoal }),
 	};
 }
 
