@@ -13,7 +13,7 @@ import type {
 } from '../src/provider-stream';
 import { resolveRoundTokenUsage } from '../src/token-usage';
 import type { ProviderConfig } from '../src/types';
-import { buildWebExtractionToolPayload, type WebExtractionOutcome } from '../src/web-extraction';
+import type { WebExtractionOutcome } from '../src/web-extraction';
 import {
 	WebExtractionReader,
 	type WebExtractionReaderOptions,
@@ -189,17 +189,12 @@ function options(overrides: Partial<WebSearchRunOptions> = {}): WebSearchRunOpti
 }
 
 function readerResult(
-	readerOptions: WebExtractionReaderOptions,
+	_readerOptions: WebExtractionReaderOptions,
 	outcome: WebExtractionOutcome,
 ): WebExtractionReaderResult {
 	const content = JSON.stringify(outcome);
 	return {
 		outcome,
-		payload: buildWebExtractionToolPayload(
-			outcome,
-			readerOptions.documents,
-			new Map(readerOptions.documents.map((document) => [document.sourceId, document.sourceId])),
-		),
 		rounds: [{
 			request: {
 				provider,
@@ -312,7 +307,6 @@ describe('DeepSeekWebSearchCoordinator', () => {
 			question: 'Only the typed current question',
 			extractionGoal: 'Exact extraction goal',
 			target: kind === 'search' ? 'target query' : 'https://example.test/emend',
-			maxOutputCharacters: 20000,
 		});
 		const expectedTitle = kind === 'search' ? 'Emend documentation' : 'Fetched page';
 		expect(input?.documents).toEqual([{

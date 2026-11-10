@@ -298,7 +298,6 @@ export class DeepSeekWebSearchCoordinator {
 				extractionGoal: call.extractionGoal,
 				target,
 				documents,
-				maxOutputCharacters: options.maxContentCharactersPerCall,
 				signal: options.signal,
 			});
 			readerRounds = extracted.rounds;

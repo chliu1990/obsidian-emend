@@ -8,7 +8,6 @@ import {
 } from './provider-stream';
 import type { ProviderConfig } from './types';
 import {
-	fitWebExtractionToolPayload,
 	grepRetrievalDocuments,
 	normalizeClaimText,
 	parseJsonObject,
@@ -80,7 +79,6 @@ export interface WebExtractionReaderOptions {
 	extractionGoal: string;
 	target: string;
 	documents: readonly WebExtractionDocument[];
-	maxOutputCharacters: number;
 	signal: AbortSignal;
 }
 
@@ -91,7 +89,6 @@ export interface WebExtractionReaderRound {
 
 export interface WebExtractionReaderResult {
 	outcome: WebExtractionOutcome;
-	payload: string;
 	rounds: WebExtractionReaderRound[];
 }
 
@@ -140,13 +137,7 @@ export class WebExtractionReader {
 		try {
 			const extractorOutcome = await this.runExtractor(options, rounds);
 			const verifiedOutcome = await this.verifyAndRefine(extractorOutcome, options, rounds);
-			const fitted = fitWebExtractionToolPayload(
-				verifiedOutcome,
-				options.documents,
-				new Map(options.documents.map((document) => [document.sourceId, document.sourceId])),
-				options.maxOutputCharacters,
-			);
-			return { outcome: fitted.outcome, payload: fitted.payload, rounds };
+			return { outcome: verifiedOutcome, rounds };
 		} catch (error) {
 			if (options.signal.aborted) {
 				options.signal.throwIfAborted();
@@ -341,7 +332,9 @@ export class WebExtractionReader {
 			if (refined.length === 0 || isUnchangedRevision(refined, rejected)) {
 				break;
 			}
-			pending = refined.filter((claim) => !acceptedKeys.has(claimKey(claim)));
+			pending = selectVerifiableClaims(refined.filter(
+				(claim) => !acceptedKeys.has(claimKey(claim)),
+			));
 		}
 
 		return buildVerifiedOutcome(extractorOutcome, accepted);

@@ -7,7 +7,10 @@ import type {
 } from '../src/provider-stream';
 import { resolveRoundTokenUsage } from '../src/token-usage';
 import type { ProviderConfig } from '../src/types';
-import type { WebExtractionDocument } from '../src/web-extraction';
+import {
+	fitWebExtractionToolPayload,
+	type WebExtractionDocument,
+} from '../src/web-extraction';
 import {
 	WebExtractionReader,
 	WebExtractionReaderError,
@@ -51,17 +54,6 @@ const verifyContent = (
 const supported = (claimIndex = 0) => verifyContent([{ claimIndex, supported: true }]);
 const unsupported = (claimIndex = 0, reason = 'The quote does not support the claim.') =>
 	verifyContent([{ claimIndex, supported: false, reason }]);
-
-const expectedPayload = JSON.stringify({
-	extraction: 'ai-reader',
-	outcome: 'evidence',
-	results: [{
-		sourceId: 'R1',
-		title: 'Public title',
-		url: 'https://example.test/source',
-		claims: [{ text: 'The needle fact', evidence: ['needle body'] }],
-	}],
-});
 
 type ExtractionOptions = Parameters<WebExtractionReader['extract']>[0];
 
@@ -108,7 +100,6 @@ function options(overrides: Partial<ExtractionOptions> = {}): ExtractionOptions 
 		extractionGoal: 'Find only the needle fact.',
 		target: 'needle query',
 		documents: [source],
-		maxOutputCharacters: 10000,
 		signal: new AbortController().signal,
 		...overrides,
 	};
@@ -252,7 +243,6 @@ describe('WebExtractionReader extraction and verification', () => {
 				evidence: ['needle body'],
 			}],
 		});
-		expect(extracted.payload).toBe(expectedPayload);
 		expect(extracted.rounds).toEqual([
 			{ request: initial, result: first },
 			{ request: continued, result: second },
@@ -301,16 +291,6 @@ describe('WebExtractionReader extraction and verification', () => {
 			outcome: 'evidence',
 			results: [{ sourceId: 'R1', claims: [], evidence: ['needle body'] }],
 		});
-		expect(JSON.parse(extracted.payload)).toEqual({
-			extraction: 'ai-reader',
-			outcome: 'evidence',
-			results: [{
-				sourceId: 'R1',
-				title: 'Public title',
-				url: 'https://example.test/source',
-				evidence: ['needle body'],
-			}],
-		});
 		expect(request).toHaveBeenCalledOnce();
 	});
 
@@ -320,11 +300,6 @@ describe('WebExtractionReader extraction and verification', () => {
 		const extracted = await reader.extract(options());
 
 		expect(extracted.outcome).toEqual({ outcome: 'no_relevant_evidence', results: [] });
-		expect(JSON.parse(extracted.payload)).toEqual({
-			extraction: 'ai-reader',
-			outcome: 'no_relevant_evidence',
-			results: [],
-		});
 		expect(request).toHaveBeenCalledOnce();
 	});
 
@@ -522,12 +497,6 @@ describe('WebExtractionReader extraction and verification', () => {
 			outcome: 'evidence',
 			results: [{ sourceId: 'R1', claims: [], evidence: ['needle body'] }],
 		});
-		expect((JSON.parse(extracted.payload) as { results: unknown[] }).results[0]).toEqual({
-			sourceId: 'R1',
-			title: 'Public title',
-			url: 'https://example.test/source',
-			evidence: ['needle body'],
-		});
 	});
 
 	it.each([
@@ -719,22 +688,6 @@ describe('WebExtractionReader extraction and verification', () => {
 		expect(failure).toMatchObject({ failureKind: 'limit' });
 	});
 
-	it('fits an over-cap verified payload instead of failing the extraction', async () => {
-		const { reader } = readerWith([
-			terminalRound(claimContent()),
-			terminalRound(supported()),
-		]);
-
-		const extracted = await reader.extract(options({ maxOutputCharacters: 150 }));
-
-		expect(extracted.payload.length).toBeLessThanOrEqual(150);
-		expect(JSON.parse(extracted.payload)).toEqual({
-			extraction: 'ai-reader',
-			outcome: 'no_relevant_evidence',
-			results: [],
-		});
-	});
-
 	it('degrades a verified claim to its extractor quotes under a tight cap', async () => {
 		const { reader } = readerWith([
 			terminalRound(claimContent()),
@@ -751,10 +704,16 @@ describe('WebExtractionReader extraction and verification', () => {
 			}],
 		});
 
-		const extracted = await reader.extract(options({ maxOutputCharacters: quotesPayload.length }));
+		const extracted = await reader.extract(options());
+		const fitted = fitWebExtractionToolPayload(
+			extracted.outcome,
+			[source],
+			new Map([['R1', 'R1']]),
+			quotesPayload.length,
+		);
 
-		expect(extracted.payload).toBe(quotesPayload);
-		expect(extracted.outcome).toEqual({
+		expect(fitted.payload).toBe(quotesPayload);
+		expect(fitted.outcome).toEqual({
 			outcome: 'evidence',
 			results: [{ sourceId: 'R1', claims: [], evidence: ['needle body'] }],
 		});
@@ -795,7 +754,7 @@ describe('WebExtractionReader extraction and verification', () => {
 			terminalRound(verifierContent),
 		]);
 
-		const extracted = await reader.extract(options({ documents, maxOutputCharacters: 20000 }));
+		const extracted = await reader.extract(options({ documents }));
 
 		const verifier = request.mock.calls[1]![0];
 		const claimsJson = verifier.userPrompt.split('Claims: ')[1]?.split('\n\n')[0] ?? '';
@@ -838,7 +797,7 @@ describe('WebExtractionReader extraction and verification', () => {
 			terminalRound(noEvidenceContent),
 		]);
 
-		const extracted = await reader.extract(options({ documents, maxOutputCharacters: 100000 }));
+		const extracted = await reader.extract(options({ documents }));
 
 		expect(extracted.outcome).toEqual({
 			outcome: 'evidence',
@@ -847,6 +806,52 @@ describe('WebExtractionReader extraction and verification', () => {
 				claims: [],
 				evidence: quotesBySource.get(document.sourceId) ?? [],
 			})),
+		});
+	});
+
+	it('bounds a post-refine verifier request and keeps result quotes', async () => {
+		const quotes = Array.from({ length: 16 }, (_value, index) => `Q${index}-${'q'.repeat(1490)}`);
+		const largeSource: WebExtractionDocument = {
+			sourceId: 'R1',
+			title: 'Large source',
+			url: 'https://example.test/large',
+			canonicalText: quotes.join('|'),
+		};
+		const refinedClaims = Array.from({ length: 8 }, (_value, index) => ({
+			text: `Refined claim ${index} ${'t'.repeat(470)}`,
+			evidence: [quotes[index * 2]!, quotes[index * 2 + 1]!],
+		}));
+		const { reader, request } = readerWith([
+			terminalRound(JSON.stringify({
+				outcome: 'evidence',
+				results: [{
+					sourceId: 'R1',
+					claims: [{ text: 'Original claim', evidence: [quotes[0]!] }],
+				}],
+			})),
+			terminalRound(unsupported()),
+			terminalRound(JSON.stringify({
+				outcome: 'evidence',
+				results: [{ sourceId: 'R1', claims: refinedClaims }],
+			})),
+			terminalRound(JSON.stringify({
+				outcome: 'verify',
+				results: [{ sourceId: 'R1', verdicts: [] }],
+			})),
+			terminalRound(noEvidenceContent),
+		]);
+
+		const extracted = await reader.extract(options({ documents: [largeSource] }));
+
+		expect(request).toHaveBeenCalledTimes(5);
+		const postRefineVerifier = request.mock.calls[3]![0];
+		const claimsJson = postRefineVerifier.userPrompt.split('Claims: ')[1]?.split('\n\n')[0] ?? '';
+		const sentClaims = JSON.parse(claimsJson) as unknown[];
+		expect(claimsJson.length).toBeLessThanOrEqual(24000);
+		expect(sentClaims.length).toBeLessThan(refinedClaims.length);
+		expect(extracted.outcome).toEqual({
+			outcome: 'evidence',
+			results: [{ sourceId: 'R1', claims: [], evidence: [quotes[0]!] }],
 		});
 	});
 
