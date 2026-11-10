@@ -2494,6 +2494,50 @@ describe('EmendChatView web activity review', () => {
 			{ type: 'fetch' as const, target: 'https://example.test/page', status: 'failed' as const, failureReason: 'reader' as const },
 			'Fetch · Failed (reader) · https://example.test/page',
 		],
+		[
+			'http with status',
+			{
+				type: 'fetch' as const,
+				target: 'https://example.test/forbidden',
+				status: 'failed' as const,
+				failureReason: 'http' as const,
+				failureStatus: 403,
+			},
+			'Fetch · Failed (HTTP 403) · https://example.test/forbidden',
+		],
+		[
+			'reader format',
+			{
+				type: 'fetch' as const,
+				target: 'https://example.test/format',
+				status: 'failed' as const,
+				failureReason: 'reader' as const,
+				readerFailureKind: 'format' as const,
+			},
+			'Fetch · Failed (reader format) · https://example.test/format',
+		],
+		[
+			'reader provider',
+			{
+				type: 'search' as const,
+				target: 'service query',
+				status: 'failed' as const,
+				failureReason: 'reader' as const,
+				readerFailureKind: 'provider' as const,
+			},
+			'Search · Failed (reader service) · service query',
+		],
+		[
+			'reader limit',
+			{
+				type: 'fetch' as const,
+				target: 'https://example.test/limit',
+				status: 'failed' as const,
+				failureReason: 'reader' as const,
+				readerFailureKind: 'limit' as const,
+			},
+			'Fetch · Failed (reader limit) · https://example.test/limit',
+		],
 	])('labels failed %s activities with their failure reason', (_reason, activity, expected) => {
 		const container = renderForFooter({
 			...message('answer', 'Note.md'),
@@ -2529,6 +2573,12 @@ describe('EmendChatView web activity review', () => {
 					status: 'failed',
 					failureReason: 'mystery' as unknown as WebActivityRecord['failureReason'],
 				},
+				{
+					type: 'fetch',
+					target: 'https://example.test/completed-reader',
+					status: 'completed',
+					readerFailureKind: 'limit',
+				},
 			],
 		});
 
@@ -2540,8 +2590,11 @@ describe('EmendChatView web activity review', () => {
 		expect(rendered).toContain('Search · Completed · done query');
 		expect(rendered).toContain('Fetch · Skipped · https://example.test/skipped');
 		expect(rendered).toContain('Fetch · Failed · https://example.test/unknown');
+		expect(rendered).toContain('Fetch · Completed · https://example.test/completed-reader');
 		expect(rendered).not.toContain('mystery');
 		expect(rendered).not.toContain('(undefined)');
+		expect(rendered).not.toContain('reader limit');
+		expect(rendered).not.toContain('HTTP undefined');
 	});
 });
 

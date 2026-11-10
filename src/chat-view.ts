@@ -958,12 +958,30 @@ const WEB_FAILURE_REASON_LABELS: Record<string, string | undefined> = {
 	reader: 'reader',
 };
 
+const WEB_READER_FAILURE_LABELS: Record<string, string | undefined> = {
+	format: 'reader format',
+	provider: 'reader service',
+	limit: 'reader limit',
+};
+
+function formatWebFailureReason(activity: WebActivityRecord) {
+	if (!activity.failureReason) {
+		return undefined;
+	}
+	if (activity.failureReason === 'http' && activity.failureStatus !== undefined) {
+		return `HTTP ${activity.failureStatus}`;
+	}
+	if (activity.failureReason === 'reader' && activity.readerFailureKind) {
+		return WEB_READER_FAILURE_LABELS[activity.readerFailureKind]
+			?? WEB_FAILURE_REASON_LABELS.reader;
+	}
+	return WEB_FAILURE_REASON_LABELS[activity.failureReason];
+}
+
 function formatWebActivityText(activity: WebActivityRecord) {
 	const type = activity.type === 'search' ? 'Search' : 'Fetch';
 	const status = activity.status.charAt(0).toUpperCase() + activity.status.slice(1);
-	const reason = activity.status === 'failed' && activity.failureReason
-		? WEB_FAILURE_REASON_LABELS[activity.failureReason]
-		: undefined;
+	const reason = activity.status === 'failed' ? formatWebFailureReason(activity) : undefined;
 	const label = reason ? `${status} (${reason})` : status;
 	return `${type} · ${label} · ${activity.target}`;
 }

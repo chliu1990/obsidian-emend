@@ -26,6 +26,7 @@ export interface WebSearchRunOptions {
 }
 
 export type WebFailureReason = 'network' | 'http' | 'empty' | 'reader';
+export type WebReaderFailureKind = 'format' | 'provider' | 'limit';
 
 export interface WebActivityRecord {
 	type: 'search' | 'fetch';
@@ -33,6 +34,8 @@ export interface WebActivityRecord {
 	status: 'completed' | 'failed' | 'skipped';
 	failureKind?: 'extraction';
 	failureReason?: WebFailureReason;
+	readerFailureKind?: WebReaderFailureKind;
+	failureStatus?: number;
 }
 
 export interface WebToolLoopResult {

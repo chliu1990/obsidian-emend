@@ -16,6 +16,7 @@ import type { ProviderConfig } from '../src/types';
 import type { WebExtractionOutcome } from '../src/web-extraction';
 import {
 	WebExtractionReader,
+	WebExtractionReaderError,
 	type WebExtractionReaderOptions,
 	type WebExtractionReaderResult,
 } from '../src/web-extraction-reader';
@@ -736,6 +737,7 @@ describe('DeepSeekWebSearchCoordinator', () => {
 			status: 'failed',
 			failureKind: 'extraction',
 			failureReason: 'reader',
+			readerFailureKind: 'format',
 		}]);
 		const mainRequests = request.mock.calls
 			.map((call) => call[0])
@@ -1300,6 +1302,30 @@ describe('DeepSeek web follow-up behavior', () => {
 		}]);
 	});
 
+	it.each(['format', 'provider', 'limit'] as const)(
+		'propagates the reader %s failure kind into the failed activity',
+		async (kind) => {
+			const reader = successfulReader();
+			reader.extract.mockRejectedValue(new WebExtractionReaderError(new Error('Reader failed'), [], kind));
+			const { coordinator } = coordinatorWith([
+				toolRound([searchCall('call-1', `reader-${kind}`)]),
+				finalRound('Answer without extracted evidence'),
+			], undefined, undefined, reader);
+
+			const result = await coordinator.submit(aiRequest(), options());
+
+			expect(result.failedExtractions).toBe(1);
+			expect(result.activities).toEqual([{
+				type: 'search',
+				target: `reader-${kind}`,
+				status: 'failed',
+				failureKind: 'extraction',
+				failureReason: 'reader',
+				readerFailureKind: kind,
+			}]);
+		},
+	);
+
 	it('returns fetch failures as unread outcomes without invoking the reader', async () => {
 		const failure = Object.assign(new Error('HTTP 403 from GitHub'), { status: 403 });
 		const fetchPage = vi.fn(async () => { throw failure; });
@@ -1320,6 +1346,7 @@ describe('DeepSeek web follow-up behavior', () => {
 			target: 'https://github.com/example/repo',
 			status: 'failed',
 			failureReason: 'http',
+			failureStatus: 403,
 		}]);
 		expect(reader.extract).not.toHaveBeenCalled();
 		const toolMessage = request.mock.calls[1]?.[0].continuation?.find((message) => message.role === 'tool');
@@ -1492,6 +1519,7 @@ describe('DeepSeek web transport retry and search degradation', () => {
 			target,
 			status: 'failed',
 			failureReason: 'http',
+			failureStatus: 503,
 		}]);
 		expect(result.failedExtractions).toBe(0);
 		expect(result.failedSearches).toBe(0);
@@ -1538,6 +1566,7 @@ describe('DeepSeek web transport retry and search degradation', () => {
 			target,
 			status: 'failed',
 			failureReason: 'http',
+			failureStatus: status,
 		}]);
 	});
 
@@ -1637,6 +1666,7 @@ describe('DeepSeek web transport retry and search degradation', () => {
 			target: 'forbidden',
 			status: 'failed',
 			failureReason: 'http',
+			failureStatus: 403,
 		}]);
 	});
 
@@ -1773,6 +1803,7 @@ describe('DeepSeek web transport retry and search degradation', () => {
 			target,
 			status: 'failed',
 			failureReason: 'http',
+			failureStatus: status,
 		}]);
 	});
 
@@ -1817,6 +1848,7 @@ describe('DeepSeek web transport retry and search degradation', () => {
 			target: 'five hundred',
 			status: 'failed',
 			failureReason: 'http',
+			failureStatus: 503,
 		}]);
 		const toolMessage = request.mock.calls[1]?.[0].continuation?.find(
 			(message) => message.role === 'tool' && message.toolCallId === 'call-1',

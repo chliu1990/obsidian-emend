@@ -247,7 +247,7 @@ export class DeepSeekWebSearchCoordinator {
 				options,
 			);
 			if (!outcome.ok) {
-				return searchFailedOutcome(call.query, outcome.reason, options);
+				return searchFailedOutcome(call.query, outcome.reason, options, outcome.status);
 			}
 			return this.extractDocuments(
 				call,
@@ -265,7 +265,7 @@ export class DeepSeekWebSearchCoordinator {
 			(page) => !page.content.trim(),
 		);
 		if (!outcome.ok) {
-			return fetchFailedOutcome(call.url, outcome.reason, options);
+			return fetchFailedOutcome(call.url, outcome.reason, options, outcome.status);
 		}
 		return this.extractDocuments(
 			call,
@@ -280,19 +280,30 @@ export class DeepSeekWebSearchCoordinator {
 		retryLabel: string,
 		options: WebSearchRunOptions,
 		isEmpty?: (value: T) => boolean,
-	): Promise<{ ok: true; value: T } | { ok: false; reason: WebFailureReason }> {
+	): Promise<
+		{ ok: true; value: T } |
+		{ ok: false; reason: WebFailureReason; status?: number }
+	> {
 		const first = await this.attempt(run, isEmpty, options.signal);
 		if (first.ok) {
 			return first;
 		}
 		if (!first.retryable) {
-			return { ok: false, reason: first.reason };
+			return {
+				ok: false,
+				reason: first.reason,
+				...(first.status === undefined ? {} : { status: first.status }),
+			};
 		}
 		options.signal.throwIfAborted();
 		options.onActivity({ status: 'pending', label: retryLabel });
 		options.signal.throwIfAborted();
 		const second = await this.attempt(run, isEmpty, options.signal);
-		return second.ok ? second : { ok: false, reason: second.reason };
+		return second.ok ? second : {
+			ok: false,
+			reason: second.reason,
+			...(second.status === undefined ? {} : { status: second.status }),
+		};
 	}
 
 	private async attempt<T>(
@@ -301,7 +312,7 @@ export class DeepSeekWebSearchCoordinator {
 		signal: AbortSignal,
 	): Promise<
 		{ ok: true; value: T } |
-		{ ok: false; reason: WebFailureReason; retryable: boolean }
+		{ ok: false; reason: WebFailureReason; retryable: boolean; status?: number }
 	> {
 		try {
 			const value = await run();
@@ -329,6 +340,7 @@ export class DeepSeekWebSearchCoordinator {
 					status === undefined ||
 					status === 429 ||
 					(status >= 500 && status <= 599),
+				...(status === undefined ? {} : { status }),
 			};
 		}
 	}
@@ -407,6 +419,9 @@ export class DeepSeekWebSearchCoordinator {
 					status: 'failed',
 					failureKind: 'extraction',
 					failureReason: 'reader',
+					...(error instanceof WebExtractionReaderError
+						? { readerFailureKind: error.failureKind }
+						: {}),
 				},
 				failedExtraction: true,
 				failedSearch: false,
@@ -421,6 +436,7 @@ function searchFailedOutcome(
 	query: string,
 	reason: WebFailureReason,
 	options: WebSearchRunOptions,
+	status?: number,
 ) {
 	options.onActivity({ status: 'complete', label: `Search failed: ${query}` });
 	return {
@@ -430,6 +446,7 @@ function searchFailedOutcome(
 			target: query,
 			status: 'failed' as const,
 			failureReason: reason,
+			...(status === undefined ? {} : { failureStatus: status }),
 		},
 		failedExtraction: false,
 		failedSearch: true,
@@ -442,6 +459,7 @@ function fetchFailedOutcome(
 	url: string,
 	reason: WebFailureReason,
 	options: WebSearchRunOptions,
+	status?: number,
 ) {
 	options.onActivity({ status: 'complete', label: `Fetch failed: ${url}` });
 	return {
@@ -451,6 +469,7 @@ function fetchFailedOutcome(
 			target: url,
 			status: 'failed' as const,
 			failureReason: reason,
+			...(status === undefined ? {} : { failureStatus: status }),
 		},
 		failedExtraction: false,
 		failedSearch: false,

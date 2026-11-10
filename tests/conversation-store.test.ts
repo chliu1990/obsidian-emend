@@ -633,6 +633,7 @@ describe('ConversationStore web citation migration', () => {
 					status: 'failed',
 					failureKind: 'extraction',
 					failureReason: 'reader',
+					readerFailureKind: 'format',
 				},
 				{
 					type: 'search',
@@ -640,6 +641,14 @@ describe('ConversationStore web citation migration', () => {
 					status: 'failed',
 					failureKind: 'extraction',
 					failureReason: 'reader',
+					readerFailureKind: 'limit',
+				},
+				{
+					type: 'fetch',
+					target: 'https://example.test/forbidden',
+					status: 'failed',
+					failureReason: 'http',
+					failureStatus: 403,
 				},
 			],
 		});
@@ -649,12 +658,16 @@ describe('ConversationStore web citation migration', () => {
 		const raw = adapter.files.get(threadPath(adapter)) ?? '';
 		expect(raw).not.toContain('failureKind');
 		expect(raw).not.toContain('failureReason');
+		expect(raw).not.toContain('readerFailureKind');
+		expect(raw).not.toContain('failureStatus');
+		expect(raw).not.toContain('403');
 		expect(await store.load('Note.md')).toEqual([readyMessage({
 			webActivities: [
 				{ type: 'fetch', target: 'https://example.test/network', status: 'failed' },
 				{ type: 'fetch', target: 'https://example.test/empty', status: 'failed' },
 				{ type: 'fetch', target: 'https://example.test/reader', status: 'failed' },
 				{ type: 'search', target: 'reader query', status: 'failed' },
+				{ type: 'fetch', target: 'https://example.test/forbidden', status: 'failed' },
 			],
 		})]);
 
@@ -668,6 +681,8 @@ describe('ConversationStore web citation migration', () => {
 					status: 'failed',
 					failureKind: 'extraction',
 					failureReason: 'reader',
+					readerFailureKind: 'provider',
+					failureStatus: 503,
 				}],
 			}],
 		}));

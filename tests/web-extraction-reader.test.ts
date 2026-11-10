@@ -131,6 +131,33 @@ function parseRead(serialized: string): ReadOutput {
 	return JSON.parse(serialized) as ReadOutput;
 }
 
+const LOCAL_CALL_LIMIT_RESULT = JSON.stringify({ error: { kind: 'local_call_limit_reached' } });
+
+const manyClaimContent = JSON.stringify({
+	outcome: 'evidence',
+	results: [{ sourceId: 'R1', claims: [{ text: 'The first source fact', evidence: ['EVIDENCE 1'] }] }],
+});
+
+function manyDocuments(count: number): WebExtractionDocument[] {
+	return Array.from({ length: count }, (_value, index) => ({
+		sourceId: `R${index + 1}`,
+		title: `Source ${index + 1}`,
+		url: `https://example.test/source-${index + 1}`,
+		canonicalText: `EVIDENCE ${index + 1} for the reader.`,
+	}));
+}
+
+function readCallsFor(
+	documents: readonly WebExtractionDocument[],
+	prefix: string,
+): ProviderToolCall[] {
+	return documents.map((document, index) => ({
+		id: `${prefix}-${index + 1}`,
+		name: 'retrieval_read',
+		arguments: JSON.stringify({ sourceId: document.sourceId, offset: 0, length: 3500 }),
+	}));
+}
+
 afterEach(() => {
 	vi.unstubAllGlobals();
 });
@@ -878,32 +905,102 @@ describe('WebExtractionReader extraction and verification', () => {
 		});
 	});
 
-	it('rejects a fifth local call in one batch as a limit failure', async () => {
-		const calls = Array.from({ length: 5 }, (_value, index) => grepCall(`call-${index}`));
-		const { reader, request } = readerWith([toolRound(calls), terminalRound()]);
+	it('completes the five-result Search extraction when the first round reads every result', async () => {
+		const documents = manyDocuments(5);
+		const { reader, request } = readerWith([
+			toolRound(readCallsFor(documents, 'read')),
+			terminalRound(manyClaimContent),
+			terminalRound(supported()),
+		]);
 
-		const failure: unknown = await reader.extract(options()).catch((error: unknown) => error);
+		const extracted = await reader.extract(options({ documents }));
 
-		expect(failure).toMatchObject({ name: 'WebExtractionReaderError', failureKind: 'limit' });
-		expect(String((failure as Error).message)).toMatch(/4/);
-		expect(request).toHaveBeenCalledOnce();
+		expect(request).toHaveBeenCalledTimes(3);
+		const continued = request.mock.calls[1]![0];
+		const toolMessages = (continued.continuation ?? [])
+			.filter((message) => message.role === 'tool');
+		expect(toolMessages).toHaveLength(5);
+		const payloads = toolMessages.map((message) =>
+			JSON.parse(message.role === 'tool' ? message.content : '{}') as ReadOutput & { error?: unknown }
+		);
+		expect(payloads.map((payload) => payload.sourceId)).toEqual(['R1', 'R2', 'R3', 'R4', 'R5']);
+		expect(payloads.some((payload) => payload.error !== undefined)).toBe(false);
+		expect(extracted.outcome).toEqual({
+			outcome: 'evidence',
+			results: [{
+				sourceId: 'R1',
+				claims: [{ text: 'The first source fact', evidence: ['EVIDENCE 1'] }],
+				evidence: ['EVIDENCE 1'],
+			}],
+		});
+		expect(request.mock.calls[0]![0].systemPrompt).toContain('local_call_limit_reached');
 	});
 
-	it('rejects the seventeenth total local call as a limit failure', async () => {
-		const batches = Array.from({ length: 4 }, (_batch, batchIndex) => toolRound(
-			Array.from({ length: 4 }, (_call, callIndex) => grepCall(`call-${batchIndex}-${callIndex}`)),
+	it('executes eight of nine local reads, reports the excess, and lets the next round finish', async () => {
+		const documents = manyDocuments(9);
+		const { reader, request } = readerWith([
+			toolRound(readCallsFor(documents, 'read')),
+			terminalRound(manyClaimContent),
+			terminalRound(supported()),
+		]);
+
+		const extracted = await reader.extract(options({ documents }));
+
+		expect(request).toHaveBeenCalledTimes(3);
+		const toolMessages = (request.mock.calls[1]![0].continuation ?? [])
+			.filter((message) => message.role === 'tool');
+		expect(toolMessages).toHaveLength(9);
+		const payloads = toolMessages.map((message) =>
+			JSON.parse(message.role === 'tool' ? message.content : '{}') as ReadOutput & { error?: unknown }
+		);
+		expect(payloads.slice(0, 8).map((payload) => payload.sourceId)).toEqual([
+			'R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7', 'R8',
+		]);
+		expect(payloads[8]).toEqual({ error: { kind: 'local_call_limit_reached' } });
+		expect(toolMessages[8]?.role === 'tool' && toolMessages[8].toolCallId).toBe('read-9');
+		expect(extracted.outcome).toEqual({
+			outcome: 'evidence',
+			results: [{
+				sourceId: 'R1',
+				claims: [{ text: 'The first source fact', evidence: ['EVIDENCE 1'] }],
+				evidence: ['EVIDENCE 1'],
+			}],
+		});
+	});
+
+	it('caps total local calls at 24, reports excess calls, and forces the answer', async () => {
+		const documents = manyDocuments(5);
+		const batches = Array.from({ length: 3 }, (_batch, batchIndex) => toolRound(
+			Array.from({ length: 8 }, (_call, callIndex) => ({
+				id: `batch-${batchIndex}-${callIndex}`,
+				name: 'retrieval_read',
+				arguments: JSON.stringify({ sourceId: 'R1', offset: 0, length: 20 }),
+			})),
 		));
 		const { reader, request } = readerWith([
 			...batches,
-			toolRound([grepCall('seventeenth')]),
-			terminalRound(),
+			toolRound([readCall('overflow')]),
+			terminalRound(noEvidenceContent),
 		]);
 
-		const failure: unknown = await reader.extract(options()).catch((error: unknown) => error);
+		const extracted = await reader.extract(options({ documents }));
 
-		expect(failure).toMatchObject({ name: 'WebExtractionReaderError', failureKind: 'limit' });
-		expect(String((failure as Error).message)).toMatch(/16/);
 		expect(request).toHaveBeenCalledTimes(5);
+		const forced = request.mock.calls[4]![0];
+		expect(forced.tools).toBeUndefined();
+		expect(forced.responseFormat).toBe('json_object');
+		expect(forced.systemPrompt).toContain('call limit');
+		const continuation = forced.continuation ?? [];
+		const overflow = continuation.find(
+			(message) => message.role === 'tool' && message.toolCallId === 'overflow',
+		);
+		expect(overflow?.role === 'tool' ? overflow.content : undefined).toBe(LOCAL_CALL_LIMIT_RESULT);
+		const executed = continuation.filter(
+			(message) => message.role === 'tool' && message.toolCallId !== 'overflow',
+		);
+		expect(executed).toHaveLength(24);
+		expect(JSON.stringify(executed)).not.toContain('local_call_limit_reached');
+		expect(extracted.outcome).toEqual({ outcome: 'no_relevant_evidence', results: [] });
 	});
 
 	it.each([
@@ -1031,23 +1128,37 @@ describe('WebExtractionReader extraction and verification', () => {
 
 	it('counts invalid local calls against the per-round and total call bounds', async () => {
 		const invalidCall = (id: string) => grepCall(id, { query: 42 });
-		const perRound = readerWith([toolRound(Array.from({ length: 5 }, (_value, index) =>
-			invalidCall(`bad-${index}`),
-		)), terminalRound()]);
-		const perRoundFailure: unknown = await perRound.reader.extract(options())
-			.catch((error: unknown) => error);
-		expect(perRoundFailure).toMatchObject({ name: 'WebExtractionReaderError', failureKind: 'limit' });
-		expect(perRound.request).toHaveBeenCalledOnce();
+		const perRound = readerWith([
+			toolRound(Array.from({ length: 9 }, (_value, index) => invalidCall(`bad-${index}`))),
+			terminalRound(noEvidenceContent),
+		]);
+		await perRound.reader.extract(options());
+		const perRoundMessages = (perRound.request.mock.calls[1]![0].continuation ?? [])
+			.filter((message) => message.role === 'tool');
+		expect(perRoundMessages).toHaveLength(9);
+		const perRoundPayloads = perRoundMessages.map((message) =>
+			JSON.parse(message.role === 'tool' ? message.content : '{}') as { error?: { kind: string } }
+		);
+		expect(perRoundPayloads.slice(0, 8).every(
+			(payload) => payload.error?.kind === 'invalid_local_call',
+		)).toBe(true);
+		expect(perRoundPayloads[8]).toEqual({ error: { kind: 'local_call_limit_reached' } });
 
 		const batches = Array.from({ length: 4 }, (_batch, batchIndex) => toolRound(
-			Array.from({ length: 4 }, (_call, callIndex) =>
+			Array.from({ length: 8 }, (_call, callIndex) =>
 				invalidCall(`bad-${batchIndex}-${callIndex}`)),
 		));
-		const total = readerWith([...batches, toolRound([invalidCall('seventeenth')]), terminalRound()]);
-		const totalFailure: unknown = await total.reader.extract(options())
-			.catch((error: unknown) => error);
-		expect(totalFailure).toMatchObject({ name: 'WebExtractionReaderError', failureKind: 'limit' });
+		const total = readerWith([...batches, terminalRound(noEvidenceContent)]);
+		await total.reader.extract(options());
 		expect(total.request).toHaveBeenCalledTimes(5);
+		const forced = total.request.mock.calls[4]![0];
+		expect(forced.tools).toBeUndefined();
+		expect(forced.systemPrompt).toContain('call limit');
+		const overflowContinuation = forced.continuation ?? [];
+		const overflowResults = overflowContinuation.filter(
+			(message) => message.role === 'tool' && message.content === LOCAL_CALL_LIMIT_RESULT,
+		);
+		expect(overflowResults).toHaveLength(8);
 	});
 
 	it('classifies a provider failure after a completed round', async () => {
