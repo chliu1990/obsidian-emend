@@ -907,22 +907,147 @@ describe('WebExtractionReader extraction and verification', () => {
 	});
 
 	it.each([
-		['malformed arguments', { id: 'bad', name: 'retrieval_grep', arguments: '{' }],
-		['extra grep arguments', grepCall('bad', { query: 'needle', pattern: '.*' })],
-		['an empty grep query', grepCall('bad', { query: '' })],
-		['a non-string grep query', grepCall('bad', { query: 42 })],
-		['an unknown read source', readCall('bad', { sourceId: 'R9', offset: 0, length: 1 })],
-		['a negative read offset', readCall('bad', { sourceId: 'R1', offset: -1, length: 1 })],
-		['a zero read length', readCall('bad', { sourceId: 'R1', offset: 0, length: 0 })],
-		['extra read arguments', readCall('bad', { sourceId: 'R1', offset: 0, length: 1, content: true })],
-		['a non-local tool', { id: 'bad', name: 'web_search', arguments: '{"query":"needle"}' }],
-	])('rejects %s as a format failure without another model round', async (_label, call) => {
-		const { reader, request } = readerWith([toolRound([call]), terminalRound()]);
+		[
+			'malformed arguments',
+			{ id: 'bad', name: 'retrieval_grep', arguments: '{' },
+			'Local retrieval arguments must be valid JSON.',
+		],
+		[
+			'extra grep arguments',
+			grepCall('bad', { query: 'needle', pattern: '.*' }),
+			'Local retrieval grep arguments have an invalid shape.',
+		],
+		[
+			'an empty grep query',
+			grepCall('bad', { query: '' }),
+			'Retrieval grep query must contain 1 to 256 characters.',
+		],
+		[
+			'a non-string grep query',
+			grepCall('bad', { query: 42 }),
+			'Local retrieval grep arguments have an invalid shape.',
+		],
+		[
+			'an unknown read source',
+			readCall('bad', { sourceId: 'R9', offset: 0, length: 1 }),
+			'Unknown retrieval source: R9',
+		],
+		[
+			'a negative read offset',
+			readCall('bad', { sourceId: 'R1', offset: -1, length: 1 }),
+			'Retrieval read offset is outside the document.',
+		],
+		[
+			'a zero read length',
+			readCall('bad', { sourceId: 'R1', offset: 0, length: 0 }),
+			'Retrieval read length must be an integer from 1 to 3500.',
+		],
+		[
+			'extra read arguments',
+			readCall('bad', { sourceId: 'R1', offset: 0, length: 1, content: true }),
+			'Local retrieval read arguments have an invalid shape.',
+		],
+		[
+			'a non-local tool',
+			{ id: 'bad', name: 'web_search', arguments: '{"query":"needle"}' },
+			'Unknown local retrieval tool: web_search',
+		],
+	])('recovers %s with an invalid_local_call tool error', async (_label, call, message) => {
+		const { reader, request } = readerWith([toolRound([call]), terminalRound(noEvidenceContent)]);
 
-		const failure: unknown = await reader.extract(options()).catch((error: unknown) => error);
+		const extracted = await reader.extract(options());
 
-		expect(failure).toMatchObject({ name: 'WebExtractionReaderError', failureKind: 'format' });
-		expect(request).toHaveBeenCalledOnce();
+		expect(extracted.outcome).toEqual({ outcome: 'no_relevant_evidence', results: [] });
+		expect(request).toHaveBeenCalledTimes(2);
+		const continuation = request.mock.calls[1]![0].continuation ?? [];
+		const invalid = continuation.find(
+			(candidate) => candidate.role === 'tool' && candidate.toolCallId === 'bad',
+		);
+		expect(invalid?.role === 'tool' ? JSON.parse(invalid.content) : undefined).toEqual({
+			error: { kind: 'invalid_local_call', message },
+		});
+	});
+
+	it('recovers an invalid local call and completes from a later valid call and answer', async () => {
+		const { reader, request } = readerWith([
+			toolRound([grepCall('bad', { query: 'needle', pattern: '.*' })]),
+			toolRound([grepCall('good')]),
+			terminalRound(),
+			terminalRound(supported()),
+		]);
+
+		const extracted = await reader.extract(options());
+
+		expect(request).toHaveBeenCalledTimes(4);
+		expect(extracted.outcome).toEqual({
+			outcome: 'evidence',
+			results: [{
+				sourceId: 'R1',
+				claims: [{ text: 'The needle fact', evidence: ['needle body'] }],
+				evidence: ['needle body'],
+			}],
+		});
+		const continuation = request.mock.calls[1]![0].continuation ?? [];
+		const invalid = continuation.find(
+			(candidate) => candidate.role === 'tool' && candidate.toolCallId === 'bad',
+		);
+		expect(invalid?.role === 'tool' ? JSON.parse(invalid.content) : undefined).toEqual({
+			error: {
+				kind: 'invalid_local_call',
+				message: 'Local retrieval grep arguments have an invalid shape.',
+			},
+		});
+		expect(JSON.stringify(continuation)).not.toContain('extraction_failed');
+		const secondContinuation = request.mock.calls[2]![0].continuation ?? [];
+		const good = secondContinuation.find(
+			(candidate) => candidate.role === 'tool' && candidate.toolCallId === 'good',
+		);
+		expect(good?.role).toBe('tool');
+	});
+
+	it('bounds the invalid local call message to 200 code points without leaking source text', async () => {
+		const sourceId = `R${'9'.repeat(500)}`;
+		const { reader, request } = readerWith([
+			toolRound([readCall('bad', { sourceId, offset: 0, length: 1 })]),
+			terminalRound(noEvidenceContent),
+		]);
+
+		const extracted = await reader.extract(options());
+
+		expect(extracted.outcome).toEqual({ outcome: 'no_relevant_evidence', results: [] });
+		const continuation = request.mock.calls[1]![0].continuation ?? [];
+		const invalid = continuation.find(
+			(candidate) => candidate.role === 'tool' && candidate.toolCallId === 'bad',
+		);
+		const payload = JSON.parse(
+			invalid?.role === 'tool' ? invalid.content : '{}',
+		) as { error: { kind: string; message: string } };
+		expect(payload.error.kind).toBe('invalid_local_call');
+		expect(Array.from(payload.error.message)).toHaveLength(200);
+		expect(payload.error.message).toBe(`Unknown retrieval source: ${sourceId}`.slice(0, 200));
+		expect(payload.error.message).not.toContain(source.canonicalText);
+		expect(payload.error.message).not.toContain('NOTE_SNAPSHOT');
+	});
+
+	it('counts invalid local calls against the per-round and total call bounds', async () => {
+		const invalidCall = (id: string) => grepCall(id, { query: 42 });
+		const perRound = readerWith([toolRound(Array.from({ length: 5 }, (_value, index) =>
+			invalidCall(`bad-${index}`),
+		)), terminalRound()]);
+		const perRoundFailure: unknown = await perRound.reader.extract(options())
+			.catch((error: unknown) => error);
+		expect(perRoundFailure).toMatchObject({ name: 'WebExtractionReaderError', failureKind: 'limit' });
+		expect(perRound.request).toHaveBeenCalledOnce();
+
+		const batches = Array.from({ length: 4 }, (_batch, batchIndex) => toolRound(
+			Array.from({ length: 4 }, (_call, callIndex) =>
+				invalidCall(`bad-${batchIndex}-${callIndex}`)),
+		));
+		const total = readerWith([...batches, toolRound([invalidCall('seventeenth')]), terminalRound()]);
+		const totalFailure: unknown = await total.reader.extract(options())
+			.catch((error: unknown) => error);
+		expect(totalFailure).toMatchObject({ name: 'WebExtractionReaderError', failureKind: 'limit' });
+		expect(total.request).toHaveBeenCalledTimes(5);
 	});
 
 	it('classifies a provider failure after a completed round', async () => {

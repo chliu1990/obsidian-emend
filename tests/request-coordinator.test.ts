@@ -146,6 +146,7 @@ describe('ReadOnlyRequestCoordinator', () => {
 			expect(result.failedExtractions).toBe(0);
 			expect(result.skippedWebCalls).toBe(0);
 			expect(result.failedSearches).toBe(0);
+			expect(result.omittedEvidence).toBe(false);
 			expect(submission.callbacks.onContent).toHaveBeenCalledExactlyOnceWith(
 				'Streamed answer',
 			);
@@ -1090,6 +1091,7 @@ describe('ReadOnlyRequestCoordinator web routing', () => {
 				failedExtractions: 2,
 				skippedWebCalls: 3,
 				failedSearches: 4,
+				omittedEvidence: true,
 				rounds: [
 					{
 						request,
@@ -1159,6 +1161,7 @@ describe('ReadOnlyRequestCoordinator web routing', () => {
 		expect(result.failedExtractions).toBe(2);
 		expect(result.skippedWebCalls).toBe(3);
 		expect(result.failedSearches).toBe(4);
+		expect(result.omittedEvidence).toBe(true);
 		expect(result.sources).toEqual([{ id: 'S1', title: 'Source', url: 'https://example.test/source' }]);
 		expect(result.usage).toEqual({ promptTokens: 30, completionTokens: 7, totalTokens: 37, source: 'provider' });
 	});
@@ -1175,6 +1178,7 @@ describe('ReadOnlyRequestCoordinator web routing', () => {
 			failedExtractions: 0,
 			failedSearches: 0,
 			skippedWebCalls: 0,
+			omittedEvidence: false,
 			rounds: [
 				{
 					request,

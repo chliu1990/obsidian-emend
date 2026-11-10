@@ -268,6 +268,7 @@ describe('DeepSeekWebSearchCoordinator', () => {
 
 		expect(result.content).toBe('No research needed');
 		expect(result.failedExtractions).toBe(0);
+		expect(result.omittedEvidence).toBe(false);
 		expect(result.sources).toEqual([]);
 		expect(result.rounds).toHaveLength(1);
 		expect(request).toHaveBeenCalledOnce();
@@ -534,6 +535,7 @@ describe('DeepSeekWebSearchCoordinator', () => {
 
 		expect(result.content).toBe('Answer from fitted evidence');
 		expect(result.failedExtractions).toBe(0);
+		expect(result.omittedEvidence).toBe(false);
 		expect(result.activities).toEqual([{ type: 'search', target: 'oversized', status: 'completed' }]);
 		expect(result.sources.map((source) => source.id)).toEqual(['S1']);
 		const toolMessage = request.mock.calls[1]?.[0].continuation?.find((message) => message.role === 'tool');
@@ -547,6 +549,40 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		expect(payload.results[0]?.evidence).toHaveLength(1);
 		expect(payload.results[0]?.evidence[0]!.length).toBeLessThan(2000);
 		expect('x'.repeat(2000).startsWith(payload.results[0]?.evidence[0] ?? '')).toBe(true);
+		expect(payload.results[0]?.truncated).toBe(true);
+	});
+
+	it('reports omitted evidence when cap fitting drops a verified claim', async () => {
+		const quote = 'x'.repeat(2000);
+		const reader = successfulReader();
+		reader.extract.mockImplementation(async (input) => readerResult(input, {
+			outcome: 'evidence',
+			results: [{
+				sourceId: 'R1',
+				claims: [{ text: 'Verified claim', evidence: [quote] }],
+				evidence: [quote],
+			}],
+		}));
+		const { coordinator, request } = coordinatorWith([
+			toolRound([searchCall('call-1', 'oversized claim')]),
+			finalRound('Answer from fitted evidence'),
+		], undefined, undefined, reader);
+
+		const result = await coordinator.submit(
+			aiRequest(),
+			options({ maxContentCharactersPerCall: 1000 }),
+		);
+
+		expect(result.failedExtractions).toBe(0);
+		expect(result.omittedEvidence).toBe(true);
+		expect(result.sources.map((source) => source.id)).toEqual(['S1']);
+		const toolMessage = request.mock.calls[1]?.[0].continuation?.find(
+			(message) => message.role === 'tool',
+		);
+		const payload = JSON.parse(
+			toolMessage?.role === 'tool' ? toolMessage.content : '{}',
+		) as { results: Array<{ claims?: unknown; evidence?: string[]; truncated?: boolean }> };
+		expect(payload.results[0]?.claims).toBeUndefined();
 		expect(payload.results[0]?.truncated).toBe(true);
 	});
 
@@ -1150,6 +1186,12 @@ describe('DeepSeekWebSearchCoordinator', () => {
 			['url', 'extractionGoal'],
 		]);
 		expect(parameters.map((value) => value.additionalProperties)).toEqual([false, false]);
+		expect(parameters.map((value) =>
+			(value.properties as Record<string, { description: string } | undefined>).extractionGoal?.description
+		)).toEqual([
+			'The compact goal-relevant claims with verbatim quotes the AI reader should extract, from 1 to 1000 Unicode code points.',
+			'The compact goal-relevant claims with verbatim quotes the AI reader should extract, from 1 to 1000 Unicode code points.',
+		]);
 		const fetchTool = tools?.find((tool) => tool.function.name === 'web_fetch');
 		expect(fetchTool?.function.description).toContain('Do not fetch merely because a search result exists');
 		expect(firstRequest?.systemPrompt).toContain('If a fetch fails, do not claim the page was read');

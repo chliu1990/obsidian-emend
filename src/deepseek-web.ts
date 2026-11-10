@@ -41,7 +41,7 @@ const WEB_TOOL_DEFINITIONS: ProviderToolDefinition[] = [
 				type: 'object',
 				properties: {
 					query: { type: 'string', description: 'One specific search query, at most 128 characters.' },
-					extractionGoal: { type: 'string', description: 'The goal-relevant verbatim passages the AI reader should select, from 1 to 1000 Unicode code points.' },
+					extractionGoal: { type: 'string', description: 'The compact goal-relevant claims with verbatim quotes the AI reader should extract, from 1 to 1000 Unicode code points.' },
 				},
 				required: ['query', 'extractionGoal'],
 				additionalProperties: false,
@@ -57,7 +57,7 @@ const WEB_TOOL_DEFINITIONS: ProviderToolDefinition[] = [
 				type: 'object',
 				properties: {
 					url: { type: 'string', description: 'A credentialess HTTP(S) URL.' },
-					extractionGoal: { type: 'string', description: 'The goal-relevant verbatim passages the AI reader should select, from 1 to 1000 Unicode code points.' },
+					extractionGoal: { type: 'string', description: 'The compact goal-relevant claims with verbatim quotes the AI reader should extract, from 1 to 1000 Unicode code points.' },
 				},
 				required: ['url', 'extractionGoal'],
 				additionalProperties: false,
@@ -121,6 +121,7 @@ export class DeepSeekWebSearchCoordinator {
 		let skippedWebCalls = 0;
 		let failedExtractions = 0;
 		let failedSearches = 0;
+		let omittedEvidence = false;
 		let forceTerminal = false;
 
 		while (true) {
@@ -163,6 +164,7 @@ export class DeepSeekWebSearchCoordinator {
 					failedExtractions,
 					failedSearches,
 					skippedWebCalls,
+					omittedEvidence,
 					rounds,
 				};
 			}
@@ -195,6 +197,9 @@ export class DeepSeekWebSearchCoordinator {
 				}
 				if (outcome.failedSearch) {
 					failedSearches += 1;
+				}
+				if (outcome.omittedEvidence) {
+					omittedEvidence = true;
 				}
 				continuation = [
 					...continuation,
@@ -231,6 +236,7 @@ export class DeepSeekWebSearchCoordinator {
 		activity: WebActivityRecord;
 		failedExtraction: boolean;
 		failedSearch: boolean;
+		omittedEvidence: boolean;
 		readerRounds: WebExtractionReaderRound[];
 	}> {
 		if (call.name === 'web_search') {
@@ -337,6 +343,7 @@ export class DeepSeekWebSearchCoordinator {
 		activity: WebActivityRecord;
 		failedExtraction: boolean;
 		failedSearch: boolean;
+		omittedEvidence: boolean;
 		readerRounds: WebExtractionReaderRound[];
 	}> {
 		const type = call.name === 'web_search' ? 'search' : 'fetch';
@@ -378,6 +385,7 @@ export class DeepSeekWebSearchCoordinator {
 				activity: { type, target, status: 'completed' },
 				failedExtraction: false,
 				failedSearch: false,
+				omittedEvidence: fitted.omitted,
 				readerRounds,
 			};
 		} catch (error) {
@@ -402,6 +410,7 @@ export class DeepSeekWebSearchCoordinator {
 				},
 				failedExtraction: true,
 				failedSearch: false,
+				omittedEvidence: false,
 				readerRounds,
 			};
 		}
@@ -424,6 +433,7 @@ function searchFailedOutcome(
 		},
 		failedExtraction: false,
 		failedSearch: true,
+		omittedEvidence: false,
 		readerRounds: [],
 	};
 }
@@ -444,6 +454,7 @@ function fetchFailedOutcome(
 		},
 		failedExtraction: false,
 		failedSearch: false,
+		omittedEvidence: false,
 		readerRounds: [],
 	};
 }

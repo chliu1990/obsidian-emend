@@ -2122,7 +2122,113 @@ describe('EmendChatView web research', () => {
 		expect(finalSave?.[1]?.content.split(warning)).toHaveLength(2);
 	});
 
-	it('orders unread-page, extraction, search, and skipped-call warnings', async () => {
+	it('appends and persists one exact omission warning between the search and skipped-call warnings', async () => {
+		const omissionWarning = 'Emend omitted some extracted evidence to fit the per-call output cap. The answer may be incomplete.';
+		const searchWarning = 'Emend could not complete 1 web search. The answer may be incomplete.';
+		const skippedWarning = 'Web retrieval reached the 20-call limit. 1 proposed call was skipped; the answer may be incomplete.';
+		const requestChatCompletion = vi.fn(async (submission: {
+			callbacks: { onContent(text: string): void };
+		}) => {
+			submission.callbacks.onContent('Answer from capped evidence');
+			return {
+				content: 'Answer from capped evidence',
+				reasoning: '',
+				failedExtractions: 0,
+				failedSearches: 1,
+				skippedWebCalls: 1,
+				omittedEvidence: true,
+				activities: [],
+				usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4, source: 'provider' as const },
+			};
+		});
+		const persistMessages = vi.fn(async (_notePath: string, _messages: ChatMessage[]) => undefined);
+		const context = {
+			inputEl: { value: 'Research' },
+			isSending: false,
+			isThreadLoading: false,
+			selectedMode: 'ask' as const,
+			webSearchMode: 'auto' as const,
+			messages: [] as ChatMessage[],
+			plugin: {
+				settings: { maxWebToolCalls: 20 },
+				captureChatContext: () => ({ file: { path: 'Note.md' } }),
+				additionalNotesStore: new AdditionalNotesStore(),
+				requestChatCompletion,
+			},
+			toProviderHistory: () => [],
+			persistMessages,
+			render: vi.fn(),
+			scheduleMessageRender: vi.fn(),
+			closed: false,
+			activeController: null,
+			webReviewModal: null,
+		};
+
+		await viewPrototype.submitPrompt.call(context);
+
+		const expectedContent = [
+			'Answer from capped evidence',
+			searchWarning,
+			omissionWarning,
+			skippedWarning,
+		].join('\n\n');
+		expect(context.messages[1]?.status).toBe('ready');
+		expect(context.messages[1]?.content).toBe(expectedContent);
+		expect(context.messages[1]?.content.split(omissionWarning)).toHaveLength(2);
+		const finalSave = persistMessages.mock.calls.at(-1)?.[1];
+		expect(finalSave?.[1]?.content).toBe(expectedContent);
+		expect(finalSave?.[1]?.content.split(omissionWarning)).toHaveLength(2);
+	});
+
+	it.each([
+		{ omittedEvidence: false, webSearchMode: 'auto' as const },
+		{ omittedEvidence: undefined, webSearchMode: 'auto' as const },
+		{ omittedEvidence: false, webSearchMode: 'off' as const },
+	])('does not warn about omitted evidence when nothing was omitted ($omittedEvidence, $webSearchMode)', async ({ omittedEvidence, webSearchMode }) => {
+		const requestChatCompletion = vi.fn(async (submission: {
+			callbacks: { onContent(text: string): void };
+		}) => {
+			submission.callbacks.onContent('Answer within the cap');
+			return {
+				content: 'Answer within the cap',
+				reasoning: '',
+				failedExtractions: 0,
+				failedSearches: 0,
+				skippedWebCalls: 0,
+				omittedEvidence,
+				activities: [],
+				usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4, source: 'provider' as const },
+			};
+		});
+		const context = {
+			inputEl: { value: 'Research' },
+			isSending: false,
+			isThreadLoading: false,
+			selectedMode: 'ask' as const,
+			webSearchMode,
+			messages: [] as ChatMessage[],
+			plugin: {
+				settings: { maxWebToolCalls: 20 },
+				captureChatContext: () => ({ file: { path: 'Note.md' } }),
+				additionalNotesStore: new AdditionalNotesStore(),
+				requestChatCompletion,
+			},
+			toProviderHistory: () => [],
+			persistMessages: vi.fn(async () => undefined),
+			render: vi.fn(),
+			scheduleMessageRender: vi.fn(),
+			closed: false,
+			activeController: null,
+			webReviewModal: null,
+		};
+
+		await viewPrototype.submitPrompt.call(context);
+
+		expect(context.messages[1]?.content).toBe('Answer within the cap');
+		expect(context.messages[1]?.content).not.toContain('Emend omitted some extracted evidence');
+	});
+
+	it('orders unread-page, extraction, search, omission, and skipped-call warnings', async () => {
 		const requestChatCompletion = vi.fn(async (submission: {
 			callbacks: { onContent(text: string): void };
 		}) => {
@@ -2133,6 +2239,7 @@ describe('EmendChatView web research', () => {
 				failedExtractions: 1,
 				failedSearches: 2,
 				skippedWebCalls: 1,
+				omittedEvidence: true,
 				activities: [
 					{
 						type: 'fetch' as const,
@@ -2181,6 +2288,7 @@ describe('EmendChatView web research', () => {
 			'Emend could not read 1 requested page. The answer may be incomplete.',
 			'Emend could not extract information from 1 web query. The answer may be incomplete.',
 			'Emend could not complete 2 web searches. The answer may be incomplete.',
+			'Emend omitted some extracted evidence to fit the per-call output cap. The answer may be incomplete.',
 			'Web retrieval reached the 20-call limit. 1 proposed call was skipped; the answer may be incomplete.',
 		].join('\n\n');
 		expect(context.messages[1]?.status).toBe('ready');
@@ -2724,7 +2832,7 @@ describe('EmendChatView compact Web disclosure', () => {
 		expect(disclosure).toHaveLength(0);
 		expect(webSelect?.title).toContain('note context');
 		expect(webSelect?.title).toContain('stored locally with ready chats');
-		expect(webSelect?.title).toContain('Each web call uses an AI extraction reader that receives your current question and extraction goal, may use up to 6 extractor rounds, a verifier, and up to 2 refine rounds, and may incur separate charges.');
+		expect(webSelect?.title).toContain('Each web call uses an AI extraction reader that receives your current question and extraction goal, may use up to 6 extractor rounds, a verifier, and up to 2 refine rounds, and may incur separate charges. A transient Search or Fetch failure may be retried once.');
 		if (webSelect) {
 			webSelect.value = 'review';
 			webSelect.dispatch('change');
@@ -2732,6 +2840,17 @@ describe('EmendChatView compact Web disclosure', () => {
 			webSelect.dispatch('change');
 		}
 		expect(requestChatCompletion).not.toHaveBeenCalled();
+	});
+});
+
+
+describe('Emend Web review modal styles', () => {
+	it('styles the extraction disclosure as muted smaller text with a modest top margin', () => {
+		const rule = getCssRule('.emend-web-review-disclosure');
+
+		expect(rule).toContain('color: var(--text-muted);');
+		expect(rule).toContain('font-size: var(--font-ui-smaller);');
+		expect(rule).toContain('margin-top: 4px;');
 	});
 });
 

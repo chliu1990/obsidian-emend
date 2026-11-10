@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { WebSearchModal } from '../src/web-search-modal';
 import type { WebToolCall } from '../src/web-search';
 
-const EXTRACTION_DISCLOSURE = 'Each web call uses an AI extraction reader that receives your current question and extraction goal, may use up to 6 extractor rounds, a verifier, and up to 2 refine rounds, and may incur separate charges.';
+const EXTRACTION_DISCLOSURE = 'Each web call uses an AI extraction reader that receives your current question and extraction goal, may use up to 6 extractor rounds, a verifier, and up to 2 refine rounds, and may incur separate charges. A transient Search or Fetch failure may be retried once.';
 
 class FakeElement {
 	readonly children: FakeElement[] = [];

@@ -619,8 +619,71 @@ describe('mapped extraction payloads and cap fitting', () => {
 		const fitted = fitWebExtractionToolPayload(outcome, [source], map, payload.length);
 		expect(fitted.payload).toBe(payload);
 		expect(fitted.outcome).toEqual(outcome);
+		expect(fitted.omitted).toBe(false);
 		expect(() => assertWebExtractionWithinCap(payload, payload.length)).not.toThrow();
 		expect(() => assertWebExtractionWithinCap(payload, payload.length - 1)).toThrow();
+	});
+
+	it('reports omitted evidence when a claim is dropped', () => {
+		const source = document({
+			canonicalText: 'Title: Example\nSnippet: A snippet\nSummary: \nContent: Body and more',
+		});
+		const map = identityMap('R1');
+		const full: WebExtractionOutcome = {
+			outcome: 'evidence',
+			results: [{
+				sourceId: 'R1',
+				claims: [{ text: 'Claim text', evidence: ['Content: Body'] }],
+				evidence: ['Content: Body'],
+			}],
+		};
+		const quotesOnly: WebExtractionOutcome = {
+			outcome: 'evidence',
+			results: [{ sourceId: 'R1', claims: [], evidence: ['Content: Body'] }],
+		};
+		const cap = buildWebExtractionToolPayload(quotesOnly, [source], map).length;
+		const fitted = fitWebExtractionToolPayload(full, [source], map, cap);
+		expect(fitted.omitted).toBe(true);
+	});
+
+	it('reports omitted evidence when a whole result is dropped', () => {
+		const source = document({ canonicalText: 'Title: Example\nContent: Long evidence' });
+		const map = identityMap('R1');
+		const full: WebExtractionOutcome = {
+			outcome: 'evidence',
+			results: [{ sourceId: 'R1', claims: [], evidence: ['Long evidence'] }],
+		};
+		const floor = buildWebExtractionToolPayload(
+			{ outcome: 'no_relevant_evidence', results: [] },
+			[source],
+			map,
+		);
+		const fitted = fitWebExtractionToolPayload(full, [source], map, floor.length);
+		expect(fitted.omitted).toBe(true);
+	});
+
+	it('does not report omitted evidence for a quote prefix truncation', () => {
+		const quote = '🙂'.repeat(30);
+		const source = document({ canonicalText: `Title: Example\n${quote}` });
+		const map = identityMap('R1');
+		const full: WebExtractionOutcome = {
+			outcome: 'evidence',
+			results: [{ sourceId: 'R1', claims: [], evidence: [quote] }],
+		};
+		const prefix = '🙂'.repeat(20);
+		const expected: WebExtractionOutcome = {
+			outcome: 'evidence',
+			results: [{
+				sourceId: 'R1',
+				claims: [],
+				evidence: [prefix],
+				truncated: true,
+			}],
+		};
+		const expectedPayload = buildWebExtractionToolPayload(expected, [source], map);
+		const fitted = fitWebExtractionToolPayload(full, [source], map, expectedPayload.length);
+		expect(fitted.omitted).toBe(false);
+		expect(fitted.outcome.results[0]?.truncated).toBe(true);
 	});
 
 	it('drops trailing claims before quotes-only evidence', () => {

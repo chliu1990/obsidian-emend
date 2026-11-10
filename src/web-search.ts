@@ -43,10 +43,11 @@ export interface WebToolLoopResult {
 	failedExtractions: number;
 	failedSearches: number;
 	skippedWebCalls: number;
+	omittedEvidence: boolean;
 	rounds: Array<{ request: AiProviderRequest; result: StreamResult }>;
 }
 
-export const WEB_EXTRACTION_DISCLOSURE = 'Each web call uses an AI extraction reader that receives your current question and extraction goal, may use up to 6 extractor rounds, a verifier, and up to 2 refine rounds, and may incur separate charges.';
+export const WEB_EXTRACTION_DISCLOSURE = 'Each web call uses an AI extraction reader that receives your current question and extraction goal, may use up to 6 extractor rounds, a verifier, and up to 2 refine rounds, and may incur separate charges. A transient Search or Fetch failure may be retried once.';
 
 export type WebToolCall =
 	| { id: string; name: 'web_search'; query: string; extractionGoal: string }

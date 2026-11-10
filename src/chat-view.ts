@@ -825,6 +825,9 @@ export class EmendChatView extends ItemView {
 				if (result.failedSearches > 0) {
 					loadingMessage.content += `${loadingMessage.content ? '\n\n' : ''}${formatSearchWarning(result.failedSearches)}`;
 				}
+				if (result.omittedEvidence) {
+					loadingMessage.content += `${loadingMessage.content ? '\n\n' : ''}Emend omitted some extracted evidence to fit the per-call output cap. The answer may be incomplete.`;
+				}
 				if (result.skippedWebCalls > 0) {
 					const skipped = result.skippedWebCalls;
 					loadingMessage.content += `${loadingMessage.content ? '\n\n' : ''}Web retrieval reached the ${this.plugin.settings.maxWebToolCalls}-call limit. ${skipped} proposed ${skipped === 1 ? 'call was' : 'calls were'} skipped; the answer may be incomplete.`;

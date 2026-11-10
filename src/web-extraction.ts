@@ -31,6 +31,7 @@ export type WebExtractionOutcome = {
 export interface WebExtractionFitResult {
 	outcome: WebExtractionOutcome;
 	payload: string;
+	omitted: boolean;
 }
 
 export class WebExtractionParseError extends Error {
@@ -376,11 +377,13 @@ export function fitWebExtractionToolPayload(
 
 	const serialize = () => serializePayload(working);
 	const measure = (payload: string) => measureWebContent(payload).value;
+	let omitted = false;
 	while (measure(serialize()) > cap) {
 		const claimIndex = findLastIndex(working, (result) => result.claims.length > 0);
 		if (claimIndex !== -1) {
 			const target = working[claimIndex]!;
 			target.claims.pop();
+			omitted = true;
 			if (target.claims.length === 0 && target.evidence.length === 0) {
 				working.splice(claimIndex, 1);
 			}
@@ -400,6 +403,7 @@ export function fitWebExtractionToolPayload(
 			target.evidence.pop();
 			if (target.evidence.length === 0) {
 				working.splice(evidenceIndex, 1);
+				omitted = true;
 			}
 			continue;
 		}
@@ -437,6 +441,7 @@ export function fitWebExtractionToolPayload(
 			}
 			target.evidence = [];
 			working.splice(lastIndex, 1);
+			omitted = true;
 			continue;
 		}
 
@@ -444,10 +449,14 @@ export function fitWebExtractionToolPayload(
 		if (measure(floor) > cap) {
 			throw new Error(`Web extraction payload cannot fit within the ${cap}-character cap.`);
 		}
-		return { outcome: { outcome: 'no_relevant_evidence', results: [] }, payload: floor };
+		return {
+			outcome: { outcome: 'no_relevant_evidence', results: [] },
+			payload: floor,
+			omitted: true,
+		};
 	}
 
-	return { outcome: toOutcome(working), payload: serialize() };
+	return { outcome: toOutcome(working), payload: serialize(), omitted };
 }
 
 export function assertWebExtractionWithinCap(payload: string, cap: number): void {

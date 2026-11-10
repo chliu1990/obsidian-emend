@@ -86,6 +86,7 @@ export interface ChatStreamResult extends Omit<StreamResult, 'usage'> {
 	failedExtractions: number;
 	failedSearches: number;
 	skippedWebCalls: number;
+	omittedEvidence: boolean;
 }
 
 export interface EditRequestResult extends EditResult {
@@ -141,6 +142,7 @@ export class ReadOnlyRequestCoordinator {
 				failedExtractions: result.failedExtractions,
 				failedSearches: result.failedSearches,
 				skippedWebCalls: result.skippedWebCalls,
+				omittedEvidence: result.omittedEvidence,
 				usage: resolveRoundTokenUsage(result.rounds),
 			};
 		}
@@ -155,6 +157,7 @@ export class ReadOnlyRequestCoordinator {
 			failedExtractions: 0,
 			failedSearches: 0,
 			skippedWebCalls: 0,
+			omittedEvidence: false,
 			usage: resolveTokenUsage(request, result),
 		};
 	}
