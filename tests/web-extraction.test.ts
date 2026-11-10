@@ -662,6 +662,27 @@ describe('mapped extraction payloads and cap fitting', () => {
 		expect(fitted.omitted).toBe(true);
 	});
 
+	it('reports omitted evidence when one of several quotes is dropped', () => {
+		const source = document({
+			canonicalText: 'Title: Example\nSnippet: A snippet\nSummary: \nContent: Alpha quote. Beta quote.',
+		});
+		const map = identityMap('R1');
+		const full: WebExtractionOutcome = {
+			outcome: 'evidence',
+			results: [{ sourceId: 'R1', claims: [], evidence: ['Alpha quote.', 'Beta quote.'] }],
+		};
+		const surviving: WebExtractionOutcome = {
+			outcome: 'evidence',
+			results: [{ sourceId: 'R1', claims: [], evidence: ['Alpha quote.'] }],
+		};
+		const cap = buildWebExtractionToolPayload(surviving, [source], map).length;
+		const fitted = fitWebExtractionToolPayload(full, [source], map, cap);
+		const payload = JSON.parse(fitted.payload) as { results: Array<{ evidence: string[] }> };
+		expect(fitted.omitted).toBe(true);
+		expect(fitted.outcome).toEqual(surviving);
+		expect(payload.results[0]?.evidence).toEqual(['Alpha quote.']);
+	});
+
 	it('does not report omitted evidence for a quote prefix truncation', () => {
 		const quote = '🙂'.repeat(30);
 		const source = document({ canonicalText: `Title: Example\n${quote}` });

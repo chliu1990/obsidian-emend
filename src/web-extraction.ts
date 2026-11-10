@@ -401,9 +401,9 @@ export function fitWebExtractionToolPayload(
 			);
 			const target = working[evidenceIndex]!;
 			target.evidence.pop();
+			omitted = true;
 			if (target.evidence.length === 0) {
 				working.splice(evidenceIndex, 1);
-				omitted = true;
 			}
 			continue;
 		}
