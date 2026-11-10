@@ -70,6 +70,7 @@ export const DEFAULT_SETTINGS: EmendSettings = {
 	smartSelectionContext: true,
 	maxContextCharacters: 12000,
 	maxWebToolCalls: 8,
+	maxWebContentCharactersPerCall: 20000,
 };
 
 export function normalizeSettings(data: unknown): EmendSettings {
@@ -109,6 +110,9 @@ export function normalizeSettings(data: unknown): EmendSettings {
 				: DEFAULT_SETTINGS.smartSelectionContext,
 		maxContextCharacters: normalizeContextLimit(root.maxContextCharacters),
 		maxWebToolCalls: normalizeWebToolCallLimit(root.maxWebToolCalls),
+		maxWebContentCharactersPerCall: normalizeWebContentCharacterLimit(
+			root.maxWebContentCharactersPerCall,
+		),
 	};
 }
 
@@ -372,6 +376,24 @@ export class EmendSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					});
 			});
+
+		new Setting(containerEl)
+			.setName('Web output cap per call (characters)')
+			.setDesc('Maximum characters in each search/fetch reader response. Each response has an independent cap; total growth is cap × calls.')
+			.addText((text) => {
+				text.inputEl.type = 'number';
+				text.inputEl.min = '1000';
+				text.inputEl.max = '100000';
+				text.inputEl.step = '1';
+				text
+					.setPlaceholder(String(DEFAULT_SETTINGS.maxWebContentCharactersPerCall))
+					.setValue(String(this.plugin.settings.maxWebContentCharactersPerCall))
+					.onChange(async (value) => {
+						this.plugin.settings.maxWebContentCharactersPerCall =
+							normalizeWebContentCharacterLimit(Number.parseInt(value, 10));
+						await this.plugin.saveSettings();
+					});
+			});
 	}
 
 	private async refreshModels(providerId: ProviderId) {
@@ -459,6 +481,12 @@ function normalizeWebToolCallLimit(value: unknown) {
 	return typeof value === 'number' && Number.isFinite(value)
 		? Math.min(20, Math.max(1, Math.floor(value)))
 		: DEFAULT_SETTINGS.maxWebToolCalls;
+}
+
+function normalizeWebContentCharacterLimit(value: unknown) {
+	return typeof value === 'number' && Number.isFinite(value)
+		? Math.min(100000, Math.max(1000, Math.floor(value)))
+		: DEFAULT_SETTINGS.maxWebContentCharactersPerCall;
 }
 
 function stringOrDefault(value: unknown, fallback: string) {
