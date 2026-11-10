@@ -144,6 +144,16 @@ The main model may answer from other successful evidence after a non-abort reade
 
 Existing fatal main-loop Search errors and fatal Fetch HTTP 400/401/402/413 behavior remain unchanged.
 
+## Over-limit graceful completion
+
+`maxWebToolCalls` limits executed Search/Fetch calls; it does not make an over-limit conversation fail. When a proposed batch would exceed the limit, Emend executes only the first remaining calls in model order and skips the excess. All proposed arguments are validated first. Review presents only the executable calls for editing/consent; skipped calls perform no retrieval or reader work.
+
+The continuation preserves every proposed call ID. Executed calls use their reviewed arguments and ordinary extracted/failed outcomes; each skipped call receives only a small `call_limit_reached` tool outcome and skipped activity. After the allowed executions, Emend makes exactly one forced terminal main-model request with Web tools removed and an instruction to answer from the current note/chat and successfully gathered evidence without further retrieval. A provider response attempting more tools at this boundary is malformed and fails without retrieval.
+
+The forced answer is a ready answer whenever the provider completes normally, even if no evidence was gathered. It must acknowledge missing evidence rather than inventing retrieval or citations. Only successfully extracted sources remain available. The forced round and all selected reader rounds participate in ordinary all-round usage, and all aborts still cancel the whole submission.
+
+The transient result includes `skippedWebCalls: number` (ordinary chat returns zero). For `N > 0`, ready chat appends exactly one additional warning: `Web retrieval reached the <limit>-call limit. N proposed calls were skipped; the answer may be incomplete.` with singular `1 proposed call was skipped`. It can coexist with unread-Fetch and extraction warnings and persists as ordinary sanitized content. Exactly reaching the limit without an excess proposal produces no warning.
+
 ## Usage, activity, and persistence
 
 - Reader rounds are included in the existing all-round provider-versus-estimated usage calculation. Provider-sourced usage requires complete valid triplets from every main and reader model round; otherwise all rounds are independently estimated and labelled Estimated.
@@ -153,7 +163,7 @@ Existing fatal main-loop Search errors and fatal Fetch HTTP 400/401/402/413 beha
 
 ## Settings and migration
 
-The new per-call setting is non-secret local plugin data. Existing `maxWebToolCalls` keeps its meaning and normalization. No credentials move out of SecretStorage, and sanitized settings saves continue to write blank API-key fields.
+The new per-call setting is non-secret local plugin data. Existing `maxWebToolCalls` keeps its 1–20 normalization and limits executed Search/Fetch calls as specified above. No credentials move out of SecretStorage, and sanitized settings saves continue to write blank API-key fields.
 
 There is no conversation-schema migration. The PR1 shared-budget flag/warning is removed before it ever reaches a merged release, so no compatibility path is needed for unreleased `contentBudgetExhausted` data. Current documentation and Stage 40 are rewritten to describe the final per-call reader behavior rather than layering contradictory contracts.
 
@@ -164,7 +174,7 @@ Write regression tests first and record RED→GREEN evidence for:
 - settings default, normalization, independent per-call cap, explicit character unit, token-ready measurement boundary, and no total-cap setting;
 - required nonempty `extractionGoal` validation and Review editing for Search and Fetch;
 - small and large Search/Fetch results each invoking exactly one reader with the current user question and extraction goal, but no note snapshot/history/instructions/additional-note leakage;
-- two heavy Searches at a 20-call limit succeeding without shared-pool truncation; derived `C × N` output bounds and unchanged 20/21-call behavior;
+- two heavy Searches at a 20-call limit succeeding without shared-pool truncation; derived `C × N` output bounds; exact 20-call completion without a warning and 20/21 partial-execution/skipped-call completion with a no-tools final answer;
 - literal grep/ranged-read validation, source/offset bounds, tool-result caps, and round/call exhaustion;
 - valid source-labelled extraction, exact serialized-cap boundaries, verbatim evidence grounding, malformed/invented/duplicate/over-cap output, and no hard truncation or raw passthrough;
 - unread-query outcomes with no raw fallback, one incompleteness warning, failed activity, and excluded unread sources;
@@ -173,7 +183,7 @@ Write regression tests first and record RED→GREEN evidence for:
 - all-round main+reader usage and provider/estimated labels;
 - sanitized schema-2 persistence/reload with no raw retrieval, reader payloads, evidence extracts, reader reasoning, or transient state.
 
-Run the complete clean gate and real-Obsidian loopback scenarios on both supported DeepSeek models, including small and large Search/Fetch extraction, two heavy Searches at setting 20, successful grep/read extraction, reader failure, Stop/retry, Review consent, Auto, reload persistence, usage, citations, and unchanged notes. Use only ignored `test_vault/`, synthetic content, local mocks, and dummy credentials.
+Run the complete clean gate and real-Obsidian loopback scenarios on both supported DeepSeek models, including small and large Search/Fetch extraction, two heavy Searches at setting 20, successful grep/read extraction, reader failure, Stop/retry, Review consent, Auto, partial over-limit execution with a no-tools final answer and skipped-call warning, reload persistence, usage, citations, and unchanged notes. Use only ignored `test_vault/`, synthetic content, local mocks, and dummy credentials.
 
 The revised PR requires fresh independent task and whole-branch reviews, green GitHub CI, and user review/merge before PR2 resumes.
 

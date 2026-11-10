@@ -206,6 +206,34 @@
   - Expected: all checks pass and tracked status contains only intended source/tests/docs.
   - Commit docs with `git commit -m "docs: verify per-query web extraction"`; keep ignored loopback evidence uncommitted.
 
+### Task 7: Graceful Over-limit Completion
+
+**Files:**
+- Modify: `src/deepseek-web.ts`, `src/web-search.ts`, `src/request-coordinator.ts`, `src/chat-view.ts`, `src/settings.ts`, `AGENTS.md`, `IMPLEMENTATION_PLAN.md`, `README.md`, `devel_docs/36-deepseek-online-search.md`, `devel_docs/40-web-content-budget-diagnostics.md`, `test_vault/emend-web-verify/`
+- Test: `tests/deepseek-web.test.ts`, `tests/request-coordinator.test.ts`, `tests/chat-view.test.ts`, `tests/settings.test.ts`
+
+**Interfaces:**
+- Adds `WebToolLoopResult.skippedWebCalls: number` and `ChatStreamResult.skippedWebCalls: number` (ordinary chat returns 0).
+- `maxWebToolCalls` caps executed Search/Fetch calls. An over-limit batch executes the first remaining calls in model order, skips only the excess, and makes one forced terminal main-model request without Web tools.
+- For `N > 0`, chat appends `Web retrieval reached the <limit>-call limit. N proposed calls were skipped; the answer may be incomplete.` with singular `1 proposed call was skipped`.
+
+- [ ] **Step 1: Write failing over-limit tests**
+  - Replace the old 21st-call terminal-error expectation: after 20 successful calls, call 21 is skipped without Search/reader execution, one no-tools final request returns a ready answer, and the result reports `skippedWebCalls: 1` with all rounds/citations preserved.
+  - With a limit of 8 and 10 first-round proposals, assert the first 8 execute in model order, only those appear in Review, the other 2 receive skipped activity/`call_limit_reached` outcomes, reviewed arguments replace the executable originals in continuation, and the forced request has no tools. Cover zero remaining slots, multiple skipped calls, no gathered evidence, selected extraction failures, exact 20 without excess, and malformed tool calls in the forced round.
+  - Assert ordinary chat returns zero, exact singular/plural warnings persist once alongside other warnings, and settings/docs no longer claim an over-cap batch fails or executes none.
+- [ ] **Step 2: Verify RED**
+  - Run: `npm test -- tests/deepseek-web.test.ts tests/request-coordinator.test.ts tests/chat-view.test.ts tests/settings.test.ts`
+  - Expected: the old thrown error remains and the new result/warning is absent.
+- [ ] **Step 3: Implement partial execution and the forced answer**
+  - Validate all proposals, select only the remaining slots, and Review only those. Rebuild continuation with every original call ID, reviewed executable arguments, ordinary selected outcomes, and small capped `call_limit_reached` outcomes for skipped calls.
+  - Force one final round with no Web tool declarations and a system instruction to answer from available context/evidence. Reject any further proposed tools without retrieval. Return skipped count/activity, preserve sources/usage/abort/fatal behavior, and propagate the exact warning through chat.
+- [ ] **Step 4: Verify GREEN and update current docs**
+  - Run focused tests and `npm test && npm run lint && npm run build && git diff --check`.
+  - Update all listed current guides and setting copy to executed-call limits, partial execution, forced no-tools completion, and skipped-call warnings. Do not claim verification yet.
+- [ ] **Step 5: Run real-Obsidian over-limit verification and commit**
+  - On both supported models exercise Auto and Review batches that partially execute and skip excess calls, including a 20/21 boundary and no-evidence completion. Assert exact request order, no tools in the final request, skipped activity/warning persistence, citations/usage, unchanged notes, and Stop/retry.
+  - Run `npm ci && npm test && npm run lint && npm run build && git diff --check`; record final evidence in Stage 40 and commit with `git commit -m "feat: answer after web call limits"`.
+
 ## Completion and Review
 
 - Generate each task review from its recorded BASE through HEAD; resolve every Critical/Important finding before continuing.
