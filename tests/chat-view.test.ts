@@ -1926,6 +1926,7 @@ describe('EmendChatView web research', () => {
 		expect(context.messages[1]?.content).toContain(
 			'Emend could not read 1 requested page. The answer may be incomplete.',
 		);
+		expect(context.messages[1]?.content).not.toContain('Emend could not extract information');
 	});
 
 	it.each([

@@ -224,13 +224,7 @@ export class DeepSeekWebSearchCoordinator {
 			}
 			options.onActivity({ status: 'complete', label: `Fetch failed: ${call.url}` });
 			return {
-				content: JSON.stringify({
-					error: {
-						kind: 'fetch_failed',
-						message: error instanceof Error ? error.message : String(error),
-					},
-					url: call.url,
-				}),
+				content: fetchFailedPayload(options.maxContentCharactersPerCall),
 				activity: { type, target, status: 'failed' },
 				failedExtraction: false,
 				readerRounds: [],
@@ -239,10 +233,7 @@ export class DeepSeekWebSearchCoordinator {
 		if (!page.content.trim()) {
 			options.onActivity({ status: 'complete', label: `Fetch failed: ${call.url}` });
 			return {
-				content: JSON.stringify({
-					error: { kind: 'fetch_failed', message: 'The fetched page contained no readable content.' },
-					url: call.url,
-				}),
+				content: fetchFailedPayload(options.maxContentCharactersPerCall),
 				activity: { type, target, status: 'failed' },
 				failedExtraction: false,
 				readerRounds: [],
@@ -325,6 +316,12 @@ export class DeepSeekWebSearchCoordinator {
 			};
 		}
 	}
+}
+
+function fetchFailedPayload(maxContentCharacters: number) {
+	const content = JSON.stringify({ error: { kind: 'fetch_failed' } });
+	assertWebExtractionWithinCap(content, maxContentCharacters);
+	return content;
 }
 
 export async function searchDeepSeek(

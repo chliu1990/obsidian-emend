@@ -910,6 +910,29 @@ describe('DeepSeek web follow-up behavior', () => {
 		expect(toolMessage?.role === 'tool' && toolMessage.content).not.toContain('dummy-key');
 	});
 
+	it('caps a nonfatal Fetch failure with a long provider error and URL at the 1000-character setting', async () => {
+		const longUrl = `https://example.test/${'u'.repeat(1100)}`;
+		const failure = new Error(`PRIVATE_PROVIDER_ERROR_${'e'.repeat(2000)}`);
+		const fetchPage = vi.fn(async () => { throw failure; });
+		const reader = successfulReader();
+		const { coordinator, request } = coordinatorWith([
+			toolRound([fetchCall('call-fetch', longUrl)]),
+			finalRound('The requested page was unread.'),
+		], vi.fn(async () => []), fetchPage, reader);
+
+		const result = await coordinator.submit(aiRequest(), options({ maxContentCharactersPerCall: 1000 }));
+
+		expect(result.failedExtractions).toBe(0);
+		expect(result.activities).toEqual([{ type: 'fetch', target: longUrl, status: 'failed' }]);
+		expect(reader.extract).not.toHaveBeenCalled();
+		const toolMessage = request.mock.calls[1]?.[0].continuation?.find((message) => message.role === 'tool');
+		const content = toolMessage?.role === 'tool' ? toolMessage.content : '';
+		expect(content).toBe('{"error":{"kind":"fetch_failed"}}');
+		expect(content.length).toBeLessThanOrEqual(1000);
+		expect(content).not.toContain('PRIVATE_PROVIDER_ERROR');
+		expect(content).not.toContain(longUrl);
+	});
+
 	it.each([400, 401, 402, 413])('keeps fetch account/request HTTP %s fatal', async (status) => {
 		const failure = Object.assign(new Error(`HTTP ${status}`), { status });
 		const fetchPage = vi.fn(async () => { throw failure; });
@@ -942,5 +965,27 @@ describe('DeepSeek web follow-up behavior', () => {
 		}]);
 		expect(result.sources).toEqual([]);
 		expect(reader.extract).not.toHaveBeenCalled();
+	});
+
+	it('caps an empty-page Fetch outcome with a long URL at the 1000-character setting', async () => {
+		const longUrl = `https://example.test/empty/${'u'.repeat(1100)}`;
+		const fetchPage = vi.fn(async () => ({ title: 'Empty', content: '  ' }));
+		const reader = successfulReader();
+		const { coordinator, request } = coordinatorWith([
+			toolRound([fetchCall('call-fetch', longUrl)]),
+			finalRound('The empty page was unread.'),
+		], vi.fn(async () => []), fetchPage, reader);
+
+		const result = await coordinator.submit(aiRequest(), options({ maxContentCharactersPerCall: 1000 }));
+
+		expect(result.failedExtractions).toBe(0);
+		expect(result.activities).toEqual([{ type: 'fetch', target: longUrl, status: 'failed' }]);
+		expect(result.sources).toEqual([]);
+		expect(reader.extract).not.toHaveBeenCalled();
+		const toolMessage = request.mock.calls[1]?.[0].continuation?.find((message) => message.role === 'tool');
+		const content = toolMessage?.role === 'tool' ? toolMessage.content : '';
+		expect(content).toBe('{"error":{"kind":"fetch_failed"}}');
+		expect(content.length).toBeLessThanOrEqual(1000);
+		expect(content).not.toContain(longUrl);
 	});
 });
