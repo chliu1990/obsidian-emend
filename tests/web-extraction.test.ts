@@ -429,6 +429,46 @@ describe('parseWebExtractionOutcome tolerant claims', () => {
 		});
 	});
 
+	it('caps claims per source and in total before verification', () => {
+		const sources = Array.from({ length: 4 }, (_value, index) => document({
+			sourceId: `R${index + 1}`,
+			title: `Source ${index + 1}`,
+			url: `https://example.test/${index + 1}`,
+			canonicalText: 'Title: Source\nSnippet: \nSummary: \nContent: Body',
+		}));
+		const claims = Array.from({ length: 1000 }, (_value, index) => ({
+			text: `Claim ${index}`,
+			evidence: ['Content: Body'],
+		}));
+		const parsed = parseWebExtractionOutcome(JSON.stringify({
+			outcome: 'evidence',
+			results: sources.map((source) => ({ sourceId: source.sourceId, claims })),
+		}), sources);
+		expect(parsed.outcome).toBe('evidence');
+		const results = parsed.outcome === 'evidence' ? parsed.results : [];
+		expect(results.map((result) => result.claims.length)).toEqual([8, 8, 8]);
+		expect(results.reduce((total, result) => total + result.claims.length, 0)).toBe(24);
+	});
+
+	it('deduplicates repeated claim text without a quadratic scan', () => {
+		const repeated = Array.from({ length: 2000 }, () => ({
+			text: 'Same claim',
+			evidence: ['Content: Body'],
+		}));
+		const parsed = parseWebExtractionOutcome(JSON.stringify({
+			outcome: 'evidence',
+			results: [{ sourceId: 'R1', claims: repeated }],
+		}), [document()]);
+		expect(parsed).toEqual({
+			outcome: 'evidence',
+			results: [{
+				sourceId: 'R1',
+				claims: [{ text: 'Same claim', evidence: ['Content: Body'] }],
+				evidence: ['Content: Body'],
+			}],
+		});
+	});
+
 	it('merges duplicate source IDs and drops unknown sources', () => {
 		const parsed = parseWebExtractionOutcome(JSON.stringify({
 			outcome: 'evidence',
@@ -564,11 +604,23 @@ describe('mapped extraction payloads and cap fitting', () => {
 		});
 	});
 
-	it('allows an exact-cap payload and rejects cap plus one without slicing it', () => {
-		const payload = JSON.stringify({ extraction: 'ai-reader', value: 'A🙂' });
+	it('fits an exact-cap claim and evidence payload without changing it', () => {
+		const source = document();
+		const map = identityMap('R1');
+		const outcome: WebExtractionOutcome = {
+			outcome: 'evidence',
+			results: [{
+				sourceId: 'R1',
+				claims: [{ text: 'Fact', evidence: ['Content: Body'] }],
+				evidence: ['Content: Body'],
+			}],
+		};
+		const payload = buildWebExtractionToolPayload(outcome, [source], map);
+		const fitted = fitWebExtractionToolPayload(outcome, [source], map, payload.length);
+		expect(fitted.payload).toBe(payload);
+		expect(fitted.outcome).toEqual(outcome);
 		expect(() => assertWebExtractionWithinCap(payload, payload.length)).not.toThrow();
 		expect(() => assertWebExtractionWithinCap(payload, payload.length - 1)).toThrow();
-		expect(payload).toBe(JSON.stringify({ extraction: 'ai-reader', value: 'A🙂' }));
 	});
 
 	it('drops trailing claims before quotes-only evidence', () => {
@@ -597,6 +649,29 @@ describe('mapped extraction payloads and cap fitting', () => {
 		const cap = buildWebExtractionToolPayload(quotesOnly, [document(), other], map).length;
 		const fitted = fitWebExtractionToolPayload(full, [document(), other], map, cap);
 		expect(fitted.payload).toBe(buildWebExtractionToolPayload(quotesOnly, [document(), other], map));
+		expect(fitted.outcome).toEqual(quotesOnly);
+	});
+
+	it('degrades a claim result to its preserved quotes when a tight cap removes the claim', () => {
+		const source = document({
+			canonicalText: 'Title: Example\nSnippet: A snippet\nSummary: \nContent: Body and more',
+		});
+		const map = identityMap('R1');
+		const full: WebExtractionOutcome = {
+			outcome: 'evidence',
+			results: [{
+				sourceId: 'R1',
+				claims: [{ text: 'Claim text', evidence: ['Content: Body'] }],
+				evidence: ['Content: Body'],
+			}],
+		};
+		const quotesOnly: WebExtractionOutcome = {
+			outcome: 'evidence',
+			results: [{ sourceId: 'R1', claims: [], evidence: ['Content: Body'] }],
+		};
+		const cap = buildWebExtractionToolPayload(quotesOnly, [source], map).length;
+		const fitted = fitWebExtractionToolPayload(full, [source], map, cap);
+		expect(fitted.payload).toBe(buildWebExtractionToolPayload(quotesOnly, [source], map));
 		expect(fitted.outcome).toEqual(quotesOnly);
 	});
 

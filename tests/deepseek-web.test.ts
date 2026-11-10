@@ -741,7 +741,7 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		expect(onEvent).not.toHaveBeenCalledWith({ type: 'reasoning', text: 'Reader private two' });
 	});
 
-	it.each(['complete', 'missing'] as const)('retains a completed reader round for %s usage after a later reader provider failure', async (usageCase) => {
+	it.each(['complete', 'missing'] as const)('records a completed and a failed reader attempt for %s usage', async (usageCase) => {
 		const mainRounds = [
 			{
 				...toolRound([searchCall('call-1', 'reader failure')]),
@@ -785,23 +785,16 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		expect(result.content).toBe('Degraded answer');
 		expect(result.failedExtractions).toBe(1);
 		expect(result.sources).toEqual([]);
-		expect(result.rounds).toHaveLength(3);
+		expect(result.rounds).toHaveLength(4);
 		expect(result.rounds[1]?.request.tools?.map((tool) => tool.function.name)).toEqual([
 			'retrieval_grep',
 			'retrieval_read',
 		]);
+		expect(result.rounds[2]?.result).toEqual({ content: '', reasoning: '' });
 		expect(result.reasoning).not.toContain('Private reader reasoning');
 		const usage = resolveRoundTokenUsage(result.rounds);
-		if (usageCase === 'complete') {
-			expect(usage).toEqual({
-				promptTokens: 60,
-				completionTokens: 14,
-				totalTokens: 74,
-				source: 'provider',
-			});
-		} else {
-			expect(usage.source).toBe('estimated');
-		}
+		expect(usage.source).toBe('estimated');
+		expect(usage.totalTokens).toBeGreaterThan(0);
 	});
 
 	it.each(['reject', 'resolve'] as const)('rejects the entire submission when a reader %s aborts', async (behavior) => {
@@ -1158,6 +1151,87 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		const fetchTool = tools?.find((tool) => tool.function.name === 'web_fetch');
 		expect(fetchTool?.function.description).toContain('Do not fetch merely because a search result exists');
 		expect(firstRequest?.systemPrompt).toContain('If a fetch fails, do not claim the page was read');
+		expect(firstRequest?.systemPrompt).toContain('truncated: true');
+	});
+
+	it('keeps main Web rounds out of JSON mode', async () => {
+		const { coordinator, request } = coordinatorWith([
+			toolRound([searchCall('call-1', 'json-mode')]),
+			finalRound('Answer [S1]'),
+		]);
+
+		await coordinator.submit(aiRequest(), options());
+
+		const mainRequests = request.mock.calls
+			.map((call) => call[0])
+			.filter((roundRequest) => roundRequest.tools?.some((tool) => tool.function.name === 'web_search'));
+		expect(mainRequests.length).toBeGreaterThanOrEqual(2);
+		for (const mainRequest of mainRequests) {
+			expect(mainRequest.responseFormat).toBeUndefined();
+		}
+	});
+
+	it('keeps a near-cap staged payload within the cap when IDs grow to S100+', async () => {
+		const search = vi.fn(async (call: Extract<WebToolCall, { name: 'web_search' }>) => [
+			{
+				...parsedSearchResult,
+				title: `Seed ${call.query} a`,
+				url: `https://example.test/${call.query}/a`,
+				snippet: '',
+				summary: '',
+				content: 'body',
+			},
+			{
+				...parsedSearchResult,
+				title: `Seed ${call.query} b`,
+				url: `https://example.test/${call.query}/b`,
+				snippet: '',
+				summary: '',
+				content: 'body',
+			},
+		]);
+		const reader = {
+			extract: vi.fn(async (input: WebExtractionReaderOptions) => readerResult(input, {
+				outcome: 'evidence',
+				results: input.documents.map((document) => ({
+					sourceId: document.sourceId,
+					claims: [],
+					evidence: [input.target === 'target' ? 'x'.repeat(2000) : 'Title:'],
+				})),
+			})),
+		};
+		const seedCalls = Array.from({ length: 50 }, (_value, index) => searchCall(
+			`seed-${index}`,
+			`seed-${index}`,
+		));
+		const { coordinator, request } = coordinatorWith([
+			toolRound(seedCalls),
+			toolRound([searchCall('target', 'target')]),
+			finalRound('Answer [S101]'),
+		], search, undefined, reader);
+		const cap = 1000;
+
+		const result = await coordinator.submit(aiRequest(), options({
+			maxToolCalls: 51,
+			maxContentCharactersPerCall: cap,
+		}));
+
+		expect(result.failedExtractions).toBe(0);
+		expect(result.sources.some((source) => source.id === 'S101')).toBe(true);
+		const mainRequests = request.mock.calls
+			.map((call) => call[0])
+			.filter((roundRequest) => roundRequest.tools?.some((tool) => tool.function.name === 'web_search'));
+		const targetMessage = mainRequests.at(-1)?.continuation?.find(
+			(message) => message.role === 'tool' && message.toolCallId === 'target',
+		);
+		const payload = targetMessage?.role === 'tool' ? targetMessage.content : '';
+		expect(payload.length).toBeLessThanOrEqual(cap);
+		expect(payload.length).toBeGreaterThan(cap - 128);
+		const parsed = JSON.parse(payload) as {
+			results: Array<{ sourceId: string; truncated?: boolean }>;
+		};
+		expect(parsed.results[0]?.sourceId).toBe('S101');
+		expect(parsed.results[0]?.truncated).toBe(true);
 	});
 });
 

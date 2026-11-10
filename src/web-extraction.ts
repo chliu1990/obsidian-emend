@@ -74,6 +74,8 @@ const MAX_READ_CHARACTERS = 3500;
 const MAX_CLAIM_TEXT_CODE_POINTS = 500;
 const MAX_CLAIM_QUOTES = 4;
 const MAX_QUOTE_CODE_POINTS = 1500;
+const MAX_CLAIMS_PER_SOURCE = 8;
+const MAX_TOTAL_CLAIMS = 24;
 
 export function buildSearchExtractionDocuments(
 	results: readonly SearchExtractionResult[],
@@ -207,6 +209,8 @@ export function parseWebExtractionOutcome(
 
 	const documentsById = new Map(documents.map((document) => [document.sourceId, document]));
 	const resultsBySourceId = new Map<string, WebExtractionResult>();
+	const claimTextsBySourceId = new Map<string, Set<string>>();
+	let totalClaims = 0;
 	for (const candidate of parsed.results) {
 		if (!isRecord(candidate) || typeof candidate.sourceId !== 'string') {
 			continue;
@@ -220,9 +224,13 @@ export function parseWebExtractionOutcome(
 			claims: [],
 			evidence: [],
 		};
+		const claimTexts = claimTextsBySourceId.get(candidate.sourceId) ?? new Set<string>();
 		const fallbackQuotes = new Set(result.evidence);
 		if (Array.isArray(candidate.claims)) {
 			for (const rawClaim of candidate.claims) {
+				if (totalClaims >= MAX_TOTAL_CLAIMS || result.claims.length >= MAX_CLAIMS_PER_SOURCE) {
+					break;
+				}
 				if (!isRecord(rawClaim)) {
 					continue;
 				}
@@ -240,13 +248,16 @@ export function parseWebExtractionOutcome(
 				if (quotes.length === 0) {
 					continue;
 				}
-				const claim: WebExtractionClaim = {
+				const normalizedText = normalizeClaimText(text);
+				if (claimTexts.has(normalizedText)) {
+					continue;
+				}
+				claimTexts.add(normalizedText);
+				result.claims.push({
 					text,
 					evidence: quotes.slice(0, MAX_CLAIM_QUOTES),
-				};
-				if (!result.claims.some((candidateClaim) => normalizeClaimText(candidateClaim.text) === normalizeClaimText(text))) {
-					result.claims.push(claim);
-				}
+				});
+				totalClaims += 1;
 			}
 		}
 		for (const quote of collectQuotes(candidate.evidence, document)) {
@@ -254,6 +265,7 @@ export function parseWebExtractionOutcome(
 		}
 		result.evidence = [...fallbackQuotes];
 		resultsBySourceId.set(candidate.sourceId, result);
+		claimTextsBySourceId.set(candidate.sourceId, claimTexts);
 	}
 
 	const results = [...resultsBySourceId.values()].filter(
@@ -476,6 +488,7 @@ function collectQuotes(value: unknown, document: WebExtractionDocument): string[
 		return [];
 	}
 	const quotes: string[] = [];
+	const seen = new Set<string>();
 	for (const candidate of value) {
 		if (typeof candidate !== 'string') {
 			continue;
@@ -485,9 +498,10 @@ function collectQuotes(value: unknown, document: WebExtractionDocument): string[
 		if (length === 0 || length > MAX_QUOTE_CODE_POINTS) {
 			continue;
 		}
-		if (!document.canonicalText.includes(quote) || quotes.includes(quote)) {
+		if (!document.canonicalText.includes(quote) || seen.has(quote)) {
 			continue;
 		}
+		seen.add(quote);
 		quotes.push(quote);
 	}
 	return quotes;
@@ -536,7 +550,7 @@ function toOutcome(results: readonly PayloadResult[]): WebExtractionOutcome {
 				text: claim.text,
 				evidence: [...claim.evidence],
 			})),
-			evidence: result.claims.length > 0 ? [] : [...result.evidence],
+			evidence: [...result.evidence],
 			...(result.truncated ? { truncated: true } : {}),
 		})),
 	};
