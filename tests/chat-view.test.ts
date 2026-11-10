@@ -27,6 +27,7 @@ import type {
 	ProviderHistoryMessage,
 	SelectionSnapshot,
 } from '../src/types';
+import type { WebActivityRecord } from '../src/web-search';
 
 function getCssRule(selector: string): string {
 	const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
@@ -2066,6 +2067,176 @@ describe('EmendChatView web research', () => {
 		expect(finalSave?.[1]?.content.split(skippedWarning)).toHaveLength(2);
 	});
 
+	it.each([1, 2])('appends and persists one exact search warning for %s failed searches', async (failedSearches) => {
+		const warning = `Emend could not complete ${failedSearches} web ${failedSearches === 1 ? 'search' : 'searches'}. The answer may be incomplete.`;
+		const requestChatCompletion = vi.fn(async (submission: {
+			callbacks: { onContent(text: string): void };
+		}) => {
+			submission.callbacks.onContent('Answer from available evidence');
+			return {
+				content: 'Answer from available evidence',
+				reasoning: '',
+				failedExtractions: 0,
+				failedSearches,
+				skippedWebCalls: 0,
+				activities: [{
+					type: 'search' as const,
+					target: 'failed query',
+					status: 'failed' as const,
+					failureReason: 'network' as const,
+				}],
+				usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4, source: 'provider' as const },
+			};
+		});
+		const persistMessages = vi.fn(async (_notePath: string, _messages: ChatMessage[]) => undefined);
+		const context = {
+			inputEl: { value: 'Research' },
+			isSending: false,
+			isThreadLoading: false,
+			selectedMode: 'ask' as const,
+			webSearchMode: 'auto' as const,
+			messages: [] as ChatMessage[],
+			plugin: {
+				settings: { maxWebToolCalls: 20 },
+				captureChatContext: () => ({ file: { path: 'Note.md' } }),
+				additionalNotesStore: new AdditionalNotesStore(),
+				requestChatCompletion,
+			},
+			toProviderHistory: () => [],
+			persistMessages,
+			render: vi.fn(),
+			scheduleMessageRender: vi.fn(),
+			closed: false,
+			activeController: null,
+			webReviewModal: null,
+		};
+
+		await viewPrototype.submitPrompt.call(context);
+
+		const expectedContent = `Answer from available evidence\n\n${warning}`;
+		expect(context.messages[1]?.status).toBe('ready');
+		expect(context.messages[1]?.content).toBe(expectedContent);
+		expect(context.messages[1]?.content.split(warning)).toHaveLength(2);
+		const finalSave = persistMessages.mock.calls.at(-1)?.[1];
+		expect(finalSave?.[1]?.content).toBe(expectedContent);
+		expect(finalSave?.[1]?.content.split(warning)).toHaveLength(2);
+	});
+
+	it('orders unread-page, extraction, search, and skipped-call warnings', async () => {
+		const requestChatCompletion = vi.fn(async (submission: {
+			callbacks: { onContent(text: string): void };
+		}) => {
+			submission.callbacks.onContent('Answer from available evidence');
+			return {
+				content: 'Answer from available evidence',
+				reasoning: '',
+				failedExtractions: 1,
+				failedSearches: 2,
+				skippedWebCalls: 1,
+				activities: [
+					{
+						type: 'fetch' as const,
+						target: 'https://example.test/unread',
+						status: 'failed' as const,
+						failureReason: 'network' as const,
+					},
+					{
+						type: 'fetch' as const,
+						target: 'https://example.test/extraction-failed',
+						status: 'failed' as const,
+						failureKind: 'extraction' as const,
+						failureReason: 'reader' as const,
+					},
+				],
+				usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4, source: 'provider' as const },
+			};
+		});
+		const persistMessages = vi.fn(async (_notePath: string, _messages: ChatMessage[]) => undefined);
+		const context = {
+			inputEl: { value: 'Research' },
+			isSending: false,
+			isThreadLoading: false,
+			selectedMode: 'ask' as const,
+			webSearchMode: 'auto' as const,
+			messages: [] as ChatMessage[],
+			plugin: {
+				settings: { maxWebToolCalls: 20 },
+				captureChatContext: () => ({ file: { path: 'Note.md' } }),
+				additionalNotesStore: new AdditionalNotesStore(),
+				requestChatCompletion,
+			},
+			toProviderHistory: () => [],
+			persistMessages,
+			render: vi.fn(),
+			scheduleMessageRender: vi.fn(),
+			closed: false,
+			activeController: null,
+			webReviewModal: null,
+		};
+
+		await viewPrototype.submitPrompt.call(context);
+
+		const expectedContent = [
+			'Answer from available evidence',
+			'Emend could not read 1 requested page. The answer may be incomplete.',
+			'Emend could not extract information from 1 web query. The answer may be incomplete.',
+			'Emend could not complete 2 web searches. The answer may be incomplete.',
+			'Web retrieval reached the 20-call limit. 1 proposed call was skipped; the answer may be incomplete.',
+		].join('\n\n');
+		expect(context.messages[1]?.status).toBe('ready');
+		expect(context.messages[1]?.content).toBe(expectedContent);
+		const finalSave = persistMessages.mock.calls.at(-1)?.[1];
+		expect(finalSave?.[1]?.content).toBe(expectedContent);
+	});
+
+	it.each([
+		{ failedSearches: 0, webSearchMode: 'auto' as const },
+		{ failedSearches: undefined, webSearchMode: 'auto' as const },
+		{ failedSearches: 0, webSearchMode: 'off' as const },
+	])('does not warn without failed searches ($failedSearches, $webSearchMode)', async ({ failedSearches, webSearchMode }) => {
+		const requestChatCompletion = vi.fn(async (submission: {
+			callbacks: { onContent(text: string): void };
+		}) => {
+			submission.callbacks.onContent('Answer without failed searches');
+			return {
+				content: 'Answer without failed searches',
+				reasoning: '',
+				failedExtractions: 0,
+				failedSearches,
+				skippedWebCalls: 0,
+				activities: [{ type: 'search' as const, target: 'completed query', status: 'completed' as const }],
+				usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4, source: 'provider' as const },
+			};
+		});
+		const context = {
+			inputEl: { value: 'Research' },
+			isSending: false,
+			isThreadLoading: false,
+			selectedMode: 'ask' as const,
+			webSearchMode,
+			messages: [] as ChatMessage[],
+			plugin: {
+				settings: { maxWebToolCalls: 20 },
+				captureChatContext: () => ({ file: { path: 'Note.md' } }),
+				additionalNotesStore: new AdditionalNotesStore(),
+				requestChatCompletion,
+			},
+			toProviderHistory: () => [],
+			persistMessages: vi.fn(async () => undefined),
+			render: vi.fn(),
+			scheduleMessageRender: vi.fn(),
+			closed: false,
+			activeController: null,
+			webReviewModal: null,
+		};
+
+		await viewPrototype.submitPrompt.call(context);
+
+		expect(context.messages[1]?.status).toBe('ready');
+		expect(context.messages[1]?.content).toBe('Answer without failed searches');
+		expect(context.messages[1]?.content).not.toContain('Emend could not complete');
+	});
+
 	it('does not add a skipped-call warning at the exact limit', async () => {
 		const requestChatCompletion = vi.fn(async (submission: {
 			callbacks: { onContent(text: string): void };
@@ -2192,6 +2363,77 @@ describe('EmendChatView web activity review', () => {
 		expect(textOf(details as FakeElement)).toContain('Search · Completed · activity query');
 		expect(textOf(details as FakeElement)).toContain('Fetch · Failed · https://example.test/failed');
 		expect(textOf(details as FakeElement)).toContain('Fetch · Skipped · https://example.test/skipped');
+	});
+
+	it.each([
+		[
+			'network',
+			{ type: 'fetch' as const, target: 'https://example.test/page', status: 'failed' as const, failureReason: 'network' as const },
+			'Fetch · Failed (network) · https://example.test/page',
+		],
+		[
+			'http',
+			{ type: 'search' as const, target: 'example query', status: 'failed' as const, failureReason: 'http' as const },
+			'Search · Failed (HTTP) · example query',
+		],
+		[
+			'empty',
+			{ type: 'fetch' as const, target: 'https://example.test/blank', status: 'failed' as const, failureReason: 'empty' as const },
+			'Fetch · Failed (empty page) · https://example.test/blank',
+		],
+		[
+			'reader',
+			{ type: 'fetch' as const, target: 'https://example.test/page', status: 'failed' as const, failureReason: 'reader' as const },
+			'Fetch · Failed (reader) · https://example.test/page',
+		],
+	])('labels failed %s activities with their failure reason', (_reason, activity, expected) => {
+		const container = renderForFooter({
+			...message('answer', 'Note.md'),
+			webActivities: [activity],
+		});
+
+		const details = findElements(container, (element) =>
+			element.tagName === 'details' && element.className === 'emend-chat-web-activity'
+		)[0];
+		expect(details).toBeDefined();
+		expect(textOf(details as FakeElement)).toContain(expected);
+	});
+
+	it('leaves completed and skipped rows unchanged and ignores unknown reasons', () => {
+		const container = renderForFooter({
+			...message('answer', 'Note.md'),
+			webActivities: [
+				{
+					type: 'search',
+					target: 'done query',
+					status: 'completed',
+					failureReason: 'network',
+				},
+				{
+					type: 'fetch',
+					target: 'https://example.test/skipped',
+					status: 'skipped',
+					failureReason: 'reader',
+				},
+				{
+					type: 'fetch',
+					target: 'https://example.test/unknown',
+					status: 'failed',
+					failureReason: 'mystery' as unknown as WebActivityRecord['failureReason'],
+				},
+			],
+		});
+
+		const details = findElements(container, (element) =>
+			element.tagName === 'details' && element.className === 'emend-chat-web-activity'
+		)[0];
+		expect(details).toBeDefined();
+		const rendered = textOf(details as FakeElement);
+		expect(rendered).toContain('Search · Completed · done query');
+		expect(rendered).toContain('Fetch · Skipped · https://example.test/skipped');
+		expect(rendered).toContain('Fetch · Failed · https://example.test/unknown');
+		expect(rendered).not.toContain('mystery');
+		expect(rendered).not.toContain('(undefined)');
 	});
 });
 
@@ -2408,6 +2650,26 @@ describe('EmendChatView completion relayout and unread pages', () => {
 		expect(getUnreadPageCount([
 			{ type: 'fetch', target: 'https://example.test/unread', status: 'failed' },
 			extractionFailure,
+		])).toBe(1);
+	});
+
+	it('excludes extraction failures that carry a reader reason from unread-page counts', () => {
+		expect(getUnreadPageCount([{
+			type: 'fetch',
+			target: 'https://example.test/extraction-failed',
+			status: 'failed',
+			failureKind: 'extraction',
+			failureReason: 'reader',
+		}])).toBe(0);
+		expect(getUnreadPageCount([
+			{ type: 'fetch', target: 'https://example.test/unread', status: 'failed', failureReason: 'network' },
+			{
+				type: 'fetch',
+				target: 'https://example.test/extraction-failed',
+				status: 'failed',
+				failureKind: 'extraction',
+				failureReason: 'reader',
+			},
 		])).toBe(1);
 	});
 });

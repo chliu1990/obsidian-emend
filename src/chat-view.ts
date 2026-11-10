@@ -43,6 +43,10 @@ function formatExtractionWarning(failedExtractions: number) {
 	return `Emend could not extract information from ${failedExtractions} web ${failedExtractions === 1 ? 'query' : 'queries'}. The answer may be incomplete.`;
 }
 
+function formatSearchWarning(failedSearches: number) {
+	return `Emend could not complete ${failedSearches} web ${failedSearches === 1 ? 'search' : 'searches'}. The answer may be incomplete.`;
+}
+
 const MODE_PLACEHOLDERS: Record<Mode, string> = {
 	ask: 'Ask about the active note...',
 	edit: 'Edit the note or selection with CriticMarkup...',
@@ -818,6 +822,9 @@ export class EmendChatView extends ItemView {
 				if (result.failedExtractions > 0) {
 					loadingMessage.content += `${loadingMessage.content ? '\n\n' : ''}${formatExtractionWarning(result.failedExtractions)}`;
 				}
+				if (result.failedSearches > 0) {
+					loadingMessage.content += `${loadingMessage.content ? '\n\n' : ''}${formatSearchWarning(result.failedSearches)}`;
+				}
 				if (result.skippedWebCalls > 0) {
 					const skipped = result.skippedWebCalls;
 					loadingMessage.content += `${loadingMessage.content ? '\n\n' : ''}Web retrieval reached the ${this.plugin.settings.maxWebToolCalls}-call limit. ${skipped} proposed ${skipped === 1 ? 'call was' : 'calls were'} skipped; the answer may be incomplete.`;
@@ -941,6 +948,23 @@ export function formatChatMessageForCopy(message: ChatMessage) {
 	return `${message.content}\n\n### Sources\n${sourceList}`;
 }
 
+const WEB_FAILURE_REASON_LABELS: Record<string, string | undefined> = {
+	network: 'network',
+	http: 'HTTP',
+	empty: 'empty page',
+	reader: 'reader',
+};
+
+function formatWebActivityText(activity: WebActivityRecord) {
+	const type = activity.type === 'search' ? 'Search' : 'Fetch';
+	const status = activity.status.charAt(0).toUpperCase() + activity.status.slice(1);
+	const reason = activity.status === 'failed' && activity.failureReason
+		? WEB_FAILURE_REASON_LABELS[activity.failureReason]
+		: undefined;
+	const label = reason ? `${status} (${reason})` : status;
+	return `${type} · ${label} · ${activity.target}`;
+}
+
 function renderWebActivities(
 	containerEl: HTMLElement,
 	activities: WebActivityRecord[] | undefined,
@@ -952,11 +976,9 @@ function renderWebActivities(
 	detailsEl.open = false;
 	detailsEl.createEl('summary', { text: `Web activity (${activities.length})` });
 	for (const activity of activities) {
-		const type = activity.type === 'search' ? 'Search' : 'Fetch';
-		const status = activity.status.charAt(0).toUpperCase() + activity.status.slice(1);
 		detailsEl.createDiv({
 			cls: 'emend-chat-web-activity-item',
-			text: `${type} · ${status} · ${activity.target}`,
+			text: formatWebActivityText(activity),
 		});
 	}
 }
