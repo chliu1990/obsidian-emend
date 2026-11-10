@@ -609,4 +609,71 @@ describe('ConversationStore web citation migration', () => {
 			],
 		})]);
 	});
+
+	it('excludes transient web failure kinds and reasons from persistence', async () => {
+		const adapter = new MemoryAdapter();
+		const { store } = makeStore(adapter);
+		const message = readyMessage({
+			webActivities: [
+				{
+					type: 'fetch',
+					target: 'https://example.test/network',
+					status: 'failed',
+					failureReason: 'network',
+				},
+				{
+					type: 'fetch',
+					target: 'https://example.test/empty',
+					status: 'failed',
+					failureReason: 'empty',
+				},
+				{
+					type: 'fetch',
+					target: 'https://example.test/reader',
+					status: 'failed',
+					failureKind: 'extraction',
+					failureReason: 'reader',
+				},
+				{
+					type: 'search',
+					target: 'reader query',
+					status: 'failed',
+					failureKind: 'extraction',
+					failureReason: 'reader',
+				},
+			],
+		});
+
+		await store.save('Note.md', [message]);
+
+		const raw = adapter.files.get(threadPath(adapter)) ?? '';
+		expect(raw).not.toContain('failureKind');
+		expect(raw).not.toContain('failureReason');
+		expect(await store.load('Note.md')).toEqual([readyMessage({
+			webActivities: [
+				{ type: 'fetch', target: 'https://example.test/network', status: 'failed' },
+				{ type: 'fetch', target: 'https://example.test/empty', status: 'failed' },
+				{ type: 'fetch', target: 'https://example.test/reader', status: 'failed' },
+				{ type: 'search', target: 'reader query', status: 'failed' },
+			],
+		})]);
+
+		adapter.files.set(threadPath(adapter), JSON.stringify({
+			version: 2,
+			messages: [{
+				...readyMessage(),
+				webActivities: [{
+					type: 'search',
+					target: 'hand edited query',
+					status: 'failed',
+					failureKind: 'extraction',
+					failureReason: 'reader',
+				}],
+			}],
+		}));
+
+		expect((await store.load('Note.md'))[0]?.webActivities).toEqual([
+			{ type: 'search', target: 'hand edited query', status: 'failed' },
+		]);
+	});
 });

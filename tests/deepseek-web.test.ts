@@ -1682,4 +1682,130 @@ describe('DeepSeek web transport retry and search degradation', () => {
 			{ type: 'search', target: 'third', status: 'failed', failureReason: 'network' },
 		]);
 	});
+
+	it('stops after a fatal status on the retry attempt without an outcome', async () => {
+		const target = 'https://example.test/retry-then-fatal';
+		const fatal = httpFailure(401);
+		const fetchPage = vi.fn()
+			.mockRejectedValueOnce(httpFailure(503))
+			.mockRejectedValueOnce(fatal)
+			.mockResolvedValue({ title: 'Unused', content: 'Unused' });
+		const reader = successfulReader();
+		const { coordinator, request } = coordinatorWith([
+			toolRound([fetchCall('call-fetch', target)]),
+			finalRound('Must not be returned'),
+		], vi.fn(async () => []), fetchPage, reader);
+		const activity: Array<{ status: string; label: string }> = [];
+
+		await expect(coordinator.submit(aiRequest(), options({
+			onActivity: (event) => activity.push(event),
+		}))).rejects.toBe(fatal);
+
+		expect(fetchPage).toHaveBeenCalledTimes(2);
+		expect(reader.extract).not.toHaveBeenCalled();
+		expect(request).toHaveBeenCalledOnce();
+		expect(activity.map((event) => event.label)).toEqual([
+			`Fetching: ${target}`,
+			`Retrying fetch: ${target}`,
+		]);
+	});
+
+	it.each([403, 404])('reports http without a third attempt when the retry returns %s', async (status) => {
+		const target = 'https://example.test/retry-then-blocked';
+		const fetchPage = vi.fn()
+			.mockRejectedValueOnce(httpFailure(503))
+			.mockRejectedValueOnce(httpFailure(status))
+			.mockResolvedValue({ title: 'Unused', content: 'Unused' });
+		const reader = successfulReader();
+		const { coordinator } = coordinatorWith([
+			toolRound([fetchCall('call-fetch', target)]),
+			finalRound('The page could not be read.'),
+		], vi.fn(async () => []), fetchPage, reader);
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(fetchPage).toHaveBeenCalledTimes(2);
+		expect(reader.extract).not.toHaveBeenCalled();
+		expect(result.activities).toEqual([{
+			type: 'fetch',
+			target,
+			status: 'failed',
+			failureReason: 'http',
+		}]);
+	});
+
+	it('reports the retry network failure when an empty first page is followed by a transport error', async () => {
+		const target = 'https://example.test/empty-then-network';
+		const fetchPage = vi.fn()
+			.mockResolvedValueOnce({ title: 'Empty', content: '   ' })
+			.mockRejectedValueOnce(new Error('socket reset'));
+		const reader = successfulReader();
+		const { coordinator } = coordinatorWith([
+			toolRound([fetchCall('call-fetch', target)]),
+			finalRound('The page could not be read.'),
+		], vi.fn(async () => []), fetchPage, reader);
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(fetchPage).toHaveBeenCalledTimes(2);
+		expect(reader.extract).not.toHaveBeenCalled();
+		expect(result.activities).toEqual([{
+			type: 'fetch',
+			target,
+			status: 'failed',
+			failureReason: 'network',
+		}]);
+	});
+
+	it('reports an http search failure after exactly two 5xx attempts', async () => {
+		const search = vi.fn(async () => { throw httpFailure(503); });
+		const reader = successfulReader();
+		const { coordinator, request } = coordinatorWith([
+			toolRound([searchCall('call-1', 'five hundred')]),
+			finalRound('Answer without that search'),
+		], search, undefined, reader);
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(search).toHaveBeenCalledTimes(2);
+		expect(reader.extract).not.toHaveBeenCalled();
+		expect(result.failedSearches).toBe(1);
+		expect(result.activities).toEqual([{
+			type: 'search',
+			target: 'five hundred',
+			status: 'failed',
+			failureReason: 'http',
+		}]);
+		const toolMessage = request.mock.calls[1]?.[0].continuation?.find(
+			(message) => message.role === 'tool' && message.toolCallId === 'call-1',
+		);
+		expect(toolMessage?.role === 'tool' && toolMessage.content).toBe(
+			'{"error":{"kind":"search_failed"}}',
+		);
+	});
+
+	it('rejects with the abort reason without a second attempt when aborted before the retry', async () => {
+		const controller = new AbortController();
+		const reason = new DOMException('Stopped between attempts', 'AbortError');
+		const target = 'https://example.test/abort-between';
+		const fetchPage = vi.fn(async () => { throw new Error('socket hang up'); });
+		const reader = successfulReader();
+		const { coordinator, request } = coordinatorWith([
+			toolRound([fetchCall('call-fetch', target)]),
+			finalRound('Must not be returned'),
+		], vi.fn(async () => []), fetchPage, reader);
+
+		await expect(coordinator.submit(aiRequest(), options({
+			signal: controller.signal,
+			onActivity: (event) => {
+				if (event.label === `Retrying fetch: ${target}`) {
+					controller.abort(reason);
+				}
+			},
+		}))).rejects.toBe(reason);
+
+		expect(fetchPage).toHaveBeenCalledOnce();
+		expect(reader.extract).not.toHaveBeenCalled();
+		expect(request).toHaveBeenCalledOnce();
+	});
 });

@@ -284,6 +284,7 @@ export class DeepSeekWebSearchCoordinator {
 		}
 		options.signal.throwIfAborted();
 		options.onActivity({ status: 'pending', label: retryLabel });
+		options.signal.throwIfAborted();
 		const second = await this.attempt(run, isEmpty, options.signal);
 		return second.ok ? second : { ok: false, reason: second.reason };
 	}
