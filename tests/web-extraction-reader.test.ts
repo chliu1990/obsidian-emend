@@ -1003,6 +1003,116 @@ describe('WebExtractionReader extraction and verification', () => {
 		expect(extracted.outcome).toEqual({ outcome: 'no_relevant_evidence', results: [] });
 	});
 
+	it('fails with the call-limit error when the forced total-cap answer returns tool calls', async () => {
+		const documents = manyDocuments(5);
+		const batches = Array.from({ length: 3 }, (_batch, batchIndex) => toolRound(
+			Array.from({ length: 8 }, (_call, callIndex) => ({
+				id: `batch-${batchIndex}-${callIndex}`,
+				name: 'retrieval_read',
+				arguments: JSON.stringify({ sourceId: 'R1', offset: 0, length: 20 }),
+			})),
+		));
+		const { reader, request } = readerWith([
+			...batches,
+			toolRound([readCall('overflow')]),
+			toolRound([readCall('forced-extra')]),
+		]);
+
+		const failure: unknown = await reader.extract(options({ documents }))
+			.catch((error: unknown) => error);
+
+		expect(failure).toBeInstanceOf(WebExtractionReaderError);
+		expect(failure).toMatchObject({ failureKind: 'limit' });
+		expect(String((failure as Error).message)).toBe(
+			'The web extraction reader returned tool calls after the 24-call call limit.',
+		);
+		expect(request).toHaveBeenCalledTimes(5);
+		const overflowRound = request.mock.calls[3]![0];
+		const forced = request.mock.calls[4]![0];
+		expect(overflowRound.tools).toBeDefined();
+		expect(forced.tools).toBeUndefined();
+		expect(forced.systemPrompt).toContain('24-call reader call limit');
+		expect(forced.continuation?.find(
+			(message) => message.role === 'tool' && message.toolCallId === 'overflow',
+		)).toMatchObject({ content: LOCAL_CALL_LIMIT_RESULT });
+	});
+
+	it('accepts a voluntary terminal answer after exactly 24 local calls without a forced request', async () => {
+		const documents = manyDocuments(1);
+		const batches = Array.from({ length: 3 }, (_batch, batchIndex) => toolRound(
+			Array.from({ length: 8 }, (_call, callIndex) => ({
+				id: `batch-${batchIndex}-${callIndex}`,
+				name: 'retrieval_read',
+				arguments: JSON.stringify({ sourceId: 'R1', offset: 0, length: 20 }),
+			})),
+		));
+		const { reader, request } = readerWith([
+			...batches,
+			terminalRound(manyClaimContent),
+			terminalRound(supported()),
+		]);
+
+		const extracted = await reader.extract(options({ documents }));
+
+		expect(request).toHaveBeenCalledTimes(5);
+		const voluntary = request.mock.calls[3]![0];
+		expect(voluntary.tools).toBeDefined();
+		expect(voluntary.continuation?.filter((message) => message.role === 'tool')).toHaveLength(24);
+		expect(request.mock.calls.every(
+			(call) => !call[0].systemPrompt.includes('limit has been reached'),
+		)).toBe(true);
+		expect(request.mock.calls[4]![0].tools).toBeUndefined();
+		expect(extracted.outcome).toEqual({
+			outcome: 'evidence',
+			results: [{
+				sourceId: 'R1',
+				claims: [{ text: 'The first source fact', evidence: ['EVIDENCE 1'] }],
+				evidence: ['EVIDENCE 1'],
+			}],
+		});
+	});
+
+	it('lets the model retry an overflowed ninth read successfully in the next round', async () => {
+		const documents = manyDocuments(9);
+		const ninthClaim = JSON.stringify({
+			outcome: 'evidence',
+			results: [{ sourceId: 'R9', claims: [{ text: 'The ninth source fact', evidence: ['EVIDENCE 9'] }] }],
+		});
+		const { reader, request } = readerWith([
+			toolRound(readCallsFor(documents, 'read')),
+			toolRound([readCall('retry-read-9', { sourceId: 'R9', offset: 0, length: 3500 })]),
+			terminalRound(ninthClaim),
+			terminalRound(verifyContent([{ claimIndex: 0, supported: true }], 'R9')),
+		]);
+
+		const extracted = await reader.extract(options({ documents }));
+
+		expect(request).toHaveBeenCalledTimes(4);
+		const continuation = request.mock.calls[1]![0].continuation ?? [];
+		const overflowed = continuation.find(
+			(message) => message.role === 'tool' && message.toolCallId === 'read-9',
+		);
+		expect(overflowed?.role === 'tool' ? overflowed.content : undefined).toBe(LOCAL_CALL_LIMIT_RESULT);
+		const retriedContinuation = request.mock.calls[2]![0].continuation ?? [];
+		const retried = retriedContinuation.find(
+			(message) => message.role === 'tool' && message.toolCallId === 'retry-read-9',
+		);
+		const retriedPayload = JSON.parse(
+			retried?.role === 'tool' ? retried.content : '{}',
+		) as ReadOutput & { error?: unknown };
+		expect(retriedPayload).toMatchObject({ sourceId: 'R9' });
+		expect(retriedPayload.content).toContain('EVIDENCE 9');
+		expect(retriedPayload.error).toBeUndefined();
+		expect(extracted.outcome).toEqual({
+			outcome: 'evidence',
+			results: [{
+				sourceId: 'R9',
+				claims: [{ text: 'The ninth source fact', evidence: ['EVIDENCE 9'] }],
+				evidence: ['EVIDENCE 9'],
+			}],
+		});
+	});
+
 	it.each([
 		[
 			'malformed arguments',
