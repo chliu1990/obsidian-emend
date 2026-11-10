@@ -1,5 +1,12 @@
 # Per-query Web Extraction Reader Implementation Plan
 
+> **Superseded in PR #47.** The resilience pass (Stage 40 Tasks 9–12a) replaced
+> verbatim-only output with claims plus a verifier/refine loop, tolerant parsing,
+> one format-correction round, deterministic cap fitting (including a marked
+> quote prefix), one bounded Search/Fetch retry, non-fatal `search_failed`
+> degradation, and recoverable invalid local calls. Statements below that
+> conflict are historical.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace shared Web-content truncation with bounded, goal-directed AI extraction for every DeepSeek Search/Fetch result, using independent per-call output caps and source-grounded evidence.
@@ -14,13 +21,13 @@
 
 - Work in `/home/chang/Projects/obsidian-emend` on `fix/web-content-budget-diagnostics`; no worktrees. Use sequential implementation subagents and fresh task reviewers. Do not resume PR2 until revised PR #47 is reviewed and merged.
 - Write regression tests first and record observed RED→GREEN evidence. Preserve all existing safety contracts and run `npm test && npm run lint && npm run build && git diff --check` after every task; run `npm ci` for the final clean gate.
-- Every Search/Fetch call invokes exactly one reader. The main answering model never receives raw retrieved content, including after reader failure. No hard truncation, automatic reader retry, raw fallback, or alternative provider.
+- Every Search/Fetch call invokes exactly one reader. The main answering model never receives raw retrieved content, including after reader failure. No hard truncation, automatic reader retry, raw fallback, or alternative provider. *(superseded — see Stage 40 Tasks 9–12a)*
 - Default `maxWebContentCharactersPerCall` to **20,000**, normalize to **1,000–100,000**, and apply it to each complete serialized Search/Fetch tool response. There is no independent total cap: `N` calls contribute at most `C × N` characters.
 - The current unit is characters, not tokens. Keep measurement behind the Task 1 interface; do not add a tokenizer dependency or represent `ceil(characters / 4)` as exact tokenization.
 - Every Web call requires a nonempty reviewable `extractionGoal`. The reader receives the current ready user question and that goal, but never the note snapshot/path, earlier chat history, instructions/skills, additional notes, or vault content.
 - Reader tools are local-only, closed, validated literal grep/ranged read operations. Limit each reader to **6 model rounds**, **4 local calls per round**, **16 local calls total**, and **4,000 characters per local tool result**.
-- Reader output is closed JSON with source IDs and nonempty arrays of goal-relevant verbatim evidence from canonical source text; there is no `extractedFacts` or other AI-generated factual/paraphrase field. Invalid/over-cap output becomes `extraction_failed`, never a truncated result.
-- Every abort cancels the whole submission. Non-abort reader failures allow a degraded answer from other evidence with one deterministic warning. Existing fatal Search and Fetch HTTP 400/401/402/413 behavior remains unchanged.
+- Reader output is closed JSON with source IDs and nonempty arrays of goal-relevant verbatim evidence from canonical source text; there is no `extractedFacts` or other AI-generated factual/paraphrase field. Invalid/over-cap output becomes `extraction_failed`, never a truncated result. *(superseded — see Stage 40 Tasks 9–12a)*
+- Every abort cancels the whole submission. Non-abort reader failures allow a degraded answer from other evidence with one deterministic warning. Existing fatal Search and Fetch HTTP 400/401/402/413 behavior remains unchanged. *(superseded — see Stage 40 Tasks 9–12a)*
 - Full-note and selection writers, note bytes, pending locks, SecretStorage, provider capability checks, sequential retrieval, and the 1–20 main Web call limit remain unchanged. No background requests, real providers, telemetry, raw retrieval/reader persistence, or reader-reasoning display/persistence.
 - Manual verification uses only ignored `test_vault/`, synthetic content, loopback mocks, and dummy credentials. Do not merge, tag, publish a release, or resume another feature without user authorization.
 

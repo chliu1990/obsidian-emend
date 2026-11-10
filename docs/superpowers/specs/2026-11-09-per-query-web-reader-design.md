@@ -1,5 +1,12 @@
 # Per-query Web retrieval reader design
 
+> **Superseded in PR #47.** The resilience pass (Stage 40 Tasks 9–12a) replaced
+> verbatim-only output with claims plus a verifier/refine loop, tolerant parsing,
+> one format-correction round, deterministic cap fitting (including a marked
+> quote prefix), one bounded Search/Fetch retry, non-fatal `search_failed`
+> degradation, and recoverable invalid local calls. Statements below that
+> conflict are historical.
+
 ## Intent
 
 Replace Emend's fixed 40,000-character shared Web retrieval pool with independent, user-configured output budgets for each Search/Fetch call. Every retrieval result is inspected by a bounded AI reader that extracts information relevant to a reviewable extraction goal rather than blindly summarizing or hard-truncating content. This preserves useful evidence across more queries while keeping every tool response bounded and making provider cost, privacy, and incomplete-results behavior explicit.
@@ -12,7 +19,7 @@ This revises open PR #47 before merge. Later feature branches remain paused unti
 - Invoke a separate AI extraction reader for every Search/Fetch call, regardless of raw result size; the main answering model receives no raw retrieved content.
 - Give the reader a concise, reviewable `extractionGoal` supplied with the main model's Search/Fetch call so it extracts goal-relevant information rather than producing a generic summary.
 - Let the reader inspect full temporary retrieval content through bounded local grep/read tools rather than receiving one giant prompt or truncating unread content.
-- Return compact, source-labelled, goal-relevant verbatim evidence without intermediate AI-generated facts, whose complete serialized tool response is within the per-call cap.
+- Return compact, source-labelled, goal-relevant verbatim evidence without intermediate AI-generated facts, whose complete serialized tool response is within the per-call cap. *(superseded — see Stage 40 Tasks 9–12a)*
 - Preserve actual-result citations, sequential retrieval, Review/Auto behavior, Stop/abort, sanitized errors, read-only notes, and bounded provider activity.
 - Include every reader model round in usage accounting and disclose possible extra provider charges.
 - Preserve schema-2 conversation data and persist only existing sanitized ready-message content, citations, and activity metadata.
@@ -21,15 +28,15 @@ This revises open PR #47 before merge. Later feature branches remain paused unti
 
 - No independent total retrieval-character setting and no fixed 40,000-character shared pool.
 - No hardcoded assumption that every provider/model has a 1M-token context window.
-- No generic/blind summarization, automatic retry of a failed reader, raw-content fallback, silent answer degradation, or alternative provider.
+- No generic/blind summarization, automatic retry of a failed reader, raw-content fallback, silent answer degradation, or alternative provider. *(superseded in part — see Stage 40 Tasks 9–12a: an unparseable terminal reply gets one format-correction round, rejected claims get bounded refine rounds, and Search/Fetch transport failures get one bounded retry; the reader itself is still never restarted automatically)*
 - No note writer, vault access for the reader, background request, AI session naming/summary, or automatic context compression.
 - No new third-party retrieval provider or provider-metadata/pricing request.
 - No raw retrieval/request/tool-payload persistence.
-- No real-provider verification; use only loopback mocks and dummy credentials.
+- Real-provider verification is limited to the single user-authorized JSON-mode compatibility probe made on 2026-11-10 against `deepseek-flash` and `deepseek-v4-pro` (non-streaming and streaming, tool declarations, `response_format: json_object`, `stream_options.include_usage`), which sent no note content and performed no retrieval; every other check uses only loopback mocks and dummy credentials.
 
 ## Anti-goals
 
-- Truncating a reader response to make it fit.
+- Truncating a reader response to make it fit. *(superseded in part — see Stage 40 Tasks 9–12a: deterministic cap fitting may shorten the last quote to a marked verbatim prefix; it never splits the serialized JSON or passes raw retrieval through)*
 - Sending raw retrieval of any size to the main answering model, including after reader failure.
 - Treating reader-generated text as trusted instructions or inventing sources/citations.
 - Allowing per-query budgets to bypass the later per-provider context-capacity safeguards.
@@ -103,7 +110,7 @@ The reader has no network tools. It may use only closed, validated local operati
 - `retrieval_grep`: case-insensitive literal search, optionally scoped to one source ID, with bounded context and bounded matches. No regular-expression execution.
 - `retrieval_read`: exact source ID plus UTF-16 character offset and bounded length, returning a labelled chunk with its actual offsets.
 
-Every argument and result is validated. Tool outputs are bounded so a reader round cannot reintroduce the full raw document into its prompt. Unknown source IDs, invalid offsets/lengths, excess calls, and oversized tool results fail the reader rather than silently widening the limits.
+Every argument and result is validated. Tool outputs are bounded so a reader round cannot reintroduce the full raw document into its prompt. Unknown source IDs, invalid offsets/lengths, excess calls, and oversized tool results fail the reader rather than silently widening the limits. *(superseded in part — see Stage 40 Tasks 9–12a: a malformed local call returns a bounded `invalid_local_call` tool error and the same extraction continues)*
 
 Builder-owned initial limits, to be pinned in tests and documented rather than exposed as more settings:
 
@@ -111,7 +118,7 @@ Builder-owned initial limits, to be pinned in tests and documented rather than e
 - at most **4 local tool calls per round** and **16 per reader**;
 - at most **4,000 characters per local read or grep result**.
 
-Exhausting any reader limit produces the unread-query outcome below; there is no automatic retry or raw fallback.
+Exhausting any reader limit produces the unread-query outcome below; there is no automatic retry or raw fallback. *(superseded in part — see Stage 40 Tasks 9–12a: at the round limit the reader gets one forced no-tools JSON answer request, and an unparseable terminal reply gets one format-correction round)*
 
 ## Reader output and grounding
 
@@ -125,11 +132,11 @@ With `outcome: 'evidence'`, `results` is nonempty and each item contains only:
 - `sourceId` from the supplied catalog; and
 - `evidence`: a nonempty array of short, goal-relevant verbatim extracts from that source's canonical text.
 
-There is no `extractedFacts` field and no AI-generated paraphrase, factual statement, or link-label description in the reader result. The reader selects evidence only; it does not summarize it. Any additional result field is invalid.
+There is no `extractedFacts` field and no AI-generated paraphrase, factual statement, or link-label description in the reader result. The reader selects evidence only; it does not summarize it. Any additional result field is invalid. *(superseded — see Stage 40 Tasks 9–12a)*
 
 With `outcome: 'no_relevant_evidence'`, `results` must be empty and Emend returns an explicit no-relevant-evidence tool outcome rather than registering sources from that reader response.
 
-Emend validates the closed shape and outcome consistency, unique known IDs, nonempty evidence arrays and strings, verbatim occurrence of every extract in the corresponding canonical source, and a complete serialized main-loop tool payload within the user cap. Missing, malformed, invented, duplicated, ungrounded, or over-cap output fails closed as unread; Emend never truncates it.
+Emend validates the closed shape and outcome consistency, unique known IDs, nonempty evidence arrays and strings, verbatim occurrence of every extract in the corresponding canonical source, and a complete serialized main-loop tool payload within the user cap. Missing, malformed, invented, duplicated, ungrounded, or over-cap output fails closed as unread; Emend never truncates it. *(superseded in part — see Stage 40 Tasks 9–12a: structurally unusable output gets one format-correction round, tolerant parsing drops individually invalid claims, and an over-cap payload is deterministically fitted with a shortened final quote marked `truncated`)*
 
 The extracted payload includes the reader outcome and labels the evidence as untrusted external source text. The main answering model synthesizes the final answer only from these verbatim extracts and actual source metadata, continuing to cite only supplied source IDs. Actual normalized source URLs remain the basis of citations; reader-written URLs do not create sources. This removes the intermediate layer of AI-generated facts that could drift away from a genuine but unrelated quote; final-answer claims must still be grounded in the supplied evidence.
 
@@ -137,13 +144,13 @@ Reader reasoning is used only for transient request/response usage accounting. I
 
 ## Reader failure and incomplete answers
 
-A reader provider error, malformed output, grounding failure, or exhausted limit returns a small explicit `extraction_failed` tool outcome containing no raw content. The query's activity is failed/unread and its unextracted sources are not offered as usable evidence.
+A reader provider error, malformed output, grounding failure, or exhausted limit returns a small explicit `extraction_failed` tool outcome containing no raw content. The query's activity is failed/unread and its unextracted sources are not offered as usable evidence. *(superseded in part — see Stage 40 Tasks 9–12a: unsupported or unverifiable claims fall back to quotes-only evidence rather than `extraction_failed`, and a malformed local call is recoverable)*
 
 Every abort—including Stop, note switch, chat close, view close, or another existing request-cancellation path—aborts the entire submission immediately. No abort becomes an unread-query outcome or permits the main model to continue answering.
 
 The main model may answer from other successful evidence after a non-abort reader failure. The ready answer receives one deterministic warning stating how many queries Emend could not extract and that the answer may be incomplete. This is the user-selected degraded-answer behavior, not a silent fallback. The warning persists as ordinary ready content; raw reader requests/results, reader reasoning, and transient extraction state do not persist.
 
-Existing fatal main-loop Search errors and fatal Fetch HTTP 400/401/402/413 behavior remain unchanged.
+Existing fatal main-loop Search errors and fatal Fetch HTTP 400/401/402/413 behavior remain unchanged. *(superseded in part — see Stage 40 Tasks 9–12a: Search and Fetch each retry once for a missing HTTP status, `429`, `5xx`, or an empty Fetch page, and an exhausted Search retry becomes a non-fatal `search_failed` outcome with its own warning; `400`/`401`/`402`/`413` and aborts remain fatal)*
 
 ## Over-limit graceful completion
 
