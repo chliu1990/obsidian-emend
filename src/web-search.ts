@@ -17,6 +17,8 @@ export interface WebSearchActivity {
 export interface WebSearchRunOptions {
 	mode: EnabledWebSearchMode;
 	maxToolCalls: number;
+	question: string;
+	maxContentCharactersPerCall: number;
 	reviewCalls(calls: readonly WebToolCall[]): Promise<readonly WebToolCall[]>;
 	onActivity(activity: WebSearchActivity): void;
 	callbacks: { onEvent(event: StreamEvent): void };
@@ -34,7 +36,7 @@ export interface WebToolLoopResult {
 	reasoning: string;
 	sources: WebSource[];
 	activities: WebActivityRecord[];
-	contentBudgetExhausted: boolean;
+	failedExtractions: number;
 	rounds: Array<{ request: AiProviderRequest; result: StreamResult }>;
 }
 

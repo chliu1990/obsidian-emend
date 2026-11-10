@@ -39,7 +39,9 @@ import type {
 export const EMEND_CHAT_VIEW_TYPE = 'emend-chat-view';
 export const WEB_SEARCH_DISCLOSURE = `DeepSeek may generate search queries and fetch URLs from note context. Review asks before each batch; Auto runs directly. Successful search/fetch calls may be billed separately. Queries, URLs, and outcomes are stored locally with ready chats. ${WEB_EXTRACTION_DISCLOSURE}`;
 
-const WEB_CONTENT_BUDGET_WARNING = 'Web retrieval reached its 40,000-character content budget. Some retrieved content was omitted; the answer may be incomplete.';
+function formatExtractionWarning(failedExtractions: number) {
+	return `Emend could not extract information from ${failedExtractions} web ${failedExtractions === 1 ? 'query' : 'queries'}. The answer may be incomplete.`;
+}
 
 const MODE_PLACEHOLDERS: Record<Mode, string> = {
 	ask: 'Ask about the active note...',
@@ -795,6 +797,7 @@ export class EmendChatView extends ItemView {
 							webSearch: {
 								mode: webSearchMode,
 								maxToolCalls: this.plugin.settings.maxWebToolCalls,
+								maxContentCharactersPerCall: this.plugin.settings.maxWebContentCharactersPerCall,
 								reviewCalls: (calls: readonly WebToolCall[]) =>
 									this.reviewWebCalls(calls, controller.signal),
 								onActivity: (activity: WebSearchActivity) => {
@@ -812,8 +815,8 @@ export class EmendChatView extends ItemView {
 				if (unreadPages > 0) {
 					loadingMessage.content += `${loadingMessage.content ? '\n\n' : ''}Emend could not read ${unreadPages} requested page${unreadPages === 1 ? '' : 's'}. The answer may be incomplete.`;
 				}
-				if (result.contentBudgetExhausted) {
-					loadingMessage.content += `${loadingMessage.content ? '\n\n' : ''}${WEB_CONTENT_BUDGET_WARNING}`;
+				if (result.failedExtractions > 0) {
+					loadingMessage.content += `${loadingMessage.content ? '\n\n' : ''}${formatExtractionWarning(result.failedExtractions)}`;
 				}
 			}
 			controller.signal.throwIfAborted();

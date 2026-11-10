@@ -545,10 +545,13 @@ describe('ConversationStore web citation migration', () => {
 		]);
 	});
 
-	it('retains sanitized activity while omitting transient and tool payload fields', async () => {
+	it('reloads only ordinary sanitized content, citations, activity, and main reasoning', async () => {
 		const adapter = new MemoryAdapter();
 		const { store } = makeStore(adapter);
+		const warning = 'Emend could not extract information from 2 web queries. The answer may be incomplete.';
 		const message = readyMessage({
+			content: `Answer\n\n${warning}`,
+			reasoning: 'Main reasoning only',
 			webSources: [{ id: 'S1', title: 'Actual', url: 'https://example.test/source' }],
 			webActivities: [{ type: 'search', target: 'activity query', status: 'completed' }],
 			webActivity: 'Searching: private query',
@@ -556,16 +559,32 @@ describe('ConversationStore web citation migration', () => {
 			toolArguments: '{"query":"private query"}',
 			toolResult: 'retrieved page',
 			requestBody: '{"messages":[]}',
+			failedExtractions: 2,
+			readerReasoning: 'Private reader reasoning',
+			extractionPayload: '{"evidence":["private evidence extract"]}',
+			evidenceExtract: 'private evidence extract',
 		} as Partial<ChatMessage>);
 
 		await store.save('Note.md', [message]);
 
 		const raw = adapter.files.get(threadPath(adapter)) ?? '';
+		expect(raw).toContain(warning);
+		expect(raw).toContain('Main reasoning only');
 		expect(raw).toContain('https://example.test/source');
 		expect(raw).toContain('activity query');
 		expect(raw).not.toContain('private query');
 		expect(raw).not.toContain('retrieved page');
 		expect(raw).not.toContain('requestBody');
 		expect(raw).not.toContain('webActivity');
+		expect(raw).not.toContain('failedExtractions');
+		expect(raw).not.toContain('Private reader reasoning');
+		expect(raw).not.toContain('private evidence extract');
+		expect(raw).not.toContain('extractionPayload');
+		expect(await store.load('Note.md')).toEqual([readyMessage({
+			content: `Answer\n\n${warning}`,
+			reasoning: 'Main reasoning only',
+			webSources: [{ id: 'S1', title: 'Actual', url: 'https://example.test/source' }],
+			webActivities: [{ type: 'search', target: 'activity query', status: 'completed' }],
+		})]);
 	});
 });

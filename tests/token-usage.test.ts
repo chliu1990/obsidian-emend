@@ -84,19 +84,20 @@ describe('resolveTokenUsage', () => {
 });
 
 describe('resolveRoundTokenUsage', () => {
-	it('sums provider usage across every model round', () => {
+	it('sums provider usage across every main and reader model round', () => {
 		expect(resolveRoundTokenUsage([
 			{ request, result: result({ usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12 } }) },
 			{ request, result: result({ usage: { promptTokens: 20, completionTokens: 5, totalTokens: 25 } }) },
+			{ request, result: result({ usage: { promptTokens: 30, completionTokens: 7, totalTokens: 37 } }) },
 		])).toEqual({
-			promptTokens: 30,
-			completionTokens: 7,
-			totalTokens: 37,
+			promptTokens: 60,
+			completionTokens: 14,
+			totalTokens: 74,
 			source: 'provider',
 		});
 	});
 
-	it('estimates all rounds and includes continuation tool text when any usage is missing', () => {
+	it('estimates all main and reader rounds independently when reader usage is missing', () => {
 		expect(resolveRoundTokenUsage([
 			{ request, result: result({ usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12 } }) },
 			{
@@ -113,10 +114,11 @@ describe('resolveRoundTokenUsage', () => {
 				},
 				result: result(),
 			},
+			{ request, result: result({ usage: { promptTokens: 30, completionTokens: 7, totalTokens: 37 } }) },
 		])).toEqual({
-			promptTokens: 102,
-			completionTokens: 6,
-			totalTokens: 108,
+			promptTokens: 149,
+			completionTokens: 9,
+			totalTokens: 158,
 			source: 'estimated',
 		});
 	});

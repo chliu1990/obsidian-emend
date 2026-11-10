@@ -35,7 +35,7 @@ export interface ReadOnlyStreamCallbacks {
 
 export type ReadOnlyWebSearchOptions = Omit<
 	WebSearchRunOptions,
-	'callbacks' | 'signal'
+	'callbacks' | 'signal' | 'question'
 >;
 
 export interface ReadOnlySubmission {
@@ -83,7 +83,7 @@ export interface ChatStreamResult extends Omit<StreamResult, 'usage'> {
 	usage: TokenUsage;
 	sources?: WebSource[];
 	activities?: WebActivityRecord[];
-	contentBudgetExhausted: boolean;
+	failedExtractions: number;
 }
 
 export interface EditRequestResult extends EditResult {
@@ -127,6 +127,7 @@ export class ReadOnlyRequestCoordinator {
 			}
 			const result = await this.dependencies.webSearch.submit(request, {
 				...submission.webSearch,
+				question: submission.prompt,
 				callbacks,
 				signal: submission.signal,
 			});
@@ -135,7 +136,7 @@ export class ReadOnlyRequestCoordinator {
 				reasoning: result.reasoning,
 				sources: result.sources,
 				activities: result.activities,
-				contentBudgetExhausted: result.contentBudgetExhausted,
+				failedExtractions: result.failedExtractions,
 				usage: resolveRoundTokenUsage(result.rounds),
 			};
 		}
@@ -145,7 +146,7 @@ export class ReadOnlyRequestCoordinator {
 			callbacks,
 			submission.signal,
 		);
-		return { ...result, contentBudgetExhausted: false, usage: resolveTokenUsage(request, result) };
+		return { ...result, failedExtractions: 0, usage: resolveTokenUsage(request, result) };
 	}
 }
 

@@ -1894,7 +1894,7 @@ describe('EmendChatView web research', () => {
 			webSearchMode: 'auto' as const,
 			messages: [] as ChatMessage[],
 			plugin: {
-				settings: { maxWebToolCalls: 6 },
+				settings: { maxWebToolCalls: 6, maxWebContentCharactersPerCall: 12345 },
 				captureChatContext: () => ({ file: { path: 'Note.md' } }),
 				additionalNotesStore: new AdditionalNotesStore(),
 				requestChatCompletion,
@@ -1911,7 +1911,9 @@ describe('EmendChatView web research', () => {
 		await viewPrototype.submitPrompt.call(context);
 
 		const submission = requestChatCompletion.mock.calls[0]?.[0];
-		expect(submission).toMatchObject({ webSearch: { mode: 'auto', maxToolCalls: 6 } });
+		expect(submission).toMatchObject({
+			webSearch: { mode: 'auto', maxToolCalls: 6, maxContentCharactersPerCall: 12345 },
+		});
 		expect(context.messages[0]?.webSearchMode).toBe('auto');
 		expect(context.messages[1]?.webSources).toEqual([
 			{ id: 'S1', title: 'Actual source', url: 'https://example.test/source', snippet: 'Evidence' },
@@ -1926,16 +1928,24 @@ describe('EmendChatView web research', () => {
 		);
 	});
 
-	it('appends one shared-content-budget warning and persists it with the ready answer', async () => {
-		const warning = 'Web retrieval reached its 40,000-character content budget. Some retrieved content was omitted; the answer may be incomplete.';
+	it.each([
+		{ failedExtractions: 1, activities: [], unreadWarning: '' },
+		{
+			failedExtractions: 2,
+			activities: [{ type: 'fetch' as const, target: 'https://example.test/unread', status: 'failed' as const }],
+			unreadWarning: 'Emend could not read 1 requested page. The answer may be incomplete.\n\n',
+		},
+	])('appends and persists one exact extraction warning for $failedExtractions failures', async ({ failedExtractions, activities, unreadWarning }) => {
+		const warning = `Emend could not extract information from ${failedExtractions} web ${failedExtractions === 1 ? 'query' : 'queries'}. The answer may be incomplete.`;
 		const requestChatCompletion = vi.fn(async (submission: {
 			callbacks: { onContent(text: string): void };
 		}) => {
-			submission.callbacks.onContent('Answer from truncated evidence');
+			submission.callbacks.onContent('Answer from extracted evidence');
 			return {
-				content: 'Answer from truncated evidence',
+				content: 'Answer from extracted evidence',
 				reasoning: '',
-				contentBudgetExhausted: true,
+				failedExtractions,
+				activities,
 				usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4, source: 'provider' as const },
 			};
 		});
@@ -1964,10 +1974,11 @@ describe('EmendChatView web research', () => {
 
 		await viewPrototype.submitPrompt.call(context);
 
-		const expectedContent = `Answer from truncated evidence\n\n${warning}`;
+		const expectedContent = `Answer from extracted evidence\n\n${unreadWarning}${warning}`;
 		expect(context.messages[1]?.status).toBe('ready');
 		expect(context.messages[1]?.content).toBe(expectedContent);
 		expect(context.messages[1]?.content.split(warning)).toHaveLength(2);
+		expect(context.messages[1]?.content).not.toContain('40,000-character content budget');
 		const finalSave = persistMessages.mock.calls.at(-1)?.[1];
 		expect(finalSave?.[1]?.content).toBe(expectedContent);
 		expect(finalSave?.[1]?.content.split(warning)).toHaveLength(2);
