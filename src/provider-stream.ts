@@ -41,6 +41,7 @@ export interface AiProviderRequest {
 	history: ProviderHistoryMessage[];
 	tools?: ProviderToolDefinition[];
 	continuation?: ProviderContinuationMessage[];
+	responseFormat?: 'json_object';
 }
 
 export interface StreamResult {
@@ -104,6 +105,9 @@ export async function requestAiResponse(
 				temperature: 0.3,
 				reasoning_effort: provider.reasoningEffort,
 				stream: true,
+				...(request.responseFormat === 'json_object'
+					? { response_format: { type: 'json_object' } }
+					: {}),
 				...(request.tools?.length
 					? { tools: request.tools, tool_choice: 'auto' }
 					: {}),

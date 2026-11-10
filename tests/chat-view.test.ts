@@ -2462,7 +2462,7 @@ describe('EmendChatView compact Web disclosure', () => {
 		expect(disclosure).toHaveLength(0);
 		expect(webSelect?.title).toContain('note context');
 		expect(webSelect?.title).toContain('stored locally with ready chats');
-		expect(webSelect?.title).toContain('Each web call uses an AI reader to select goal-relevant verbatim passages. The reader receives your current question and extraction goal, may use up to 6 model rounds, and may incur separate charges.');
+		expect(webSelect?.title).toContain('Each web call uses an AI extraction reader that receives your current question and extraction goal, may use up to 6 extractor rounds, a verifier, and up to 2 refine rounds, and may incur separate charges.');
 		if (webSelect) {
 			webSelect.value = 'review';
 			webSelect.dispatch('change');

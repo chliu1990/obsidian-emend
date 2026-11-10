@@ -13,11 +13,11 @@ import type {
 } from '../src/provider-stream';
 import { resolveRoundTokenUsage } from '../src/token-usage';
 import type { ProviderConfig } from '../src/types';
-import type { WebExtractionOutcome } from '../src/web-extraction';
-import type {
+import { buildWebExtractionToolPayload, type WebExtractionOutcome } from '../src/web-extraction';
+import {
 	WebExtractionReader,
-	WebExtractionReaderOptions,
-	WebExtractionReaderResult,
+	type WebExtractionReaderOptions,
+	type WebExtractionReaderResult,
 } from '../src/web-extraction-reader';
 import type { WebSearchRunOptions, WebToolCall } from '../src/web-search';
 
@@ -192,23 +192,14 @@ function readerResult(
 	readerOptions: WebExtractionReaderOptions,
 	outcome: WebExtractionOutcome,
 ): WebExtractionReaderResult {
-	const results = outcome.results.map((result) => {
-		const document = readerOptions.documents.find((candidate) => candidate.sourceId === result.sourceId);
-		return {
-			sourceId: result.sourceId,
-			title: document?.title ?? '',
-			url: document?.url ?? '',
-			evidence: result.evidence,
-		};
-	});
 	const content = JSON.stringify(outcome);
 	return {
 		outcome,
-		payload: JSON.stringify({
-			extraction: 'ai-reader',
-			outcome: outcome.outcome,
-			results,
-		}),
+		payload: buildWebExtractionToolPayload(
+			outcome,
+			readerOptions.documents,
+			new Map(readerOptions.documents.map((document) => [document.sourceId, document.sourceId])),
+		),
 		rounds: [{
 			request: {
 				provider,
@@ -230,6 +221,7 @@ function successfulReader() {
 					outcome: 'evidence',
 					results: [{
 						sourceId: document.sourceId,
+						claims: [],
 						evidence: ['Title:'],
 					}],
 				}
@@ -333,8 +325,9 @@ describe('DeepSeekWebSearchCoordinator', () => {
 				: `Title: ${expectedTitle}\nSnippet: \nSummary: \nContent: ${rawContent}`,
 		}]);
 		const mainSystemPrompt = request.mock.calls[0]?.[0].systemPrompt ?? '';
-		expect(mainSystemPrompt).toContain('Synthesize only from the supplied verbatim evidence and actual source metadata');
-		expect(mainSystemPrompt).toContain('Every final-answer claim must be supported by the supplied evidence');
+		expect(mainSystemPrompt).toContain('Treat claims as compressions');
+		expect(mainSystemPrompt).toContain('quoted evidence as ground truth');
+		expect(mainSystemPrompt).toContain('must remain supported by the supplied evidence');
 		const continuation = request.mock.calls[1]?.[0].continuation ?? [];
 		const toolMessage = continuation.find((message) => message.role === 'tool');
 		const payload = JSON.parse(toolMessage?.role === 'tool' ? toolMessage.content : '{}') as {
@@ -383,6 +376,7 @@ describe('DeepSeekWebSearchCoordinator', () => {
 			outcome: 'evidence',
 			results: [{
 				sourceId: 'R1',
+				claims: [],
 				evidence: ['Title:', 'x'.repeat(300)],
 			}],
 		}));
@@ -439,7 +433,7 @@ describe('DeepSeekWebSearchCoordinator', () => {
 			}
 			return readerResult(input, {
 				outcome: 'evidence',
-				results: [{ sourceId: 'R1', evidence: ['Title:'] }],
+				results: [{ sourceId: 'R1', claims: [], evidence: ['Title:'] }],
 			});
 		});
 		const { coordinator, request } = coordinatorWith([
@@ -498,8 +492,8 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		reader.extract.mockImplementation(async (input) => readerResult(input, {
 			outcome: 'evidence',
 			results: [
-				{ sourceId: 'R2', evidence: ['Title:'] },
-				{ sourceId: 'R1', evidence: ['Title:'] },
+				{ sourceId: 'R2', claims: [], evidence: ['Title:'] },
+				{ sourceId: 'R1', claims: [], evidence: ['Title:'] },
 			],
 		}));
 		const { coordinator, request } = coordinatorWith([
@@ -525,24 +519,190 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		expect(payload.results.map((result: { sourceId: string }) => result.sourceId)).toEqual(['S2', 'S1']);
 	});
 
-	it('discards staged sources and returns generic output when final mapped evidence exceeds the cap', async () => {
+	it('fits a final staged payload within the per-call cap instead of failing the extraction', async () => {
 		const reader = successfulReader();
 		reader.extract.mockImplementation(async (input) => readerResult(input, {
 			outcome: 'evidence',
-			results: [{ sourceId: 'R1', evidence: ['Title:', 'x'.repeat(200)] }],
+			results: [{ sourceId: 'R1', claims: [], evidence: ['x'.repeat(2000)] }],
 		}));
 		const { coordinator, request } = coordinatorWith([
-			toolRound([searchCall('call-1', 'over-cap')]),
-			finalRound('Answer without that evidence'),
+			toolRound([searchCall('call-1', 'oversized')]),
+			finalRound('Answer from fitted evidence'),
 		], undefined, undefined, reader);
 
-		const result = await coordinator.submit(aiRequest(), options({ maxContentCharactersPerCall: 100 }));
+		const result = await coordinator.submit(aiRequest(), options({ maxContentCharactersPerCall: 1000 }));
 
-		expect(result.content).toBe('Answer without that evidence');
+		expect(result.content).toBe('Answer from fitted evidence');
+		expect(result.failedExtractions).toBe(0);
+		expect(result.activities).toEqual([{ type: 'search', target: 'oversized', status: 'completed' }]);
+		expect(result.sources.map((source) => source.id)).toEqual(['S1']);
+		const toolMessage = request.mock.calls[1]?.[0].continuation?.find((message) => message.role === 'tool');
+		const content = toolMessage?.role === 'tool' ? toolMessage.content : '';
+		expect(content.length).toBeLessThanOrEqual(1000);
+		const payload = JSON.parse(content) as {
+			results: Array<{ sourceId: string; evidence: string[]; truncated?: boolean }>;
+		};
+		expect(payload.results).toHaveLength(1);
+		expect(payload.results[0]?.sourceId).toBe('S1');
+		expect(payload.results[0]?.evidence).toHaveLength(1);
+		expect(payload.results[0]?.evidence[0]!.length).toBeLessThan(2000);
+		expect('x'.repeat(2000).startsWith(payload.results[0]?.evidence[0] ?? '')).toBe(true);
+		expect(payload.results[0]?.truncated).toBe(true);
+	});
+
+	it('keeps verifier-approved claims and their quotes out of raw retrieval', async () => {
+		const rawMarker = 'RAW_RETRIEVAL_MUST_NOT_LEAK';
+		const search = vi.fn(async () => [{
+			...parsedSearchResult,
+			snippet: 'Snippet text',
+			summary: 'Summary text',
+			content: `${rawMarker} body`,
+		}]);
+		const reader = successfulReader();
+		reader.extract.mockImplementation(async (input) => readerResult(input, {
+			outcome: 'evidence',
+			results: [{
+				sourceId: 'R1',
+				claims: [{ text: 'Verified claim', evidence: ['Snippet text'] }],
+				evidence: [],
+			}],
+		}));
+		const { coordinator, request } = coordinatorWith([
+			toolRound([searchCall('call-1', 'claims')]),
+			finalRound('Answer [S1]'),
+		], search, undefined, reader);
+
+		await coordinator.submit(aiRequest(), options());
+
+		const continuation = request.mock.calls[1]?.[0].continuation ?? [];
+		const toolMessage = continuation.find((message) => message.role === 'tool');
+		expect(JSON.parse(toolMessage?.role === 'tool' ? toolMessage.content : '{}')).toEqual({
+			extraction: 'ai-reader',
+			outcome: 'evidence',
+			results: [{
+				sourceId: 'S1',
+				title: 'Emend documentation',
+				url: 'https://example.test/emend',
+				claims: [{ text: 'Verified claim', evidence: ['Snippet text'] }],
+			}],
+		});
+		expect(JSON.stringify(continuation)).not.toContain(rawMarker);
+		expect(JSON.stringify(continuation)).not.toContain('Summary text');
+	});
+
+	it('falls back to extractor quotes when a verifier rejects every claim', async () => {
+		const search = vi.fn(async () => [{
+			...parsedSearchResult,
+			snippet: 'Snippet text',
+			summary: 'Summary text',
+			content: 'CANONICAL_RAW_BODY',
+		}]);
+		let mainRound = 0;
+		const request = vi.fn(async (roundRequest: AiProviderRequest): Promise<StreamResult> => {
+			if (roundRequest.tools?.some((tool) => tool.function.name === 'web_search')) {
+				mainRound += 1;
+				return mainRound === 1
+					? toolRound([searchCall('call-1', 'verify-fallback')])
+					: finalRound('Answer [S1]');
+			}
+			if (roundRequest.tools?.some((tool) => tool.function.name === 'retrieval_grep')) {
+				return finalRound(JSON.stringify({
+					outcome: 'evidence',
+					results: [{
+						sourceId: 'R1',
+						claims: [{ text: 'Rejected claim', evidence: ['Snippet text'] }],
+					}],
+				}));
+			}
+			if (roundRequest.systemPrompt.includes('claim verifier')) {
+				return finalRound(JSON.stringify({
+					outcome: 'verify',
+					results: [{ sourceId: 'R1', verdicts: [{ claimIndex: 0, supported: false }] }],
+				}));
+			}
+			if (roundRequest.systemPrompt.includes('revise')) {
+				return finalRound(JSON.stringify({
+					outcome: 'evidence',
+					results: [{
+						sourceId: 'R1',
+						claims: [{ text: 'Rejected claim', evidence: ['Snippet text'] }],
+					}],
+				}));
+			}
+			throw new Error('Unexpected reader request');
+		});
+		const coordinator = new DeepSeekWebSearchCoordinator({
+			provider,
+			request,
+			search,
+			reader: new WebExtractionReader({ provider, request }),
+		});
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(result.content).toBe('Answer [S1]');
+		expect(result.failedExtractions).toBe(0);
+		expect(result.sources.map((source) => source.id)).toEqual(['S1']);
+		expect(result.activities).toEqual([{
+			type: 'search',
+			target: 'verify-fallback',
+			status: 'completed',
+		}]);
+		const mainRequests = request.mock.calls
+			.map((call) => call[0])
+			.filter((roundRequest) => roundRequest.tools?.some((tool) => tool.function.name === 'web_search'));
+		const continuation = mainRequests.at(-1)?.continuation ?? [];
+		const toolMessage = continuation.find((message) => message.role === 'tool');
+		expect(JSON.parse(toolMessage?.role === 'tool' ? toolMessage.content : '{}')).toEqual({
+			extraction: 'ai-reader',
+			outcome: 'evidence',
+			results: [{
+				sourceId: 'S1',
+				title: 'Emend documentation',
+				url: 'https://example.test/emend',
+				evidence: ['Snippet text'],
+			}],
+		});
+		expect(JSON.stringify(continuation)).not.toContain('Rejected claim');
+		expect(JSON.stringify(continuation)).not.toContain('CANONICAL_RAW_BODY');
+		expect(JSON.stringify(continuation)).not.toContain('Summary text');
+	});
+
+	it('fails extraction only when the extractor stays unparseable through correction', async () => {
+		let mainRound = 0;
+		const request = vi.fn(async (roundRequest: AiProviderRequest): Promise<StreamResult> => {
+			if (roundRequest.tools?.some((tool) => tool.function.name === 'web_search')) {
+				mainRound += 1;
+				return mainRound === 1
+					? toolRound([searchCall('call-1', 'format-failure')])
+					: finalRound('Answer without extracted evidence');
+			}
+			if (roundRequest.tools?.some((tool) => tool.function.name === 'retrieval_grep')) {
+				return finalRound('{');
+			}
+			return finalRound('still not json');
+		});
+		const coordinator = new DeepSeekWebSearchCoordinator({
+			provider,
+			request,
+			search: vi.fn(async () => [parsedSearchResult]),
+			reader: new WebExtractionReader({ provider, request }),
+		});
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(result.content).toBe('Answer without extracted evidence');
 		expect(result.failedExtractions).toBe(1);
 		expect(result.sources).toEqual([]);
-		expect(result.activities).toEqual([{ type: 'search', target: 'over-cap', status: 'failed' }]);
-		const toolMessage = request.mock.calls[1]?.[0].continuation?.find((message) => message.role === 'tool');
+		expect(result.activities).toEqual([{
+			type: 'search',
+			target: 'format-failure',
+			status: 'failed',
+		}]);
+		const mainRequests = request.mock.calls
+			.map((call) => call[0])
+			.filter((roundRequest) => roundRequest.tools?.some((tool) => tool.function.name === 'web_search'));
+		const toolMessage = mainRequests.at(-1)?.continuation?.find((message) => message.role === 'tool');
 		expect(toolMessage?.role === 'tool' && toolMessage.content).toBe('{"error":"extraction_failed"}');
 	});
 
@@ -555,7 +715,7 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		reader.extract.mockImplementation(async (input) => {
 			const extracted = readerResult(input, {
 				outcome: 'evidence',
-				results: [{ sourceId: 'R1', evidence: ['Title:'] }],
+				results: [{ sourceId: 'R1', claims: [], evidence: ['Title:'] }],
 			});
 			return {
 				...extracted,
@@ -653,7 +813,7 @@ describe('DeepSeekWebSearchCoordinator', () => {
 			controller.abort(reason);
 			return readerResult(input, {
 				outcome: 'evidence',
-				results: [{ sourceId: 'R1', evidence: ['Title:'] }],
+				results: [{ sourceId: 'R1', claims: [], evidence: ['Title:'] }],
 			});
 		});
 		const { coordinator, request } = coordinatorWith([
@@ -764,7 +924,7 @@ describe('DeepSeekWebSearchCoordinator', () => {
 			return readerResult(input, document
 				? {
 					outcome: 'evidence',
-					results: [{ sourceId: document.sourceId, evidence: ['Title:'] }],
+					results: [{ sourceId: document.sourceId, claims: [], evidence: ['Title:'] }],
 				}
 				: { outcome: 'no_relevant_evidence', results: [] });
 		});

@@ -8,9 +8,16 @@ export interface WebExtractionDocument {
 	canonicalText: string;
 }
 
+export interface WebExtractionClaim {
+	text: string;
+	evidence: string[];
+}
+
 export interface WebExtractionResult {
 	sourceId: string;
+	claims: WebExtractionClaim[];
 	evidence: string[];
+	truncated?: boolean;
 }
 
 export type WebExtractionOutcome = {
@@ -20,6 +27,18 @@ export type WebExtractionOutcome = {
 	outcome: 'no_relevant_evidence';
 	results: [];
 };
+
+export interface WebExtractionFitResult {
+	outcome: WebExtractionOutcome;
+	payload: string;
+}
+
+export class WebExtractionParseError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'WebExtractionParseError';
+	}
+}
 
 interface SearchExtractionResult {
 	title: string;
@@ -38,10 +57,23 @@ interface GrepMatch {
 	context: string;
 }
 
+interface PayloadResult {
+	sourceId: string;
+	mappedId: string;
+	title: string;
+	url: string;
+	claims: WebExtractionClaim[];
+	evidence: string[];
+	truncated?: boolean;
+}
+
 const LOCAL_TOOL_RESULT_CAP = 4000;
 const MAX_GREP_MATCHES = 8;
 const GREP_CONTEXT_CHARACTERS = 120;
 const MAX_READ_CHARACTERS = 3500;
+const MAX_CLAIM_TEXT_CODE_POINTS = 500;
+const MAX_CLAIM_QUOTES = 4;
+const MAX_QUOTE_CODE_POINTS = 1500;
 
 export function buildSearchExtractionDocuments(
 	results: readonly SearchExtractionResult[],
@@ -160,51 +192,116 @@ export function parseWebExtractionOutcome(
 	content: string,
 	documents: readonly WebExtractionDocument[],
 ): WebExtractionOutcome {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(content);
-	} catch {
-		throw new Error('Web extraction output must be valid JSON.');
-	}
-	if (!isRecord(parsed) || !hasExactKeys(parsed, ['outcome', 'results']) || !Array.isArray(parsed.results)) {
-		throw new Error('Web extraction output has an invalid shape.');
-	}
+	const parsed = parseJsonObject(content);
 	if (parsed.outcome === 'no_relevant_evidence') {
-		if (parsed.results.length !== 0) {
-			throw new Error('No-evidence extraction output cannot contain results.');
-		}
 		return { outcome: 'no_relevant_evidence', results: [] };
 	}
-	if (parsed.outcome !== 'evidence' || parsed.results.length === 0) {
-		throw new Error('Evidence extraction output must contain results.');
+	if (parsed.outcome !== 'evidence') {
+		throw new WebExtractionParseError(
+			'Web extraction output must use the evidence or no_relevant_evidence outcome.',
+		);
+	}
+	if (!Array.isArray(parsed.results)) {
+		throw new WebExtractionParseError('Evidence extraction output must contain a results array.');
 	}
 
 	const documentsById = new Map(documents.map((document) => [document.sourceId, document]));
-	const seenSourceIds = new Set<string>();
-	const results: WebExtractionResult[] = parsed.results.map((candidate: unknown) => {
-		if (!isRecord(candidate) || !hasExactKeys(candidate, ['sourceId', 'evidence'])) {
-			throw new Error('Web extraction result has an invalid shape.');
-		}
-		if (typeof candidate.sourceId !== 'string' || seenSourceIds.has(candidate.sourceId)) {
-			throw new Error('Web extraction source IDs must be unique.');
+	const resultsBySourceId = new Map<string, WebExtractionResult>();
+	for (const candidate of parsed.results) {
+		if (!isRecord(candidate) || typeof candidate.sourceId !== 'string') {
+			continue;
 		}
 		const document = documentsById.get(candidate.sourceId);
 		if (!document) {
-			throw new Error(`Unknown extraction source: ${candidate.sourceId}`);
+			continue;
 		}
-		if (!isNonemptyStringArray(candidate.evidence)) {
-			throw new Error('Extraction evidence must be a nonempty string array.');
-		}
-		if (candidate.evidence.some((evidence) => !document.canonicalText.includes(evidence))) {
-			throw new Error('Extraction evidence must be verbatim source text.');
-		}
-		seenSourceIds.add(candidate.sourceId);
-		return {
+		const result = resultsBySourceId.get(candidate.sourceId) ?? {
 			sourceId: candidate.sourceId,
-			evidence: [...candidate.evidence],
+			claims: [],
+			evidence: [],
 		};
-	});
+		const fallbackQuotes = new Set(result.evidence);
+		if (Array.isArray(candidate.claims)) {
+			for (const rawClaim of candidate.claims) {
+				if (!isRecord(rawClaim)) {
+					continue;
+				}
+				const quotes = collectQuotes(rawClaim.evidence, document);
+				for (const quote of quotes) {
+					fallbackQuotes.add(quote);
+				}
+				if (typeof rawClaim.text !== 'string') {
+					continue;
+				}
+				const text = rawClaim.text.trim();
+				if (codePointLength(text) === 0 || codePointLength(text) > MAX_CLAIM_TEXT_CODE_POINTS) {
+					continue;
+				}
+				if (quotes.length === 0) {
+					continue;
+				}
+				const claim: WebExtractionClaim = {
+					text,
+					evidence: quotes.slice(0, MAX_CLAIM_QUOTES),
+				};
+				if (!result.claims.some((candidateClaim) => normalizeClaimText(candidateClaim.text) === normalizeClaimText(text))) {
+					result.claims.push(claim);
+				}
+			}
+		}
+		for (const quote of collectQuotes(candidate.evidence, document)) {
+			fallbackQuotes.add(quote);
+		}
+		result.evidence = [...fallbackQuotes];
+		resultsBySourceId.set(candidate.sourceId, result);
+	}
+
+	const results = [...resultsBySourceId.values()].filter(
+		(result) => result.claims.length > 0 || result.evidence.length > 0,
+	);
+	if (results.length === 0) {
+		return { outcome: 'no_relevant_evidence', results: [] };
+	}
 	return { outcome: 'evidence', results };
+}
+
+export function parseJsonObject(content: string): Record<string, unknown> {
+	const candidates = [content.trim()];
+	const fenced = content.match(/```[A-Za-z0-9_-]*\s*\n?([\s\S]*?)```/);
+	if (fenced?.[1] !== undefined) {
+		candidates.push(fenced[1].trim());
+	}
+	for (const candidate of candidates) {
+		try {
+			const value: unknown = JSON.parse(candidate);
+			if (isRecord(value)) {
+				return value;
+			}
+		} catch {
+			// Fall through to the balanced-object scan.
+		}
+	}
+
+	let searchFrom = 0;
+	while (true) {
+		const start = content.indexOf('{', searchFrom);
+		if (start === -1) {
+			break;
+		}
+		const end = findJsonObjectEnd(content, start);
+		if (end !== -1) {
+			try {
+				const value: unknown = JSON.parse(content.slice(start, end + 1));
+				if (isRecord(value)) {
+					return value;
+				}
+			} catch {
+				// Try the next brace.
+			}
+		}
+		searchFrom = start + 1;
+	}
+	throw new WebExtractionParseError('Reader output must contain a parseable JSON object.');
 }
 
 export function buildWebExtractionToolPayload(
@@ -212,25 +309,133 @@ export function buildWebExtractionToolPayload(
 	documents: readonly WebExtractionDocument[],
 	idByTemporaryId: ReadonlyMap<string, string>,
 ): string {
-	const documentsById = new Map(documents.map((document) => [document.sourceId, document]));
-	const results = outcome.results.map((result) => {
-		const document = documentsById.get(result.sourceId);
+	const payload = outcome.results.map((result) => {
+		const document = documents.find((candidate) => candidate.sourceId === result.sourceId);
 		const sourceId = idByTemporaryId.get(result.sourceId);
 		if (!document || sourceId === undefined) {
 			throw new Error(`Cannot map extraction source: ${result.sourceId}`);
 		}
-		return {
-			sourceId,
+		return serializeResult({
+			sourceId: result.sourceId,
+			mappedId: sourceId,
 			title: document.title,
 			url: document.url,
+			claims: result.claims,
 			evidence: result.evidence,
-		};
+			truncated: result.truncated,
+		});
 	});
+	if (payload.length === 0) {
+		return JSON.stringify({ extraction: 'ai-reader', outcome: 'no_relevant_evidence', results: [] });
+	}
 	return JSON.stringify({
 		extraction: 'ai-reader',
 		outcome: outcome.outcome,
-		results,
+		results: payload,
 	});
+}
+
+export function fitWebExtractionToolPayload(
+	outcome: WebExtractionOutcome,
+	documents: readonly WebExtractionDocument[],
+	idByTemporaryId: ReadonlyMap<string, string>,
+	cap: number,
+): WebExtractionFitResult {
+	if (!Number.isInteger(cap) || cap < 0) {
+		throw new Error('Web extraction cap must be a nonnegative integer.');
+	}
+	const working: PayloadResult[] = [];
+	for (const result of outcome.results) {
+		const document = documents.find((candidate) => candidate.sourceId === result.sourceId);
+		const mappedId = idByTemporaryId.get(result.sourceId);
+		if (!document || mappedId === undefined) {
+			throw new Error(`Cannot map extraction source: ${result.sourceId}`);
+		}
+		working.push({
+			sourceId: result.sourceId,
+			mappedId,
+			title: document.title,
+			url: document.url,
+			claims: result.claims.map((claim) => ({ text: claim.text, evidence: [...claim.evidence] })),
+			evidence: [...result.evidence],
+			...(result.truncated ? { truncated: true } : {}),
+		});
+	}
+
+	const serialize = () => serializePayload(working);
+	const measure = (payload: string) => measureWebContent(payload).value;
+	while (measure(serialize()) > cap) {
+		const claimIndex = findLastIndex(working, (result) => result.claims.length > 0);
+		if (claimIndex !== -1) {
+			const target = working[claimIndex]!;
+			target.claims.pop();
+			if (target.claims.length === 0 && target.evidence.length === 0) {
+				working.splice(claimIndex, 1);
+			}
+			continue;
+		}
+
+		const quoteCount = working.reduce(
+			(sum, result) => sum + (result.claims.length === 0 ? result.evidence.length : 0),
+			0,
+		);
+		if (quoteCount > 1) {
+			const evidenceIndex = findLastIndex(
+				working,
+				(result) => result.claims.length === 0 && result.evidence.length > 0,
+			);
+			const target = working[evidenceIndex]!;
+			target.evidence.pop();
+			if (target.evidence.length === 0) {
+				working.splice(evidenceIndex, 1);
+			}
+			continue;
+		}
+
+		const lastIndex = findLastIndex(
+			working,
+			(result) => result.claims.length === 0 && result.evidence.length > 0,
+		);
+		if (lastIndex !== -1) {
+			const target = working[lastIndex]!;
+			const quote = target.evidence[0]!;
+			const codePoints = Array.from(quote);
+			const fitsPrefix = (length: number) => {
+				target.evidence = [codePoints.slice(0, length).join('')];
+				const fits = measure(serialize()) <= cap;
+				target.evidence = [quote];
+				return fits;
+			};
+			let low = 1;
+			let high = codePoints.length - 1;
+			let best = 0;
+			while (low <= high) {
+				const middle = Math.floor((low + high) / 2);
+				if (fitsPrefix(middle)) {
+					best = middle;
+					low = middle + 1;
+				} else {
+					high = middle - 1;
+				}
+			}
+			if (best > 0) {
+				target.evidence = [codePoints.slice(0, best).join('')];
+				target.truncated = true;
+				continue;
+			}
+			target.evidence = [];
+			working.splice(lastIndex, 1);
+			continue;
+		}
+
+		const floor = serializePayload([]);
+		if (measure(floor) > cap) {
+			throw new Error(`Web extraction payload cannot fit within the ${cap}-character cap.`);
+		}
+		return { outcome: { outcome: 'no_relevant_evidence', results: [] }, payload: floor };
+	}
+
+	return { outcome: toOutcome(working), payload: serialize() };
 }
 
 export function assertWebExtractionWithinCap(payload: string, cap: number): void {
@@ -266,17 +471,126 @@ function readResult(document: WebExtractionDocument, start: number, end: number)
 	};
 }
 
+function collectQuotes(value: unknown, document: WebExtractionDocument): string[] {
+	if (!Array.isArray(value)) {
+		return [];
+	}
+	const quotes: string[] = [];
+	for (const candidate of value) {
+		if (typeof candidate !== 'string') {
+			continue;
+		}
+		const quote = candidate.trim();
+		const length = codePointLength(quote);
+		if (length === 0 || length > MAX_QUOTE_CODE_POINTS) {
+			continue;
+		}
+		if (!document.canonicalText.includes(quote) || quotes.includes(quote)) {
+			continue;
+		}
+		quotes.push(quote);
+	}
+	return quotes;
+}
+
+function serializePayload(results: readonly PayloadResult[]): string {
+	if (results.length === 0) {
+		return JSON.stringify({ extraction: 'ai-reader', outcome: 'no_relevant_evidence', results: [] });
+	}
+	return JSON.stringify({
+		extraction: 'ai-reader',
+		outcome: 'evidence',
+		results: results.map(serializeResult),
+	});
+}
+
+function serializeResult(result: PayloadResult): Record<string, unknown> {
+	const payload: Record<string, unknown> = {
+		sourceId: result.mappedId,
+		title: result.title,
+		url: result.url,
+	};
+	if (result.claims.length > 0) {
+		payload.claims = result.claims.map((claim) => ({
+			text: claim.text,
+			evidence: [...claim.evidence],
+		}));
+	} else {
+		payload.evidence = [...result.evidence];
+	}
+	if (result.truncated) {
+		payload.truncated = true;
+	}
+	return payload;
+}
+
+function toOutcome(results: readonly PayloadResult[]): WebExtractionOutcome {
+	if (results.length === 0) {
+		return { outcome: 'no_relevant_evidence', results: [] };
+	}
+	return {
+		outcome: 'evidence',
+		results: results.map((result) => ({
+			sourceId: result.sourceId,
+			claims: result.claims.map((claim) => ({
+				text: claim.text,
+				evidence: [...claim.evidence],
+			})),
+			evidence: result.claims.length > 0 ? [] : [...result.evidence],
+			...(result.truncated ? { truncated: true } : {}),
+		})),
+	};
+}
+
+function findJsonObjectEnd(content: string, start: number): number {
+	let depth = 0;
+	let inString = false;
+	let escaped = false;
+	for (let index = start; index < content.length; index += 1) {
+		const character = content[index]!;
+		if (inString) {
+			if (escaped) {
+				escaped = false;
+			} else if (character === '\\') {
+				escaped = true;
+			} else if (character === '"') {
+				inString = false;
+			}
+			continue;
+		}
+		if (character === '"') {
+			inString = true;
+			continue;
+		}
+		if (character === '{') {
+			depth += 1;
+		} else if (character === '}') {
+			depth -= 1;
+			if (depth === 0) {
+				return index;
+			}
+		}
+	}
+	return -1;
+}
+
+function findLastIndex<T>(values: readonly T[], predicate: (value: T) => boolean): number {
+	for (let index = values.length - 1; index >= 0; index -= 1) {
+		if (predicate(values[index]!)) {
+			return index;
+		}
+	}
+	return -1;
+}
+
+function codePointLength(value: string): number {
+	return Array.from(value).length;
+}
+
+export function normalizeClaimText(value: string): string {
+	return value.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-	const actualKeys = Object.keys(value);
-	return actualKeys.length === keys.length && keys.every((key) => Object.prototype.hasOwnProperty.call(value, key));
-}
-
-function isNonemptyStringArray(value: unknown): value is string[] {
-	return Array.isArray(value)
-		&& value.length > 0
-		&& value.every((item) => typeof item === 'string' && item.trim().length > 0);
 }
