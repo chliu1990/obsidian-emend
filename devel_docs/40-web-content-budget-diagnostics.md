@@ -10,7 +10,10 @@ Stage 36's provider and read-only boundaries remain intact. Web is available onl
 
 ### Calls, goals, and independent caps
 
-- `maxWebToolCalls` defaults to 8 and normalizes to integers from 1 through 20. Every model-requested Search/Fetch call counts, and an over-cap batch executes none of its calls.
+- `maxWebToolCalls` defaults to 8 and normalizes to integers from 1 through 20, capping executed Search/Fetch calls rather than rejecting an over-limit batch. Every proposal is validated; only the first remaining calls execute in model order, and only those executable calls appear in Review. Skipped calls perform no Search/Fetch/reader work.
+- Continuations preserve every proposed call ID, reviewed executable arguments, original skipped arguments, ordinary selected outcomes, and small capped `{"error":{"kind":"call_limit_reached"}}` outcomes for skipped calls. Skipped calls also gain persisted skipped activities.
+- After any skipped calls, exactly one forced terminal main-model request omits Web tools and instructs the model to answer from current note/chat and successful evidence. A ready answer may have no evidence but cannot invent citations. Further tool calls in that forced round fail without retrieval or retry.
+- Chat appends `Web retrieval reached the <limit>-call limit. N proposed calls were skipped; the answer may be incomplete.` for multiple skips, or `1 proposed call was skipped` for one. This warning occurs once, coexists with unread/extraction warnings, and persists as ordinary ready content. Exact-limit completion has no skipped-call warning.
 - Every call requires a nonempty `extractionGoal` of 1–1000 Unicode code points. Review permits editing the goal and query/URL while preserving call IDs and tool names; an invalid goal blocks the batch before retrieval. Auto validates the same fields without the review pause.
 - `maxWebContentCharactersPerCall` defaults to 20,000 and normalizes to integers from 1,000 through 100,000, restoring 20,000 for malformed values. It caps the complete serialized extraction tool response, including source metadata, facts, evidence, and JSON syntax.
 - Each call has an independent cap. For cap `C` and `N` executed calls, the payloads contribute at most `C × N` characters; there is no independent total retrieval-character cap.
@@ -52,7 +55,9 @@ Conversation schema 2 persists only ordinary ready content, sanitized citations/
 
 Tasks 1–5 used regression-first coverage for character measurement and normalization, Review goals, canonical documents and local tools, reader bounds/grounding, main-loop integration, failure diagnostics, and all-round usage. The completed Task 5 gate passed **39 Vitest files and 971 tests**, ESLint, strict TypeScript/production build, and `git diff --check`. Task 6 adds no runtime code; its final locked-install clean gate is recorded in the Task 6 report.
 
-Focused runtime tests cover small/large Search/Fetch, exact serialized-cap boundaries, independent heavy calls, mixed success/failure/no-evidence outcomes, failed-round accounting, unread-Fetch versus extraction diagnostics, contiguous citations, no raw continuation, prompt-injection-shaped content, aborts, provider errors, Review/Auto, 20/21-call behavior, provider-versus-estimated usage, and sanitized reload persistence.
+Task 7 replaced the old over-limit terminal-error expectation with failing partial-execution tests before implementation. The focused RED run failed 14 intended tests; the focused GREEN run passed **4 files and 236 tests**. The final locked-install gate passed **39 Vitest files and 979 tests**, ESLint, strict TypeScript/production build, and `git diff --check`.
+
+Focused runtime tests cover small/large Search/Fetch, exact serialized-cap boundaries, independent heavy calls, mixed success/failure/no-evidence outcomes, failed-round accounting, unread-Fetch versus extraction diagnostics, contiguous citations, no raw continuation, prompt-injection-shaped content, aborts, provider errors, Review/Auto, partial execution and forced no-tools completion, zero remaining slots, exact 20 and skipped 21, malformed forced-round calls, skipped counts and exact singular/plural warnings, provider-versus-estimated usage, and sanitized reload persistence.
 
 ## Real-Obsidian loopback evidence
 
@@ -88,6 +93,32 @@ Evidence is retained under ignored paths:
 
 The first harness attempt copied a stale fixture plugin and failed before exercising the new setting. After installing the actual root bundle, verifier-only corrections distinguished terminal main requests from accumulated continuations, unique local calls from repeated reader history, and rendered Markdown whitespace from persisted newlines. The first unread-Fetch fixture attempt also used an overlong generated extraction goal; short explicit goals corrected that verifier-only fixture before the final passing run. No runtime defect was found in these harness corrections and no result JSON was edited to conceal a failure.
 
+### Task 7 graceful over-limit completion
+
+- Date: 2026-11-10, Asia/Shanghai.
+- Runtime: the same official Obsidian 1.15.0 AppImage assets, isolated Xvfb `:99`, CDP `19222`, and CORS loopback chat/Search/Fetch mock at `127.0.0.1:8765`.
+- Data: only synthetic notes, instructions, configuration, and a dummy SecretStorage credential under ignored `test_vault/emend-web-verify/runtime-over-limit/`. No real provider/account/key, external retrieval, other vault, fallback, or note write was used.
+- Bundle: root and tested `main.js` SHA-256 were both `638c67f3f8cce87f519e9cf9eb7beb4722f0442740bab6fd8dda39a7db999224`.
+- Command: `node test_vault/emend-web-verify/verify.mjs --over-limit` using `mock-reader.mjs` for fragmented main and reader SSE rounds.
+- Result: **8/8 scenarios and 58/58 assertions passed**, covering both supported models. The request audit covered 10 captured logs and 124 entries with zero header violations and zero dummy-credential leaks. Owned Obsidian, Xvfb, and mock processes were stopped after the run.
+
+For each of `deepseek-flash` and `deepseek-v4-pro`:
+
+1. **Review partial execution and reload:** four proposals at setting 3 displayed only three Review calls. The edited first query/goal and two original executable queries ran in model order; the fourth did no Search/reader work. The forced no-tools continuation contained all four IDs, edited executable arguments, exact original skipped arguments, three grounded outcomes, and one `call_limit_reached` outcome. Three citations and five-round provider usage `75 total · 50 prompt · 25 completion` survived with one singular warning and four activities. Actual reload restored all of them without new retrieval.
+2. **Auto no-evidence completion:** three proposals at setting 1 executed only the first Search/reader, which returned no relevant evidence; two skipped calls caused no retrieval. The forced no-tools answer had no citations, one exact plural warning, three activities, and three-round provider usage `45 total · 30 prompt · 15 completion`.
+3. **20/21 boundary:** exactly twenty ordered Search/reader pairs ran before the 21st proposal was skipped without work. One forced no-tools request preserved both assistant batches and all 21 outcomes. Twenty citations, 21 activities, one singular warning, and 23-round provider usage `345 total · 230 prompt · 115 completion` persisted.
+4. **Stop and retry:** Stop during a held reader produced no forced continuation or skipped-call retrieval. A fresh retry executed one Search/reader and one forced answer, preserving one citation, skipped activity/warning, and all-round usage while stopped artifacts remained transient.
+
+Every Task 7 scenario asserted byte-for-byte unchanged notes and schema-2 persistence without raw tool outcomes, extracted-fact arrays, or reader reasoning. Evidence is retained under ignored paths:
+
+- `test_vault/emend-web-verify/evidence-over-limit/summary.json`
+- `test_vault/emend-web-verify/evidence-over-limit/over-limit-evidence.json`
+- `test_vault/emend-web-verify/evidence-over-limit/request-log.json`
+- `test_vault/emend-web-verify/evidence-over-limit/logs/`
+- `test_vault/emend-web-verify/evidence-over-limit/over-limit-*.png`
+
+The first Task 7 harness attempt passed Review and 20/21 on both models but exposed two verifier-only fixture mistakes: it expected empty `webSources` to serialize as an array and clicked Stop before the held reader started. The final verifier accepts the existing omitted-empty-sources schema and waits for the reader request before Stop. No runtime code was changed for those corrections, and the final passing evidence was regenerated rather than edited.
+
 ## Environment limits
 
-All provider behavior was deterministic loopback behavior on Linux/Xvfb, not a real DeepSeek response. The mock exercised both model names and real Obsidian UI/runtime paths, but cannot establish real-provider extraction quality, pricing, tokenization, or model behavior. Character measurement is verified; no tokenizer or real-provider verification is claimed. Every requested Task 6 and final unread-Fetch scenario was exercised; no requested scenario was skipped.
+All provider behavior was deterministic loopback behavior on Linux/Xvfb, not a real DeepSeek response. The mock exercised both model names and real Obsidian UI/runtime paths, but cannot establish real-provider extraction quality, pricing, tokenization, model behavior, or real-provider forced-limit compliance. Character measurement is verified; no tokenizer or real-provider verification is claimed. Every requested Task 6, final unread-Fetch, and Task 7 scenario was exercised; no requested scenario was skipped.

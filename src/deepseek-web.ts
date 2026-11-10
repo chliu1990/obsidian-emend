@@ -112,15 +112,19 @@ export class DeepSeekWebSearchCoordinator {
 		const sources = new WebSourceRegistry();
 		let continuation = request.continuation ?? [];
 		let reasoning = '';
-		let requestedCalls = 0;
+		let executedCalls = 0;
+		let skippedWebCalls = 0;
 		let failedExtractions = 0;
+		let forceTerminal = false;
 
 		while (true) {
 			options.signal.throwIfAborted();
 			const roundRequest: AiProviderRequest = {
 				...request,
-				systemPrompt: `${request.systemPrompt}\n\n${WEB_SYSTEM_PROMPT}`,
-				tools: WEB_TOOL_DEFINITIONS,
+				systemPrompt: `${request.systemPrompt}\n\n${WEB_SYSTEM_PROMPT}${forceTerminal
+					? '\n\nThe configured Web call limit has been reached. Answer now from the current note, chat, and successfully extracted evidence. Do not call tools or invent citations; if evidence is insufficient, answer from available context and disclose uncertainty.'
+					: ''}`,
+				...(forceTerminal ? {} : { tools: WEB_TOOL_DEFINITIONS }),
 				continuation,
 			};
 			const result = await this.dependencies.request(
@@ -138,6 +142,9 @@ export class DeepSeekWebSearchCoordinator {
 			rounds.push({ request: roundRequest, result });
 			reasoning += result.reasoning;
 			const rawCalls = result.toolCalls ?? [];
+			if (forceTerminal && rawCalls.length > 0) {
+				throw new Error('The model returned tool calls after the web call limit was reached.');
+			}
 			if (rawCalls.length === 0) {
 				if (result.content) {
 					options.callbacks.onEvent({ type: 'content', text: result.content });
@@ -148,21 +155,24 @@ export class DeepSeekWebSearchCoordinator {
 					sources: sources.list(),
 					activities,
 					failedExtractions,
+					skippedWebCalls,
 					rounds,
 				};
 			}
 
 			const proposed = rawCalls.map(parseWebToolCall);
-			requestedCalls += proposed.length;
-			if (requestedCalls > options.maxToolCalls) {
-				throw new Error(`The model exceeded the ${options.maxToolCalls}-call web tool call limit. No calls in the final batch were executed.`);
-			}
-			const reviewed = options.mode === 'review'
-				? await options.reviewCalls(proposed)
-				: proposed;
+			const remaining = Math.max(0, options.maxToolCalls - executedCalls);
+			const executable = proposed.slice(0, remaining);
+			const skipped = proposed.slice(remaining);
+			const reviewed = options.mode === 'review' && executable.length > 0
+				? await options.reviewCalls(executable)
+				: executable;
 			options.signal.throwIfAborted();
-			const calls = validateReviewedCalls(proposed, reviewed);
-			const wireCalls = calls.map(toProviderToolCall);
+			const calls = validateReviewedCalls(executable, reviewed);
+			const wireCalls = [
+				...calls.map(toProviderToolCall),
+				...rawCalls.slice(calls.length),
+			];
 			continuation = [
 				...continuation,
 				{ role: 'assistant', content: result.content, toolCalls: wireCalls },
@@ -181,6 +191,24 @@ export class DeepSeekWebSearchCoordinator {
 					{ role: 'tool', toolCallId: call.id, content: outcome.content },
 				];
 			}
+			executedCalls += calls.length;
+			for (const call of skipped) {
+				activities.push({
+					type: call.name === 'web_search' ? 'search' : 'fetch',
+					target: call.name === 'web_search' ? call.query : call.url,
+					status: 'skipped',
+				});
+				continuation = [
+					...continuation,
+					{
+						role: 'tool',
+						toolCallId: call.id,
+						content: JSON.stringify({ error: { kind: 'call_limit_reached' } }),
+					},
+				];
+			}
+			skippedWebCalls += skipped.length;
+			forceTerminal = skipped.length > 0;
 		}
 	}
 

@@ -360,7 +360,7 @@ export class EmendSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName('Web tool call limit')
 			// eslint-disable-next-line obsidianmd/ui/sentence-case -- DeepSeek is a provider brand name.
-			.setDesc('Maximum model-requested Search/Fetch calls per answer. Each call has an independent output cap, so total reader output is bounded by cap × calls. Successful DeepSeek retrieval calls may be billed separately.')
+			.setDesc('Maximum executed Search/Fetch calls per answer. An over-limit batch executes the remaining calls in model order, skips only the excess, and then answers without Web tools. Each executed call has an independent output cap, so total reader output is bounded by cap × calls. Successful DeepSeek retrieval calls may be billed separately.')
 			.addText((text) => {
 				text.inputEl.type = 'number';
 				text.inputEl.min = '1';

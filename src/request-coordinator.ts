@@ -84,6 +84,7 @@ export interface ChatStreamResult extends Omit<StreamResult, 'usage'> {
 	sources?: WebSource[];
 	activities?: WebActivityRecord[];
 	failedExtractions: number;
+	skippedWebCalls: number;
 }
 
 export interface EditRequestResult extends EditResult {
@@ -137,6 +138,7 @@ export class ReadOnlyRequestCoordinator {
 				sources: result.sources,
 				activities: result.activities,
 				failedExtractions: result.failedExtractions,
+				skippedWebCalls: result.skippedWebCalls,
 				usage: resolveRoundTokenUsage(result.rounds),
 			};
 		}
@@ -146,7 +148,12 @@ export class ReadOnlyRequestCoordinator {
 			callbacks,
 			submission.signal,
 		);
-		return { ...result, failedExtractions: 0, usage: resolveTokenUsage(request, result) };
+		return {
+			...result,
+			failedExtractions: 0,
+			skippedWebCalls: 0,
+			usage: resolveTokenUsage(request, result),
+		};
 	}
 }
 

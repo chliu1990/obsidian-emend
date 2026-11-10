@@ -2002,6 +2002,112 @@ describe('EmendChatView web research', () => {
 		expect(finalSave?.[1]?.content.split(warning)).toHaveLength(2);
 	});
 
+	it.each([1, 2])('appends and persists one exact skipped-call warning alongside other warnings for %s skips', async (skippedWebCalls) => {
+		const skippedWarning = skippedWebCalls === 1
+			? 'Web retrieval reached the 20-call limit. 1 proposed call was skipped; the answer may be incomplete.'
+			: 'Web retrieval reached the 20-call limit. 2 proposed calls were skipped; the answer may be incomplete.';
+		const requestChatCompletion = vi.fn(async (submission: {
+			callbacks: { onContent(text: string): void };
+		}) => {
+			submission.callbacks.onContent('Answer from available evidence');
+			return {
+				content: 'Answer from available evidence',
+				reasoning: '',
+				failedExtractions: 1,
+				skippedWebCalls,
+				activities: [
+					{ type: 'fetch' as const, target: 'https://example.test/unread', status: 'failed' as const },
+					{
+						type: 'fetch' as const,
+						target: 'https://example.test/extraction-failed',
+						status: 'failed' as const,
+						failureKind: 'extraction' as const,
+					},
+				],
+				usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4, source: 'provider' as const },
+			};
+		});
+		const persistMessages = vi.fn(async (_notePath: string, _messages: ChatMessage[]) => undefined);
+		const context = {
+			inputEl: { value: 'Research' },
+			isSending: false,
+			isThreadLoading: false,
+			selectedMode: 'ask' as const,
+			webSearchMode: 'auto' as const,
+			messages: [] as ChatMessage[],
+			plugin: {
+				settings: { maxWebToolCalls: 20 },
+				captureChatContext: () => ({ file: { path: 'Note.md' } }),
+				additionalNotesStore: new AdditionalNotesStore(),
+				requestChatCompletion,
+			},
+			toProviderHistory: () => [],
+			persistMessages,
+			render: vi.fn(),
+			scheduleMessageRender: vi.fn(),
+			closed: false,
+			activeController: null,
+			webReviewModal: null,
+		};
+
+		await viewPrototype.submitPrompt.call(context);
+
+		const expectedContent = [
+			'Answer from available evidence',
+			'Emend could not read 1 requested page. The answer may be incomplete.',
+			'Emend could not extract information from 1 web query. The answer may be incomplete.',
+			skippedWarning,
+		].join('\n\n');
+		expect(context.messages[1]?.status).toBe('ready');
+		expect(context.messages[1]?.content).toBe(expectedContent);
+		expect(context.messages[1]?.content.split(skippedWarning)).toHaveLength(2);
+		const finalSave = persistMessages.mock.calls.at(-1)?.[1];
+		expect(finalSave?.[1]?.content).toBe(expectedContent);
+		expect(finalSave?.[1]?.content.split(skippedWarning)).toHaveLength(2);
+	});
+
+	it('does not add a skipped-call warning at the exact limit', async () => {
+		const requestChatCompletion = vi.fn(async (submission: {
+			callbacks: { onContent(text: string): void };
+		}) => {
+			submission.callbacks.onContent('Answer at the exact limit');
+			return {
+				content: 'Answer at the exact limit',
+				reasoning: '',
+				failedExtractions: 0,
+				skippedWebCalls: 0,
+				activities: [],
+				usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4, source: 'provider' as const },
+			};
+		});
+		const context = {
+			inputEl: { value: 'Research' },
+			isSending: false,
+			isThreadLoading: false,
+			selectedMode: 'ask' as const,
+			webSearchMode: 'auto' as const,
+			messages: [] as ChatMessage[],
+			plugin: {
+				settings: { maxWebToolCalls: 20 },
+				captureChatContext: () => ({ file: { path: 'Note.md' } }),
+				additionalNotesStore: new AdditionalNotesStore(),
+				requestChatCompletion,
+			},
+			toProviderHistory: () => [],
+			persistMessages: vi.fn(async () => undefined),
+			render: vi.fn(),
+			scheduleMessageRender: vi.fn(),
+			closed: false,
+			activeController: null,
+			webReviewModal: null,
+		};
+
+		await viewPrototype.submitPrompt.call(context);
+
+		expect(context.messages[1]?.content).toBe('Answer at the exact limit');
+		expect(context.messages[1]?.content).not.toContain('Web retrieval reached');
+	});
+
 	it('does not submit web options in Edit even when Auto is selected', async () => {
 		const requestChatCompletion = vi.fn(async (_submission: unknown) => ({
 			applied: false,

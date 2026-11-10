@@ -38,6 +38,7 @@ export interface WebToolLoopResult {
 	sources: WebSource[];
 	activities: WebActivityRecord[];
 	failedExtractions: number;
+	skippedWebCalls: number;
 	rounds: Array<{ request: AiProviderRequest; result: StreamResult }>;
 }
 

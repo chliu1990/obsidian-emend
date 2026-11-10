@@ -752,20 +752,88 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		]);
 	});
 
-	it('rejects an over-cap batch before executing any call in it', async () => {
-		const { coordinator, request, search, reader } = coordinatorWith([
-			toolRound([searchCall('call-1', 'first'), searchCall('call-2', 'second')]),
-		]);
+	it('executes only remaining Review slots and preserves every call in the forced continuation', async () => {
+		const calls = Array.from({ length: 10 }, (_, index) => searchCall(
+			`call-${index + 1}`,
+			`query ${index + 1}`,
+			`goal ${index + 1}`,
+		));
+		const reader = successfulReader();
+		reader.extract.mockImplementation(async (input) => {
+			if (input.target === 'edited query 2') {
+				throw new Error('Selected reader failure');
+			}
+			const document = input.documents[0];
+			return readerResult(input, document
+				? {
+					outcome: 'evidence',
+					results: [{ sourceId: document.sourceId, extractedFacts: ['Fact'], evidence: ['Title:'] }],
+				}
+				: { outcome: 'no_relevant_evidence', results: [] });
+		});
+		const reviewCalls = vi.fn(async (proposed: readonly WebToolCall[]) => proposed.map((call, index) => ({
+			...call,
+			query: `edited query ${index + 1}`,
+			extractionGoal: `edited goal ${index + 1}`,
+		})));
+		const { coordinator, request, search } = coordinatorWith([
+			toolRound(calls),
+			finalRound('Answer from remaining evidence [S1]'),
+		], undefined, undefined, reader);
 
-		await expect(coordinator.submit(aiRequest(), options({ maxToolCalls: 1 }))).rejects.toThrow(
-			'web tool call limit',
+		const result = await coordinator.submit(aiRequest(), options({
+			mode: 'review',
+			maxToolCalls: 8,
+			reviewCalls,
+		}));
+
+		expect(search.mock.calls.map((call) => call[0].query)).toEqual(
+			Array.from({ length: 8 }, (_, index) => `edited query ${index + 1}`),
 		);
-		expect(search).not.toHaveBeenCalled();
-		expect(reader.extract).not.toHaveBeenCalled();
-		expect(request).toHaveBeenCalledOnce();
+		expect(reader.extract).toHaveBeenCalledTimes(8);
+		expect(reviewCalls).toHaveBeenCalledOnce();
+		expect(reviewCalls.mock.calls[0]?.[0].map((call) => call.id)).toEqual(
+			Array.from({ length: 8 }, (_, index) => `call-${index + 1}`),
+		);
+		expect(result.content).toBe('Answer from remaining evidence [S1]');
+		expect(result.skippedWebCalls).toBe(2);
+		expect(result.failedExtractions).toBe(1);
+		expect(result.sources).toEqual([{
+			id: 'S1',
+			title: 'Emend documentation',
+			url: 'https://example.test/emend',
+			snippet: 'Short evidence',
+		}]);
+		expect(result.activities).toHaveLength(10);
+		expect(result.activities.slice(-2)).toEqual([
+			{ type: 'search', target: 'query 9', status: 'skipped' },
+			{ type: 'search', target: 'query 10', status: 'skipped' },
+		]);
+		expect(result.rounds).toHaveLength(9);
+		const forcedRequest = request.mock.calls[1]?.[0];
+		expect(forcedRequest?.tools).toBeUndefined();
+		expect(forcedRequest?.systemPrompt).toContain('Answer now from the current note, chat, and successfully extracted evidence');
+		const assistant = forcedRequest?.continuation?.find((message) => message.role === 'assistant');
+		const wireCalls = assistant?.role === 'assistant' && 'toolCalls' in assistant
+			? assistant.toolCalls
+			: [];
+		expect(wireCalls).toHaveLength(10);
+		expect(wireCalls.slice(0, 8).map((call) => call.arguments)).toEqual(
+			Array.from({ length: 8 }, (_, index) => JSON.stringify({
+				query: `edited query ${index + 1}`,
+				extractionGoal: `edited goal ${index + 1}`,
+			})),
+		);
+		expect(wireCalls.slice(8)).toEqual(calls.slice(8));
+		const outcomes = forcedRequest?.continuation?.filter((message) => message.role === 'tool') ?? [];
+		expect(outcomes).toHaveLength(10);
+		expect(outcomes.slice(-2).map((message) => message.role === 'tool' ? message.content : '')).toEqual([
+			'{"error":{"kind":"call_limit_reached"}}',
+			'{"error":{"kind":"call_limit_reached"}}',
+		]);
 	});
 
-	it('allows exactly 20 proposed calls', async () => {
+	it('allows exactly 20 proposed calls without a forced round or skipped calls', async () => {
 		const calls = Array.from({ length: 20 }, (_, index) => searchCall(
 			`call-${index + 1}`,
 			`query ${index + 1}`,
@@ -779,31 +847,102 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		const result = await coordinator.submit(aiRequest(), options({ maxToolCalls: 20 }));
 
 		expect(result.content).toBe('Twenty calls completed');
+		expect(result.skippedWebCalls).toBe(0);
 		expect(search).toHaveBeenCalledTimes(20);
 		expect(reader.extract).toHaveBeenCalledTimes(20);
 		expect(result.activities).toHaveLength(20);
 		expect(request).toHaveBeenCalledTimes(2);
 	});
 
-	it('rejects the 21st proposed call without executing its final batch', async () => {
+	it('skips the 21st call and forces one no-tools answer while preserving all rounds and sources', async () => {
 		const firstBatch = Array.from({ length: 20 }, (_, index) => searchCall(
 			`call-${index + 1}`,
 			`query ${index + 1}`,
 			`goal ${index + 1}`,
 		));
+		const reviewCalls = vi.fn(async (proposed: readonly WebToolCall[]) => proposed);
 		const { coordinator, request, search, reader } = coordinatorWith([
 			toolRound(firstBatch),
 			toolRound([searchCall('call-21', 'over limit')]),
-			finalRound('Must not be returned'),
+			finalRound('Answer after twenty calls [S1]'),
 		]);
 
-		await expect(coordinator.submit(aiRequest(), options({ maxToolCalls: 20 }))).rejects.toThrow(
-			'The model exceeded the 20-call web tool call limit. No calls in the final batch were executed.',
-		);
+		const result = await coordinator.submit(aiRequest(), options({
+			mode: 'review',
+			maxToolCalls: 20,
+			reviewCalls,
+		}));
+
+		expect(result.content).toBe('Answer after twenty calls [S1]');
+		expect(result.skippedWebCalls).toBe(1);
+		expect(result.sources).toHaveLength(1);
+		expect(result.rounds).toHaveLength(23);
 		expect(search).toHaveBeenCalledTimes(20);
 		expect(reader.extract).toHaveBeenCalledTimes(20);
 		expect(search.mock.calls.map((call) => call[0].query)).not.toContain('over limit');
+		expect(reviewCalls).toHaveBeenCalledOnce();
+		expect(request).toHaveBeenCalledTimes(3);
+		expect(result.activities.at(-1)).toEqual({
+			type: 'search', target: 'over limit', status: 'skipped',
+		});
+		const forcedRequest = request.mock.calls[2]?.[0];
+		expect(forcedRequest?.tools).toBeUndefined();
+		const skippedOutcome = forcedRequest?.continuation?.find(
+			(message) => message.role === 'tool' && message.toolCallId === 'call-21',
+		);
+		expect(skippedOutcome?.role === 'tool' && skippedOutcome.content).toBe(
+			'{"error":{"kind":"call_limit_reached"}}',
+		);
+	});
+
+	it('allows a forced answer without evidence or invented citations', async () => {
+		const search = vi.fn(async () => []);
+		const { coordinator, request, reader } = coordinatorWith([
+			toolRound([searchCall('call-1', 'no evidence'), searchCall('call-2', 'skipped')]),
+			finalRound('Answer from the current note only.'),
+		], search);
+
+		const result = await coordinator.submit(aiRequest(), options({ maxToolCalls: 1 }));
+
+		expect(result.content).toBe('Answer from the current note only.');
+		expect(result.skippedWebCalls).toBe(1);
+		expect(result.sources).toEqual([]);
+		expect(result.content).not.toContain('[S');
+		expect(search).toHaveBeenCalledOnce();
+		expect(reader.extract).toHaveBeenCalledOnce();
 		expect(request).toHaveBeenCalledTimes(2);
+	});
+
+	it('rejects further malformed tool calls in the forced round without retrieval or retry', async () => {
+		const { coordinator, request, search, reader } = coordinatorWith([
+			toolRound([searchCall('call-1', 'first'), searchCall('call-2', 'skipped')]),
+			toolRound([{ id: 'bad', name: 'web_search', arguments: 'not-json' }], 'Ignored content'),
+		]);
+
+		await expect(coordinator.submit(aiRequest(), options({ maxToolCalls: 1 }))).rejects.toThrow(
+			'after the web call limit',
+		);
+		expect(search).toHaveBeenCalledOnce();
+		expect(reader.extract).toHaveBeenCalledOnce();
+		expect(request).toHaveBeenCalledTimes(2);
+	});
+
+	it('validates skipped proposals before Review or retrieval', async () => {
+		const reviewCalls = vi.fn(async (proposed: readonly WebToolCall[]) => proposed);
+		const { coordinator, request, search, reader } = coordinatorWith([
+			toolRound([
+				searchCall('call-1', 'valid'),
+				{ id: 'call-2', name: 'web_search', arguments: 'not-json' },
+			]),
+		]);
+
+		await expect(coordinator.submit(aiRequest(), options({
+			mode: 'review', maxToolCalls: 1, reviewCalls,
+		}))).rejects.toThrow('The web tool arguments were not valid JSON.');
+		expect(search).not.toHaveBeenCalled();
+		expect(reader.extract).not.toHaveBeenCalled();
+		expect(reviewCalls).not.toHaveBeenCalled();
+		expect(request).toHaveBeenCalledOnce();
 	});
 
 	it('propagates retrieval failure without extraction, another model round, or retry', async () => {

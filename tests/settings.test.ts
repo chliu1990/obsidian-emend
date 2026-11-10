@@ -517,14 +517,18 @@ describe('EmendSettingTab web output cap', () => {
 		settingInstances.length = 0;
 	});
 
-	it('describes independent per-call output caps and cap-times-calls growth', () => {
+	it('describes executed-call limits, graceful skipped calls, and independent output caps', () => {
 		const { tab } = createModelSettingsTab();
 		displaySettings(tab);
 
 		const description = latestSetting('Web tool call limit').description;
+		expect(description).toContain('Maximum executed Search/Fetch calls');
+		expect(description).toContain('remaining calls in model order');
+		expect(description).toContain('skips only the excess');
 		expect(description).toContain('independent output cap');
 		expect(description).toContain('cap × calls');
-		expect(description).not.toContain('40,000-character content budget');
+		expect(description).not.toContain('Maximum model-requested');
+		expect(description).not.toContain('No calls in the final batch');
 	});
 
 	it('normalizes and saves the numeric per-call cap without changing provider configs', async () => {
