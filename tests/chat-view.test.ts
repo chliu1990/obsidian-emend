@@ -2538,6 +2538,40 @@ describe('EmendChatView web activity review', () => {
 			},
 			'Fetch · Failed (reader limit) · https://example.test/limit',
 		],
+		[
+			'http after retry',
+			{
+				type: 'fetch' as const,
+				target: 'https://example.test/forbidden',
+				status: 'failed' as const,
+				failureReason: 'http' as const,
+				failureStatus: 403,
+				attempts: 2,
+			},
+			'Fetch · Failed (HTTP 403, 2 attempts) · https://example.test/forbidden',
+		],
+		[
+			'network with one attempt',
+			{
+				type: 'fetch' as const,
+				target: 'https://example.test/blocked',
+				status: 'failed' as const,
+				failureReason: 'network' as const,
+				attempts: 1,
+			},
+			'Fetch · Failed (network) · https://example.test/blocked',
+		],
+		[
+			'empty page after retry',
+			{
+				type: 'fetch' as const,
+				target: 'https://example.test/blank',
+				status: 'failed' as const,
+				failureReason: 'empty' as const,
+				attempts: 2,
+			},
+			'Fetch · Failed (empty page, 2 attempts) · https://example.test/blank',
+		],
 	])('labels failed %s activities with their failure reason', (_reason, activity, expected) => {
 		const container = renderForFooter({
 			...message('answer', 'Note.md'),
@@ -2885,7 +2919,7 @@ describe('EmendChatView compact Web disclosure', () => {
 		expect(disclosure).toHaveLength(0);
 		expect(webSelect?.title).toContain('note context');
 		expect(webSelect?.title).toContain('stored locally with ready chats');
-		expect(webSelect?.title).toContain('Each web call uses an AI extraction reader that receives your current question and extraction goal, may use up to 6 extractor rounds, a verifier, and up to 2 refine rounds, and may incur separate charges. A transient Search or Fetch failure may be retried once.');
+		expect(webSelect?.title).toContain('Each web call uses an AI extraction reader that receives your current question and extraction goal, may use up to 6 extractor rounds, a verifier, and up to 2 refine rounds, and may incur separate charges. A transient Search or Fetch failure may be retried once. Failed calls also count toward the configured call limit.');
 		if (webSelect) {
 			webSelect.value = 'review';
 			webSelect.dispatch('change');

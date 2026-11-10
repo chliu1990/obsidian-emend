@@ -1197,6 +1197,10 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		const fetchTool = tools?.find((tool) => tool.function.name === 'web_fetch');
 		expect(fetchTool?.function.description).toContain('Do not fetch merely because a search result exists');
 		expect(firstRequest?.systemPrompt).toContain('If a fetch fails, do not claim the page was read');
+		expect(firstRequest?.systemPrompt).toContain(
+			'A failure result may include a reason, an HTTP status, and an attempt count',
+		);
+		expect(firstRequest?.systemPrompt).toContain('you may disclose those details');
 		expect(firstRequest?.systemPrompt).toContain('truncated: true');
 	});
 
@@ -1347,11 +1351,44 @@ describe('DeepSeek web follow-up behavior', () => {
 			status: 'failed',
 			failureReason: 'http',
 			failureStatus: 403,
+			attempts: 1,
 		}]);
 		expect(reader.extract).not.toHaveBeenCalled();
 		const toolMessage = request.mock.calls[1]?.[0].continuation?.find((message) => message.role === 'tool');
-		expect(toolMessage?.role === 'tool' && toolMessage.content).toContain('fetch_failed');
+		expect(toolMessage?.role === 'tool' && toolMessage.content).toBe(
+			'{"error":{"kind":"fetch_failed","reason":"http","httpStatus":403,"attempts":1}}',
+		);
 		expect(toolMessage?.role === 'tool' && toolMessage.content).not.toContain('dummy-key');
+	});
+
+	it('keeps provider messages, headers, and credentials out of the failure payload', async () => {
+		const failure = Object.assign(
+			new Error('Authorization: Bearer dummy-key PRIVATE_PROVIDER_HEADERS'),
+			{ status: 403 },
+		);
+		const fetchPage = vi.fn(async () => { throw failure; });
+		const { coordinator, request } = coordinatorWith([
+			toolRound([fetchCall('call-fetch', 'https://example.test/secret')]),
+			finalRound('The page could not be read.'),
+		], vi.fn(async () => []), fetchPage, successfulReader());
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(result.activities).toEqual([{
+			type: 'fetch',
+			target: 'https://example.test/secret',
+			status: 'failed',
+			failureReason: 'http',
+			failureStatus: 403,
+			attempts: 1,
+		}]);
+		const toolMessage = request.mock.calls[1]?.[0].continuation?.find((message) => message.role === 'tool');
+		const content = toolMessage?.role === 'tool' ? toolMessage.content : '';
+		expect(content).toBe('{"error":{"kind":"fetch_failed","reason":"http","httpStatus":403,"attempts":1}}');
+		expect(content).not.toContain('Authorization');
+		expect(content).not.toContain('Bearer');
+		expect(content).not.toContain('PRIVATE_PROVIDER_HEADERS');
+		expect(content).not.toContain('dummy-key');
 	});
 
 	it('caps a nonfatal Fetch failure with a long provider error and URL at the 1000-character setting', async () => {
@@ -1373,11 +1410,12 @@ describe('DeepSeek web follow-up behavior', () => {
 			target: longUrl,
 			status: 'failed',
 			failureReason: 'network',
+			attempts: 2,
 		}]);
 		expect(reader.extract).not.toHaveBeenCalled();
 		const toolMessage = request.mock.calls[1]?.[0].continuation?.find((message) => message.role === 'tool');
 		const content = toolMessage?.role === 'tool' ? toolMessage.content : '';
-		expect(content).toBe('{"error":{"kind":"fetch_failed"}}');
+		expect(content).toBe('{"error":{"kind":"fetch_failed","reason":"network","attempts":2}}');
 		expect(content.length).toBeLessThanOrEqual(1000);
 		expect(content).not.toContain('PRIVATE_PROVIDER_ERROR');
 		expect(content).not.toContain(longUrl);
@@ -1401,7 +1439,7 @@ describe('DeepSeek web follow-up behavior', () => {
 	it('treats an empty fetched page as unread rather than extraction evidence', async () => {
 		const fetchPage = vi.fn(async () => ({ title: 'Empty', content: '  ' }));
 		const reader = successfulReader();
-		const { coordinator } = coordinatorWith([
+		const { coordinator, request } = coordinatorWith([
 			toolRound([fetchCall('call-fetch', 'https://example.test/empty')]),
 			finalRound('The requested page was unavailable.'),
 		], vi.fn(async () => []), fetchPage, reader);
@@ -1415,9 +1453,14 @@ describe('DeepSeek web follow-up behavior', () => {
 			target: 'https://example.test/empty',
 			status: 'failed',
 			failureReason: 'empty',
+			attempts: 2,
 		}]);
 		expect(result.sources).toEqual([]);
 		expect(reader.extract).not.toHaveBeenCalled();
+		const toolMessage = request.mock.calls[1]?.[0].continuation?.find((message) => message.role === 'tool');
+		expect(toolMessage?.role === 'tool' && toolMessage.content).toBe(
+			'{"error":{"kind":"fetch_failed","reason":"empty","attempts":2}}',
+		);
 	});
 
 	it('caps an empty-page Fetch outcome with a long URL at the 1000-character setting', async () => {
@@ -1437,12 +1480,13 @@ describe('DeepSeek web follow-up behavior', () => {
 			target: longUrl,
 			status: 'failed',
 			failureReason: 'empty',
+			attempts: 2,
 		}]);
 		expect(result.sources).toEqual([]);
 		expect(reader.extract).not.toHaveBeenCalled();
 		const toolMessage = request.mock.calls[1]?.[0].continuation?.find((message) => message.role === 'tool');
 		const content = toolMessage?.role === 'tool' ? toolMessage.content : '';
-		expect(content).toBe('{"error":{"kind":"fetch_failed"}}');
+		expect(content).toBe('{"error":{"kind":"fetch_failed","reason":"empty","attempts":2}}');
 		expect(content.length).toBeLessThanOrEqual(1000);
 		expect(content).not.toContain(longUrl);
 	});
@@ -1520,11 +1564,14 @@ describe('DeepSeek web transport retry and search degradation', () => {
 			status: 'failed',
 			failureReason: 'http',
 			failureStatus: 503,
+			attempts: 2,
 		}]);
 		expect(result.failedExtractions).toBe(0);
 		expect(result.failedSearches).toBe(0);
 		const toolMessage = request.mock.calls[1]?.[0].continuation?.find((message) => message.role === 'tool');
-		expect(toolMessage?.role === 'tool' && toolMessage.content).toBe('{"error":{"kind":"fetch_failed"}}');
+		expect(toolMessage?.role === 'tool' && toolMessage.content).toBe(
+			'{"error":{"kind":"fetch_failed","reason":"http","httpStatus":503,"attempts":2}}',
+		);
 	});
 
 	it('retries an empty Fetch page once and uses the second response', async () => {
@@ -1567,6 +1614,7 @@ describe('DeepSeek web transport retry and search degradation', () => {
 			status: 'failed',
 			failureReason: 'http',
 			failureStatus: status,
+			attempts: 1,
 		}]);
 	});
 
@@ -1637,6 +1685,7 @@ describe('DeepSeek web transport retry and search degradation', () => {
 			target: 'down',
 			status: 'failed',
 			failureReason: 'network',
+			attempts: 2,
 		}]);
 		const toolMessages = request.mock.calls[1]?.[0].continuation?.filter(
 			(message) => message.role === 'tool',
@@ -1644,7 +1693,7 @@ describe('DeepSeek web transport retry and search degradation', () => {
 		expect(toolMessages.map((message) => message.role === 'tool'
 			? [message.toolCallId, message.content]
 			: [])).toEqual([
-			['call-1', '{"error":{"kind":"search_failed"}}'],
+			['call-1', '{"error":{"kind":"search_failed","reason":"network","attempts":2}}'],
 		]);
 	});
 
@@ -1667,6 +1716,7 @@ describe('DeepSeek web transport retry and search degradation', () => {
 			status: 'failed',
 			failureReason: 'http',
 			failureStatus: 403,
+			attempts: 1,
 		}]);
 	});
 
@@ -1749,9 +1799,9 @@ describe('DeepSeek web transport retry and search degradation', () => {
 		expect(reader.extract).toHaveBeenCalledOnce();
 		expect(result.failedSearches).toBe(2);
 		expect(result.activities).toEqual([
-			{ type: 'search', target: 'first', status: 'failed', failureReason: 'network' },
+			{ type: 'search', target: 'first', status: 'failed', failureReason: 'network', attempts: 2 },
 			{ type: 'fetch', target: 'https://example.test/two', status: 'completed' },
-			{ type: 'search', target: 'third', status: 'failed', failureReason: 'network' },
+			{ type: 'search', target: 'third', status: 'failed', failureReason: 'network', attempts: 2 },
 		]);
 	});
 
@@ -1804,6 +1854,7 @@ describe('DeepSeek web transport retry and search degradation', () => {
 			status: 'failed',
 			failureReason: 'http',
 			failureStatus: status,
+			attempts: 2,
 		}]);
 	});
 
@@ -1827,6 +1878,7 @@ describe('DeepSeek web transport retry and search degradation', () => {
 			target,
 			status: 'failed',
 			failureReason: 'network',
+			attempts: 2,
 		}]);
 	});
 
@@ -1849,12 +1901,13 @@ describe('DeepSeek web transport retry and search degradation', () => {
 			status: 'failed',
 			failureReason: 'http',
 			failureStatus: 503,
+			attempts: 2,
 		}]);
 		const toolMessage = request.mock.calls[1]?.[0].continuation?.find(
 			(message) => message.role === 'tool' && message.toolCallId === 'call-1',
 		);
 		expect(toolMessage?.role === 'tool' && toolMessage.content).toBe(
-			'{"error":{"kind":"search_failed"}}',
+			'{"error":{"kind":"search_failed","reason":"http","httpStatus":503,"attempts":2}}',
 		);
 	});
 

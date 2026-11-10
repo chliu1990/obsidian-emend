@@ -38,6 +38,15 @@ Changes to page extraction, pagination, source filtering, reader behavior, retri
 
 Any follow-up must preserve sequential validated calls, explicit opt-in, current-question/goal privacy, Stop/abort behavior, bounded content and reader loops, credential redaction, the single bounded Search/Fetch retry with no retry for HTTP 400/401/402/413 or aborts, no raw fallback, and no fallback provider. Search remains unavailable to Edit, quick actions, and Modify Selection unless a separate editing-specific design explicitly changes that boundary.
 
+## Deferred failure-budget and diagnostics improvements
+
+Task 14 (recorded in [Stage 40](40-web-content-budget-diagnostics.md)) improved only the failure error channel: `search_failed` and `fetch_failed` carry bounded `reason`, `httpStatus`, and `attempts` fields, and folded rows show the attempt count. These related proposals remain unimplemented:
+
+- **Failure-budget reservation (G2/G3):** failed calls consume the configured `maxWebToolCalls` budget exactly like successful calls. There is no live remaining-call counter, mid-flight adjustment, or over-limit overshoot. Reserving slots for failures or surfacing a live remaining-call count would need a deterministic model-facing contract, explicit accounting for retries and skipped calls, and exact-limit tests. The 1–20 setting remains the cost control; changing it is a budget/UX change, not a payload fix.
+- **Archive/Wayback fallback (G4):** unread pages and failed Searches are reported, not silently re-fetched through a third-party archive. Adding archive retrieval introduces another recipient and privacy disclosure, archive-specific citation semantics, and separate-charge questions, so it needs its own design and verification rather than riding on diagnostics.
+- **Search-ranking preferences (G5):** result ranking and query interpretation are provider-controlled. Local query rewriting, host penalization, or preferred-domain ranking would alter model-facing queries and evidence and require provider-specific quality evidence; no such preference is implemented.
+- **Failure-schema and claims normalization (G6):** the stable failure field order (`kind`, `reason`, `httpStatus`, `attempts`) and the claims-with-quotes versus quotes-only result shapes are deliberate. Do not add an always-empty `claims` key or a shared normalized schema merely for convenience; any future shape change must preserve the verified/fallback distinction and be migration-tested.
+
 ## Privacy, citations, and persistence requirements for follow-ups
 
 Search can disclose note-derived text through model-generated queries and fetch URLs, and a provider may involve separate retrieval and reader services. Each adapter must disclose its actual recipient paths and possible charges before calls run. Main model rounds continue to send ordinary captured context only after submission; extraction readers must not inherit note context, history, instructions/skills, additional notes, or vault access by default.

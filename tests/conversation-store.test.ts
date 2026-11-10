@@ -649,6 +649,7 @@ describe('ConversationStore web citation migration', () => {
 					status: 'failed',
 					failureReason: 'http',
 					failureStatus: 403,
+					attempts: 2,
 				},
 			],
 		});
@@ -660,6 +661,7 @@ describe('ConversationStore web citation migration', () => {
 		expect(raw).not.toContain('failureReason');
 		expect(raw).not.toContain('readerFailureKind');
 		expect(raw).not.toContain('failureStatus');
+		expect(raw).not.toContain('attempts');
 		expect(raw).not.toContain('403');
 		expect(await store.load('Note.md')).toEqual([readyMessage({
 			webActivities: [
@@ -683,6 +685,7 @@ describe('ConversationStore web citation migration', () => {
 					failureReason: 'reader',
 					readerFailureKind: 'provider',
 					failureStatus: 503,
+					attempts: 2,
 				}],
 			}],
 		}));

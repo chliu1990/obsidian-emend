@@ -965,6 +965,17 @@ const WEB_READER_FAILURE_LABELS: Record<string, string | undefined> = {
 };
 
 function formatWebFailureReason(activity: WebActivityRecord) {
+	const attempts = activity.attempts !== undefined && activity.attempts > 1
+		? `${activity.attempts} attempts`
+		: undefined;
+	const reason = formatWebFailureCategory(activity);
+	if (!reason) {
+		return attempts;
+	}
+	return attempts ? `${reason}, ${attempts}` : reason;
+}
+
+function formatWebFailureCategory(activity: WebActivityRecord) {
 	if (!activity.failureReason) {
 		return undefined;
 	}

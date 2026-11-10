@@ -36,6 +36,7 @@ export interface WebActivityRecord {
 	failureReason?: WebFailureReason;
 	readerFailureKind?: WebReaderFailureKind;
 	failureStatus?: number;
+	attempts?: number;
 }
 
 export interface WebToolLoopResult {
@@ -50,7 +51,7 @@ export interface WebToolLoopResult {
 	rounds: Array<{ request: AiProviderRequest; result: StreamResult }>;
 }
 
-export const WEB_EXTRACTION_DISCLOSURE = 'Each web call uses an AI extraction reader that receives your current question and extraction goal, may use up to 6 extractor rounds, a verifier, and up to 2 refine rounds, and may incur separate charges. A transient Search or Fetch failure may be retried once.';
+export const WEB_EXTRACTION_DISCLOSURE = 'Each web call uses an AI extraction reader that receives your current question and extraction goal, may use up to 6 extractor rounds, a verifier, and up to 2 refine rounds, and may incur separate charges. A transient Search or Fetch failure may be retried once. Failed calls also count toward the configured call limit.';
 
 export type WebToolCall =
 	| { id: string; name: 'web_search'; query: string; extractionGoal: string }
