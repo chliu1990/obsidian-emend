@@ -6,7 +6,7 @@ Post-edit chat summaries are implemented on `feat/post-edit-change-summaries-v2`
 
 The model may return the legacy bare operations array or an envelope object with `operations` and an optional `summary`. The summary is model prose for the user, never note content and never a write instruction. It is shown in chat and persisted only as ordinary ready assistant content.
 
-The feature changed no writer, permission, persistence-schema, message-type, or provider-call behavior. It did change response parsing, the ready-content layout, and provider history for composer Selection. Task 1 (`c7ba73f`) retained source-relative Operation metadata in edit preparations, Task 2 (`923bb2a`) exposed it only on successful applied results after the guarded writer wrote, Task 3 added the pure formatter and chat wiring, Task 4 (`fbfa3eb`) accepted the optional summary envelope, Task 5 (`a94379e`) rendered the target line and summary, and Task 6 (`5c85b6d`, `0651f20`) sent composer-Selection history and made the history window configurable.
+The feature changed no writer, permission, persistence-schema, message-type, or provider-transport behavior. It did change response parsing, the ready-content layout, and the provider history included with composer Selection. Task 1 (`c7ba73f`) retained source-relative Operation metadata in edit preparations, Task 2 (`923bb2a`) exposed it only on successful applied results after the guarded writer wrote, Task 3 added the pure formatter and chat wiring, Task 4 (`fbfa3eb`) accepted the optional summary envelope, Task 5 (`a94379e`) rendered the target line and summary, and Task 6 (`5c85b6d`, `0651f20`) sent composer-Selection history and made the history window configurable.
 
 ## Protocol
 
@@ -116,7 +116,7 @@ Task 4 covered envelope precedence, unknown keys, missing/non-array operations, 
 
 Coverage includes exact singular/plural strings for all four types, ranges with original note lines and response order, CRLF and a target ending at a newline, all three insertion line-boundary pins (inside a line, line start, EOF after a trailing newline), Selection offset applied exactly once to ranges and insertion points, eight items as eight bullets, nine and twenty items as seven plus one aggregate, fixed aggregate order with singular/plural nouns, comment-only `changeCount: 0`, empty items, and a leakage test proving anchors/targets/replacements/comment text never appear in bullets. Chat tests prove the full-note path formats against `sourceText` with no offset, the Selection path adds `snapshot.from` once to reach a note-absolute line, and no-ops keep the exact no-change line plus the summary.
 
-The full local gate passed **40 Vitest files and 1178 tests**, ESLint, strict TypeScript plus the production build, and `git diff --check` on the final source tree. The source gate commit is `1df4918`; the later `0bf8885` documentation commit and this evidence update change documentation only. The gate was rerun on the documentation-complete tree with the same counts.
+The full local gate passed **40 Vitest files and 1178 tests**, ESLint, strict TypeScript plus the production build, and `git diff --check` on the final source tree at `0bf8885`, and again after this evidence and the quick-start documentation updates. The last code commit is `1df4918`; the later branch commits change documentation and the ignored harness only.
 
 ## Real-Obsidian loopback evidence
 
@@ -141,7 +141,7 @@ New and strengthened scenarios:
 | Full-note history | The following full-note Edit sent six wire messages, retaining the Ask pair and the earlier Selection user prompt plus its local Edit status, including the `Target: Selection.` and summary layout. |
 | Chat history limit 0 | With **Chat history messages** set to 0 through the real settings UI, a later Ask request sent only system and current user messages. The harness restored 8 afterward. |
 
-Reload persistence: the audit read every stored schema 2 thread. It confirmed the typed, full-note-override, and correction results persisted the exact target, summary, and bullet Markdown; the no-op persisted the no-change line plus its summary and no target line; the comment result persisted the target and zero-change bullet; rejected summaries, candidates, diagnostics, note snapshots, selections, additional-note content, and the dummy credential were absent. The Command Palette modal created no thread.
+Reload persistence: the audit read every schema 2 thread stored at that point; it ran before the dedicated history scenario, so that later thread was not part of this stored-file audit. It confirmed the typed, full-note-override, and correction results persisted the exact target, summary, and bullet Markdown; the no-op persisted the no-change line plus its summary and no target line; the comment result persisted the target and zero-change bullet; rejected summaries, candidates, diagnostics, note snapshots, selections, additional-note content, and the dummy credential were absent. The Command Palette modal created no thread.
 
 Failure-surface evidence: Stop and stale retries now include the earlier ready user prompt as annotated history, because the stopped or errored assistant response is excluded but its accepted user message remains ready. The harness asserts this rather than claiming empty history.
 
