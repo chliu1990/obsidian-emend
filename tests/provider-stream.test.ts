@@ -468,7 +468,7 @@ describe('requestAiResponse', () => {
 		const fetchMock = vi.fn().mockRejectedValue(abortError);
 		vi.stubGlobal('fetch', fetchMock);
 		const controller = new AbortController();
-		controller.abort();
+		controller.abort(abortError);
 
 		await expect(
 			requestAiResponse(
@@ -477,7 +477,7 @@ describe('requestAiResponse', () => {
 				controller.signal,
 			),
 		).rejects.toBe(abortError);
-		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
 	it('reports HTTP provider details without exposing credentials', async () => {
@@ -861,5 +861,28 @@ describe('requestAiResponse context capacity at the transport boundary', () => {
 		expect((error as ContextCapacityError).details.kind).toBe('transport');
 		expect(fetchMock).toHaveBeenCalledOnce();
 		expect(secondOnEvent).not.toHaveBeenCalled();
+	});
+
+	it('lets an already-aborted signal win over capacity without fetching', async () => {
+		const fetchMock = mockStream([
+			'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
+			'data: [DONE]\n\n',
+		]);
+		const providerWithCapacity = capacityProviderForTokens(1);
+		const request = makeRequest({ provider: providerWithCapacity });
+		expect(accountRequestCharacters(request).estimatedInputTokens)
+			.toBeGreaterThanOrEqual(1);
+		const controller = new AbortController();
+		controller.abort();
+
+		const error = await getError(requestAiResponse(
+			request,
+			{ onEvent: vi.fn() },
+			controller.signal,
+		));
+
+		expect(error).not.toBeInstanceOf(ContextCapacityError);
+		expect(error.name).toBe('AbortError');
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 });

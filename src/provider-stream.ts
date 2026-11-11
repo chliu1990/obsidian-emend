@@ -87,6 +87,7 @@ export async function requestAiResponse(
 		throw new Error(`${provider.name} base URL must use HTTP or HTTPS.`);
 	}
 
+	signal.throwIfAborted();
 	assertRequestWithinCapacity(
 		request,
 		resolveContextCapacity(provider),
