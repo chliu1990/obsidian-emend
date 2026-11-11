@@ -578,6 +578,29 @@ describe('EditRequestCoordinator', () => {
 		);
 	});
 
+	it('applies a comment-only operation with zero text changes and its summary item', async () => {
+		const sourceText = '# Note\nOriginal text';
+		const request = editRequest(JSON.stringify([
+			{ type: 'comment', target: 'Original', comment: 'Review this.' },
+		]));
+		const { coordinator, writer } = makeEditCoordinator(request, sourceText);
+		const submission = makeEditSubmission();
+
+		const result = await coordinator.submit(submission);
+
+		const originalStart = sourceText.indexOf('Original');
+		expect(result).toMatchObject({ applied: true, changeCount: 0 });
+		expect(result.summaryItems).toEqual([{
+			type: 'comment',
+			start: originalStart,
+			end: originalStart + 'Original'.length,
+		}]);
+		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
+			submission.context.file,
+			'# Note\nOriginal{>>Review this.<<} text',
+		);
+	});
+
 	it('rejects an Operation target found only in an additional note without writing', async () => {
 		const additionalNote = makeAdditionalNote();
 		const originalAdditionalMarkdown = additionalNote.markdown;
@@ -769,6 +792,11 @@ describe('EditRequestCoordinator', () => {
 		expect(result).toEqual({
 			applied: true,
 			changeCount: 1,
+			summaryItems: [{
+				type: 'replace',
+				start: sourceText.indexOf('They have a plan.'),
+				end: sourceText.indexOf('They have a plan.') + 'They have a plan.'.length,
+			}],
 			usage: {
 				promptTokens: 30,
 				completionTokens: 7,

@@ -11,6 +11,10 @@ import type { Mode } from '../src/types';
 const STALE_ERROR =
 	'The note changed while Emend was responding. No edits were applied.';
 
+const SUMMARY_ITEMS = [
+	{ type: 'replace', start: 7, end: 15 },
+] as const;
+
 function makeContext(sourceText = '# Note\nOriginal text'): RequestContext {
 	const file = new TFile();
 	file.path = 'folder/note.md';
@@ -39,7 +43,7 @@ function makeWriter(currentText = '# Note\nOriginal text') {
 }
 
 describe('applyPreparedEdit', () => {
-	it('writes a validated Edit response once to the captured file', async () => {
+	it('writes a validated Edit response once and returns its summary items after the write', async () => {
 		const context = makeContext();
 		const { writer } = makeWriter();
 		const annotatedMarkdown = '# Note\n{~~Original~>Edited~~} text';
@@ -47,11 +51,16 @@ describe('applyPreparedEdit', () => {
 		const result = await applyPreparedEdit(
 			'edit',
 			context,
-			{ annotatedMarkdown, changeCount: 1, summaryItems: [] },
+			{ annotatedMarkdown, changeCount: 1, summaryItems: SUMMARY_ITEMS },
 			writer,
 		);
 
-		expect(result).toEqual({ applied: true, changeCount: 1 });
+		expect(result).toEqual({
+			applied: true,
+			changeCount: 1,
+			summaryItems: SUMMARY_ITEMS,
+		});
+		expect(result.summaryItems).toBe(SUMMARY_ITEMS);
 		expect(writer.readCurrentText).toHaveBeenCalledExactlyOnceWith(context.file);
 		expect(writer.isTargetCurrent).toHaveBeenCalledExactlyOnceWith(context.file);
 		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
@@ -60,35 +69,44 @@ describe('applyPreparedEdit', () => {
 		);
 	});
 
-	it('does not write or re-read an unchanged response', async () => {
+	it('does not write, re-read, or return summary items for an unchanged response', async () => {
 		const context = makeContext();
 		const { writer } = makeWriter();
 
 		const result = await applyPreparedEdit(
 			'edit',
 			context,
-			{ annotatedMarkdown: context.sourceText, changeCount: 0, summaryItems: [] },
+			{
+				annotatedMarkdown: context.sourceText,
+				changeCount: 0,
+				summaryItems: SUMMARY_ITEMS,
+			},
 			writer,
 		);
 
-		expect(result).toEqual({ applied: false, changeCount: 0 });
+		expect(result).toEqual({ applied: false, changeCount: 0, summaryItems: [] });
 		expect(writer.readCurrentText).not.toHaveBeenCalled();
 		expect(writer.write).not.toHaveBeenCalled();
 	});
 
-	it('applies a valid comment-only edit with zero text changes', async () => {
+	it('applies a valid comment-only edit with zero text changes and its comment item', async () => {
 		const context = makeContext();
 		const { writer } = makeWriter();
-		const annotatedMarkdown = `${context.sourceText}{>>Review this.<<}`;
+		const annotatedMarkdown = '# Note\nOriginal{>>Review this.<<} text';
+		const commentItems = [{ type: 'comment', start: 7, end: 15 }] as const;
 
 		const result = await applyPreparedEdit(
 			'edit',
 			context,
-			{ annotatedMarkdown, changeCount: 0, summaryItems: [] },
+			{ annotatedMarkdown, changeCount: 0, summaryItems: commentItems },
 			writer,
 		);
 
-		expect(result).toEqual({ applied: true, changeCount: 0 });
+		expect(result).toEqual({
+			applied: true,
+			changeCount: 0,
+			summaryItems: commentItems,
+		});
 		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
 			context.file,
 			annotatedMarkdown,
@@ -178,17 +196,45 @@ describe('applyPreparedEdit', () => {
 				{
 					annotatedMarkdown: '# Note\n{--Original--} text',
 					changeCount: 1,
-					summaryItems: [],
+					summaryItems: SUMMARY_ITEMS,
 				},
 				writer,
 			);
 
-			expect(result).toEqual({ applied: false, changeCount: 0 });
+			expect(result).toEqual({
+				applied: false,
+				changeCount: 0,
+				summaryItems: [],
+			});
 			expect(writer.readCurrentText).not.toHaveBeenCalled();
 			expect(writer.isTargetCurrent).not.toHaveBeenCalled();
 			expect(writer.write).not.toHaveBeenCalled();
 		},
 	);
+
+	it('rejects without a result when the guarded write fails', async () => {
+		const context = makeContext();
+		const { writer } = makeWriter();
+		const writeError = new Error('Vault write failed');
+		writer.write = vi.fn(async () => {
+			throw writeError;
+		});
+
+		await expect(
+			applyPreparedEdit(
+				'edit',
+				context,
+				{
+					annotatedMarkdown: '# Note\n{++Added++}\nOriginal text',
+					changeCount: 1,
+					summaryItems: SUMMARY_ITEMS,
+				},
+				writer,
+			),
+		).rejects.toBe(writeError);
+
+		expect(writer.write).toHaveBeenCalledOnce();
+	});
 });
 
 describe('createVaultNoteWriter', () => {

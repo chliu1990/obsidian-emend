@@ -5,6 +5,7 @@ import {
 	EditSourceValidationError,
 } from '../src/edit-validation';
 import { prepareEditResponse } from '../src/edit-response';
+import { operationEditStrategy } from '../src/operation-edit-strategy';
 import {
 	requestAiResponse,
 	type AiProviderRequest,
@@ -171,6 +172,61 @@ describe('prepareEditResponse', () => {
 		expect(requestRound).toHaveBeenCalledTimes(1);
 		expect(prepareEdit).toHaveBeenCalledOnce();
 		expect(onRetry).not.toHaveBeenCalled();
+	});
+
+	it('returns only the second candidate summary items after a real-strategy correction', async () => {
+		const original = '# Note\n```\nalpha\n```\nbeta';
+		const invalidResponse = JSON.stringify([{ type: 'remove', target: 'alpha' }]);
+		const validResponse = JSON.stringify([
+			{ type: 'replace', target: 'beta', replacement: 'delta' },
+		]);
+		const requestRound = vi.fn<typeof requestAiResponse>()
+			.mockResolvedValueOnce(result(invalidResponse))
+			.mockResolvedValueOnce(result(validResponse));
+		const onRetry = vi.fn();
+
+		const response = await prepareEditResponse({
+			original,
+			request: makeRequest(),
+			editStrategy: operationEditStrategy,
+			requestRound,
+			signal: new AbortController().signal,
+			onRetry,
+		});
+
+		const betaStart = original.indexOf('beta');
+		expect(onRetry).toHaveBeenCalledOnce();
+		expect(requestRound).toHaveBeenCalledTimes(2);
+		expect(requestRound.mock.calls[1]?.[0].continuation?.[1]?.content).toContain(
+			'"code":"fenced-code-edit"',
+		);
+		expect(response.prepared.annotatedMarkdown).toBe(
+			'# Note\n```\nalpha\n```\n{~~beta~>delta~~}',
+		);
+		expect(response.prepared.changeCount).toBe(1);
+		expect(response.prepared.summaryItems).toEqual([
+			{ type: 'replace', start: betaStart, end: betaStart + 4 },
+		]);
+	});
+
+	it('rejects two real-strategy invalid candidates without a prepared result', async () => {
+		const original = '# Note\nAlpha beta.';
+		const requestRound = vi.fn<typeof requestAiResponse>()
+			.mockResolvedValueOnce(result(JSON.stringify([
+				{ type: 'remove', target: 'missing' },
+			])))
+			.mockResolvedValueOnce(result(JSON.stringify([
+				{ type: 'remove', target: 'also-missing' },
+			])));
+
+		await expect(prepareEditResponse({
+			original,
+			request: makeRequest(),
+			editStrategy: operationEditStrategy,
+			requestRound,
+			signal: new AbortController().signal,
+		})).rejects.toThrow(/not found/i);
+		expect(requestRound).toHaveBeenCalledTimes(2);
 	});
 
 	it('surfaces the second validation error without a third provider call', async () => {

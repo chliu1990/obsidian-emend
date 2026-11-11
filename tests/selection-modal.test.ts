@@ -243,12 +243,16 @@ describe('SelectionModal quick actions', () => {
 		);
 		store.clear('note.md');
 		expect(submitSelection.mock.calls[0]?.[2]).toEqual(['First.md', 'Second.md']);
-		response.resolve({ applied: false, changeCount: 0 });
+		response.resolve({ applied: false, changeCount: 0, summaryItems: [] });
 		await vi.waitFor(() => expect(input.disabled).toBe(false));
 	});
 
 	it('submits the renamed target paths for typed input', async () => {
-		const submitSelection = vi.fn(async () => ({ applied: false, changeCount: 0 }));
+		const submitSelection = vi.fn(async () => ({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+		}));
 		const store = new AdditionalNotesStore();
 		store.add('note.md', 'Context.md');
 		const { contentEl, input, targetFile } = openModal(submitSelection, store);
@@ -273,7 +277,11 @@ describe('SelectionModal quick actions', () => {
 	it.each(QUICK_ACTIONS)(
 		'$id submits the renamed target paths after the modal opens',
 		async (action) => {
-			const submitSelection = vi.fn(async () => ({ applied: false, changeCount: 0 }));
+			const submitSelection = vi.fn(async () => ({
+				applied: false,
+				changeCount: 0,
+				summaryItems: [],
+			}));
 			const store = new AdditionalNotesStore();
 			store.add('note.md', 'Context.md');
 			const { contentEl, targetFile } = openModal(submitSelection, store);
@@ -306,7 +314,7 @@ describe('SelectionModal quick actions', () => {
 		expect(cancelButton?.disabled).toBe(true);
 		expect(cancelButton?.textContent).toBe('Stopping...');
 
-		response.resolve({ applied: false, changeCount: 0 });
+		response.resolve({ applied: false, changeCount: 0, summaryItems: [] });
 
 		await vi.waitFor(() => {
 			expect(cancelButton?.disabled).toBe(false);

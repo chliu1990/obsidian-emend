@@ -163,7 +163,7 @@ export function applyPreparedSelectionEdit(
 ): EditResult {
 	const annotatedFullText = `${snapshot.fullText.slice(0, snapshot.from)}${prepared.annotatedMarkdown}${snapshot.fullText.slice(snapshot.to)}`;
 	if (!canWriteToNote(mode) || annotatedFullText === snapshot.fullText) {
-		return { applied: false, changeCount: 0 };
+		return { applied: false, changeCount: 0, summaryItems: [] };
 	}
 
 	signal?.throwIfAborted();
@@ -171,12 +171,16 @@ export function applyPreparedSelectionEdit(
 		throw new Error(STALE_NOTE_ERROR);
 	}
 	if (!canWriteToNote(mode)) {
-		return { applied: false, changeCount: 0 };
+		return { applied: false, changeCount: 0, summaryItems: [] };
 	}
 
 	signal?.throwIfAborted();
 	editor.replaceRange(prepared.annotatedMarkdown, snapshot.from, snapshot.to);
-	return { applied: true, changeCount: prepared.changeCount };
+	return {
+		applied: true,
+		changeCount: prepared.changeCount,
+		summaryItems: prepared.summaryItems,
+	};
 }
 
 export class SelectionEditRequestCoordinator {

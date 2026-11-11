@@ -933,6 +933,7 @@ function createSelectionEditSubmission() {
 		return {
 			applied: true,
 			changeCount: 2,
+			summaryItems: [],
 			usage: {
 				promptTokens: 30,
 				completionTokens: 7,
@@ -1153,6 +1154,7 @@ describe('EmendChatView selection edit submission', () => {
 		response.resolve({
 			applied: false,
 			changeCount: 0,
+			summaryItems: [],
 			usage: { promptTokens: 2, completionTokens: 1, totalTokens: 3, source: 'provider' },
 		});
 		await submission;
@@ -1198,6 +1200,7 @@ describe('EmendChatView selection edit submission', () => {
 		response.resolve({
 			applied: false,
 			changeCount: 0,
+			summaryItems: [],
 			usage: { promptTokens: 2, completionTokens: 1, totalTokens: 3, source: 'provider' },
 		});
 		await submission;
@@ -1231,6 +1234,7 @@ describe('EmendChatView selection edit submission', () => {
 		response.resolve({
 			applied: false,
 			changeCount: 0,
+			summaryItems: [],
 			usage: { promptTokens: 2, completionTokens: 1, totalTokens: 3, source: 'provider' },
 		});
 		await submission;
