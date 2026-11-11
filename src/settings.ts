@@ -1,9 +1,10 @@
-import { App, Notice, PluginSettingTab, setIcon, Setting, type TextComponent } from 'obsidian';
+import { App, Notice, PluginSettingTab, setIcon, Setting, type ButtonComponent, type TextComponent } from 'obsidian';
 import {
 	INVALID_CONTEXT_CAPACITY_MESSAGE,
 	resolveContextCapacity,
 } from './context-accounting';
 import { discoverProviderModels } from './model-discovery';
+import { getDocumentedCapacityDefaults } from './provider-capacity-defaults';
 import type EmendPlugin from './main';
 import type {
 	DiscoveredModel,
@@ -260,6 +261,7 @@ export class EmendSettingTab extends PluginSettingTab {
 					.setValue(config.model)
 					.onChange(async (value) => {
 						config.model = value.trim();
+						refreshDocumentedDefaults();
 						await this.plugin.saveSettings();
 					}),
 			)
@@ -409,6 +411,41 @@ export class EmendSettingTab extends PluginSettingTab {
 					void commitCapacity();
 				});
 			});
+
+		const providerId = provider.id;
+		let documentedDefaultsButton: ButtonComponent | null = null;
+		const defaultsSetting = new Setting(containerEl)
+			.setName('Capacity defaults');
+		function refreshDocumentedDefaults() {
+			const defaults = getDocumentedCapacityDefaults(providerId, config.model);
+			defaultsSetting.setDesc(
+				defaults?.description ?? 'No documented defaults for this model.',
+			);
+			documentedDefaultsButton?.setDisabled(!defaults);
+		}
+		defaultsSetting.addButton((button) => {
+			documentedDefaultsButton = button;
+			button
+				.setButtonText('Use documented defaults')
+				.onClick(async () => {
+					const defaults = getDocumentedCapacityDefaults(providerId, config.model);
+					if (!defaults) {
+						return;
+					}
+					windowDraft = String(defaults.contextWindowTokens);
+					reserveDraft = String(defaults.outputReserveTokens);
+					windowText?.setValue(windowDraft);
+					reserveText?.setValue(reserveDraft);
+					applyProviderCapacityPair(
+						config,
+						defaults.contextWindowTokens,
+						defaults.outputReserveTokens,
+					);
+					refreshCapacityStatus();
+					await this.plugin.saveSettings();
+				});
+		});
+		refreshDocumentedDefaults();
 
 		capacityStatus = new Setting(containerEl)
 			.setName('Context capacity')

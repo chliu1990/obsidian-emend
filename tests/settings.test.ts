@@ -1378,3 +1378,207 @@ describe('EmendSettingTab context capacity', () => {
 		expect(plugin.saveSettings).toHaveBeenCalledTimes(2);
 	});
 });
+
+describe('EmendSettingTab documented capacity defaults', () => {
+	beforeEach(() => {
+		settingInstances.length = 0;
+		vi.mocked(discoverProviderModels).mockReset();
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it.each([
+		{
+			providerId: 'deepseek',
+			modelId: 'deepseek-flash',
+			window: 1048576,
+			reserve: 393216,
+			description: 'DeepSeek documents 1M context and 384K maximum output. These are model documentation values, not a response from your account.',
+		},
+		{
+			providerId: 'deepseek',
+			modelId: 'deepseek-v4-pro',
+			window: 1048576,
+			reserve: 393216,
+			description: 'DeepSeek documents 1M context and 384K maximum output. These are model documentation values, not a response from your account.',
+		},
+		{
+			providerId: 'kimi',
+			modelId: 'k3.1-pro',
+			window: 1048576,
+			reserve: 131072,
+			description: 'Kimi documents up to 1M context on eligible plans and 131,072 default output. Lower-tier plans may need a smaller context window. These are documentation values, not a response from your account.',
+		},
+	] as const)('shows an enabled action with exact copy for $providerId $modelId', ({
+		providerId,
+		modelId,
+		description,
+	}) => {
+		const { plugin, tab } = createModelSettingsTab();
+		plugin.settings.activeProvider = providerId;
+		plugin.settings.providers[providerId].model = modelId;
+
+		displaySettings(tab);
+
+		const defaults = latestSetting('Capacity defaults');
+		expect(defaults.description).toBe(description);
+		expect(defaults.buttons).toHaveLength(1);
+		expect(defaults.buttons[0]?.text).toBe('Use documented defaults');
+		expect(defaults.buttons[0]?.buttonEl.disabled).toBe(false);
+	});
+
+	it.each([
+		{ providerId: 'deepseek', modelId: 'unknown-model' },
+		{ providerId: 'kimi', modelId: 'deepseek-flash' },
+		{ providerId: 'custom', modelId: 'k3.1-pro' },
+		{ providerId: 'custom', modelId: 'custom-model' },
+	] as const)('offers no enabled action for unsupported $providerId model $modelId', ({
+		providerId,
+		modelId,
+	}) => {
+		const { plugin, tab } = createModelSettingsTab();
+		plugin.settings.activeProvider = providerId;
+		plugin.settings.providers[providerId].model = modelId;
+
+		displaySettings(tab);
+
+		const defaults = latestSetting('Capacity defaults');
+		expect(defaults.description).toBe('No documented defaults for this model.');
+		expect(defaults.buttons.filter((button) => !button.buttonEl.disabled)).toEqual([]);
+	});
+
+	it('applies exact values in place, clears invalid state, and saves sanitized settings once', async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+		const { plugin, tab } = createModelSettingsTab();
+		plugin.settings.providers.deepseek.apiKey = 'deepseek-secret';
+		plugin.settings.providers.kimi.apiKey = 'kimi-secret';
+		plugin.settings.providers.custom.apiKey = 'custom-secret';
+		plugin.settings.providers.deepseek.contextWindowTokens = 8000;
+		plugin.settings.providers.deepseek.outputReserveTokens = 8000;
+		plugin.settings.providers.deepseek.contextCapacityInvalid = true;
+		let persisted: ReturnType<typeof sanitizeSettings> | undefined;
+		plugin.saveSettings.mockImplementation(async () => {
+			persisted = sanitizeSettings(plugin.settings);
+		});
+		displaySettings(tab);
+		const renderedCount = settingInstances.length;
+		const windowText = latestSetting('Context window (tokens)').texts[0];
+		const reserveText = latestSetting('Output reserve (tokens)').texts[0];
+		const status = latestSetting('Context capacity');
+		const defaults = latestSetting('Capacity defaults');
+		const renderSpy = vi.spyOn(
+			tab as unknown as { renderSettings(): void },
+			'renderSettings',
+		);
+		const button = defaults.buttons[0];
+		if (!button) throw new Error('Missing documented defaults button');
+
+		await button.clickHandler();
+
+		expect(plugin.settings.providers.deepseek).toMatchObject({
+			contextWindowTokens: 1048576,
+			outputReserveTokens: 393216,
+			contextCapacityInvalid: false,
+		});
+		expect(windowText?.value).toBe('1048576');
+		expect(windowText?.inputEl.value).toBe('1048576');
+		expect(reserveText?.value).toBe('393216');
+		expect(reserveText?.inputEl.value).toBe('393216');
+		expect(status.description).toBe('');
+		expect(status.settingEl.style.display).toBe('');
+		expect(settingInstances).toHaveLength(renderedCount);
+		expect(renderSpy).not.toHaveBeenCalled();
+		expect(plugin.saveSettings).toHaveBeenCalledOnce();
+		expect(persisted?.providers.deepseek.apiKey).toBe('');
+		expect(persisted?.providers.kimi.apiKey).toBe('');
+		expect(persisted?.providers.custom.apiKey).toBe('');
+		expect(persisted?.providers.deepseek).toMatchObject({
+			contextWindowTokens: 1048576,
+			outputReserveTokens: 393216,
+			contextCapacityInvalid: false,
+		});
+		expect(discoverProviderModels).not.toHaveBeenCalled();
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it('keeps manual values through normalization and explicit model selection', async () => {
+		const normalized = normalizeSettings({
+			providers: {
+				deepseek: {
+					model: 'deepseek-flash',
+					contextWindowTokens: 64000,
+					outputReserveTokens: 4000,
+				},
+			},
+		});
+		expect(normalized.providers.deepseek).toMatchObject({
+			contextWindowTokens: 64000,
+			outputReserveTokens: 4000,
+			contextCapacityInvalid: false,
+		});
+
+		const { plugin, tab } = createModelSettingsTab();
+		plugin.settings.providers.deepseek.contextWindowTokens = 64000;
+		plugin.settings.providers.deepseek.outputReserveTokens = 4000;
+		plugin.settings.providers.deepseek.discoveredModels = [
+			{ id: 'deepseek-v4-pro', displayName: 'deepseek-v4-pro' },
+		];
+		displaySettings(tab);
+
+		await latestDropdown('DeepSeek model').onChangeHandler('deepseek-v4-pro');
+
+		expect(plugin.settings.providers.deepseek).toMatchObject({
+			model: 'deepseek-v4-pro',
+			contextWindowTokens: 64000,
+			outputReserveTokens: 4000,
+			contextCapacityInvalid: false,
+		});
+		expect(plugin.saveSettings).toHaveBeenCalledOnce();
+		expect(discoverProviderModels).not.toHaveBeenCalled();
+	});
+});
+
+describe('EmendSettingTab documented defaults model edits', () => {
+	beforeEach(() => {
+		settingInstances.length = 0;
+	});
+
+	it('disables the action for an unknown model and restores it for an exact supported ID without applying values', async () => {
+		const { plugin, tab } = createModelSettingsTab();
+		plugin.settings.providers.deepseek.contextWindowTokens = 64000;
+		plugin.settings.providers.deepseek.outputReserveTokens = 4000;
+		displaySettings(tab);
+		const renderedCount = settingInstances.length;
+		const modelText = latestModelText();
+
+		await modelText.onChangeHandler('unknown-model');
+
+		let defaults = latestSetting('Capacity defaults');
+		expect(defaults.description).toBe('No documented defaults for this model.');
+		expect(defaults.buttons.every((button) => button.buttonEl.disabled)).toBe(true);
+		expect(plugin.settings.providers.deepseek).toMatchObject({
+			model: 'unknown-model',
+			contextWindowTokens: 64000,
+			outputReserveTokens: 4000,
+			contextCapacityInvalid: false,
+		});
+		expect(settingInstances).toHaveLength(renderedCount);
+
+		await modelText.onChangeHandler(' deepseek-v4-pro ');
+
+		defaults = latestSetting('Capacity defaults');
+		expect(defaults.description).toBe('DeepSeek documents 1M context and 384K maximum output. These are model documentation values, not a response from your account.');
+		expect(defaults.buttons.some((button) => !button.buttonEl.disabled)).toBe(true);
+		expect(plugin.settings.providers.deepseek).toMatchObject({
+			model: 'deepseek-v4-pro',
+			contextWindowTokens: 64000,
+			outputReserveTokens: 4000,
+			contextCapacityInvalid: false,
+		});
+		expect(settingInstances).toHaveLength(renderedCount);
+		expect(plugin.saveSettings).toHaveBeenCalledTimes(2);
+	});
+});
