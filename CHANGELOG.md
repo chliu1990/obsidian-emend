@@ -2,6 +2,38 @@
 
 All notable changes to Emend are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.0] - 2026-11-11
+
+### Added
+
+- DeepSeek-only per-query Web extraction for Ask, Discuss, and Brainstorm, still default Off: every readable Search/Fetch result now runs a bounded extractor plus same-provider verifier loop that produces compact, question-focused claims backed by exact verbatim quotes, with up to two refine rounds for rejected claims.
+- A configurable per-call Web output cap (default 20,000 characters, range 1,000–100,000) applied independently to every Search/Fetch payload, replacing the former shared retrieval pool.
+- Reviewable extraction goals on every Search/Fetch call; Review permits editing each goal together with its query or URL.
+- One immediate Search/Fetch retry for transient failures, a non-fatal `search_failed` outcome with a ready warning when Search still fails, and explicit unread-page handling for Fetch.
+- Failure diagnostics in tool results (`reason`, `httpStatus`, and `attempts`) plus folded activity labels for HTTP status, reader failure kind, and retry attempts.
+- Cap-fitting omission warnings, `truncated`/`omitted` markers, and graceful local-call overflow with `local_call_limit_reached` instead of discarding an extraction.
+
+### Changed
+
+- Replaced verbatim-only extraction and shared truncation with claims plus verified quotes; verification failure falls back to exact quotes or `no_relevant_evidence` rather than failing the whole retrieval.
+- Reader, correction, verifier, and refine requests now use JSON mode, with tolerant parsing for fenced or prose-wrapped output and individual invalid claims/quotes dropped.
+- The answering model receives only actual source metadata plus verified claims with their quotes, or quotes-only evidence, never raw retrieval or unverified AI-generated facts.
+
+### Fixed
+
+- Search extraction no longer fails when the extractor reads all five default results in one round; the reader allows 8 local calls per round and 24 total with recoverable overflow.
+- Invented summaries, labels, and extra fields no longer reach the answering model.
+- Malformed local reader calls, format failures, and verification failures now degrade or correct instead of silently discarding inspected evidence.
+- Retry attempts and failure causes are visible instead of collapsing into one opaque error string.
+
+### Security
+
+- Web remains writer-free in Ask, Discuss, and Brainstorm and unavailable in Edit, quick actions, and Modify Selection.
+- Raw retrieval, reader reasoning, failure reasons/statuses/attempts, and reader artifacts remain transient; schema 2 persists only sanitized ready content, citations, activity status, and usage.
+- Failure payloads exclude credentials, headers, provider messages, and page URLs beyond the existing activity target.
+
+Web retrieval remains default Off and available only for DeepSeek `deepseek-flash` and `deepseek-v4-pro`; failed calls count toward the configured 1–20 call limit.
+
 ## [2.7.0] - 2026-11-07
 
 ### Added
@@ -122,7 +154,8 @@ All notable changes to Emend are documented here. The format follows [Keep a Cha
 - Strict provider error redaction and bounded error output.
 - Validated anchors, ambiguity/overlap rejection, stale-source/target checks, and abort/unload protection for note writes.
 
-[Unreleased]: https://github.com/chliu1990/obsidian-emend/compare/2.7.0...HEAD
+[Unreleased]: https://github.com/chliu1990/obsidian-emend/compare/2.8.0...HEAD
+[2.8.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.8.0
 [2.7.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.7.0
 [2.6.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.6.0
 [2.5.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.5.0
