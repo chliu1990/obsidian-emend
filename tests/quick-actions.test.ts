@@ -217,11 +217,13 @@ describe('quick action submission', () => {
 			isSending: false,
 			isThreadLoading: false,
 			evaluateQuickActionCapacity: () => ({ estimate: undefined, blockMessage }),
+			refreshDraftEstimate: vi.fn(),
 			submitPrompt: vi.fn(async (_prompt: string) => {}),
 		};
 
 		await viewPrototype.submitQuickAction.call(context, action);
 
+		expect(context.refreshDraftEstimate).toHaveBeenCalledTimes(1);
 		expect(context.submitPrompt).not.toHaveBeenCalled();
 		expect(context.selectedMode).toBe('brainstorm');
 		expect(noticeMessages.slice(noticeCount)).toEqual([`Emend: ${blockMessage}`]);
