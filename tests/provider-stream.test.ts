@@ -182,6 +182,9 @@ const provider: ProviderConfig = {
 	reasoningEffort: 'medium',
 	requestUsage: true,
 	discoveredModels: [],
+	contextWindowTokens: null,
+	outputReserveTokens: null,
+	contextCapacityInvalid: false,
 };
 
 function makeRequest(overrides: Partial<AiProviderRequest> = {}): AiProviderRequest {

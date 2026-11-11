@@ -73,6 +73,7 @@ export class PluginSettingTab {
 interface TextComponent {
 	inputEl: { type: string; min: string; max: string; step: string };
 	value: string;
+	placeholder: string;
 	onChangeHandler: (value: string) => unknown;
 	setPlaceholder(value: string): TextComponent;
 	setValue(value: string): TextComponent;
@@ -137,8 +138,10 @@ export class Setting {
 		const text: TextComponent = {
 			inputEl: { type: '', min: '', max: '', step: '' },
 			value: '',
+			placeholder: '',
 			onChangeHandler: () => undefined,
-			setPlaceholder(_value) {
+			setPlaceholder(value) {
+				this.placeholder = value;
 				return this;
 			},
 			setValue(value) {

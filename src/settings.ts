@@ -1,4 +1,5 @@
 import { App, Notice, PluginSettingTab, setIcon, Setting } from 'obsidian';
+import { resolveContextCapacity } from './context-accounting';
 import { discoverProviderModels } from './model-discovery';
 import type EmendPlugin from './main';
 import type {
@@ -45,6 +46,9 @@ export const DEFAULT_SETTINGS: EmendSettings = {
 			reasoningEffort: 'high',
 			requestUsage: true,
 			discoveredModels: [],
+			contextWindowTokens: null,
+			outputReserveTokens: null,
+			contextCapacityInvalid: false,
 		},
 		kimi: {
 			name: 'Kimi',
@@ -54,6 +58,9 @@ export const DEFAULT_SETTINGS: EmendSettings = {
 			reasoningEffort: 'high',
 			requestUsage: true,
 			discoveredModels: [],
+			contextWindowTokens: null,
+			outputReserveTokens: null,
+			contextCapacityInvalid: false,
 		},
 		custom: {
 			name: 'Custom',
@@ -63,6 +70,9 @@ export const DEFAULT_SETTINGS: EmendSettings = {
 			reasoningEffort: 'high',
 			requestUsage: false,
 			discoveredModels: [],
+			contextWindowTokens: null,
+			outputReserveTokens: null,
+			contextCapacityInvalid: false,
 		},
 	},
 	defaultMode: 'ask',
@@ -298,6 +308,56 @@ export class EmendSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
+			.setName('Context window (tokens)')
+			.setDesc('Tokens the provider can accept in one request. Leave empty to disable capacity checks.')
+			.addText((text) => {
+				text.inputEl.type = 'number';
+				text.inputEl.min = '1';
+				text.inputEl.step = '1';
+				text
+					// eslint-disable-next-line obsidianmd/ui/sentence-case -- Numeric example placeholder.
+					.setPlaceholder('e.g. 128000')
+					.setValue(
+						config.contextWindowTokens === null
+							? ''
+							: String(config.contextWindowTokens),
+					)
+					.onChange(async (value) => {
+						updateProviderCapacity(config, 'contextWindowTokens', value);
+						await this.plugin.saveSettings();
+						this.renderSettings();
+					});
+			});
+
+		new Setting(containerEl)
+			.setName('Output reserve (tokens)')
+			.setDesc('Tokens reserved for the response. Leave empty to disable capacity checks.')
+			.addText((text) => {
+				text.inputEl.type = 'number';
+				text.inputEl.min = '1';
+				text.inputEl.step = '1';
+				text
+					// eslint-disable-next-line obsidianmd/ui/sentence-case -- Numeric example placeholder.
+					.setPlaceholder('e.g. 8000')
+					.setValue(
+						config.outputReserveTokens === null
+							? ''
+							: String(config.outputReserveTokens),
+					)
+					.onChange(async (value) => {
+						updateProviderCapacity(config, 'outputReserveTokens', value);
+						await this.plugin.saveSettings();
+						this.renderSettings();
+					});
+			});
+
+		if (resolveContextCapacity(config).kind === 'invalid') {
+			new Setting(containerEl)
+				.setName('Context capacity')
+				.setDesc('Requests are blocked until both values are positive and the context window is larger than the output reserve.');
+		}
+
+		new Setting(containerEl)
 			.setName('Default mode')
 			.setDesc('Initial chat mode for each chat session.')
 			.addDropdown((dropdown) => {
@@ -457,6 +517,11 @@ function normalizeProviderConfig(
 	data: unknown,
 ): ProviderConfig {
 	const config = isRecord(data) ? data : {};
+	const capacity = resolveProviderCapacityFields(
+		config.contextWindowTokens,
+		config.outputReserveTokens,
+		config.contextCapacityInvalid === true,
+	);
 	return {
 		name: stringOrDefault(config.name, defaults.name),
 		baseUrl: stringOrDefault(config.baseUrl, defaults.baseUrl),
@@ -470,7 +535,84 @@ function normalizeProviderConfig(
 				? config.requestUsage
 				: defaults.requestUsage,
 		discoveredModels: normalizeDiscoveredModels(config.discoveredModels),
+		...capacity,
 	};
+}
+
+interface OptionalPositiveInteger {
+	value: number | null;
+	malformed: boolean;
+}
+
+function parseOptionalPositiveInteger(value: unknown): OptionalPositiveInteger {
+	if (value === undefined || value === null) {
+		return { value: null, malformed: false };
+	}
+	if (
+		typeof value === 'number' &&
+		Number.isInteger(value) &&
+		value > 0
+	) {
+		return { value, malformed: false };
+	}
+	return { value: null, malformed: true };
+}
+
+function resolveProviderCapacityFields(
+	rawWindow: unknown,
+	rawReserve: unknown,
+	persistedInvalid: boolean,
+): Pick<
+	ProviderConfig,
+	'contextWindowTokens' | 'outputReserveTokens' | 'contextCapacityInvalid'
+> {
+	const window = parseOptionalPositiveInteger(rawWindow);
+	const reserve = parseOptionalPositiveInteger(rawReserve);
+	const cleared = window.value === null && reserve.value === null;
+	if (cleared && !window.malformed && !reserve.malformed) {
+		return {
+			contextWindowTokens: null,
+			outputReserveTokens: null,
+			contextCapacityInvalid: persistedInvalid,
+		};
+	}
+
+	const validPair = !window.malformed &&
+		!reserve.malformed &&
+		window.value !== null &&
+		reserve.value !== null &&
+		window.value - reserve.value > 0;
+	return {
+		contextWindowTokens: window.value,
+		outputReserveTokens: reserve.value,
+		contextCapacityInvalid: !validPair,
+	};
+}
+
+function parseCapacityInput(value: string): unknown {
+	const trimmed = value.trim();
+	if (!trimmed) {
+		return null;
+	}
+	const parsed = Number(trimmed);
+	return Number.isNaN(parsed) ? trimmed : parsed;
+}
+
+function updateProviderCapacity(
+	config: ProviderConfig,
+	field: 'contextWindowTokens' | 'outputReserveTokens',
+	value: string,
+) {
+	const parsed = parseCapacityInput(value);
+	// A user edit states the full pair, so it resolves any persisted malformed marker.
+	const capacity = resolveProviderCapacityFields(
+		field === 'contextWindowTokens' ? parsed : config.contextWindowTokens,
+		field === 'outputReserveTokens' ? parsed : config.outputReserveTokens,
+		false,
+	);
+	config.contextWindowTokens = capacity.contextWindowTokens;
+	config.outputReserveTokens = capacity.outputReserveTokens;
+	config.contextCapacityInvalid = capacity.contextCapacityInvalid;
 }
 
 function normalizeDiscoveredModels(value: unknown): DiscoveredModel[] {

@@ -171,6 +171,9 @@ const provider: ProviderConfig = {
 	reasoningEffort: 'low',
 	requestUsage: false,
 	discoveredModels: [],
+	contextWindowTokens: null,
+	outputReserveTokens: null,
+	contextCapacityInvalid: false,
 };
 
 describe('SelectionModal quick actions', () => {

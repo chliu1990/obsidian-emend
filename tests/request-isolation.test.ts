@@ -39,6 +39,9 @@ const provider: ProviderConfig = {
 	reasoningEffort: 'low',
 	requestUsage: true,
 	discoveredModels: [],
+	contextWindowTokens: null,
+	outputReserveTokens: null,
+	contextCapacityInvalid: false,
 };
 
 function deferred<T = void>() {

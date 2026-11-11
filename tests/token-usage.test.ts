@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import {
+	countRequestCharacters,
+	estimateTokensForCharacters,
+} from '../src/context-accounting';
 import type { AiProviderRequest, StreamResult } from '../src/provider-stream';
 import { resolveRoundTokenUsage, resolveTokenUsage } from '../src/token-usage';
 
@@ -80,6 +84,20 @@ describe('resolveTokenUsage', () => {
 			totalTokens: 2,
 			source: 'estimated',
 		});
+	});
+
+	it('keeps the completed fallback minimum while sharing the accounting count', () => {
+		const emptyRequest = { systemPrompt: '', userPrompt: '', history: [] };
+		const filledRequest = { systemPrompt: '1234', userPrompt: '123456', history: [] };
+
+		expect(countRequestCharacters(emptyRequest)).toBe(0);
+		expect(estimateTokensForCharacters(0)).toBe(0);
+		expect(resolveTokenUsage(emptyRequest, result()).promptTokens).toBe(1);
+
+		expect(countRequestCharacters(filledRequest)).toBe(10);
+		expect(resolveTokenUsage(filledRequest, result()).promptTokens).toBe(
+			Math.max(1, estimateTokensForCharacters(10)),
+		);
 	});
 });
 

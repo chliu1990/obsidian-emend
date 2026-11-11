@@ -99,6 +99,9 @@ describe('normalizeSettings', () => {
 			reasoningEffort: 'high',
 			requestUsage: true,
 			discoveredModels: [],
+			contextWindowTokens: null,
+			outputReserveTokens: null,
+			contextCapacityInvalid: false,
 		});
 		expect(DEFAULT_SETTINGS.providers.kimi).toEqual({
 			name: 'Kimi',
@@ -108,6 +111,9 @@ describe('normalizeSettings', () => {
 			reasoningEffort: 'high',
 			requestUsage: true,
 			discoveredModels: [],
+			contextWindowTokens: null,
+			outputReserveTokens: null,
+			contextCapacityInvalid: false,
 		});
 		expect(DEFAULT_SETTINGS.providers.custom).toEqual({
 			name: 'Custom',
@@ -117,6 +123,9 @@ describe('normalizeSettings', () => {
 			reasoningEffort: 'high',
 			requestUsage: false,
 			discoveredModels: [],
+			contextWindowTokens: null,
+			outputReserveTokens: null,
+			contextCapacityInvalid: false,
 		});
 	});
 
@@ -189,6 +198,9 @@ describe('normalizeSettings', () => {
 					reasoningEffort: 'low',
 					requestUsage: false,
 					discoveredModels: [],
+					contextWindowTokens: 128000,
+					outputReserveTokens: 8000,
+					contextCapacityInvalid: false,
 				},
 				kimi: {
 					name: 'Kimi',
@@ -198,6 +210,9 @@ describe('normalizeSettings', () => {
 					reasoningEffort: 'medium',
 					requestUsage: true,
 					discoveredModels: [],
+					contextWindowTokens: null,
+					outputReserveTokens: null,
+					contextCapacityInvalid: false,
 				},
 				custom: {
 					name: 'Custom',
@@ -207,6 +222,9 @@ describe('normalizeSettings', () => {
 					reasoningEffort: 'high',
 					requestUsage: true,
 					discoveredModels: [],
+					contextWindowTokens: 32000,
+					outputReserveTokens: 4000,
+					contextCapacityInvalid: false,
 				},
 			},
 			defaultMode: 'discuss',
@@ -351,6 +369,258 @@ describe('normalizeSettings', () => {
 		expect(normalized.providers.deepseek.apiKey).toBe('deepseek-secret');
 		expect(normalized.providers.kimi.apiKey).toBe('kimi-secret');
 		expect(normalized.providers.custom.apiKey).toBe('custom-secret');
+	});
+
+	it('defaults every provider to unconfigured context capacity', () => {
+		for (const providerId of ['deepseek', 'kimi', 'custom'] as const) {
+			expect(DEFAULT_SETTINGS.providers[providerId]).toMatchObject({
+				contextWindowTokens: null,
+				outputReserveTokens: null,
+				contextCapacityInvalid: false,
+			});
+		}
+	});
+
+	it.each([undefined, null])(
+		'treats absent or null capacity values as unconfigured %#',
+		(capacityValue) => {
+			const settings = normalizeSettings({
+				providers: {
+					deepseek: {
+						contextWindowTokens: capacityValue,
+						outputReserveTokens: capacityValue,
+					},
+				},
+			});
+
+			expect(settings.providers.deepseek).toMatchObject({
+				contextWindowTokens: null,
+				outputReserveTokens: null,
+				contextCapacityInvalid: false,
+			});
+		},
+	);
+
+	it('keeps a valid capacity pair with a cleared marker', () => {
+		const settings = normalizeSettings({
+			providers: {
+				deepseek: {
+					contextWindowTokens: 128000,
+					outputReserveTokens: 8000,
+					contextCapacityInvalid: false,
+				},
+			},
+		});
+
+		expect(settings.providers.deepseek).toMatchObject({
+			contextWindowTokens: 128000,
+			outputReserveTokens: 8000,
+			contextCapacityInvalid: false,
+		});
+	});
+
+	it('marks one present value invalid while preserving it', () => {
+		const settings = normalizeSettings({
+			providers: {
+				deepseek: { contextWindowTokens: 128000 },
+				kimi: { outputReserveTokens: 8000 },
+			},
+		});
+
+		expect(settings.providers.deepseek).toMatchObject({
+			contextWindowTokens: 128000,
+			outputReserveTokens: null,
+			contextCapacityInvalid: true,
+		});
+		expect(settings.providers.kimi).toMatchObject({
+			contextWindowTokens: null,
+			outputReserveTokens: 8000,
+			contextCapacityInvalid: true,
+		});
+	});
+
+	it('drops a malformed value while preserving its valid sibling', () => {
+		const settings = normalizeSettings({
+			providers: {
+				deepseek: {
+					contextWindowTokens: '128000',
+					outputReserveTokens: 8000,
+				},
+			},
+		});
+
+		expect(settings.providers.deepseek).toMatchObject({
+			contextWindowTokens: null,
+			outputReserveTokens: 8000,
+			contextCapacityInvalid: true,
+		});
+	});
+
+	it('clears both malformed values but keeps the invalid marker', () => {
+		const settings = normalizeSettings({
+			providers: {
+				deepseek: {
+					contextWindowTokens: '128000',
+					outputReserveTokens: '8000',
+				},
+			},
+		});
+
+		expect(settings.providers.deepseek).toMatchObject({
+			contextWindowTokens: null,
+			outputReserveTokens: null,
+			contextCapacityInvalid: true,
+		});
+	});
+
+	it('keeps a persisted invalid marker when both values are cleared', () => {
+		const settings = normalizeSettings({
+			providers: {
+				kimi: {
+					contextWindowTokens: null,
+					outputReserveTokens: null,
+					contextCapacityInvalid: true,
+				},
+			},
+		});
+
+		expect(settings.providers.kimi).toMatchObject({
+			contextWindowTokens: null,
+			outputReserveTokens: null,
+			contextCapacityInvalid: true,
+		});
+	});
+
+	it('fixes a persisted invalid marker once a valid pair is saved', () => {
+		const settings = normalizeSettings({
+			providers: {
+				custom: {
+					contextWindowTokens: 32000,
+					outputReserveTokens: 4000,
+					contextCapacityInvalid: true,
+				},
+			},
+		});
+
+		expect(settings.providers.custom).toMatchObject({
+			contextWindowTokens: 32000,
+			outputReserveTokens: 4000,
+			contextCapacityInvalid: false,
+		});
+	});
+
+	it.each([
+		['zero', 0],
+		['negative', -1],
+		['decimal', 128000.5],
+		['NaN', Number.NaN],
+		['Infinity', Number.POSITIVE_INFINITY],
+		['string', '128000'],
+		['object', {}],
+		['array', []],
+	])('rejects malformed capacity input: %s', (_label, contextWindowTokens) => {
+		const settings = normalizeSettings({
+			providers: {
+				deepseek: { contextWindowTokens, outputReserveTokens: 8000 },
+			},
+		});
+
+		expect(settings.providers.deepseek).toMatchObject({
+			contextWindowTokens: null,
+			outputReserveTokens: 8000,
+			contextCapacityInvalid: true,
+		});
+	});
+
+	it.each([
+		['equal to the window', 8000, 8000],
+		['greater than the window', 4000, 8000],
+	] as const)('marks a reserve %s invalid while preserving both values', (
+		_label,
+		contextWindowTokens,
+		outputReserveTokens,
+	) => {
+		const settings = normalizeSettings({
+			providers: {
+				deepseek: { contextWindowTokens, outputReserveTokens },
+			},
+		});
+
+		expect(settings.providers.deepseek).toMatchObject({
+			contextWindowTokens,
+			outputReserveTokens,
+			contextCapacityInvalid: true,
+		});
+	});
+
+	it('normalizes each provider capacity independently', () => {
+		const settings = normalizeSettings({
+			providers: {
+				deepseek: {
+					contextWindowTokens: 128000,
+					outputReserveTokens: 8000,
+				},
+				kimi: { contextWindowTokens: 8000, outputReserveTokens: 8000 },
+				custom: {},
+			},
+		});
+
+		expect(settings.providers.deepseek.contextCapacityInvalid).toBe(false);
+		expect(settings.providers.deepseek.contextWindowTokens).toBe(128000);
+		expect(settings.providers.kimi.contextCapacityInvalid).toBe(true);
+		expect(settings.providers.kimi.contextWindowTokens).toBe(8000);
+		expect(settings.providers.custom).toMatchObject({
+			contextWindowTokens: null,
+			outputReserveTokens: null,
+			contextCapacityInvalid: false,
+		});
+	});
+
+	it('round-trips capacity values and the invalid marker through sanitized saves', () => {
+		const normalized = normalizeSettings({
+			providers: {
+				deepseek: {
+					contextWindowTokens: 128000,
+					outputReserveTokens: 8000,
+					contextCapacityInvalid: false,
+					apiKey: 'deepseek-secret',
+				},
+				kimi: { contextCapacityInvalid: true, apiKey: 'kimi-secret' },
+				custom: {
+					contextWindowTokens: 1000,
+					outputReserveTokens: 2000,
+					apiKey: 'custom-secret',
+				},
+			},
+		});
+
+		const sanitized = sanitizeSettings(normalized);
+
+		expect(sanitized.providers.deepseek).toMatchObject({
+			contextWindowTokens: 128000,
+			outputReserveTokens: 8000,
+			contextCapacityInvalid: false,
+			apiKey: '',
+		});
+		expect(sanitized.providers.kimi).toMatchObject({
+			contextWindowTokens: null,
+			outputReserveTokens: null,
+			contextCapacityInvalid: true,
+			apiKey: '',
+		});
+		expect(sanitized.providers.custom).toMatchObject({
+			contextWindowTokens: 1000,
+			outputReserveTokens: 2000,
+			contextCapacityInvalid: true,
+			apiKey: '',
+		});
+		const reloaded = normalizeSettings(sanitized);
+		expect(reloaded.providers.deepseek.contextCapacityInvalid).toBe(false);
+		expect(reloaded.providers.kimi.contextCapacityInvalid).toBe(true);
+		expect(reloaded.providers.custom.contextCapacityInvalid).toBe(true);
+		expect(
+			reloaded.providers.deepseek.contextWindowTokens,
+		).toBe(128000);
 	});
 
 	it('does not retain legacy providers or instruction-file settings', () => {
@@ -845,4 +1115,157 @@ describe('EmendSettingTab model discovery', () => {
 			}
 		},
 	);
+});
+
+describe('EmendSettingTab context capacity', () => {
+	beforeEach(() => {
+		settingInstances.length = 0;
+	});
+
+	function capacitySettingNamesSince(start: number) {
+		return settingInstances.slice(start).map((setting) => setting.name);
+	}
+
+	it('renders bounded token inputs with unconfigured empty values and placeholders', () => {
+		const { tab } = createModelSettingsTab();
+		displaySettings(tab);
+
+		const windowText = latestSetting('Context window (tokens)').texts[0];
+		const reserveText = latestSetting('Output reserve (tokens)').texts[0];
+		if (!windowText || !reserveText) {
+			throw new Error('Missing capacity inputs');
+		}
+
+		expect(windowText.inputEl.type).toBe('number');
+		expect(windowText.inputEl.min).toBe('1');
+		expect(windowText.inputEl.step).toBe('1');
+		expect(windowText.placeholder).toBe('e.g. 128000');
+		expect(windowText.value).toBe('');
+		expect(reserveText.inputEl.type).toBe('number');
+		expect(reserveText.inputEl.min).toBe('1');
+		expect(reserveText.inputEl.step).toBe('1');
+		expect(reserveText.placeholder).toBe('e.g. 8000');
+		expect(reserveText.value).toBe('');
+		expect(capacitySettingNamesSince(0)).not.toContain('Context capacity');
+	});
+
+	it('shows configured numbers and an invalid warning at display time', () => {
+		const { plugin, tab } = createModelSettingsTab();
+		plugin.settings.providers.deepseek.contextWindowTokens = 8000;
+		plugin.settings.providers.deepseek.outputReserveTokens = 8000;
+		plugin.settings.providers.deepseek.contextCapacityInvalid = true;
+
+		displaySettings(tab);
+
+		expect(latestSetting('Context window (tokens)').texts[0]?.value).toBe('8000');
+		expect(latestSetting('Output reserve (tokens)').texts[0]?.value).toBe('8000');
+		expect(latestSetting('Context capacity').description).toContain(
+			'Requests are blocked until both values are positive',
+		);
+	});
+
+	it('saves a valid pair, clears the marker, and removes the warning', async () => {
+		const { plugin, tab } = createModelSettingsTab();
+		plugin.settings.providers.deepseek.contextWindowTokens = 8000;
+		plugin.settings.providers.deepseek.outputReserveTokens = 8000;
+		plugin.settings.providers.deepseek.contextCapacityInvalid = true;
+		displaySettings(tab);
+		const renderedBefore = settingInstances.length;
+
+		await latestSetting('Context window (tokens)').texts[0]?.onChangeHandler('128000');
+
+		expect(plugin.settings.providers.deepseek).toMatchObject({
+			contextWindowTokens: 128000,
+			outputReserveTokens: 8000,
+			contextCapacityInvalid: false,
+		});
+		expect(plugin.saveSettings).toHaveBeenCalledOnce();
+		expect(capacitySettingNamesSince(renderedBefore)).not.toContain(
+			'Context capacity',
+		);
+	});
+
+	it('marks an equal reserve invalid and re-renders the warning', async () => {
+		const { plugin, tab } = createModelSettingsTab();
+		plugin.settings.providers.deepseek.contextWindowTokens = 128000;
+		plugin.settings.providers.deepseek.outputReserveTokens = 8000;
+		displaySettings(tab);
+		const renderedBefore = settingInstances.length;
+
+		await latestSetting('Output reserve (tokens)').texts[0]?.onChangeHandler('128000');
+
+		expect(plugin.settings.providers.deepseek).toMatchObject({
+			contextWindowTokens: 128000,
+			outputReserveTokens: 128000,
+			contextCapacityInvalid: true,
+		});
+		expect(plugin.saveSettings).toHaveBeenCalledOnce();
+		expect(capacitySettingNamesSince(renderedBefore)).toContain(
+			'Context capacity',
+		);
+	});
+
+	it('treats an unparsable input as invalid without discarding the other value', async () => {
+		const { plugin, tab } = createModelSettingsTab();
+		plugin.settings.providers.deepseek.outputReserveTokens = 8000;
+		displaySettings(tab);
+		const renderedBefore = settingInstances.length;
+
+		await latestSetting('Context window (tokens)').texts[0]?.onChangeHandler('abc');
+
+		expect(plugin.settings.providers.deepseek).toMatchObject({
+			contextWindowTokens: null,
+			outputReserveTokens: 8000,
+			contextCapacityInvalid: true,
+		});
+		expect(capacitySettingNamesSince(renderedBefore)).toContain(
+			'Context capacity',
+		);
+	});
+
+	it('treats clearing both inputs as an explicit return to unconfigured', async () => {
+		const { plugin, tab } = createModelSettingsTab();
+		plugin.settings.providers.deepseek.contextWindowTokens = 8000;
+		plugin.settings.providers.deepseek.outputReserveTokens = 8000;
+		plugin.settings.providers.deepseek.contextCapacityInvalid = true;
+		displaySettings(tab);
+
+		await latestSetting('Context window (tokens)').texts[0]?.onChangeHandler('');
+		const renderedBefore = settingInstances.length;
+		await latestSetting('Output reserve (tokens)').texts[0]?.onChangeHandler('');
+
+		expect(plugin.settings.providers.deepseek).toMatchObject({
+			contextWindowTokens: null,
+			outputReserveTokens: null,
+			contextCapacityInvalid: false,
+		});
+		expect(plugin.saveSettings).toHaveBeenCalledTimes(2);
+		expect(capacitySettingNamesSince(renderedBefore)).not.toContain(
+			'Context capacity',
+		);
+	});
+
+	it('changes only the active provider capacity', async () => {
+		const { plugin, tab } = createModelSettingsTab();
+		displaySettings(tab);
+
+		await latestSetting('Context window (tokens)').texts[0]?.onChangeHandler('64000');
+		await latestSetting('Output reserve (tokens)').texts[0]?.onChangeHandler('4000');
+
+		expect(plugin.settings.providers.deepseek).toMatchObject({
+			contextWindowTokens: 64000,
+			outputReserveTokens: 4000,
+			contextCapacityInvalid: false,
+		});
+		expect(plugin.settings.providers.kimi).toMatchObject({
+			contextWindowTokens: null,
+			outputReserveTokens: null,
+			contextCapacityInvalid: false,
+		});
+		expect(plugin.settings.providers.custom).toMatchObject({
+			contextWindowTokens: null,
+			outputReserveTokens: null,
+			contextCapacityInvalid: false,
+		});
+	});
 });

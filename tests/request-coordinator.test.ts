@@ -7,6 +7,7 @@ import type {
 	StreamResult,
 } from '../src/provider-stream';
 import { QUICK_ACTIONS } from '../src/quick-actions';
+import { ContextCapacityError } from '../src/context-accounting';
 import {
 	EditRequestCoordinator,
 	ReadOnlyRequestCoordinator,
@@ -31,6 +32,23 @@ const provider: ProviderConfig = {
 	reasoningEffort: 'low',
 	requestUsage: true,
 	discoveredModels: [],
+	contextWindowTokens: null,
+	outputReserveTokens: null,
+	contextCapacityInvalid: false,
+};
+
+const invalidCapacityProvider: ProviderConfig = {
+	...provider,
+	contextWindowTokens: 8000,
+	outputReserveTokens: 8000,
+	contextCapacityInvalid: true,
+};
+
+const validCapacityProvider: ProviderConfig = {
+	...provider,
+	contextWindowTokens: 128000,
+	outputReserveTokens: 8000,
+	contextCapacityInvalid: false,
 };
 
 function makeContext(overrides: Partial<RequestContext> = {}): RequestContext {
@@ -91,11 +109,12 @@ function makeAdditionalNotesLoader() {
 function makeCoordinator(
 	request = successfulRequest(),
 	instructions: InstructionPromptParts = { skillTexts: new Map() },
+	providerConfig: ProviderConfig = provider,
 ) {
 	const loadInstructions = vi.fn(async () => instructions);
 	const loadAdditionalNotes = makeAdditionalNotesLoader();
 	const coordinator = new ReadOnlyRequestCoordinator({
-		provider,
+		provider: providerConfig,
 		loadAdditionalNotes,
 		loadInstructions,
 		request,
@@ -159,6 +178,38 @@ describe('ReadOnlyRequestCoordinator', () => {
 			expect(requestArg?.systemPrompt).not.toContain('CriticMarkup');
 		},
 	);
+
+	it('rejects an invalid context capacity before loading instructions or additional notes', async () => {
+		const { coordinator, loadAdditionalNotes, loadInstructions, request } =
+			makeCoordinator(
+				successfulRequest(),
+				{ skillTexts: new Map() },
+				invalidCapacityProvider,
+			);
+
+		const error = await coordinator
+			.submit(makeSubmission())
+			.catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(ContextCapacityError);
+		expect(error).toMatchObject({ code: 'invalid-context-capacity' });
+		expect(loadAdditionalNotes).not.toHaveBeenCalled();
+		expect(loadInstructions).not.toHaveBeenCalled();
+		expect(request).not.toHaveBeenCalled();
+	});
+
+	it('proceeds unchanged for a valid context capacity', async () => {
+		const { coordinator, request } = makeCoordinator(
+			successfulRequest(),
+			{ skillTexts: new Map() },
+			validCapacityProvider,
+		);
+
+		await expect(coordinator.submit(makeSubmission())).resolves.toMatchObject({
+			content: 'Streamed answer',
+		});
+		expect(request).toHaveBeenCalledOnce();
+	});
 
 	it('loads current instructions for every request and places skills before AGENTS', async () => {
 		const instructions: InstructionPromptParts = {
@@ -437,6 +488,7 @@ function editRequest(
 function makeEditCoordinator(
 	request: ReturnType<typeof editRequest>,
 	currentText = '# Note\nOriginal text',
+	providerConfig: ProviderConfig = provider,
 ) {
 	const writer: NoteWriter = {
 		readCurrentText: vi.fn(async () => currentText),
@@ -446,7 +498,7 @@ function makeEditCoordinator(
 	const loadInstructions = vi.fn(async () => ({ skillTexts: new Map() }));
 	const loadAdditionalNotes = makeAdditionalNotesLoader();
 	const coordinator = new EditRequestCoordinator({
-		provider,
+		provider: providerConfig,
 		loadAdditionalNotes,
 		loadInstructions,
 		request,
@@ -480,6 +532,45 @@ describe('EditRequestCoordinator', () => {
 
 		expectTypeOf<Mode>().toEqualTypeOf<'edit'>();
 		expectTypeOf<Dependencies>().toHaveProperty('writer');
+	});
+
+	it('rejects an invalid context capacity before reading, loading, or writing', async () => {
+		const {
+			coordinator,
+			loadAdditionalNotes,
+			loadInstructions,
+			request,
+			writer,
+		} = makeEditCoordinator(
+			editRequest('[]'),
+			'# Note\nOriginal text',
+			invalidCapacityProvider,
+		);
+
+		const error = await coordinator
+			.submit(makeEditSubmission())
+			.catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(ContextCapacityError);
+		expect(error).toMatchObject({ code: 'invalid-context-capacity' });
+		expect(loadAdditionalNotes).not.toHaveBeenCalled();
+		expect(loadInstructions).not.toHaveBeenCalled();
+		expect(request).not.toHaveBeenCalled();
+		expect(writer.readCurrentText).not.toHaveBeenCalled();
+		expect(writer.write).not.toHaveBeenCalled();
+	});
+
+	it('proceeds unchanged for a valid context capacity', async () => {
+		const { coordinator, request } = makeEditCoordinator(
+			editRequest('[]'),
+			'# Note\nOriginal text',
+			validCapacityProvider,
+		);
+
+		await expect(
+			coordinator.submit(makeEditSubmission()),
+		).resolves.toMatchObject({ applied: false, changeCount: 0 });
+		expect(request).toHaveBeenCalledOnce();
 	});
 
 	it('always sends the complete captured source instead of bounded context', async () => {

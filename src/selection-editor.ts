@@ -3,6 +3,7 @@ import {
 	formatAdditionalNotesPrompt,
 	type AdditionalNoteSnapshot,
 } from './additional-notes-context';
+import { requireValidContextCapacity } from './context-accounting';
 import { prepareEditResponse } from './edit-response';
 import type { EditPreparation, EditStrategy } from './edit-strategy';
 import type { EditResult } from './note-writer';
@@ -210,6 +211,7 @@ export class SelectionEditRequestCoordinator {
 	) {}
 
 	async submit(submission: SelectionEditSubmission): Promise<SelectionEditResult> {
+		requireValidContextCapacity(this.dependencies.provider);
 		const additionalNotes = await this.dependencies.loadAdditionalNotes(
 			submission.additionalNotePaths,
 			submission.snapshot.file.path,

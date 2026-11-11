@@ -3,6 +3,7 @@ import {
 	type AdditionalNoteSnapshot,
 } from './additional-notes-context';
 import type { RequestContext } from './context';
+import { requireValidContextCapacity } from './context-accounting';
 import type { DeepSeekWebSearchCoordinator } from './deepseek-web';
 import { prepareEditResponse } from './edit-response';
 import type { EditStrategy } from './edit-strategy';
@@ -99,6 +100,7 @@ export class ReadOnlyRequestCoordinator {
 	) {}
 
 	async submit(submission: ReadOnlySubmission): Promise<ChatStreamResult> {
+		requireValidContextCapacity(this.dependencies.provider);
 		const additionalNotes = await this.dependencies.loadAdditionalNotes(
 			submission.additionalNotePaths,
 			submission.context.file.path,
@@ -169,6 +171,7 @@ export class EditRequestCoordinator {
 	) {}
 
 	async submit(submission: EditSubmission): Promise<EditRequestResult> {
+		requireValidContextCapacity(this.dependencies.provider);
 		const additionalNotes = await this.dependencies.loadAdditionalNotes(
 			submission.additionalNotePaths,
 			submission.context.file.path,

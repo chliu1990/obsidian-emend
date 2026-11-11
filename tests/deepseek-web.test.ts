@@ -30,6 +30,9 @@ const provider: ProviderConfig = {
 	reasoningEffort: 'high',
 	requestUsage: true,
 	discoveredModels: [],
+	contextWindowTokens: null,
+	outputReserveTokens: null,
+	contextCapacityInvalid: false,
 };
 
 const searchResult = {

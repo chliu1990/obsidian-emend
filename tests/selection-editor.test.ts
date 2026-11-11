@@ -1,6 +1,7 @@
 import { TFile, type MarkdownView } from 'obsidian';
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import type { AdditionalNoteSnapshot } from '../src/additional-notes-context';
+import { ContextCapacityError } from '../src/context-accounting';
 import type { EditPreparation } from '../src/edit-strategy';
 import { operationEditStrategy } from '../src/operation-edit-strategy';
 import { formatProviderHistory } from '../src/provider-history';
@@ -38,6 +39,23 @@ const provider: ProviderConfig = {
 	reasoningEffort: 'low',
 	requestUsage: false,
 	discoveredModels: [],
+	contextWindowTokens: null,
+	outputReserveTokens: null,
+	contextCapacityInvalid: false,
+};
+
+const invalidCapacityProvider: ProviderConfig = {
+	...provider,
+	contextWindowTokens: 8000,
+	outputReserveTokens: 8000,
+	contextCapacityInvalid: true,
+};
+
+const validCapacityProvider: ProviderConfig = {
+	...provider,
+	contextWindowTokens: 128000,
+	outputReserveTokens: 8000,
+	contextCapacityInvalid: false,
 };
 
 function markdownFile(path = 'folder/note.md'): TFile {
@@ -512,6 +530,7 @@ function makeSelectionCoordinator(
 	request: ReturnType<typeof selectionRequest>,
 	snapshot: SelectionSnapshot,
 	instructions: InstructionPromptParts = { skillTexts: new Map() },
+	providerConfig: ProviderConfig = provider,
 ) {
 	const { adapter, setCurrentText, setTargetCurrent } = makeAdapter(snapshot);
 	const loadInstructions = vi.fn(async () => instructions);
@@ -523,7 +542,7 @@ function makeSelectionCoordinator(
 		): Promise<AdditionalNoteSnapshot[]> => [],
 	);
 	const coordinator = new SelectionEditRequestCoordinator({
-		provider,
+		provider: providerConfig,
 		loadAdditionalNotes,
 		loadInstructions,
 		request,
@@ -570,6 +589,50 @@ describe('SelectionEditRequestCoordinator', () => {
 		expectTypeOf<Dependencies['loadAdditionalNotes']>().toEqualTypeOf<
 			Required<Dependencies>['loadAdditionalNotes']
 		>();
+	});
+
+	it('rejects an invalid context capacity before loading or replacing', async () => {
+		const snapshot = makeSnapshot();
+		const {
+			adapter,
+			coordinator,
+			loadAdditionalNotes,
+			loadInstructions,
+			request,
+		} = makeSelectionCoordinator(
+			selectionRequest(replaceBetaResponse),
+			snapshot,
+			{ skillTexts: new Map() },
+			invalidCapacityProvider,
+		);
+
+		const error = await coordinator
+			.submit(makeSelectionSubmission(snapshot))
+			.catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(ContextCapacityError);
+		expect(error).toMatchObject({ code: 'invalid-context-capacity' });
+		expect(loadAdditionalNotes).not.toHaveBeenCalled();
+		expect(loadInstructions).not.toHaveBeenCalled();
+		expect(request).not.toHaveBeenCalled();
+		expect(adapter.readCurrentText).not.toHaveBeenCalled();
+		expect(adapter.replaceRange).not.toHaveBeenCalled();
+	});
+
+	it('proceeds unchanged for a valid context capacity', async () => {
+		const snapshot = makeSnapshot();
+		const { adapter, coordinator, request } = makeSelectionCoordinator(
+			selectionRequest('[]'),
+			snapshot,
+			{ skillTexts: new Map() },
+			validCapacityProvider,
+		);
+
+		await expect(
+			coordinator.submit(makeSelectionSubmission(snapshot)),
+		).resolves.toMatchObject({ applied: false, changeCount: 0 });
+		expect(request).toHaveBeenCalledOnce();
+		expect(adapter.replaceRange).not.toHaveBeenCalled();
 	});
 
 	it('loads current instructions and uses the operation selection prompt', async () => {

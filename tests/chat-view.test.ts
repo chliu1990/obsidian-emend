@@ -807,6 +807,9 @@ describe('EmendChatView conversation saving', () => {
 			reasoningEffort: 'low',
 			requestUsage: true,
 			discoveredModels: [],
+			contextWindowTokens: null,
+			outputReserveTokens: null,
+			contextCapacityInvalid: false,
 		};
 		const writer = {
 			readCurrentText: vi.fn(async () => sourceText),
