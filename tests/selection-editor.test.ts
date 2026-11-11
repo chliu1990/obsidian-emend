@@ -1,7 +1,7 @@
 import { TFile, type MarkdownView } from 'obsidian';
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import type { AdditionalNoteSnapshot } from '../src/additional-notes-context';
-import { ContextCapacityError } from '../src/context-accounting';
+import { ContextCapacityError, accountRequestCharacters } from '../src/context-accounting';
 import type { EditPreparation } from '../src/edit-strategy';
 import { operationEditStrategy } from '../src/operation-edit-strategy';
 import { formatProviderHistory } from '../src/provider-history';
@@ -57,6 +57,30 @@ const validCapacityProvider: ProviderConfig = {
 	outputReserveTokens: 8000,
 	contextCapacityInvalid: false,
 };
+
+function capacityProviderForTokens(tokens: number, slack = 1): ProviderConfig {
+	const outputReserveTokens = 1000;
+	const effectiveInputTokens = Math.max(1, tokens - slack);
+	return {
+		...provider,
+		contextWindowTokens: effectiveInputTokens + outputReserveTokens,
+		outputReserveTokens,
+		contextCapacityInvalid: false,
+	};
+}
+
+function requestTokens(request: AiProviderRequest): number {
+	return accountRequestCharacters(request).estimatedInputTokens;
+}
+
+function requireRequest(
+	request: AiProviderRequest | undefined,
+): AiProviderRequest {
+	if (!request) {
+		throw new Error('Provider request missing.');
+	}
+	return request;
+}
 
 function markdownFile(path = 'folder/note.md'): TFile {
 	const file = new TFile();
@@ -1393,4 +1417,198 @@ describe('SelectionEditRequestCoordinator', () => {
 			expect(adapter.replaceRange).not.toHaveBeenCalled();
 		},
 	);
+});
+
+describe('authoritative assembled-request capacity checks for selections', () => {
+	it('counts the complete selected text and rejects without touching the editor', async () => {
+		const fullText = 'Selected material line.\n'.repeat(1500);
+		const snapshot = makeSnapshot(fullText, fullText, 0);
+
+		const grownProbe = makeSelectionCoordinator(
+			selectionRequest('[]'),
+			snapshot,
+		);
+		await grownProbe.coordinator.submit(makeSelectionSubmission(snapshot));
+		const grownTokens = requestTokens(
+			requireRequest(grownProbe.request.mock.calls[0]?.[0]),
+		);
+
+		const baseSnapshot = makeSnapshot();
+		const baseProbe = makeSelectionCoordinator(
+			selectionRequest('[]'),
+			baseSnapshot,
+		);
+		await baseProbe.coordinator.submit(
+			makeSelectionSubmission(baseSnapshot),
+		);
+		const baseTokens = requestTokens(
+			requireRequest(baseProbe.request.mock.calls[0]?.[0]),
+		);
+		expect(grownTokens).toBeGreaterThan(baseTokens);
+
+		const capacity = capacityProviderForTokens(grownTokens);
+		const {
+			adapter,
+			coordinator,
+			loadAdditionalNotes,
+			loadInstructions,
+			request,
+		} = makeSelectionCoordinator(
+			selectionRequest('[]'),
+			snapshot,
+			{ skillTexts: new Map() },
+			capacity,
+		);
+		const submission = makeSelectionSubmission(snapshot);
+		const originalSelectedText = submission.snapshot.selectedText;
+
+		const error = await coordinator
+			.submit(submission)
+			.catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(ContextCapacityError);
+		expect(error).toMatchObject({
+			code: 'context-capacity-exceeded',
+			details: {
+				kind: 'selection',
+				inputTokens: grownTokens,
+				effectiveInputTokens: grownTokens - 1,
+			},
+		});
+		expect((error as Error).message).toContain('Select a smaller target.');
+		expect((error as Error).message).not.toContain('Selected material line.');
+		expect(loadAdditionalNotes).toHaveBeenCalledOnce();
+		expect(loadInstructions).toHaveBeenCalledOnce();
+		expect(request).not.toHaveBeenCalled();
+		expect(adapter.readCurrentText).not.toHaveBeenCalled();
+		expect(adapter.replaceRange).not.toHaveBeenCalled();
+		expect(submission.snapshot.selectedText).toBe(originalSelectedText);
+	});
+
+	it('counts retained history in the assembled selection request', async () => {
+		const snapshot = makeSnapshot();
+		const history: ProviderHistoryMessage[] = Array.from(
+			{ length: 20 },
+			(_, index) => ({
+				role: index % 2 === 0 ? 'user' : 'assistant',
+				content: `Selection history ${index}. `.repeat(40),
+				mode: 'edit',
+				origin: index % 2 === 0 ? 'user' : 'local-edit-status',
+			}),
+		);
+
+		const baseProbe = makeSelectionCoordinator(
+			selectionRequest('[]'),
+			snapshot,
+		);
+		await baseProbe.coordinator.submit(makeSelectionSubmission(snapshot));
+		const baseTokens = requestTokens(
+			requireRequest(baseProbe.request.mock.calls[0]?.[0]),
+		);
+
+		const historyProbe = makeSelectionCoordinator(
+			selectionRequest('[]'),
+			snapshot,
+		);
+		await historyProbe.coordinator.submit(
+			makeSelectionSubmission(snapshot, { history }),
+		);
+		const grownTokens = requestTokens(
+			requireRequest(historyProbe.request.mock.calls[0]?.[0]),
+		);
+		expect(grownTokens).toBeGreaterThan(baseTokens);
+
+		const { adapter, coordinator, request } = makeSelectionCoordinator(
+			selectionRequest('[]'),
+			snapshot,
+			{ skillTexts: new Map() },
+			capacityProviderForTokens(grownTokens),
+		);
+
+		const error = await coordinator
+			.submit(makeSelectionSubmission(snapshot, { history }))
+			.catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(ContextCapacityError);
+		expect(error).toMatchObject({
+			code: 'context-capacity-exceeded',
+			details: { kind: 'selection', inputTokens: grownTokens },
+		});
+		expect(request).not.toHaveBeenCalled();
+		expect(adapter.replaceRange).not.toHaveBeenCalled();
+	});
+
+	it('counts freshly loaded instructions and additional notes in the assembled selection request', async () => {
+		const snapshot = makeSnapshot();
+		const instructions: InstructionPromptParts = {
+			agentText: 'Agent instructions',
+			skillTexts: new Map([
+				['skills/large/SKILL.md', 'Selection skill guidance.\n'.repeat(2000)],
+			]),
+		};
+		const additionalNote: AdditionalNoteSnapshot = {
+			sourcePath: 'Reference.md',
+			markdown: 'Additional selection context line.\n'.repeat(500),
+			sourceCharacters: 16000,
+			includedCharacters: 16000,
+		};
+
+		const baseProbe = makeSelectionCoordinator(
+			selectionRequest('[]'),
+			snapshot,
+		);
+		await baseProbe.coordinator.submit(makeSelectionSubmission(snapshot));
+		const baseTokens = requestTokens(
+			requireRequest(baseProbe.request.mock.calls[0]?.[0]),
+		);
+
+		const grownProbe = makeSelectionCoordinator(
+			selectionRequest('[]'),
+			snapshot,
+			instructions,
+		);
+		grownProbe.loadAdditionalNotes.mockResolvedValue([additionalNote]);
+		await grownProbe.coordinator.submit(
+			makeSelectionSubmission(snapshot, {
+				additionalNotePaths: ['Reference.md'],
+			}),
+		);
+		const grownTokens = requestTokens(
+			requireRequest(grownProbe.request.mock.calls[0]?.[0]),
+		);
+		expect(grownTokens).toBeGreaterThan(baseTokens);
+
+		const {
+			adapter,
+			coordinator,
+			loadAdditionalNotes,
+			loadInstructions,
+			request,
+		} = makeSelectionCoordinator(
+			selectionRequest('[]'),
+			snapshot,
+			instructions,
+			capacityProviderForTokens(grownTokens),
+		);
+		loadAdditionalNotes.mockResolvedValue([additionalNote]);
+
+		const error = await coordinator
+			.submit(
+				makeSelectionSubmission(snapshot, {
+					additionalNotePaths: ['Reference.md'],
+				}),
+			)
+			.catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(ContextCapacityError);
+		expect(error).toMatchObject({
+			code: 'context-capacity-exceeded',
+			details: { kind: 'selection', inputTokens: grownTokens },
+		});
+		expect(loadAdditionalNotes).toHaveBeenCalledOnce();
+		expect(loadInstructions).toHaveBeenCalledOnce();
+		expect(request).not.toHaveBeenCalled();
+		expect(adapter.readCurrentText).not.toHaveBeenCalled();
+		expect(adapter.replaceRange).not.toHaveBeenCalled();
+	});
 });

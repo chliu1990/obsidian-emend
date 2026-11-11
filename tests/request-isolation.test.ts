@@ -2,6 +2,7 @@ import { TFile } from 'obsidian';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EmendChatView } from '../src/chat-view';
 import type { RequestContext } from '../src/context';
+import { ContextCapacityError } from '../src/context-accounting';
 import EmendPlugin from '../src/main';
 import { HISTORY_PERMISSION_PROMPT } from '../src/mode';
 import { formatProviderHistory } from '../src/provider-history';
@@ -824,5 +825,52 @@ describe('additional-note request integration', () => {
 		expect(fixture.writes).toEqual([]);
 		expect(fixture.getText('Note.md')).toBe('Alpha beta.');
 		expect(fixture.getText('Reference.md')).toBe('Additional only.');
+	});
+});
+
+describe('context capacity request isolation', () => {
+	it('releases the note after a capacity failure and keeps other notes independent', async () => {
+		const fixture = makePluginFixture({
+			'Large.md': 'x'.repeat(20000),
+			'Small.md': 'Small note.',
+		});
+		fixture.plugin.settings.providers.custom = {
+			...provider,
+			contextWindowTokens: 2000,
+			outputReserveTokens: 1000,
+		};
+		requestMock.mockResolvedValue({
+			content: 'A capacity failure must never reach the provider.',
+			reasoning: '',
+		});
+
+		const error = await fixture.plugin
+			.requestChatCompletion(makeReadOnlySubmission(fixture, 'Large.md'))
+			.catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(ContextCapacityError);
+		expect(error).toMatchObject({
+			code: 'context-capacity-exceeded',
+			details: { kind: 'read-only' },
+		});
+		expect(requestMock).not.toHaveBeenCalled();
+		expect(fixture.writes).toEqual([]);
+
+		respondWith('Small answer');
+		await expect(
+			fixture.plugin.requestChatCompletion(
+				makeReadOnlySubmission(fixture, 'Small.md'),
+			),
+		).resolves.toMatchObject({ content: 'Small answer' });
+		expect(requestMock).toHaveBeenCalledOnce();
+
+		fixture.plugin.settings.providers.custom = { ...provider };
+		respondWith('Large answer');
+		await expect(
+			fixture.plugin.requestChatCompletion(
+				makeReadOnlySubmission(fixture, 'Large.md'),
+			),
+		).resolves.toMatchObject({ content: 'Large answer' });
+		expect(requestMock).toHaveBeenCalledTimes(2);
 	});
 });

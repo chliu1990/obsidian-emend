@@ -3,7 +3,11 @@ import {
 	type AdditionalNoteSnapshot,
 } from './additional-notes-context';
 import type { RequestContext } from './context';
-import { requireValidContextCapacity } from './context-accounting';
+import {
+	assertRequestWithinCapacity,
+	requireValidContextCapacity,
+	resolveContextCapacity,
+} from './context-accounting';
 import type { DeepSeekWebSearchCoordinator } from './deepseek-web';
 import { prepareEditResponse } from './edit-response';
 import type { EditStrategy } from './edit-strategy';
@@ -117,6 +121,11 @@ export class ReadOnlyRequestCoordinator {
 			),
 			history: submission.history,
 		};
+		assertRequestWithinCapacity(
+			request,
+			resolveContextCapacity(this.dependencies.provider),
+			'read-only',
+		);
 		const callbacks = {
 			onEvent: (event: Parameters<Parameters<typeof requestAiResponse>[1]['onEvent']>[0]) => {
 				if (event.type === 'content') {
@@ -189,6 +198,11 @@ export class EditRequestCoordinator {
 			),
 			history: submission.history,
 		};
+		assertRequestWithinCapacity(
+			request,
+			resolveContextCapacity(this.dependencies.provider),
+			'full-note',
+		);
 		const { prepared, usage } = await prepareEditResponse({
 			original: submission.context.sourceText,
 			request,

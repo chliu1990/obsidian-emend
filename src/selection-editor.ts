@@ -3,7 +3,11 @@ import {
 	formatAdditionalNotesPrompt,
 	type AdditionalNoteSnapshot,
 } from './additional-notes-context';
-import { requireValidContextCapacity } from './context-accounting';
+import {
+	assertRequestWithinCapacity,
+	requireValidContextCapacity,
+	resolveContextCapacity,
+} from './context-accounting';
 import { prepareEditResponse } from './edit-response';
 import type { EditPreparation, EditStrategy } from './edit-strategy';
 import type { EditResult } from './note-writer';
@@ -218,15 +222,21 @@ export class SelectionEditRequestCoordinator {
 			submission.signal,
 		);
 		const instructions = await this.dependencies.loadInstructions();
+		const request = {
+			provider: this.dependencies.provider,
+			systemPrompt: this.dependencies.editStrategy.getSelectionPrompt(instructions),
+			userPrompt: buildSelectionUserPrompt(submission, additionalNotes),
+			history: submission.history,
+		};
+		assertRequestWithinCapacity(
+			request,
+			resolveContextCapacity(this.dependencies.provider),
+			'selection',
+		);
 		const { prepared, usage } = await prepareEditResponse({
 			original: submission.snapshot.selectedText,
 			sourceContext: submission.snapshot,
-			request: {
-				provider: this.dependencies.provider,
-				systemPrompt: this.dependencies.editStrategy.getSelectionPrompt(instructions),
-				userPrompt: buildSelectionUserPrompt(submission, additionalNotes),
-				history: submission.history,
-			},
+			request,
 			editStrategy: this.dependencies.editStrategy,
 			requestRound: this.dependencies.request,
 			signal: submission.signal,

@@ -1,13 +1,17 @@
 import { TFile } from 'obsidian';
-import { describe, expect, expectTypeOf, it, vi } from 'vitest';
+import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 import type { AdditionalNoteSnapshot } from '../src/additional-notes-context';
-import type {
-	AiProviderRequest,
-	StreamEvent,
-	StreamResult,
+import {
+	requestAiResponse,
+	type AiProviderRequest,
+	type StreamEvent,
+	type StreamResult,
 } from '../src/provider-stream';
 import { QUICK_ACTIONS } from '../src/quick-actions';
-import { ContextCapacityError } from '../src/context-accounting';
+import {
+	ContextCapacityError,
+	accountRequestCharacters,
+} from '../src/context-accounting';
 import {
 	EditRequestCoordinator,
 	ReadOnlyRequestCoordinator,
@@ -50,6 +54,47 @@ const validCapacityProvider: ProviderConfig = {
 	outputReserveTokens: 8000,
 	contextCapacityInvalid: false,
 };
+
+function capacityProviderForTokens(tokens: number, slack = 1): ProviderConfig {
+	const outputReserveTokens = 1000;
+	const effectiveInputTokens = Math.max(1, tokens - slack);
+	return {
+		...provider,
+		contextWindowTokens: effectiveInputTokens + outputReserveTokens,
+		outputReserveTokens,
+		contextCapacityInvalid: false,
+	};
+}
+
+function requestTokens(request: AiProviderRequest): number {
+	return accountRequestCharacters(request).estimatedInputTokens;
+}
+
+function requireRequest(
+	request: AiProviderRequest | undefined,
+): AiProviderRequest {
+	if (!request) {
+		throw new Error('Provider request missing.');
+	}
+	return request;
+}
+
+function sseResponse(content: string): Response {
+	const stream = new ReadableStream<Uint8Array>({
+		start(controller) {
+			controller.enqueue(new TextEncoder().encode(
+				`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n` +
+					'data: [DONE]\n\n',
+			));
+			controller.close();
+		},
+	});
+	return new Response(stream);
+}
+
+afterEach(() => {
+	vi.unstubAllGlobals();
+});
 
 function makeContext(overrides: Partial<RequestContext> = {}): RequestContext {
 	const file = new TFile();
@@ -485,8 +530,8 @@ function editRequest(
 	);
 }
 
-function makeEditCoordinator(
-	request: ReturnType<typeof editRequest>,
+function makeEditCoordinator<T extends typeof requestAiResponse>(
+	request: T,
 	currentText = '# Note\nOriginal text',
 	providerConfig: ProviderConfig = provider,
 ) {
@@ -1469,5 +1514,332 @@ describe('ReadOnlyRequestCoordinator web routing', () => {
 			},
 		}))).rejects.toThrow('Online search is not available');
 		expect(ordinaryRequest).not.toHaveBeenCalled();
+	});
+});
+
+describe('authoritative assembled-request capacity checks', () => {
+	it('rejects an oversized read-only request after fresh additional-note reads without calling the provider', async () => {
+		const largeNote = makeAdditionalNote({
+			markdown: 'Additional detail line.\n'.repeat(500),
+		});
+		const baseProbe = makeCoordinator();
+		await baseProbe.coordinator.submit(makeSubmission());
+		const baseTokens = requestTokens(
+			requireRequest(baseProbe.request.mock.calls[0]?.[0]),
+		);
+
+		const noteProbe = makeCoordinator();
+		noteProbe.loadAdditionalNotes.mockResolvedValue([largeNote]);
+		await noteProbe.coordinator.submit(
+			makeSubmission({ additionalNotePaths: ['Reference.md'] }),
+		);
+		const grownTokens = requestTokens(
+			requireRequest(noteProbe.request.mock.calls[0]?.[0]),
+		);
+		expect(grownTokens).toBeGreaterThan(baseTokens);
+
+		const capacity = capacityProviderForTokens(grownTokens);
+		const effectiveInputTokens = grownTokens - 1;
+		expect(baseTokens).toBeLessThan(effectiveInputTokens);
+
+		const { coordinator, loadAdditionalNotes, loadInstructions, request } =
+			makeCoordinator(
+				successfulRequest(),
+				{ skillTexts: new Map() },
+				capacity,
+			);
+		loadAdditionalNotes.mockResolvedValue([largeNote]);
+		const submission = makeSubmission({ additionalNotePaths: ['Reference.md'] });
+		const originalSource = submission.context.sourceText;
+
+		const error = await coordinator
+			.submit(submission)
+			.catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(ContextCapacityError);
+		expect(error).toMatchObject({
+			code: 'context-capacity-exceeded',
+			details: {
+				kind: 'read-only',
+				inputTokens: grownTokens,
+				effectiveInputTokens,
+			},
+		});
+		expect((error as Error).message).toContain(
+			'Reduce context, chat history, additional notes, or Web output.',
+		);
+		expect((error as Error).message).not.toContain('Additional detail line.');
+		expect(loadAdditionalNotes).toHaveBeenCalledOnce();
+		expect(loadInstructions).toHaveBeenCalledOnce();
+		expect(request).not.toHaveBeenCalled();
+		expect(submission.callbacks.onContent).not.toHaveBeenCalled();
+		expect(submission.context.sourceText).toBe(originalSource);
+	});
+
+	it('counts freshly loaded instructions and skills in the assembled read-only request', async () => {
+		const instructions: InstructionPromptParts = {
+			agentText: 'Agent instructions',
+			skillTexts: new Map([
+				['skills/large/SKILL.md', 'Skill guidance line.\n'.repeat(2000)],
+			]),
+		};
+		const baseProbe = makeCoordinator();
+		await baseProbe.coordinator.submit(makeSubmission());
+		const baseTokens = requestTokens(
+			requireRequest(baseProbe.request.mock.calls[0]?.[0]),
+		);
+
+		const largeProbe = makeCoordinator(successfulRequest(), instructions);
+		await largeProbe.coordinator.submit(makeSubmission());
+		const grownTokens = requestTokens(
+			requireRequest(largeProbe.request.mock.calls[0]?.[0]),
+		);
+		expect(grownTokens).toBeGreaterThan(baseTokens);
+
+		const capacity = capacityProviderForTokens(grownTokens);
+		const { coordinator, loadInstructions, request } = makeCoordinator(
+			successfulRequest(),
+			instructions,
+			capacity,
+		);
+
+		const error = await coordinator
+			.submit(makeSubmission())
+			.catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(ContextCapacityError);
+		expect(error).toMatchObject({
+			code: 'context-capacity-exceeded',
+			details: { kind: 'read-only', inputTokens: grownTokens },
+		});
+		expect(loadInstructions).toHaveBeenCalledOnce();
+		expect(request).not.toHaveBeenCalled();
+	});
+
+	it('counts retained ready history in the assembled read-only request', async () => {
+		const history: ProviderHistoryMessage[] = Array.from(
+			{ length: 20 },
+			(_, index) => ({
+				role: index % 2 === 0 ? 'user' : 'assistant',
+				content: `History ${index}. `.repeat(40),
+				mode: 'ask',
+				origin: index % 2 === 0 ? 'user' : 'model',
+			}),
+		);
+		const baseProbe = makeCoordinator();
+		await baseProbe.coordinator.submit(makeSubmission());
+		const baseTokens = requestTokens(
+			requireRequest(baseProbe.request.mock.calls[0]?.[0]),
+		);
+
+		const historyProbe = makeCoordinator();
+		await historyProbe.coordinator.submit(makeSubmission({ history }));
+		const grownTokens = requestTokens(
+			requireRequest(historyProbe.request.mock.calls[0]?.[0]),
+		);
+		expect(grownTokens).toBeGreaterThan(baseTokens);
+
+		const capacity = capacityProviderForTokens(grownTokens);
+		const { coordinator, request } = makeCoordinator(
+			successfulRequest(),
+			{ skillTexts: new Map() },
+			capacity,
+		);
+
+		const error = await coordinator
+			.submit(makeSubmission({ history }))
+			.catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(ContextCapacityError);
+		expect(error).toMatchObject({
+			code: 'context-capacity-exceeded',
+			details: { kind: 'read-only', inputTokens: grownTokens },
+		});
+		expect(request).not.toHaveBeenCalled();
+	});
+
+	it('rejects an oversized read-only request before calling the Web coordinator', async () => {
+		const submission = makeSubmission({
+			webSearch: {
+				mode: 'auto',
+				maxToolCalls: 8,
+				maxContentCharactersPerCall: 20000,
+				reviewCalls: async (calls) => calls,
+				onActivity: vi.fn(),
+			},
+		});
+		const probe = makeCoordinator();
+		await probe.coordinator.submit(makeSubmission());
+		const requestTokens = accountRequestCharacters(
+			requireRequest(probe.request.mock.calls[0]?.[0]),
+		).estimatedInputTokens;
+
+		const webSubmit = vi.fn(async (): Promise<WebToolLoopResult> => {
+			throw new Error('Web coordinator must not run.');
+		});
+		const coordinator = new ReadOnlyRequestCoordinator({
+			provider: capacityProviderForTokens(requestTokens),
+			loadAdditionalNotes: makeAdditionalNotesLoader(),
+			loadInstructions: async () => ({ skillTexts: new Map() }),
+			request: successfulRequest(),
+			webSearch: { submit: webSubmit },
+		});
+
+		const error = await coordinator
+			.submit(submission)
+			.catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(ContextCapacityError);
+		expect(error).toMatchObject({
+			code: 'context-capacity-exceeded',
+			details: { kind: 'read-only', inputTokens: requestTokens },
+		});
+		expect(webSubmit).not.toHaveBeenCalled();
+	});
+
+	it('counts the complete full-note source instead of the bounded Markdown window', async () => {
+		const sourceText = 'Full note body line.\n'.repeat(2000);
+		const boundedMarkdown = 'Bounded window only.';
+		const fullContext = makeContext({
+			sourceText,
+			markdown: boundedMarkdown,
+		});
+
+		const fullProbe = makeEditCoordinator(editRequest('[]'));
+		await fullProbe.coordinator.submit(makeEditSubmission({ context: fullContext }));
+		const fullTokens = requestTokens(
+			requireRequest(fullProbe.request.mock.calls[0]?.[0]),
+		);
+
+		const boundedProbe = makeEditCoordinator(editRequest('[]'));
+		await boundedProbe.coordinator.submit(
+			makeEditSubmission({
+				context: makeContext({
+					sourceText: boundedMarkdown,
+					markdown: boundedMarkdown,
+				}),
+			}),
+		);
+		const boundedTokens = requestTokens(
+			requireRequest(boundedProbe.request.mock.calls[0]?.[0]),
+		);
+		expect(fullTokens).toBeGreaterThan(boundedTokens);
+		expect(
+			requireRequest(fullProbe.request.mock.calls[0]?.[0]).userPrompt,
+		).toContain(sourceText);
+
+		const capacity = capacityProviderForTokens(fullTokens);
+		const { coordinator, writer } = makeEditCoordinator(
+			editRequest('[]'),
+			sourceText,
+			capacity,
+		);
+		const submission = makeEditSubmission({ context: fullContext });
+		const originalSource = submission.context.sourceText;
+
+		const error = await coordinator
+			.submit(submission)
+			.catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(ContextCapacityError);
+		expect(error).toMatchObject({
+			code: 'context-capacity-exceeded',
+			details: {
+				kind: 'full-note',
+				inputTokens: fullTokens,
+				effectiveInputTokens: fullTokens - 1,
+			},
+		});
+		expect((error as Error).message).toContain('Use a smaller selection.');
+		expect((error as Error).message).not.toContain('Full note body line.');
+		expect(writer.readCurrentText).not.toHaveBeenCalled();
+		expect(writer.write).not.toHaveBeenCalled();
+		expect(submission.context.sourceText).toBe(originalSource);
+	});
+
+	it('fails terminally when correction growth exceeds capacity and succeeds after raising it', async () => {
+		const sourceText = '# Note\nOriginal text';
+		const invalidResponse = 'not-json';
+		const validResponse = JSON.stringify([
+			{ type: 'replace', target: 'Original', replacement: 'Edited' },
+		]);
+
+		const probe = vi.fn(async (
+			_request: AiProviderRequest,
+			_callbacks: { onEvent(event: StreamEvent): void },
+			_signal: AbortSignal,
+		): Promise<StreamResult> => {
+			if (probe.mock.calls.length === 1) {
+				return { content: invalidResponse, reasoning: '' };
+			}
+			throw new Error('Probe stop.');
+		});
+		const { coordinator: probeCoordinator } = makeEditCoordinator(
+			probe,
+			sourceText,
+		);
+		await expect(
+			probeCoordinator.submit(makeEditSubmission()),
+		).rejects.toThrow('Probe stop.');
+
+		const firstTokens = requestTokens(
+			requireRequest(probe.mock.calls[0]?.[0]),
+		);
+		const correctionTokens = requestTokens(
+			requireRequest(probe.mock.calls[1]?.[0]),
+		);
+		expect(correctionTokens).toBeGreaterThan(firstTokens);
+		const capacity = capacityProviderForTokens(correctionTokens);
+		expect(firstTokens).toBeLessThan(correctionTokens - 1);
+
+		const fetchMock = vi.fn(async () => sseResponse(invalidResponse));
+		vi.stubGlobal('fetch', fetchMock);
+		const transportRequest = vi.fn(requestAiResponse);
+		const { coordinator, writer } = makeEditCoordinator(
+			transportRequest,
+			sourceText,
+			capacity,
+		);
+		const submission = makeEditSubmission();
+		const originalSource = submission.context.sourceText;
+
+		const error = await coordinator
+			.submit(submission)
+			.catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(ContextCapacityError);
+		expect(error).toMatchObject({
+			code: 'context-capacity-exceeded',
+			details: {
+				kind: 'transport',
+				inputTokens: correctionTokens,
+				effectiveInputTokens: correctionTokens - 1,
+			},
+		});
+		expect(transportRequest).toHaveBeenCalledTimes(2);
+		expect(fetchMock).toHaveBeenCalledOnce();
+		expect(writer.readCurrentText).not.toHaveBeenCalled();
+		expect(writer.write).not.toHaveBeenCalled();
+		expect(submission.context.sourceText).toBe(originalSource);
+
+		const retryFetch = vi.fn()
+			.mockImplementationOnce(async () => sseResponse(invalidResponse))
+			.mockImplementationOnce(async () => sseResponse(validResponse));
+		vi.stubGlobal('fetch', retryFetch);
+		const retryRequest = vi.fn(requestAiResponse);
+		const retry = makeEditCoordinator(
+			retryRequest,
+			sourceText,
+			capacityProviderForTokens(correctionTokens, -50),
+		);
+
+		const result = await retry.coordinator.submit(makeEditSubmission());
+
+		expect(result).toMatchObject({ applied: true, changeCount: 1 });
+		expect(retryFetch).toHaveBeenCalledTimes(2);
+		expect(retry.writer.write).toHaveBeenCalledExactlyOnceWith(
+			submission.context.file,
+			'# Note\n{~~Original~>Edited~~} text',
+		);
 	});
 });
