@@ -216,6 +216,8 @@ export function buildContextCapacityBarModel(
 	};
 }
 
+let nextContextCapacityDisplayId = 0;
+
 export class ContextCapacityDisplay {
 	private rootEl: HTMLElement | null;
 	private summaryEl: HTMLElement | null;
@@ -225,11 +227,14 @@ export class ContextCapacityDisplay {
 	private detailsPinned = false;
 	private hasDetails = false;
 	private readonly onOutsidePointerDown: (event: PointerEvent) => void;
+	private readonly onDocumentKeyDown: (event: KeyboardEvent) => void;
 
 	constructor(containerEl: HTMLElement) {
+		const detailsId = `emend-context-capacity-details-${nextContextCapacityDisplayId}`;
+		nextContextCapacityDisplayId += 1;
 		const rootEl = containerEl.createDiv({
 			cls: 'emend-context-capacity is-unavailable',
-			attr: { tabindex: '0' },
+			attr: { tabindex: '0', 'aria-describedby': detailsId },
 		});
 		this.rootEl = rootEl;
 		this.summaryEl = rootEl.createDiv({
@@ -243,7 +248,7 @@ export class ContextCapacityDisplay {
 		this.bodyEl = rootEl.createDiv('emend-context-capacity-body');
 		this.detailsEl = rootEl.createDiv({
 			cls: 'emend-context-capacity-details',
-			attr: { role: 'tooltip' },
+			attr: { id: detailsId, role: 'tooltip' },
 		});
 		this.detailsEl.hidden = true;
 
@@ -267,21 +272,24 @@ export class ContextCapacityDisplay {
 				this.setDetailsVisible(false);
 			}
 		});
-		rootEl.addEventListener('click', () => {
-			if (!this.hasDetails) {
+		rootEl.addEventListener('click', (event) => {
+			if (
+				!this.hasDetails ||
+				(event.target && this.detailsEl?.contains(event.target as Node))
+			) {
 				return;
 			}
 			this.detailsPinned = !this.detailsPinned;
 			this.setDetailsVisible(this.detailsPinned);
 		});
-		rootEl.addEventListener('keydown', (event) => {
+		this.onDocumentKeyDown = (event) => {
 			if (event.key !== 'Escape' || !this.detailsVisible) {
 				return;
 			}
 			event.preventDefault();
 			event.stopPropagation();
 			this.dismissDetails();
-		});
+		};
 		this.onOutsidePointerDown = (event) => {
 			if (
 				this.detailsVisible &&
@@ -292,6 +300,7 @@ export class ContextCapacityDisplay {
 			}
 		};
 		rootEl.ownerDocument.addEventListener('pointerdown', this.onOutsidePointerDown);
+		rootEl.ownerDocument.addEventListener('keydown', this.onDocumentKeyDown);
 	}
 
 	render(estimate: DraftCapacityEstimate | undefined): void {
@@ -345,6 +354,10 @@ export class ContextCapacityDisplay {
 			this.rootEl.ownerDocument.removeEventListener(
 				'pointerdown',
 				this.onOutsidePointerDown,
+			);
+			this.rootEl.ownerDocument.removeEventListener(
+				'keydown',
+				this.onDocumentKeyDown,
 			);
 		}
 		this.rootEl?.remove();

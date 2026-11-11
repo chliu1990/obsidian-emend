@@ -303,8 +303,9 @@
 	background: var(--background-secondary);
 }
 
-.emend-context-capacity:focus-visible .emend-context-capacity-bar {
-	box-shadow: 0 0 0 2px var(--interactive-accent);
+.emend-context-capacity:focus-visible {
+	outline: 2px solid var(--interactive-accent);
+	outline-offset: 2px;
 }
 
 .emend-context-capacity-segment {

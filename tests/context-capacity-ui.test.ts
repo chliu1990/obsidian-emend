@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { TFile } from 'obsidian';
 import { describe, expect, it } from 'vitest';
 import {
@@ -126,8 +127,14 @@ class FakeElement {
 		this.listeners.set(type, listeners);
 	}
 
-	dispatch(type: string, key?: string) {
-		const event: FakeEvent = { type, target: this, key, preventDefault: () => undefined, stopPropagation: () => undefined };
+	dispatch(type: string, key?: string, target: FakeElement = this) {
+		const event: FakeEvent = {
+			type,
+			target,
+			key,
+			preventDefault: () => undefined,
+			stopPropagation: () => undefined,
+		};
 		for (const listener of this.listeners.get(type) ?? []) {
 			listener(event);
 		}
@@ -498,6 +505,26 @@ describe('ContextCapacityDisplay', () => {
 		expect(textOf(tooltip as FakeElement)).toContain('Excluded from this estimate:');
 	});
 
+	it('associates each focusable trigger with its non-live tooltip', () => {
+		const estimate = estimateForBar({
+			system: 10,
+			user: 20,
+			history: 15,
+			tools: 10,
+			continuation: 5,
+		});
+		const first = renderDisplay(estimate);
+		const second = renderDisplay(estimate);
+		const firstTooltip = findByClass(first.root, 'emend-context-capacity-details');
+		const secondTooltip = findByClass(second.root, 'emend-context-capacity-details');
+
+		expect(firstTooltip?.attributes.id).toBeTruthy();
+		expect(first.root.attributes['aria-describedby']).toBe(firstTooltip?.attributes.id);
+		expect(second.root.attributes['aria-describedby']).toBe(secondTooltip?.attributes.id);
+		expect(secondTooltip?.attributes.id).not.toBe(firstTooltip?.attributes.id);
+		expect(firstTooltip?.attributes['aria-live']).toBeUndefined();
+	});
+
 	it('caps overflow at the window and keeps the segments within the bar', () => {
 		const { root } = renderDisplay(estimateForBar({
 			system: 10,
@@ -588,6 +615,27 @@ describe('ContextCapacityDisplay', () => {
 		expect(tooltip.hidden).toBe(true);
 	});
 
+	it('keeps details pinned when clicks originate inside the tooltip', () => {
+		const { root } = renderDisplay(estimateForBar({
+			system: 10,
+			user: 20,
+			history: 15,
+			tools: 10,
+			continuation: 5,
+		}));
+		const tooltip = findByClass(root, 'emend-context-capacity-details') as FakeElement;
+		const detail = tooltip.children[0] as FakeElement;
+
+		root.dispatch('click');
+		root.dispatch('focusout');
+		root.dispatch('click', undefined, tooltip);
+		expect(tooltip.hidden).toBe(false);
+		root.dispatch('click', undefined, detail);
+		expect(tooltip.hidden).toBe(false);
+		root.dispatch('click');
+		expect(tooltip.hidden).toBe(true);
+	});
+
 	it('refreshes an open tooltip without closing it or replacing the live summary', () => {
 		const initial = estimateForBar({
 			system: 10,
@@ -617,7 +665,7 @@ describe('ContextCapacityDisplay', () => {
 		expect(tooltip.attributes['aria-live']).toBeUndefined();
 	});
 
-	it('dismisses a pinned tooltip with Escape or an outside pointer press', () => {
+	it('dismisses a pinned tooltip on document Escape after focus loss', () => {
 		const { root } = renderDisplay(estimateForBar({
 			system: 10,
 			user: 20,
@@ -626,15 +674,30 @@ describe('ContextCapacityDisplay', () => {
 			continuation: 5,
 		}));
 		const tooltip = findByClass(root, 'emend-context-capacity-details') as FakeElement;
+		const composer = new FakeElement('textarea', root.ownerDocument);
 
 		root.dispatch('click');
-		root.dispatch('keydown', 'Escape');
+		root.dispatch('focusout');
+		expect(tooltip.hidden).toBe(false);
+		root.ownerDocument.dispatch('keydown', composer, 'Escape');
+		expect(tooltip.hidden).toBe(true);
+		root.dispatch('click');
+		root.ownerDocument.dispatch('keydown', root, 'Escape');
 		expect(tooltip.hidden).toBe(true);
 		root.dispatch('click');
 		root.ownerDocument.dispatch('pointerdown', root);
 		expect(tooltip.hidden).toBe(false);
 		root.ownerDocument.dispatch('pointerdown', new FakeElement('div', root.ownerDocument));
 		expect(tooltip.hidden).toBe(true);
+	});
+
+	it('keeps keyboard focus visible on the wrapper even without a bar', () => {
+		const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+		const focusRule = css.match(
+			/\.emend-context-capacity:focus-visible\s*\{([^}]*)\}/,
+		)?.[1] ?? '';
+
+		expect(focusRule).toContain('outline: 2px solid var(--interactive-accent);');
 	});
 
 	it('exposes the authoritative invalid message for blocked submissions', () => {
@@ -664,6 +727,7 @@ describe('ContextCapacityDisplay', () => {
 
 		expect(root.removed).toBe(true);
 		expect(root.ownerDocument.listenerCount('pointerdown')).toBe(0);
+		expect(root.ownerDocument.listenerCount('keydown')).toBe(0);
 		expect(container.children).toHaveLength(1);
 		expect(textOf(root)).toContain('Draft estimate unavailable.');
 		expect(textOf(root)).not.toContain('Estimated input:');
