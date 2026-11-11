@@ -57,12 +57,22 @@ interface CompiledRange extends OriginalRange {
 interface CompiledEditOperations {
 	compiledMarkdown: string;
 	summaryItems: readonly EditSummaryItem[];
+	summary?: string;
 }
+
+interface ParsedEditResponse {
+	operations: unknown[];
+	summary?: string;
+}
+
+const SUMMARY_MAX_CHARACTERS = 2000;
+const RESPONSE_FIELD_KEYS = ['operations', 'summary'];
 
 const MINIMAL_TARGET_PROMPT = 'For every edit, use the smallest complete semantic target that contains the change. Put independent edits in separate nonoverlapping operations instead of broadening one target. Use insert for pure additions and remove for pure deletions. When text repeats, keep the target minimal and use occurrence rather than broadening the target.';
 const MARKDOWN_STRUCTURE_PROMPT = 'Do not target or insert inside fenced code. Inline code targets must include the complete backtick-delimited span. Tables allow only text edits within one existing header or body cell; do not edit rows, columns, or delimiter rows, and do not insert newlines or unescaped | separators.';
 
-const FULL_NOTE_PROMPT = `You are Emend, an AI editor for an Obsidian note. Return only a bare JSON array of edit operations against the complete original note. Do not return a rewritten document, prose, Markdown, or a code fence.
+const FULL_NOTE_PROMPT = `You are Emend, an AI editor for an Obsidian note. Return only JSON against the complete original note in one of two accepted forms: a bare JSON array of edit operations, or an envelope object {"summary":"optional short note","operations":[...]}. Do not return a rewritten document, prose, Markdown, or a code fence.
+The optional "summary" is a short note to the user about what changed and why. It is shown in chat and never written into the note.
 The closed command union is:
 - {"type":"insert","anchor":"exact original text","position":"before"|"after","text":"nonempty inserted text","occurrence":1}
 - {"type":"remove","target":"exact original text","occurrence":1}
@@ -74,7 +84,8 @@ ${MARKDOWN_STRUCTURE_PROMPT}
 
 ${HISTORY_PERMISSION_PROMPT}`;
 
-const SELECTION_PROMPT = `You are Emend, an AI editor for a selected portion of an Obsidian note. Return only a bare JSON array of edit operations against the selected portion. Do not return the full note, a rewritten document, prose, Markdown, or a code fence. Every anchor and target must be inside the selection.
+const SELECTION_PROMPT = `You are Emend, an AI editor for a selected portion of an Obsidian note. Return only JSON against the selected portion in one of two accepted forms: a bare JSON array of edit operations, or an envelope object {"summary":"optional short note","operations":[...]}. Do not return the full note, a rewritten document, prose, Markdown, or a code fence. Every anchor and target must be inside the selection.
+The optional "summary" is a short note to the user about what changed and why. It is shown in chat and never written into the note.
 The closed command union is:
 - {"type":"insert","anchor":"exact original text","position":"before"|"after","text":"nonempty inserted text","occurrence":1}
 - {"type":"remove","target":"exact original text","occurrence":1}
@@ -115,6 +126,7 @@ export const operationEditStrategy: EditStrategy = {
 			return {
 				...preparation,
 				summaryItems: compiled.summaryItems,
+				...(compiled.summary ? { summary: compiled.summary } : {}),
 			};
 		} catch {
 			throw new EditResponseValidationError(
@@ -138,23 +150,9 @@ function compileEditOperationsWithSummary(
 	response: string,
 	sourceContext?: EditSourceContext,
 ): CompiledEditOperations {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(response);
-	} catch {
-		throw new EditResponseValidationError(
-			'invalid-json',
-			'Operation edit response must be a bare JSON array.',
-		);
-	}
-	if (!Array.isArray(parsed)) {
-		throw new EditResponseValidationError(
-			'invalid-response-shape',
-			'Edit response must be a bare JSON array of operations.',
-		);
-	}
+	const parsed = parseEditResponse(response);
 
-	const resolved = parsed.map((value, order) =>
+	const resolved = parsed.operations.map((value, order) =>
 		resolveOperation(original, parseOperation(value, order), order),
 	);
 	validateRangeIsolation(resolved);
@@ -199,7 +197,81 @@ function compileEditOperationsWithSummary(
 	for (const change of changes) {
 		compiled = `${compiled.slice(0, change.start)}${change.text}${compiled.slice(change.end)}`;
 	}
-	return { compiledMarkdown: compiled, summaryItems };
+	return {
+		compiledMarkdown: compiled,
+		summaryItems,
+		...(parsed.summary ? { summary: parsed.summary } : {}),
+	};
+}
+
+function parseEditResponse(response: string): ParsedEditResponse {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(response);
+	} catch {
+		throw new EditResponseValidationError(
+			'invalid-json',
+			'Operation edit response must be a bare JSON array. An envelope object with summary and operations is also accepted.',
+		);
+	}
+	if (Array.isArray(parsed)) {
+		return { operations: parsed };
+	}
+	if (!isRecord(parsed)) {
+		throw invalidResponseShape(
+			'Edit response must be a bare JSON array of operations or an envelope object with operations and an optional summary.',
+		);
+	}
+
+	const unknownKey = Object.keys(parsed).find((key) => !RESPONSE_FIELD_KEYS.includes(key));
+	if (unknownKey !== undefined) {
+		throw invalidResponseShape(
+			`Envelope response contains an unknown field "${unknownKey}"; use only operations and summary.`,
+		);
+	}
+	const operations = parsed.operations;
+	if (!Object.prototype.hasOwnProperty.call(parsed, 'operations') || !Array.isArray(operations)) {
+		throw invalidResponseShape(
+			'Envelope response requires an operations array.',
+		);
+	}
+	return {
+		operations,
+		...(parsed.summary === undefined ? {} : { summary: parseSummary(parsed.summary) }),
+	};
+}
+
+function parseSummary(value: unknown): string | undefined {
+	if (typeof value !== 'string') {
+		throw invalidResponseShape('Envelope summary must be a string when present.');
+	}
+	const summary = value.trim();
+	if (summary.length === 0) {
+		return undefined;
+	}
+	if (summary.length <= SUMMARY_MAX_CHARACTERS) {
+		return summary;
+	}
+	return `${truncateSummary(summary)}…`;
+}
+
+function truncateSummary(summary: string): string {
+	const capped = summary.slice(0, SUMMARY_MAX_CHARACTERS);
+	for (let index = capped.length - 1; index >= 0; index -= 1) {
+		if (/\s/.test(capped[index] ?? '')) {
+			return withoutTrailingHighSurrogate(capped.slice(0, index).trimEnd());
+		}
+	}
+	return withoutTrailingHighSurrogate(capped);
+}
+
+function withoutTrailingHighSurrogate(text: string): string {
+	const last = text.charCodeAt(text.length - 1);
+	return last >= 0xd800 && last <= 0xdbff ? text.slice(0, -1) : text;
+}
+
+function invalidResponseShape(message: string): EditResponseValidationError {
+	return new EditResponseValidationError('invalid-response-shape', message);
 }
 
 function isUnchangedReplacement(operation: EditOperation): boolean {

@@ -268,7 +268,7 @@ describe('operation EditStrategy protocol', () => {
 		'{}',
 		'null',
 		'"remove alpha"',
-	])('requires a bare JSON array: %s', (response) => {
+	])('rejects malformed or non-array JSON: %s', (response) => {
 		expect(() => compileEditOperations('Alpha', response)).toThrow();
 	});
 
@@ -519,6 +519,198 @@ describe('operation summary metadata', () => {
 			{ type: 'remove', start: 0, end: 6 },
 		]);
 		expect(prepare('Alpha beta', []).summaryItems).toEqual([]);
+	});
+});
+
+describe('operation summary envelope', () => {
+	function prepareResponse(original: string, response: unknown) {
+		return operationEditStrategy.prepareEdit(original, JSON.stringify(response));
+	}
+
+	function responseError(run: () => unknown): Error {
+		try {
+			run();
+		} catch (error) {
+			return error as Error;
+		}
+		throw new Error('Expected an edit response validation error.');
+	}
+
+	function hasLoneSurrogate(value: string): boolean {
+		for (let index = 0; index < value.length; index += 1) {
+			const code = value.charCodeAt(index);
+			if (code >= 0xd800 && code <= 0xdbff) {
+				const next = value.charCodeAt(index + 1);
+				if (!(next >= 0xdc00 && next <= 0xdfff)) {
+					return true;
+				}
+				index += 1;
+			} else if (code >= 0xdc00 && code <= 0xdfff) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	const operations = [
+		{ type: 'replace', target: 'beta', replacement: 'gamma' },
+		{ type: 'insert', anchor: 'Alpha', position: 'after', text: '!' },
+	] as const;
+	const annotated = 'Alpha{++!++} {~~beta~>gamma~~}';
+
+	it('returns the trimmed envelope summary with the same compiled edit as the bare array', () => {
+		const bare = prepare('Alpha beta', operations);
+		const enveloped = prepareResponse('Alpha beta', {
+			summary: '  Replaced beta and emphasized Alpha.  ',
+			operations,
+		});
+
+		expect(enveloped).toEqual({
+			...bare,
+			summary: 'Replaced beta and emphasized Alpha.',
+		});
+	});
+
+	it('keeps a bare array valid without a summary', () => {
+		const preparation = prepare('Alpha beta', operations);
+
+		expect(preparation.summary).toBeUndefined();
+		expect(Object.prototype.hasOwnProperty.call(preparation, 'summary')).toBe(false);
+	});
+
+	it.each(['', '   ', '\n\t  '])(
+		'treats an empty or whitespace-only summary as absent',
+		(summary) => {
+			const preparation = prepareResponse('Alpha beta', { summary, operations });
+
+			expect(preparation.summary).toBeUndefined();
+			expect(preparation.annotatedMarkdown).toBe(annotated);
+		},
+	);
+
+	it('rejects an unknown envelope key', () => {
+		expect(responseError(() => prepareResponse('Alpha', {
+			operations: [],
+			note: 'extra',
+		}))).toMatchObject({
+			name: 'EditResponseValidationError',
+			code: 'invalid-response-shape',
+		});
+	});
+
+	it.each([
+		{ summary: 'Missing operations.' },
+		{ operations: {} },
+		{ operations: 'remove Alpha' },
+		{ operations: null },
+	])('rejects an envelope without an operations array: %s', (response) => {
+		expect(responseError(() => prepareResponse('Alpha', response))).toMatchObject({
+			name: 'EditResponseValidationError',
+			code: 'invalid-response-shape',
+		});
+	});
+
+	it.each([null, 3, true, [], {}])('rejects a non-string summary: %s', (summary) => {
+		expect(responseError(() => prepareResponse('Alpha', {
+			summary,
+			operations: [],
+		}))).toMatchObject({
+			name: 'EditResponseValidationError',
+			code: 'invalid-response-shape',
+		});
+	});
+
+	it('truncates an over-cap summary at a word boundary and still applies the edit', () => {
+		const summary = 'alpha '.repeat(400);
+		const preparation = prepareResponse('Alpha beta', { summary, operations });
+
+		expect(preparation.summary).toBe(`${'alpha '.repeat(332)}alpha…`);
+		expect(preparation.summary).toHaveLength(1998);
+		expect(preparation.summary?.length).toBeLessThanOrEqual(2001);
+		expect(preparation.annotatedMarkdown).toBe(annotated);
+	});
+
+	it('hard-slices an over-cap summary with no whitespace to 2,001 characters', () => {
+		const summary = 'x'.repeat(2500);
+		const preparation = prepareResponse('Alpha beta', { summary, operations });
+
+		expect(preparation.summary).toBe(`${'x'.repeat(2000)}…`);
+		expect(preparation.summary).toHaveLength(2001);
+		expect(preparation.annotatedMarkdown).toBe(annotated);
+	});
+
+	it('does not split a surrogate pair at the truncation cut', () => {
+		const summary = `${'x'.repeat(1999)}🙂${'y'.repeat(100)}`;
+		const preparation = prepareResponse('Alpha beta', { summary, operations });
+		const truncated = preparation.summary;
+
+		expect(truncated).toBe(`${'x'.repeat(1999)}…`);
+		expect(truncated).toHaveLength(2000);
+		expect(truncated?.length).toBeLessThanOrEqual(2001);
+		expect(hasLoneSurrogate(truncated ?? '')).toBe(false);
+		expect(preparation.annotatedMarkdown).toBe(annotated);
+	});
+
+	it('leaves a summary at exactly the cap unchanged', () => {
+		const summary = 'y'.repeat(2000);
+		const preparation = prepareResponse('Alpha beta', { summary, operations });
+
+		expect(preparation.summary).toBe(summary);
+	});
+
+	it('returns a no-change preparation that still carries the summary', () => {
+		expect(prepareResponse('Alpha beta', {
+			summary: 'Nothing needed changing.',
+			operations: [],
+		})).toEqual({
+			annotatedMarkdown: 'Alpha beta',
+			changeCount: 0,
+			summaryItems: [],
+			summary: 'Nothing needed changing.',
+		});
+	});
+
+	it('discards the summary when Stage 07 rejects the compiled markup', () => {
+		expect(responseError(() => prepareResponse('{--alpha--}', {
+			summary: 'This summary must not escape.',
+			operations: [{ type: 'comment', target: 'alpha', comment: 'nested' }],
+		}))).toMatchObject({
+			name: 'EditResponseValidationError',
+			code: 'compiled-markup-rejected',
+		});
+	});
+
+	it('does not expose the summary when an operation is invalid', () => {
+		const error = responseError(() => prepareResponse('Alpha', {
+			summary: 'This reason must not escape.',
+			operations: [{ type: 'remove', target: 'Beta' }],
+		}));
+
+		expect(error).toMatchObject({
+			name: 'EditResponseValidationError',
+			code: 'missing-target',
+		});
+		expect(error.message).not.toContain('This reason must not escape.');
+	});
+
+	it('compiles envelope operations through the exported compiler', () => {
+		expect(compileEditOperations('Alpha beta', JSON.stringify({
+			summary: 'Why.',
+			operations,
+		}))).toBe(annotated);
+	});
+
+	it('names both accepted response forms in the invalid-json diagnostic', () => {
+		const error = responseError(() => compileEditOperations('Alpha', 'not json'));
+
+		expect(error).toMatchObject({
+			name: 'EditResponseValidationError',
+			code: 'invalid-json',
+		});
+		expect(error.message).toContain('bare JSON array');
+		expect(error.message).toContain('envelope');
+		expect(error.message).toContain('operations');
+		expect(error.message).toContain('summary');
 	});
 });
 
@@ -1232,6 +1424,10 @@ describe('edit strategy factory and prompts', () => {
 				: operationEditStrategy.getSelectionPrompt(instructions);
 
 			expect(prompt).toContain('bare JSON array');
+			expect(prompt).toContain('"operations"');
+			expect(prompt).toContain('"summary"');
+			expect(prompt).toContain('shown in chat');
+			expect(prompt).toContain('never written into the note');
 			expect(prompt).toContain('"insert"');
 			expect(prompt).toContain('"remove"');
 			expect(prompt).toContain('"replace"');

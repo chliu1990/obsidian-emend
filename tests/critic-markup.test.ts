@@ -319,6 +319,7 @@ describe('edit preparation contract', () => {
 			annotatedMarkdown: string;
 			changeCount: number;
 			summaryItems: readonly EditSummaryItem[];
+			summary?: string;
 		}>();
 	});
 });

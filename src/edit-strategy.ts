@@ -12,6 +12,7 @@ export interface EditPreparation {
 	annotatedMarkdown: string;
 	changeCount: number;
 	summaryItems: readonly EditSummaryItem[];
+	summary?: string;
 }
 
 export interface EditSourceContext {
