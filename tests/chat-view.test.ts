@@ -436,7 +436,7 @@ describe('EmendChatView edit target control', () => {
 			replaceRange: vi.fn(),
 		};
 		const captureSelectionEditTarget = vi.fn(() => ({ snapshot, editor }));
-		captureSelectionEditTarget.mockImplementationOnce(() => {
+		captureSelectionEditTarget.mockImplementation(() => {
 			throw new Error('Select non-whitespace text first.');
 		});
 		const requestSelectionEdit = vi.fn(async () => ({
@@ -494,6 +494,7 @@ describe('EmendChatView edit target control', () => {
 		expect(persistMessages).not.toHaveBeenCalled();
 		expect(editor.replaceRange).not.toHaveBeenCalled();
 
+		captureSelectionEditTarget.mockImplementation(() => ({ snapshot, editor }));
 		if (context.inputEl) {
 			context.inputEl.value = 'Send using the visible mode';
 		}
@@ -4169,6 +4170,79 @@ describe('EmendChatView draft capacity estimate', () => {
 
 		expect(fixture.requestChatCompletion).toHaveBeenCalledOnce();
 		expect(fixture.requestChatCompletion.mock.calls[0]?.[0].mode).toBe('ask');
+	});
+
+	it('rechecks a quick action on click when capacity changed without a refresh', async () => {
+		const fixture = createCapacityView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const emptyEditTokens = fixture.fullNoteEstimate('').categories.estimatedInputTokens;
+		fixture.provider.contextWindowTokens = emptyEditTokens + 100;
+		fixture.provider.outputReserveTokens = 1;
+		viewPrototype.refreshCapacityEstimate.call(fixture.context);
+		expect(findQuickActionButton(fixture.contentEl, 'fix-grammar')?.disabled).toBe(false);
+		expect(fixture.context.selectedMode).toBe('ask');
+
+		fixture.provider.contextWindowTokens = emptyEditTokens + 2;
+		const blockedEstimate = fixture.fullNoteEstimate(QUICK_ACTIONS[0].prompt);
+		expect(blockedEstimate.blocked).toBe(true);
+		fixture.render.mockClear();
+
+		findQuickActionButton(fixture.contentEl, 'fix-grammar')?.dispatch('click');
+
+		expect(fixture.context.selectedMode).toBe('ask');
+		expect(fixture.render).not.toHaveBeenCalled();
+		expect(noticeMessages()).toContain(expectedBlockedNotice(blockedEstimate));
+		expect(fixture.context.messages).toEqual([]);
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
+		expect(fixture.editor.replaceRange).not.toHaveBeenCalled();
+	});
+
+	it('re-renders the active mode when submitPrompt blocks after a quick action', async () => {
+		const fixture = createCapacityView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const smallEstimate = fixture.fullNoteEstimate(QUICK_ACTIONS[0].prompt);
+		const largeSource = `Intro.\n${'Long paragraph. '.repeat(500)}`;
+		const largeContext = {
+			...fixture.requestContext,
+			sourceText: largeSource,
+			markdown: largeSource,
+		};
+		const largeRequest = {
+			systemPrompt: getEditStrategy().getFullNotePrompt(undefined),
+			userPrompt: buildUserPrompt(
+				largeContext,
+				QUICK_ACTIONS[0].prompt,
+				[],
+				largeSource,
+			),
+			history: [],
+		};
+		const largeTokens =
+			buildDraftCapacityEstimate({ provider: fixture.provider, request: largeRequest })
+				.categories.estimatedInputTokens;
+		expect(smallEstimate.categories.estimatedInputTokens).toBeLessThan(largeTokens);
+		fixture.provider.contextWindowTokens = largeTokens + 1;
+		fixture.provider.outputReserveTokens = 1;
+		const largeEstimate = buildDraftCapacityEstimate({
+			provider: fixture.provider,
+			request: largeRequest,
+		});
+		expect(largeEstimate.blocked).toBe(true);
+		fixture.captureChatContext.mockReturnValue(largeContext);
+		fixture.captureChatContext.mockReturnValueOnce(fixture.requestContext);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Preserve this draft';
+		}
+
+		findQuickActionButton(fixture.contentEl, 'fix-grammar')?.dispatch('click');
+
+		expect(fixture.context.selectedMode).toBe('edit');
+		expect(findActiveModeButtonIndex(fixture.contentEl)).toBe(1);
+		expect(fixture.context.inputEl?.value).toBe('Preserve this draft');
+		expect(noticeMessages()).toContain(expectedBlockedNotice(largeEstimate));
+		expect(fixture.context.messages).toEqual([]);
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
 	});
 
 	it('uses the shared context-limit normalization and vault-qualified note path', async () => {

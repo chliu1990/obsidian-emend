@@ -115,10 +115,6 @@ export class EmendChatView extends ItemView {
 		action: QuickAction;
 		button: HTMLButtonElement;
 	}> = [];
-	private readonly quickActionCapacityMessages = new Map<
-		QuickAction['id'],
-		string
-	>();
 	private draftCapacityBlocked = false;
 	private readonly drafts = new Map<string, string>();
 
@@ -171,7 +167,6 @@ export class EmendChatView extends ItemView {
 		this.capacityDisplay = null;
 		this.sendButtonEl = null;
 		this.quickActionButtons = [];
-		this.quickActionCapacityMessages?.clear();
 		this.draftCapacityBlocked = false;
 		this.inputEl = null;
 		this.editTargetSelectEl = null;
@@ -353,23 +348,45 @@ export class EmendChatView extends ItemView {
 			isSending: this.isSending,
 			isThreadLoading: this.isThreadLoading,
 		});
-		this.quickActionCapacityMessages?.clear();
 		for (const { action, button } of this.quickActionButtons) {
-			const estimate = actionTarget
-				? buildCapacityForTarget(
-					this.plugin.settings,
-					this.app,
-					actionTarget,
-					action.prompt,
-					history,
-				)
-				: undefined;
-			const blockMessage = formatDraftCapacityBlockMessage(estimate);
+			const { estimate } = this.getQuickActionCapacity(
+				action,
+				actionTarget,
+				history,
+			);
 			button.disabled = quickActionsDisabled || (estimate?.blocked ?? false);
-			if (blockMessage) {
-				this.quickActionCapacityMessages?.set(action.id, blockMessage);
-			}
 		}
+	}
+
+	private getQuickActionCapacity(
+		action: QuickAction,
+		actionTarget: DraftCapacityTarget | undefined,
+		history: ProviderHistoryMessage[],
+	): {
+		estimate: DraftCapacityEstimate | undefined;
+		blockMessage: string | undefined;
+	} {
+		const estimate = actionTarget
+			? buildCapacityForTarget(
+				this.plugin.settings,
+				this.app,
+				actionTarget,
+				action.prompt,
+				history,
+			)
+			: undefined;
+		return {
+			estimate,
+			blockMessage: formatDraftCapacityBlockMessage(estimate),
+		};
+	}
+
+	private evaluateQuickActionCapacity(action: QuickAction) {
+		return this.getQuickActionCapacity(
+			action,
+			this.captureDraftCapacityTarget(action.mode),
+			this.safeProviderHistory(),
+		);
 	}
 
 	private safeProviderHistory(): ProviderHistoryMessage[] {
@@ -394,7 +411,6 @@ export class EmendChatView extends ItemView {
 		this.capacityDisplay = null;
 		this.sendButtonEl = null;
 		this.quickActionButtons = [];
-		this.quickActionCapacityMessages?.clear();
 		const { contentEl } = this;
 		contentEl.empty();
 		contentEl.addClass('emend-chat-view');
@@ -840,16 +856,19 @@ export class EmendChatView extends ItemView {
 		})) {
 			return;
 		}
-		const blockMessage = this.quickActionCapacityMessages?.get(action.id);
+		const { blockMessage } = this.evaluateQuickActionCapacity(action);
 		if (blockMessage) {
 			new Notice(`Emend: ${blockMessage}`);
 			return;
 		}
 		this.selectedMode = action.mode;
-		await this.submitPrompt(action.prompt);
+		await this.submitPrompt(action.prompt, { fromQuickAction: true });
 	}
 
-	private async submitPrompt(prompt = this.inputEl?.value.trim() ?? '') {
+	private async submitPrompt(
+		prompt = this.inputEl?.value.trim() ?? '',
+		options?: { fromQuickAction?: boolean },
+	) {
 		if (!prompt || this.isSending || this.isThreadLoading) {
 			return;
 		}
@@ -907,6 +926,16 @@ export class EmendChatView extends ItemView {
 		);
 		if (capacityBlockMessage) {
 			new Notice(`Emend: ${capacityBlockMessage}`);
+			if (options?.fromQuickAction) {
+				const draft = this.inputEl?.value ?? '';
+				this.render();
+				if (this.inputEl) {
+					this.inputEl.value = draft;
+				}
+				if (this.capacityDisplay) {
+					this.refreshDraftEstimate(draft);
+				}
+			}
 			return;
 		}
 		const noteMessages = this.messages;
