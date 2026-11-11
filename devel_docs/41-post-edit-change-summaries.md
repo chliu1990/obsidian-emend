@@ -40,11 +40,11 @@ Edit applied — {changeCount} changes tracked. Review in Track Changes.
 Target: Full note.
 ```
 
-or `Target: Selection.`, then a blank line, the optional trimmed summary, and a blank line followed by one bullet per item. Without a summary the blank-line-and-summary block is omitted; without items the bullet block is omitted.
+or `Target: Selection.` When a trimmed summary is present, a blank line, the summary, and another blank line follow. When no summary is present, that entire blank-line-and-summary block is omitted. One bullet per item follows the summary block or the target line; without items the bullet block is omitted.
 
 `formatNoChangeSummary(summary)` returns exactly `No changes were needed.` or `No changes were needed.\n\n{summary}`. A no-op never shows a `Target:` line or bullets.
 
-Obsidian renders the header and target as consecutive Markdown lines inside one paragraph separated by a line break. The summary then forms its own paragraph, and bullets render as a Markdown list. The harness asserts this actual rendered DOM rather than assuming two header paragraphs.
+Obsidian renders the header and target as consecutive Markdown lines inside one paragraph separated by a line break. When present, the summary forms its own paragraph, and bullets render as a Markdown list. The harness asserts this actual rendered DOM rather than assuming two header paragraphs.
 
 Bullets apply `sourceOffset` exactly once to `start`, `end`, and `insertionPoint`. Full-note Edit passes `0` with the captured note `sourceText`; composer Selection passes `snapshot.from` with `snapshot.fullText`.
 
@@ -112,11 +112,11 @@ The summary is stored as part of the ready assistant message's Markdown content,
 
 Task 3 wrote `tests/edit-summary.test.ts` and updated chat fixtures before implementation. The first RED run showed the missing module (`Cannot find module '../src/edit-summary'`) plus four failing chat assertions that still received the header-only content. A header-only skeleton then produced thirteen assertion-level formatter failures, proving the tests exercise the rules; the empty-items header test already passed. The focused GREEN run passed the six edit/selection suites (**374 tests**).
 
-Task 4 covered envelope precedence, unknown keys, missing/non-array operations, non-string summaries, trimming, word-boundary and code-point-safe truncation, and Stage 07-only attachment. Task 5 covered the four applied layouts, the exact target line, no-op summaries, read-only non-exposure, correction second-candidate-only content, writer arguments, modal exclusion, and the pinned retry instruction. Task 6 covered the configurable limit, `0` disabling, single application, Selection history, and the modal's history-free path.
+Task 4 covered envelope precedence, unknown keys, missing/non-array operations, non-string summaries, trimming, word-boundary and code-point-safe truncation, and Stage 07-only attachment. Task 5 covered the four applied layouts, the exact target line, no-op summaries, read-only non-exposure, correction second-candidate-only content, writer arguments, modal exclusion, and its then-current retry instruction. Task 7 reworded and re-pinned that retry instruction and updated every exact-message assertion. Task 6 covered the configurable limit, `0` disabling, single application, Selection history, and the modal's history-free path.
 
 Coverage includes exact singular/plural strings for all four types, ranges with original note lines and response order, CRLF and a target ending at a newline, all three insertion line-boundary pins (inside a line, line start, EOF after a trailing newline), Selection offset applied exactly once to ranges and insertion points, eight items as eight bullets, nine and twenty items as seven plus one aggregate, fixed aggregate order with singular/plural nouns, comment-only `changeCount: 0`, empty items, and a leakage test proving anchors/targets/replacements/comment text never appear in bullets. Chat tests prove the full-note path formats against `sourceText` with no offset, the Selection path adds `snapshot.from` once to reach a note-absolute line, and no-ops keep the exact no-change line plus the summary.
 
-The full local gate passed **40 Vitest files and 1178 tests**, ESLint, strict TypeScript plus the production build, and `git diff --check` on the final source tree at `0bf8885`, and again after this evidence and the quick-start documentation updates. The last code commit is `1df4918`; the later branch commits change documentation and the ignored harness only.
+The final full local gate ran at commit `d20e0af` and passed **40 Vitest files and 1178 tests**, ESLint, strict TypeScript plus the production build, and `git diff --check`. The production bundle built at that commit has SHA-256 `32fc41a1262ac6fbdae62504e0c33188841727ec2090c8b6ebb8e5cf319ba7dc`. The last code commit is `1df4918`; later branch commits change documentation and the ignored harness only. The loopback evidence below was collected at `0bf8885` with bundle `e5d5bf8e…`, before those documentation-only commits; the `src/` tree is identical.
 
 ## Real-Obsidian loopback evidence
 
