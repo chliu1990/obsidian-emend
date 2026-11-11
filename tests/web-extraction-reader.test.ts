@@ -1399,6 +1399,47 @@ describe('WebExtractionReader extraction and verification', () => {
 		expect(request).toHaveBeenCalledOnce();
 	});
 
+	it('propagates an abort during verification', async () => {
+		const controller = new AbortController();
+		const reason = new DOMException('Stopped', 'AbortError');
+		let calls = 0;
+		const request = vi.fn(async (): Promise<StreamResult> => {
+			calls += 1;
+			if (calls === 1) return terminalRound(claimContent());
+			controller.abort(reason);
+			return terminalRound(supported());
+		});
+		const reader = new WebExtractionReader({ provider, request });
+
+		await expect(reader.extract(options({ signal: controller.signal }))).rejects.toBe(reason);
+		expect(request).toHaveBeenCalledTimes(2);
+	});
+
+	it('prefers an abort over a verifier capacity error', async () => {
+		const controller = new AbortController();
+		const reason = new DOMException('Stopped', 'AbortError');
+		const capacityError = new ContextCapacityError(
+			'context-capacity-exceeded',
+			'This request needs about 12 input tokens, at or above the 8-token input capacity. Reduce context, chat history, or Web output.',
+			{ kind: 'transport', inputTokens: 12, effectiveInputTokens: 8 },
+		);
+		let calls = 0;
+		const request = vi.fn(async (): Promise<StreamResult> => {
+			calls += 1;
+			if (calls === 1) {
+				return terminalRound(claimContent());
+			}
+			controller.abort(reason);
+			throw capacityError;
+		});
+		const reader = new WebExtractionReader({ provider, request });
+
+		await expect(
+			reader.extract(options({ signal: controller.signal })),
+		).rejects.toBe(reason);
+		expect(request).toHaveBeenCalledTimes(2);
+	});
+
 	it('propagates a capacity error from the extractor unchanged', async () => {
 		const capacityError = new ContextCapacityError(
 			'context-capacity-exceeded',
