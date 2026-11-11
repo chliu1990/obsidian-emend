@@ -64,9 +64,9 @@ Chat renders the summary through the existing Obsidian `MarkdownRenderer` path a
 ## Failure and no-op behavior
 
 - `applied: false` still stores exactly `No changes were needed.`; no bullets render.
-- Provider, validation, stale, abort, and write failures keep their existing error/stopped behavior, expose no summary items, and render no bullets.
+- Provider, validation, stale, abort, and write failures keep their existing error/stopped behavior and expose no ready summary. A pre-write abort renders no bullets; an abort during the awaited full-note `vault.modify` can still complete as `applied: true`, so its summary may remain in the resulting stopped message, which is never persisted.
 - Comment-only edits may apply with `changeCount: 0` and one comment bullet.
-- Stale and aborted requests still permit retry; summaries never appear for the failed attempt.
+- Stale and pre-write aborted requests still permit retry; no ready summary appears for the failed attempt.
 - The Command Palette Modify Selection modal keeps its existing notices and shows no summary, chat result, usage, or retry status.
 
 ## Persistence
@@ -87,7 +87,7 @@ The full local gate passed **40 Vitest files and 1123 tests**, ESLint, strict Ty
 - Runtime: official Obsidian 1.15.0 AppImage already under ignored `test_vault/emend-web-verify/tools/`, isolated Xvfb `:101`, CDP `19224`, and the CORS loopback OpenAI-compatible SSE mock at `127.0.0.1:18766`.
 - Data: only synthetic notes and a dummy SecretStorage credential under ignored `test_vault/emend-selection-chat-verify/`. No real provider, account, key, external or paid request, other vault, or fallback was used.
 - Bundle: the production `main.js` SHA-256 was `9463bf33d4ec24e05f95c644e7980fa2bda4fa41a5671f57c3b6bf455e8a4cd1`, and the harness asserted the loaded copy matched the root bundle.
-- Provenance: the harness copied `main.js` built from commit `bd091ce`, the last branch commit that touches `src/` (this document's commit changes documentation only). The production build embeds the short HEAD SHA as its build ID, so rebuilding after a documentation-only commit changes the bundle bytes but not the tested source or behavior.
+- Provenance: the harness copied `main.js` built at HEAD `bd091ce`, which has the same `src/` tree as the last code commit `339a7d5` (later branch commits, including this document's, change documentation only). The production build embeds the short HEAD SHA as its build ID, so rebuilding after a documentation-only commit changes the bundle bytes but not the tested source or behavior.
 - Command: `node test_vault/emend-selection-chat-verify/verify.mjs`.
 - Result: **15/15 scenarios and 298/298 assertions passed**. The harness now asserts rendered summary structure (header paragraph plus `<li>` text) and persisted Markdown for representative scenarios.
 
