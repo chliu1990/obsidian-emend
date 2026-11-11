@@ -480,6 +480,21 @@ describe('requestAiResponse', () => {
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
+	it('rethrows a fetch abort rejection without retrying', async () => {
+		const abortError = new DOMException('Aborted during fetch', 'AbortError');
+		const fetchMock = vi.fn().mockRejectedValue(abortError);
+		vi.stubGlobal('fetch', fetchMock);
+
+		await expect(
+			requestAiResponse(
+				makeRequest(),
+				{ onEvent: vi.fn() },
+				new AbortController().signal,
+			),
+		).rejects.toBe(abortError);
+		expect(fetchMock).toHaveBeenCalledOnce();
+	});
+
 	it('reports HTTP provider details without exposing credentials', async () => {
 		const fetchMock = vi.fn().mockResolvedValue(
 			new Response(
@@ -884,5 +899,49 @@ describe('requestAiResponse context capacity at the transport boundary', () => {
 		expect(error).not.toBeInstanceOf(ContextCapacityError);
 		expect(error.name).toBe('AbortError');
 		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it('rejects at exactly the effective capacity and passes one token below', async () => {
+		const request = makeRequest();
+		const tokens = accountRequestCharacters(request).estimatedInputTokens;
+		const atCapacityFetch = mockStream([
+			'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
+			'data: [DONE]\n\n',
+		]);
+
+		const atCapacityError = await getError(requestAiResponse(
+			{
+				...request,
+				provider: capacityProviderForTokens(tokens, 0),
+			},
+			{ onEvent: vi.fn() },
+			new AbortController().signal,
+		));
+
+		expect(atCapacityError).toBeInstanceOf(ContextCapacityError);
+		expect((atCapacityError as ContextCapacityError).details).toEqual({
+			kind: 'transport',
+			inputTokens: tokens,
+			effectiveInputTokens: tokens,
+		});
+		expect(atCapacityFetch).not.toHaveBeenCalled();
+
+		vi.unstubAllGlobals();
+		const belowCapacityFetch = mockStream([
+			'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
+			'data: [DONE]\n\n',
+		]);
+
+		const result = await requestAiResponse(
+			{
+				...request,
+				provider: capacityProviderForTokens(tokens, -1),
+			},
+			{ onEvent: vi.fn() },
+			new AbortController().signal,
+		);
+
+		expect(result.content).toBe('ok');
+		expect(belowCapacityFetch).toHaveBeenCalledOnce();
 	});
 });

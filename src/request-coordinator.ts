@@ -121,6 +121,7 @@ export class ReadOnlyRequestCoordinator {
 			),
 			history: submission.history,
 		};
+		submission.signal.throwIfAborted();
 		assertRequestWithinCapacity(
 			request,
 			resolveContextCapacity(this.dependencies.provider),
@@ -198,6 +199,7 @@ export class EditRequestCoordinator {
 			),
 			history: submission.history,
 		};
+		submission.signal.throwIfAborted();
 		assertRequestWithinCapacity(
 			request,
 			resolveContextCapacity(this.dependencies.provider),

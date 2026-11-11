@@ -11,6 +11,7 @@ import type {
 	StreamEvent,
 	StreamResult,
 } from '../src/provider-stream';
+import { ContextCapacityError } from '../src/context-accounting';
 import { resolveRoundTokenUsage } from '../src/token-usage';
 import type { ProviderConfig } from '../src/types';
 import type { WebExtractionOutcome } from '../src/web-extraction';
@@ -20,7 +21,7 @@ import {
 	type WebExtractionReaderOptions,
 	type WebExtractionReaderResult,
 } from '../src/web-extraction-reader';
-import type { WebSearchRunOptions, WebToolCall } from '../src/web-search';
+import type { WebSearchActivity, WebSearchRunOptions, WebToolCall } from '../src/web-search';
 
 const provider: ProviderConfig = {
 	name: 'DeepSeek',
@@ -1937,5 +1938,41 @@ describe('DeepSeek web transport retry and search degradation', () => {
 		expect(fetchPage).toHaveBeenCalledOnce();
 		expect(reader.extract).not.toHaveBeenCalled();
 		expect(request).toHaveBeenCalledOnce();
+	});
+});
+
+describe('DeepSeekWebSearchCoordinator capacity propagation', () => {
+	it('rejects with the reader capacity error without a partial answer or extraction warning', async () => {
+		const capacityError = new ContextCapacityError(
+			'context-capacity-exceeded',
+			'This request needs about 120 input tokens, at or above the 80-token input capacity. Reduce context, chat history, or Web output.',
+			{ kind: 'transport', inputTokens: 120, effectiveInputTokens: 80 },
+		);
+		const request = vi.fn()
+			.mockResolvedValueOnce(toolRound([searchCall('call-1', 'needle query')]))
+			.mockImplementation(async (): Promise<StreamResult> => {
+				throw capacityError;
+			});
+		const search = vi.fn(async () => [parsedSearchResult]);
+		const fetchPage = vi.fn();
+		const onActivity = vi.fn((_activity: WebSearchActivity) => undefined);
+		const onEvent = vi.fn((_event: StreamEvent) => undefined);
+		const coordinator = new DeepSeekWebSearchCoordinator({
+			provider,
+			request,
+			search,
+			fetchPage,
+		});
+		const runOptions = options({ onActivity, callbacks: { onEvent } });
+
+		await expect(coordinator.submit(aiRequest(), runOptions)).rejects.toBe(
+			capacityError,
+		);
+
+		expect(search).toHaveBeenCalledOnce();
+		expect(onEvent).not.toHaveBeenCalled();
+		expect(
+			onActivity.mock.calls.map(([activity]) => activity.label),
+		).not.toContain('Extraction failed: needle query');
 	});
 });

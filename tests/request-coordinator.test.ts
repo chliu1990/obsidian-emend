@@ -1843,3 +1843,27 @@ describe('authoritative assembled-request capacity checks', () => {
 		);
 	});
 });
+
+describe('capacity abort precedence in coordinators', () => {
+	it('lets an abort during additional-note loading win over the capacity error', async () => {
+		const controller = new AbortController();
+		const { coordinator, loadAdditionalNotes, request } = makeCoordinator(
+			successfulRequest(),
+			{ skillTexts: new Map() },
+			capacityProviderForTokens(1),
+		);
+		loadAdditionalNotes.mockImplementation(async () => {
+			controller.abort();
+			return [];
+		});
+
+		const error = await coordinator
+			.submit(makeSubmission({ signal: controller.signal }))
+			.catch((thrown: unknown) => thrown);
+
+		expect(error).not.toBeInstanceOf(ContextCapacityError);
+		expect(error).toMatchObject({ name: 'AbortError' });
+		expect(loadAdditionalNotes).toHaveBeenCalledOnce();
+		expect(request).not.toHaveBeenCalled();
+	});
+});

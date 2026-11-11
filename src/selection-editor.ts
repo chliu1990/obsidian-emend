@@ -228,6 +228,7 @@ export class SelectionEditRequestCoordinator {
 			userPrompt: buildSelectionUserPrompt(submission, additionalNotes),
 			history: submission.history,
 		};
+		submission.signal.throwIfAborted();
 		assertRequestWithinCapacity(
 			request,
 			resolveContextCapacity(this.dependencies.provider),

@@ -7,6 +7,7 @@ import {
 	type StreamResult,
 } from './provider-stream';
 import type { ProviderConfig } from './types';
+import { ContextCapacityError } from './context-accounting';
 import {
 	grepRetrievalDocuments,
 	normalizeClaimText,
@@ -105,6 +106,22 @@ export class WebExtractionReaderError extends Error {
 	}
 }
 
+export function findContextCapacityError(
+	error: unknown,
+): ContextCapacityError | undefined {
+	let current: unknown = error;
+	for (let depth = 0; depth < 5; depth += 1) {
+		if (current instanceof ContextCapacityError) {
+			return current;
+		}
+		if (!(current instanceof Error)) {
+			return undefined;
+		}
+		current = (current as Error & { cause?: unknown }).cause;
+	}
+	return undefined;
+}
+
 interface WebExtractionReaderDependencies {
 	provider: ProviderConfig;
 	request: typeof requestAiResponse;
@@ -146,6 +163,10 @@ export class WebExtractionReader {
 			}
 			if (error instanceof Error && error.name === 'AbortError') {
 				throw error;
+			}
+			const capacityError = findContextCapacityError(error);
+			if (capacityError) {
+				throw capacityError;
 			}
 			const failureKind: WebExtractionFailureKind = error instanceof ReaderFailure
 				? error.kind
@@ -322,6 +343,10 @@ export class WebExtractionReader {
 				if (error instanceof Error && error.name === 'AbortError') {
 					throw error;
 				}
+				const capacityError = findContextCapacityError(error);
+				if (capacityError) {
+					throw capacityError;
+				}
 				return buildVerifiedOutcome(extractorOutcome, accepted);
 			}
 			verifierPasses += 1;
@@ -430,6 +455,10 @@ export class WebExtractionReader {
 			}
 			if (error instanceof Error && error.name === 'AbortError') {
 				throw error;
+			}
+			const capacityError = findContextCapacityError(error);
+			if (capacityError) {
+				throw capacityError;
 			}
 			return [];
 		}
