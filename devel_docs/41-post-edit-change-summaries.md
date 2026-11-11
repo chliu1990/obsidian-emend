@@ -86,8 +86,8 @@ The full local gate passed **40 Vitest files and 1123 tests**, ESLint, strict Ty
 - Date: 2026-11-11, Asia/Shanghai.
 - Runtime: official Obsidian 1.15.0 AppImage already under ignored `test_vault/emend-web-verify/tools/`, isolated Xvfb `:101`, CDP `19224`, and the CORS loopback OpenAI-compatible SSE mock at `127.0.0.1:18766`.
 - Data: only synthetic notes and a dummy SecretStorage credential under ignored `test_vault/emend-selection-chat-verify/`. No real provider, account, key, external or paid request, other vault, or fallback was used.
-- Bundle: the production `main.js` SHA-256 was `91b3871331f87d78e152781889e1c8af7216a67294ed6c22f94f09d0a75b00dd`, and the harness asserted the loaded copy matched the root bundle.
-- Provenance: the harness copied `main.js` built from the working tree that became commit `709a248` (the visible feature commit). Later branch commits changed tests and documentation, plus a behavior-neutral hoist of the summary source/offset locals in `chat-view.ts`, so this loopback evidence applies to the same displayed behavior.
+- Bundle: the production `main.js` SHA-256 was `9463bf33d4ec24e05f95c644e7980fa2bda4fa41a5671f57c3b6bf455e8a4cd1`, and the harness asserted the loaded copy matched the root bundle.
+- Provenance: the harness copied `main.js` built from commit `bd091ce`, the last branch commit that touches `src/` (this document's commit changes documentation only). The production build embeds the short HEAD SHA as its build ID, so rebuilding after a documentation-only commit changes the bundle bytes but not the tested source or behavior.
 - Command: `node test_vault/emend-selection-chat-verify/verify.mjs`.
 - Result: **15/15 scenarios and 298/298 assertions passed**. The harness now asserts rendered summary structure (header paragraph plus `<li>` text) and persisted Markdown for representative scenarios.
 
