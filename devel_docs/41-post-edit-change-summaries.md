@@ -116,16 +116,40 @@ Task 4 covered envelope precedence, unknown keys, missing/non-array operations, 
 
 Coverage includes exact singular/plural strings for all four types, ranges with original note lines and response order, CRLF and a target ending at a newline, all three insertion line-boundary pins (inside a line, line start, EOF after a trailing newline), Selection offset applied exactly once to ranges and insertion points, eight items as eight bullets, nine and twenty items as seven plus one aggregate, fixed aggregate order with singular/plural nouns, comment-only `changeCount: 0`, empty items, and a leakage test proving anchors/targets/replacements/comment text never appear in bullets. Chat tests prove the full-note path formats against `sourceText` with no offset, the Selection path adds `snapshot.from` once to reach a note-absolute line, and no-ops keep the exact no-change line plus the summary.
 
-The final local gate count and commit are recorded after the last gate run. The gate covers the source and test tree; later documentation-only commits do not change the tested code.
+The full local gate passed **40 Vitest files and 1178 tests**, ESLint, strict TypeScript plus the production build, and `git diff --check` on the final source tree. The source gate commit is `1df4918`; the later `0bf8885` documentation commit and this evidence update change documentation only. The gate was rerun on the documentation-complete tree with the same counts.
 
 ## Real-Obsidian loopback evidence
 
-Verification status is recorded after the final harness run. Only ignored synthetic notes, the local loopback mock, and a dummy credential are used; no real provider or paid call is claimed.
+- Date: 2026-11-11, Asia/Shanghai.
+- Runtime: official Obsidian 1.15.0 AppImage under ignored `test_vault/emend-web-verify/tools/`, isolated Xvfb `:101`, CDP `19224`, and the CORS loopback OpenAI-compatible SSE mock at `127.0.0.1:18766`.
+- Data: only synthetic notes and a dummy SecretStorage credential under ignored `test_vault/emend-selection-chat-verify/`. No real provider, account, key, external or paid request, other vault, or fallback was used.
+- Bundle: the production `main.js` SHA-256 was `e5d5bf8ed39e5110e6f788e061bb0cd774dacb48b0632f17655d017304279f99`, built at HEAD `0bf8885`; the harness asserted the loaded copy matched the root bundle. It also asserts the connected CDP vault is the script's isolated runtime vault, preventing stale Obsidian processes from producing false evidence.
+- Command: `node test_vault/emend-selection-chat-verify/verify.mjs`.
+- Result: **17/17 scenarios and 348/348 assertions passed**.
+
+New and strengthened scenarios:
+
+| Scenario | Observed result |
+| --- | --- |
+| Typed multiline Selection, envelope summary | Stored `Edit applied — 1 changes tracked. Review in Track Changes.\nTarget: Selection.\n\nChanged the selected second line from beta to gamma.\n\n- Replaced lines 5–6.`; Obsidian rendered the header and target in one paragraph with a line break, the summary as its own paragraph, and the bullet as a list item. |
+| Quick actions, bare array | Header plus `Target: Selection.` with no summary paragraph, then the exact bullet. |
+| Full note override, envelope summary | Header plus `Target: Full note.`, the model summary, and `- Replaced line 5.` |
+| Invalid-to-valid correction | Only the successful summary `Corrected the second repeated line once the target was disambiguated.` and `- Replaced line 4.`; `REJECTED_COMPOSER_SELECTION_SUMMARY must never surface.` was absent from ready text and persisted Markdown. |
+| Comment-only | `Edit applied — 0 changes tracked. Review in Track Changes.\nTarget: Selection.` plus `- Commented on line 3.` |
+| No-op with summary | Exactly `No changes were needed.` plus a blank line and `No edits were needed because the note already matches the request.`; no target line, no bullets, no write. |
+| Selection history | After an Ask exchange, a composer Selection edit sent four wire messages: system, the prior Ask user prompt annotated as read-only, the prior Ask model answer annotated as read-only, and the current Selection prompt. |
+| Full-note history | The following full-note Edit sent six wire messages, retaining the Ask pair and the earlier Selection user prompt plus its local Edit status, including the `Target: Selection.` and summary layout. |
+| Chat history limit 0 | With **Chat history messages** set to 0 through the real settings UI, a later Ask request sent only system and current user messages. The harness restored 8 afterward. |
+
+Reload persistence: the audit read every stored schema 2 thread. It confirmed the typed, full-note-override, and correction results persisted the exact target, summary, and bullet Markdown; the no-op persisted the no-change line plus its summary and no target line; the comment result persisted the target and zero-change bullet; rejected summaries, candidates, diagnostics, note snapshots, selections, additional-note content, and the dummy credential were absent. The Command Palette modal created no thread.
+
+Failure-surface evidence: Stop and stale retries now include the earlier ready user prompt as annotated history, because the stopped or errored assistant response is excluded but its accepted user message remains ready. The harness asserts this rather than claiming empty history.
 
 ## Unverified items
 
 - Windows and macOS rendering and physical keyboard input were not exercised. Native undo and redo were asserted in loopback, which restored the original selection and redo restored the annotated selection.
-- The harness exercises small one-item applied summaries only; the eight-bullet cap and aggregate order are covered by unit tests, not real Obsidian rendering.
+- The harness exercises small one-item applied summaries only; the eight-bullet cap, aggregate order, and the 2,000-code-unit summary truncation are covered by unit tests, not real Obsidian rendering.
+- The real-Obsidian history setting was exercised at 0 and the default 8, not above 8. Unit tests cover the 50-message bound and prove coordinators and the transport do not re-slice the configured window.
 - Comment-only display used a synthetic comment; real Track Changes comment presentation for these exact bullets was not separately re-inspected.
 - Non-ASCII line counting relies on UTF-16 offsets and is covered by unit tests plus the existing café/emoji notes, not by a dedicated new summary scenario.
 - No real-provider request was made; provider behavior is unchanged and out of scope.
