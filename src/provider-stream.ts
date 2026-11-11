@@ -98,7 +98,7 @@ export async function requestAiResponse(
 				model,
 				messages: [
 					{ role: 'system', content: request.systemPrompt },
-					...formatProviderHistory(request.history.slice(-8)),
+					...formatProviderHistory(request.history),
 					{ role: 'user', content: request.userPrompt },
 					...formatContinuationMessages(request.continuation ?? []),
 				],

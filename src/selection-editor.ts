@@ -14,6 +14,7 @@ import type {
 	InstructionPromptParts,
 	Mode,
 	ProviderConfig,
+	ProviderHistoryMessage,
 	SelectionSnapshot,
 } from './types';
 
@@ -59,6 +60,7 @@ export interface SelectionEditSubmission {
 	maxContextCharacters: number;
 	smartSelectionContext: boolean;
 	additionalNotePaths: readonly string[];
+	history: ProviderHistoryMessage[];
 	notePath?: string;
 	signal: AbortSignal;
 	callbacks?: SelectionEditCallbacks;
@@ -221,7 +223,7 @@ export class SelectionEditRequestCoordinator {
 				provider: this.dependencies.provider,
 				systemPrompt: this.dependencies.editStrategy.getSelectionPrompt(instructions),
 				userPrompt: buildSelectionUserPrompt(submission, additionalNotes),
-				history: [],
+				history: submission.history,
 			},
 			editStrategy: this.dependencies.editStrategy,
 			requestRound: this.dependencies.request,

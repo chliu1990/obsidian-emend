@@ -525,6 +525,7 @@ describe('EmendChatView edit target styles', () => {
 describe('EmendChatView provider history', () => {
 	it('filters transient entries and preserves metadata in the last eight ready messages', () => {
 		const context = {
+			plugin: { settings: { historyMessageLimit: 8 } },
 			messages: [
 				{ ...message('old-question', 'Note.md'), role: 'user' as const, content: 'Old question' },
 				{ ...message('old-answer', 'Note.md'), content: 'Old answer' },
@@ -557,6 +558,7 @@ describe('EmendChatView provider history', () => {
 
 	it('keeps retrieved sources with their historical answer so source IDs remain unambiguous', () => {
 		const context = {
+			plugin: { settings: { historyMessageLimit: 8 } },
 			messages: [{
 				...message('researched-answer', 'Note.md'),
 				content: 'Historical answer [S1]',
@@ -567,6 +569,57 @@ describe('EmendChatView provider history', () => {
 		expect(viewPrototype.toProviderHistory.call(context)[0]?.content).toBe(
 			'Historical answer [S1]\n\n### Sources\n- [S1] [Original source](https://example.test/original)',
 		);
+	});
+
+	it.each([
+		[8, 8],
+		[3, 3],
+	])('sends the last %i ready messages when the limit is %i', (limit, expectedCount) => {
+		const context = {
+			plugin: { settings: { historyMessageLimit: limit } },
+			messages: Array.from({ length: 12 }, (_, index) =>
+				message(`ready-${index}`, 'Note.md')
+			),
+		};
+
+		const history = viewPrototype.toProviderHistory.call(context);
+
+		expect(history).toHaveLength(expectedCount);
+		expect(history.map((entry) => entry.content)).toEqual(
+			Array.from(
+				{ length: expectedCount },
+				(_, offset) => `ready-${12 - expectedCount + offset}`,
+			),
+		);
+	});
+
+	it('sends no history when the limit is zero', () => {
+		const context = {
+			plugin: { settings: { historyMessageLimit: 0 } },
+			messages: [
+				message('question', 'Note.md'),
+				message('answer', 'Note.md'),
+			],
+		};
+
+		expect(viewPrototype.toProviderHistory.call(context)).toEqual([]);
+	});
+
+	it('filters transient entries before applying the limit', () => {
+		const context = {
+			plugin: { settings: { historyMessageLimit: 2 } },
+			messages: [
+				message('older', 'Note.md'),
+				message('newest', 'Note.md'),
+				{ ...message('loading', 'Note.md'), status: 'loading' as const },
+				{ ...message('error', 'Note.md'), status: 'error' as const },
+				{ ...message('stopped', 'Note.md'), status: 'stopped' as const },
+			],
+		};
+
+		expect(
+			viewPrototype.toProviderHistory.call(context).map((entry) => entry.content),
+		).toEqual(['older', 'newest']);
 	});
 });
 
@@ -804,6 +857,7 @@ describe('EmendChatView conversation saving', () => {
 				captureChatContext: () => requestContext,
 				additionalNotesStore: new AdditionalNotesStore(),
 				requestChatCompletion,
+				settings: { historyMessageLimit: 8 },
 			},
 			toProviderHistory: () => viewPrototype.toProviderHistory.call(context),
 			persistMessages: vi.fn(async (_path: string, messages: ChatMessage[]) => {
@@ -935,6 +989,7 @@ function createSelectionEditSubmission(options: SelectionSubmissionOptions = {})
 		_signal: AbortSignal,
 		_editor: SelectionEditorAdapter,
 		_additionalNotePaths: readonly string[],
+		_history: ProviderHistoryMessage[],
 		callbacks?: SelectionEditCallbacks,
 	): Promise<SelectionEditResult> => {
 		callbacks?.onReasoning?.('REJECTED raw JSON and diagnostics');
@@ -1006,7 +1061,7 @@ function createSelectionEditSubmission(options: SelectionSubmissionOptions = {})
 			additionalNotesStore,
 			requestChatCompletion,
 			requestSelectionEdit,
-			settings: { maxWebToolCalls: 8 },
+			settings: { maxWebToolCalls: 8, historyMessageLimit: 8 },
 		},
 		toProviderHistory: () => viewPrototype.toProviderHistory.call(context),
 		persistMessages: vi.fn(async (_path: string, messages: ChatMessage[]) => {
@@ -1053,8 +1108,9 @@ describe('EmendChatView selection edit submission', () => {
 		expect(args?.[2].aborted).toBe(false);
 		expect(args?.[3]).toBe(fixture.editor);
 		expect(args?.[4]).toEqual(['Reference.md']);
-		expect(typeof args?.[5]?.onReasoning).toBe('function');
-		expect(typeof args?.[5]?.onRetry).toBe('function');
+		expect(args?.[5]).toEqual([]);
+		expect(typeof args?.[6]?.onReasoning).toBe('function');
+		expect(typeof args?.[6]?.onRetry).toBe('function');
 		expect(fixture.context.messages[1]).toMatchObject({
 			status: 'ready',
 			content: summary,
@@ -1082,6 +1138,26 @@ describe('EmendChatView selection edit submission', () => {
 		)).toEqual([
 			'Edit selection',
 			summary,
+		]);
+	});
+
+	it('sends the same captured ready history as full-note and read-only requests', async () => {
+		const fixture = createSelectionEditSubmission();
+		fixture.context.messages.push(
+			{
+				...message('earlier-question', 'Note.md'),
+				role: 'user',
+				content: 'Earlier question',
+			},
+			message('earlier-answer', 'Note.md'),
+		);
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		const args = fixture.requestSelectionEdit.mock.calls[0];
+		expect(args?.[5]).toEqual([
+			{ role: 'user', content: 'Earlier question', mode: 'ask', origin: 'user' },
+			{ role: 'assistant', content: 'earlier-answer', mode: 'ask', origin: 'model' },
 		]);
 	});
 

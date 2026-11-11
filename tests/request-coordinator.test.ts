@@ -182,7 +182,7 @@ describe('ReadOnlyRequestCoordinator', () => {
 		}
 	});
 
-	it('caps provider history at the last eight ready messages', async () => {
+	it('passes the full ready history through unchanged', async () => {
 		const { coordinator, request } = makeCoordinator();
 		const history: ProviderHistoryMessage[] = Array.from(
 			{ length: 12 },
@@ -196,7 +196,7 @@ describe('ReadOnlyRequestCoordinator', () => {
 
 		await coordinator.submit(makeSubmission({ history }));
 
-		expect(request.mock.calls[0]?.[0].history).toEqual(history.slice(-8));
+		expect(request.mock.calls[0]?.[0].history).toEqual(history);
 	});
 
 	it('adds an estimated usage source using the exact request and response text', async () => {
@@ -502,6 +502,23 @@ describe('EditRequestCoordinator', () => {
 		expect(request.mock.calls[0]?.[0].systemPrompt).toContain(
 			'bare JSON array',
 		);
+	});
+
+	it('passes the full ready history through unchanged', async () => {
+		const { coordinator, request } = makeEditCoordinator(editRequest('[]'));
+		const history: ProviderHistoryMessage[] = Array.from(
+			{ length: 12 },
+			(_, index) => ({
+				role: index % 2 === 0 ? 'user' : 'assistant',
+				content: `ready ${index}`,
+				mode: 'edit',
+				origin: index % 2 === 0 ? 'user' : 'local-edit-status',
+			}),
+		);
+
+		await coordinator.submit(makeEditSubmission({ history }));
+
+		expect(request.mock.calls[0]?.[0].history).toEqual(history);
 	});
 
 	it.each(QUICK_ACTIONS)(

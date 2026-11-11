@@ -1,11 +1,16 @@
 import { MarkdownView, TFile } from 'obsidian';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EmendChatView } from '../src/chat-view';
 import type { ConversationDataAdapter } from '../src/conversation-store';
 import EmendPlugin from '../src/main';
 import type { ReadOnlySubmission } from '../src/request-coordinator';
+import type { SelectionEditorAdapter } from '../src/selection-editor';
 import { DEFAULT_SETTINGS } from '../src/settings';
-import type { ChatMessage, EmendSettings } from '../src/types';
+import type {
+	ChatMessage,
+	EmendSettings,
+	ProviderHistoryMessage,
+} from '../src/types';
 
 class MemoryAdapter implements ConversationDataAdapter {
 	readonly files = new Map<string, string>();
@@ -127,6 +132,7 @@ describe('EmendPlugin workspace conversation events', () => {
 			getActiveNotePath: () => activeNotePath,
 			captureChatContext: () => ({ file: { path: activeNotePath } }),
 			requestChatCompletion,
+			settings: structuredClone(DEFAULT_SETTINGS),
 		});
 		const view = Object.create(EmendChatView.prototype) as EmendChatView;
 		Object.assign(view, {
@@ -560,5 +566,85 @@ describe('EmendPlugin web provider guard', () => {
 			},
 			signal: new AbortController().signal,
 		})).rejects.toThrow('only available for DeepSeek deepseek-flash and deepseek-v4-pro');
+	});
+});
+
+describe('EmendPlugin Selection history', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('forwards the captured ready history into the Selection provider request', async () => {
+		const encoder = new TextEncoder();
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(encoder.encode(
+					'data: {"choices":[{"delta":{"content":"[]"}}]}\n\n',
+				));
+				controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+				controller.close();
+			},
+		});
+		const fetchMock = vi.fn().mockResolvedValue(new Response(stream));
+		vi.stubGlobal('fetch', fetchMock);
+		const file = new TFile();
+		file.path = 'Selection.md';
+		const fullText = 'BeforebetaAfter';
+		const editor: SelectionEditorAdapter = {
+			readCurrentText: () => fullText,
+			isTargetCurrent: () => true,
+			replaceRange: vi.fn(),
+		};
+		const snapshot = {
+			file,
+			fullText,
+			selectedText: 'beta',
+			from: 6,
+			to: 10,
+		};
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, {
+			settings: structuredClone(DEFAULT_SETTINGS),
+			app: {
+				vault: {
+					getAbstractFileByPath: () => null,
+				},
+			},
+			getApiKey: () => 'dummy-key',
+		});
+		const history: ProviderHistoryMessage[] = Array.from(
+			{ length: 12 },
+			(_, index) => ({
+				role: index % 2 === 0 ? 'user' : 'assistant',
+				content: `ready ${index}`,
+				mode: 'ask',
+				origin: index % 2 === 0 ? 'user' : 'model',
+			}),
+		);
+
+		const result = await plugin.requestSelectionEdit(
+			snapshot,
+			'Improve this selection.',
+			new AbortController().signal,
+			editor,
+			[],
+			history,
+		);
+
+		expect(result.applied).toBe(false);
+		expect(fetchMock).toHaveBeenCalledOnce();
+		const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+		const body = JSON.parse(init.body as string) as {
+			messages: Array<{ role: string; content: string }>;
+		};
+		const historical = body.messages.filter((item) =>
+			item.content.startsWith('[Historical'),
+		);
+		expect(historical).toHaveLength(12);
+		expect(historical[0]?.content).toContain('ready 0');
+		expect(historical.at(-1)?.content).toContain('ready 11');
+		const current = body.messages.at(-1);
+		expect(current?.role).toBe('user');
+		expect(current?.content).toContain('User message:');
 	});
 });

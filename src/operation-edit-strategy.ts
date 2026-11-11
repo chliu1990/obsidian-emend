@@ -93,7 +93,8 @@ The closed command union is:
 - {"type":"comment","target":"exact original text","comment":"nonempty comment","occurrence":1}
 The occurrence field is optional. Omit it only when the anchor or target occurs exactly once; otherwise use a one-based positive integer. Use no other commands or fields. Return [] when no change is needed. Never include CriticMarkup delimiters in operation strings.
 ${MINIMAL_TARGET_PROMPT}
-${MARKDOWN_STRUCTURE_PROMPT}`;
+${MARKDOWN_STRUCTURE_PROMPT}
+${HISTORY_PERMISSION_PROMPT}`;
 
 export const operationEditStrategy: EditStrategy = {
 	id: 'operations',

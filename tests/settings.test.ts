@@ -215,6 +215,7 @@ describe('normalizeSettings', () => {
 			maxContextCharacters: 24000,
 			maxWebToolCalls: 12,
 			maxWebContentCharactersPerCall: 24000,
+			historyMessageLimit: 12,
 		};
 
 		expect(normalizeSettings(data)).toEqual(data);
@@ -258,6 +259,31 @@ describe('normalizeSettings', () => {
 		expect(normalizeSettings({ maxWebToolCalls: 99 }).maxWebToolCalls).toBe(20);
 		expect(normalizeSettings({ maxWebToolCalls: '8' }).maxWebToolCalls).toBe(8);
 		expect(normalizeSettings({ maxWebToolCalls: Number.NaN }).maxWebToolCalls).toBe(8);
+	});
+
+	it('defaults, bounds, and floors the chat history message limit', () => {
+		expect(DEFAULT_SETTINGS.historyMessageLimit).toBe(8);
+		expect(normalizeSettings({}).historyMessageLimit).toBe(8);
+		expect(normalizeSettings({ historyMessageLimit: 0 }).historyMessageLimit).toBe(0);
+		expect(normalizeSettings({ historyMessageLimit: 50 }).historyMessageLimit).toBe(50);
+		expect(normalizeSettings({ historyMessageLimit: 51 }).historyMessageLimit).toBe(50);
+		expect(normalizeSettings({ historyMessageLimit: -3 }).historyMessageLimit).toBe(0);
+		expect(normalizeSettings({ historyMessageLimit: 7.9 }).historyMessageLimit).toBe(7);
+		expect(normalizeSettings({ historyMessageLimit: Number.NaN }).historyMessageLimit).toBe(8);
+		expect(normalizeSettings({ historyMessageLimit: Number.POSITIVE_INFINITY }).historyMessageLimit).toBe(8);
+		expect(normalizeSettings({ historyMessageLimit: '12' }).historyMessageLimit).toBe(8);
+		expect(normalizeSettings({ historyMessageLimit: null }).historyMessageLimit).toBe(8);
+	});
+
+	it('persists a valid chat history limit through sanitized settings', () => {
+		const normalized = normalizeSettings({ historyMessageLimit: 12 });
+
+		const sanitized = sanitizeSettings(normalized);
+
+		expect(sanitized.historyMessageLimit).toBe(12);
+		expect(sanitized.providers.deepseek.apiKey).toBe('');
+		expect(sanitized.providers.kimi.apiKey).toBe('');
+		expect(sanitized.providers.custom.apiKey).toBe('');
 	});
 
 	it('defaults, floors, and clamps the per-call web output character cap', () => {
@@ -511,6 +537,45 @@ function createModelSettingsTab() {
 function displaySettings(tab: EmendSettingTab) {
 	(tab as unknown as { display(): void }).display();
 }
+
+describe('EmendSettingTab chat history limit', () => {
+	beforeEach(() => {
+		settingInstances.length = 0;
+	});
+
+	it('describes the shared history window and its disabled state', () => {
+		const { tab } = createModelSettingsTab();
+		displaySettings(tab);
+
+		expect(latestSetting('Chat history messages').description).toBe(
+			'Recent ready messages sent with each request. Set 0 to disable chat history. Applies to Ask, Discuss, Brainstorm, and both full-note and Selection Edit.',
+		);
+	});
+
+	it('normalizes and saves the numeric history limit without changing provider configs', async () => {
+		const { plugin, tab } = createModelSettingsTab();
+		displaySettings(tab);
+		const text = latestSetting('Chat history messages').texts[0];
+		if (!text) throw new Error('Missing history limit input');
+
+		expect(text.inputEl.type).toBe('number');
+		expect(text.inputEl.min).toBe('0');
+		expect(text.inputEl.max).toBe('50');
+		expect(text.inputEl.step).toBe('1');
+		expect(text.value).toBe('8');
+		await text.onChangeHandler('0');
+
+		expect(plugin.settings.historyMessageLimit).toBe(0);
+		expect(plugin.settings.providers).toEqual(DEFAULT_SETTINGS.providers);
+		expect(plugin.saveSettings).toHaveBeenCalledOnce();
+
+		plugin.saveSettings.mockClear();
+		await text.onChangeHandler('51');
+
+		expect(plugin.settings.historyMessageLimit).toBe(50);
+		expect(plugin.saveSettings).toHaveBeenCalledOnce();
+	});
+});
 
 describe('EmendSettingTab web output cap', () => {
 	beforeEach(() => {

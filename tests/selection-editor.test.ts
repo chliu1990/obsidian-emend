@@ -3,6 +3,7 @@ import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import type { AdditionalNoteSnapshot } from '../src/additional-notes-context';
 import type { EditPreparation } from '../src/edit-strategy';
 import { operationEditStrategy } from '../src/operation-edit-strategy';
+import { formatProviderHistory } from '../src/provider-history';
 import type {
 	AiProviderRequest,
 	StreamEvent,
@@ -22,6 +23,7 @@ import {
 import type {
 	InstructionPromptParts,
 	ProviderConfig,
+	ProviderHistoryMessage,
 	SelectionSnapshot,
 } from '../src/types';
 
@@ -549,6 +551,7 @@ function makeSelectionSubmission(
 		maxContextCharacters: 20,
 		smartSelectionContext: true,
 		additionalNotePaths: [],
+		history: [],
 		signal: new AbortController().signal,
 		...overrides,
 	};
@@ -944,6 +947,64 @@ describe('SelectionEditRequestCoordinator', () => {
 			},
 		});
 		expect(request.mock.calls[0]?.[0].history).toEqual([]);
+	});
+
+	it('sends the captured ready history and counts it in estimated usage', async () => {
+		const snapshot = makeSnapshot();
+		const { coordinator, request } = makeSelectionCoordinator(
+			selectionRequest(replaceBetaResponse),
+			snapshot,
+		);
+		const history: ProviderHistoryMessage[] = Array.from(
+			{ length: 12 },
+			(_, index) => ({
+				role: index % 2 === 0 ? 'user' : 'assistant',
+				content: `ready ${index}`,
+				mode: 'ask',
+				origin: index % 2 === 0 ? 'user' : 'model',
+			}),
+		);
+
+		const result = await coordinator.submit(
+			makeSelectionSubmission(snapshot, { history }),
+		);
+
+		const requestArg = request.mock.calls[0]?.[0];
+		if (!requestArg) {
+			throw new Error('Provider request missing.');
+		}
+		expect(requestArg.history).toEqual(history);
+		const historyCharacters = formatProviderHistory(requestArg.history).reduce(
+			(sum, item) => sum + item.content.length,
+			0,
+		);
+		const promptTokens = Math.max(
+			1,
+			Math.ceil(
+				(requestArg.systemPrompt.length +
+					requestArg.userPrompt.length +
+					historyCharacters) /
+					4,
+			),
+		);
+		const completionTokens = Math.max(
+			1,
+			Math.ceil(replaceBetaResponse.length / 4),
+		);
+		expect(result.usage).toEqual({
+			promptTokens,
+			completionTokens,
+			totalTokens: promptTokens + completionTokens,
+			source: 'estimated',
+		});
+		expect(result.usage.promptTokens).toBeGreaterThan(
+			Math.max(
+				1,
+				Math.ceil(
+					(requestArg.systemPrompt.length + requestArg.userPrompt.length) / 4,
+				),
+			),
+		);
 	});
 
 	it('notifies retry and sums provider usage across two correction rounds', async () => {

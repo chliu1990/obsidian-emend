@@ -162,7 +162,7 @@ describe('operation EditStrategy protocol', () => {
 		});
 	});
 
-	it('adds the history-permission rule to full-note Operations only', () => {
+	it('adds the history-permission rule to full-note and selection Operations before instructions', () => {
 		const instructions: InstructionPromptParts = {
 			agentText: 'Agent instructions.',
 			skillTexts: new Map([['skills/first/SKILL.md', 'First skill instructions.']]),
@@ -170,11 +170,12 @@ describe('operation EditStrategy protocol', () => {
 		const fullNotePrompt = operationEditStrategy.getFullNotePrompt(instructions);
 		const selectionPrompt = operationEditStrategy.getSelectionPrompt(instructions);
 
-		expect(fullNotePrompt.split(HISTORY_PERMISSION_PROMPT)).toHaveLength(2);
-		expect(fullNotePrompt.indexOf(HISTORY_PERMISSION_PROMPT)).toBeLessThan(
-			fullNotePrompt.indexOf('=== Loaded Skills ==='),
-		);
-		expect(selectionPrompt).not.toContain(HISTORY_PERMISSION_PROMPT);
+		for (const prompt of [fullNotePrompt, selectionPrompt]) {
+			expect(prompt.split(HISTORY_PERMISSION_PROMPT)).toHaveLength(2);
+			expect(prompt.indexOf(HISTORY_PERMISSION_PROMPT)).toBeLessThan(
+				prompt.indexOf('=== Loaded Skills ==='),
+			);
+		}
 	});
 
 	it('supports exact unicode and multiline anchors', () => {
@@ -1589,6 +1590,7 @@ describe('operation strategy coordinator integration', () => {
 			maxContextCharacters: 1000,
 			smartSelectionContext: true,
 			additionalNotePaths: [],
+			history: [],
 			signal: new AbortController().signal,
 		})).rejects.toThrow(/not found|match/i);
 		expect(request).toHaveBeenCalledTimes(2);
@@ -1630,6 +1632,7 @@ describe('operation strategy coordinator integration', () => {
 			maxContextCharacters: 1000,
 			smartSelectionContext: true,
 			additionalNotePaths: [],
+			history: [],
 			signal: new AbortController().signal,
 		})).resolves.toMatchObject({
 			applied: true,

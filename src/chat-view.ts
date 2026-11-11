@@ -764,6 +764,7 @@ export class EmendChatView extends ItemView {
 						controller.signal,
 						capturedTarget.target.editor,
 						additionalNotePaths,
+						history,
 						callbacks,
 					)
 					: await this.plugin.requestChatCompletion({
@@ -914,19 +915,19 @@ export class EmendChatView extends ItemView {
 	}
 
 	private toProviderHistory(): ProviderHistoryMessage[] {
-		return this.messages
-			.filter((message) => message.status === 'ready')
-			.slice(-8)
-			.map((message) => ({
-				role: message.role,
-				content: message.role === 'assistant'
-					? formatChatMessageForCopy(message)
-					: message.content,
-				mode: message.mode,
-				origin: message.role === 'user'
-					? 'user'
-					: message.mode === 'edit' ? 'local-edit-status' : 'model',
-			}));
+		const limit = this.plugin.settings.historyMessageLimit;
+		const ready = this.messages.filter((message) => message.status === 'ready');
+		const selected = limit > 0 ? ready.slice(-limit) : [];
+		return selected.map((message) => ({
+			role: message.role,
+			content: message.role === 'assistant'
+				? formatChatMessageForCopy(message)
+				: message.content,
+			mode: message.mode,
+			origin: message.role === 'user'
+				? 'user'
+				: message.mode === 'edit' ? 'local-edit-status' : 'model',
+		}));
 	}
 
 	private getActiveModelLabel() {

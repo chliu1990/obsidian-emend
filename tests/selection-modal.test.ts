@@ -3,6 +3,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { AdditionalNotesStore } from '../src/additional-notes-store';
 import type { EditResult } from '../src/note-writer';
 import { operationEditStrategy } from '../src/operation-edit-strategy';
+import type {
+	AiProviderRequest,
+	StreamEvent,
+	StreamResult,
+} from '../src/provider-stream';
 import { QUICK_ACTIONS } from '../src/quick-actions';
 import {
 	SelectionEditRequestCoordinator,
@@ -403,6 +408,7 @@ describe('SelectionModal quick actions', () => {
 					maxContextCharacters: 1000,
 					smartSelectionContext: true,
 					additionalNotePaths: [],
+					history: [],
 					signal,
 				})
 			);
@@ -438,7 +444,12 @@ describe('SelectionModal quick actions', () => {
 			replaceRange: vi.fn(),
 		};
 		const secondRound = deferred<{ content: string; reasoning: string }>();
-		const request = vi.fn(() => secondRound.promise);
+		const request = vi.fn(
+			async (
+				_request: AiProviderRequest,
+				_callbacks: { onEvent(event: StreamEvent): void },
+			): Promise<StreamResult> => secondRound.promise,
+		);
 		request.mockImplementationOnce(async () => ({
 			content: 'not json',
 			reasoning: '',
@@ -458,6 +469,7 @@ describe('SelectionModal quick actions', () => {
 				maxContextCharacters: 1000,
 				smartSelectionContext: true,
 				additionalNotePaths: [],
+				history: [],
 				signal,
 			})
 		);
@@ -478,6 +490,7 @@ describe('SelectionModal quick actions', () => {
 			expect(additionalButtons.every((item) => !item.disabled)).toBe(true);
 		});
 		expect(submitSelection).toHaveBeenCalledOnce();
+		expect(request.mock.calls.map((call) => call[0].history)).toEqual([[], []]);
 		expect(editor.readCurrentText).not.toHaveBeenCalled();
 		expect(editor.replaceRange).not.toHaveBeenCalled();
 	});

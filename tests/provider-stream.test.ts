@@ -222,7 +222,7 @@ afterEach(() => {
 });
 
 describe('requestAiResponse', () => {
-	it('constructs annotated wire history and trims it to eight messages', async () => {
+	it('constructs annotated wire history without re-slicing it', async () => {
 		const fetchMock = mockStream([
 			'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
 			'data: [DONE]\n\n',
@@ -277,6 +277,14 @@ describe('requestAiResponse', () => {
 			model: 'test-model',
 			messages: [
 				{ role: 'system', content: 'System prompt' },
+				{
+					role: 'user',
+					content: '[Historical Ask message. That earlier request was read-only. Origin: user message.]\nmessage 0',
+				},
+				{
+					role: 'assistant',
+					content: '[Historical Ask message. That earlier request was read-only. Origin: model response.]\nmessage 1',
+				},
 				{
 					role: 'user',
 					content: '[Historical Discuss message. That earlier request was read-only. Origin: user message.]\nmessage 2',
