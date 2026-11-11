@@ -1,4 +1,4 @@
-import { TFile } from 'obsidian';
+import { Notice, TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { EmendChatView } from '../src/chat-view';
 import { areQuickActionsDisabled, QUICK_ACTIONS } from '../src/quick-actions';
@@ -201,6 +201,30 @@ describe('quick action submission', () => {
 			content: action.prompt,
 		});
 		expect(context.messages[0]?.webSearchMode).toBeUndefined();
+	});
+
+	it('blocks a quick action whose recalculated draft is over capacity', async () => {
+		const action = QUICK_ACTIONS[0];
+		const blockMessage =
+			'This draft is over capacity at about 10 input tokens of 5 effective capacity. Reduce the draft, chat history, or the selected target.';
+		const noticeMessages = (Notice as unknown as {
+			messages: string[];
+		}).messages;
+		const noticeCount = noticeMessages.length;
+		const context = {
+			selectedMode: 'brainstorm' as Mode,
+			notePath: 'Note.md',
+			isSending: false,
+			isThreadLoading: false,
+			evaluateQuickActionCapacity: () => ({ estimate: undefined, blockMessage }),
+			submitPrompt: vi.fn(async (_prompt: string) => {}),
+		};
+
+		await viewPrototype.submitQuickAction.call(context, action);
+
+		expect(context.submitPrompt).not.toHaveBeenCalled();
+		expect(context.selectedMode).toBe('brainstorm');
+		expect(noticeMessages.slice(noticeCount)).toEqual([`Emend: ${blockMessage}`]);
 	});
 });
 
