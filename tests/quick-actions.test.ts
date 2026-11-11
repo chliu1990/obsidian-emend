@@ -91,7 +91,7 @@ describe('quick action submission', () => {
 			{ role: 'user', content: action.prompt, mode: 'edit' },
 			{
 				role: 'assistant',
-				content: 'Edit applied — 2 changes tracked. Review in Track Changes.\n- Replaced line 1.',
+				content: 'Edit applied — 2 changes tracked. Review in Track Changes.\nTarget: Full note.\n\n- Replaced line 1.',
 				mode: 'edit',
 			},
 		]);

@@ -11,7 +11,7 @@ import { AdditionalNotesControl } from './additional-notes-ui';
 import { EMEND_BUILD_ID } from './build-info';
 import type EmendPlugin from './main';
 import { getComposerShortcut, getDefaultShortcutLabels } from './chat-shortcuts';
-import { formatEditSummary } from './edit-summary';
+import { formatEditSummary, formatNoChangeSummary } from './edit-summary';
 import type { RequestContext } from './context';
 import {
 	resolveEditTarget,
@@ -787,8 +787,12 @@ export class EmendChatView extends ItemView {
 						result.summaryItems,
 						summaryText,
 						summaryOffset,
+						{
+							target: capturedTarget.type === 'selection' ? 'selection' : 'full-note',
+							summary: result.summary,
+						},
 					)
-					: 'No changes were needed.';
+					: formatNoChangeSummary(result.summary);
 				loadingMessage.usage = result.usage;
 			} else {
 				const result = await this.plugin.requestChatCompletion({

@@ -12,25 +12,48 @@ const AGGREGATE_NOUNS: Record<EditSummaryItem['type'], readonly [string, string]
 	comment: ['comment', 'comments'],
 };
 
+const TARGET_LABELS = {
+	'full-note': 'Full note',
+	selection: 'Selection',
+} as const;
+
+export interface EditSummaryOptions {
+	target: 'full-note' | 'selection';
+	summary?: string;
+}
+
 export function formatEditSummary(
 	changeCount: number,
 	items: readonly EditSummaryItem[],
 	fullText: string,
 	sourceOffset: number,
+	options: EditSummaryOptions,
 ): string {
-	const header = `Edit applied — ${changeCount} changes tracked. Review in Track Changes.`;
-	if (items.length === 0) {
-		return header;
+	const parts = [
+		`Edit applied — ${changeCount} changes tracked. Review in Track Changes.`,
+		`Target: ${TARGET_LABELS[options.target]}.`,
+	];
+	const summary = options.summary?.trim();
+	if (summary) {
+		parts.push('', summary);
 	}
-	const bullets = items.length <= MAX_ITEMS_WITHOUT_AGGREGATE
-		? items.map((item) => formatItemBullet(item, fullText, sourceOffset))
-		: [
-			...items
-				.slice(0, INDIVIDUAL_BULLETS_WITH_AGGREGATE)
-				.map((item) => formatItemBullet(item, fullText, sourceOffset)),
-			formatAggregateBullet(items.slice(INDIVIDUAL_BULLETS_WITH_AGGREGATE)),
-		];
-	return [header, ...bullets].join('\n');
+	if (items.length > 0) {
+		const bullets = items.length <= MAX_ITEMS_WITHOUT_AGGREGATE
+			? items.map((item) => formatItemBullet(item, fullText, sourceOffset))
+			: [
+				...items
+					.slice(0, INDIVIDUAL_BULLETS_WITH_AGGREGATE)
+					.map((item) => formatItemBullet(item, fullText, sourceOffset)),
+				formatAggregateBullet(items.slice(INDIVIDUAL_BULLETS_WITH_AGGREGATE)),
+			];
+		parts.push('', ...bullets);
+	}
+	return parts.join('\n');
+}
+
+export function formatNoChangeSummary(summary?: string): string {
+	const trimmed = summary?.trim();
+	return trimmed ? `No changes were needed.\n\n${trimmed}` : 'No changes were needed.';
 }
 
 function formatItemBullet(

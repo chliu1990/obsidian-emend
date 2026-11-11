@@ -106,7 +106,7 @@ describe('prepareEditResponse', () => {
 				{ role: 'assistant', content: 'not-json' },
 				{
 					role: 'user',
-					content: 'Return only a new complete bare JSON array of operations against the unchanged original snapshot.\n{"code":"missing-anchor","operation":2,"operationType":"replace","field":"target","matchCount":0,"matchLines":[1,2,3,4,5,6,7,8]}',
+					content: 'Return only a new complete JSON array of operations or an envelope object with operations and an optional summary against the unchanged original snapshot.\n{"code":"missing-anchor","operation":2,"operationType":"replace","field":"target","matchCount":0,"matchLines":[1,2,3,4,5,6,7,8]}',
 				},
 			],
 		});
@@ -174,12 +174,16 @@ describe('prepareEditResponse', () => {
 		expect(onRetry).not.toHaveBeenCalled();
 	});
 
-	it('returns only the second candidate summary items after a real-strategy correction', async () => {
+	it('returns only the second candidate summary and summary items after a real-strategy correction', async () => {
 		const original = '# Note\n```\nalpha\n```\nbeta';
-		const invalidResponse = JSON.stringify([{ type: 'remove', target: 'alpha' }]);
-		const validResponse = JSON.stringify([
-			{ type: 'replace', target: 'beta', replacement: 'delta' },
-		]);
+		const invalidResponse = JSON.stringify({
+			summary: 'Rejected summary.',
+			operations: [{ type: 'remove', target: 'alpha' }],
+		});
+		const validResponse = JSON.stringify({
+			summary: 'Replaced beta with delta.',
+			operations: [{ type: 'replace', target: 'beta', replacement: 'delta' }],
+		});
 		const requestRound = vi.fn<typeof requestAiResponse>()
 			.mockResolvedValueOnce(result(invalidResponse))
 			.mockResolvedValueOnce(result(validResponse));
@@ -204,6 +208,8 @@ describe('prepareEditResponse', () => {
 			'# Note\n```\nalpha\n```\n{~~beta~>delta~~}',
 		);
 		expect(response.prepared.changeCount).toBe(1);
+		expect(response.prepared.summary).toBe('Replaced beta with delta.');
+		expect(response.prepared.summary).not.toContain('Rejected');
 		expect(response.prepared.summaryItems).toEqual([
 			{ type: 'replace', start: betaStart, end: betaStart + 4 },
 		]);
@@ -312,9 +318,9 @@ describe('prepareEditResponse', () => {
 		));
 
 		expect(response.usage).toEqual({
-			promptTokens: 37,
+			promptTokens: 51,
 			completionTokens: 3,
-			totalTokens: 40,
+			totalTokens: 54,
 			source: 'estimated',
 		});
 	});

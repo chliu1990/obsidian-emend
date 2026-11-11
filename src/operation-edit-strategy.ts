@@ -211,7 +211,7 @@ function parseEditResponse(response: string): ParsedEditResponse {
 	} catch {
 		throw new EditResponseValidationError(
 			'invalid-json',
-			'Operation edit response must be a bare JSON array. An envelope object with summary and operations is also accepted.',
+			'Operation edit response must be a bare JSON array of operations or an envelope object with operations and an optional summary.',
 		);
 	}
 	if (Array.isArray(parsed)) {

@@ -814,7 +814,7 @@ describe('EmendChatView conversation saving', () => {
 			closed: false,
 			activeController: null,
 		};
-		const summary = 'Edit applied — 1 changes tracked. Review in Track Changes.\n- Replaced line 1.';
+		const summary = 'Edit applied — 1 changes tracked. Review in Track Changes.\nTarget: Full note.\n\n- Replaced line 1.';
 
 		await viewPrototype.submitPrompt.call(context);
 
@@ -902,6 +902,7 @@ interface SelectionSubmissionOptions {
 	from?: number;
 	to?: number;
 	summaryItems?: readonly EditSummaryItem[];
+	summary?: string;
 }
 
 function createSelectionEditSubmission(options: SelectionSubmissionOptions = {}) {
@@ -943,6 +944,7 @@ function createSelectionEditSubmission(options: SelectionSubmissionOptions = {})
 			applied: true,
 			changeCount: 2,
 			summaryItems: options.summaryItems ?? [{ type: 'replace', start: 0, end: 4 }],
+			...(options.summary === undefined ? {} : { summary: options.summary }),
 			usage: {
 				promptTokens: 30,
 				completionTokens: 7,
@@ -1036,7 +1038,7 @@ describe('EmendChatView selection edit submission', () => {
 	it('routes automatic displayed Selection through the exact native-editor request and normal saves', async () => {
 		const fixture = createSelectionEditSubmission();
 		fixture.additionalNotesStore.add('Note.md', 'Reference.md');
-		const summary = 'Edit applied — 2 changes tracked. Review in Track Changes.\n- Replaced line 1.';
+		const summary = 'Edit applied — 2 changes tracked. Review in Track Changes.\nTarget: Selection.\n\n- Replaced line 1.';
 
 		await viewPrototype.submitPrompt.call(fixture.context);
 
@@ -1095,7 +1097,7 @@ describe('EmendChatView selection edit submission', () => {
 		await viewPrototype.submitPrompt.call(fixture.context);
 
 		expect(fixture.context.messages[1]?.content).toBe(
-			'Edit applied — 2 changes tracked. Review in Track Changes.\n- Replaced lines 2–3.',
+			'Edit applied — 2 changes tracked. Review in Track Changes.\nTarget: Selection.\n\n- Replaced lines 2–3.',
 		);
 	});
 
@@ -1143,6 +1145,7 @@ describe('EmendChatView selection edit submission', () => {
 					applied: true,
 					changeCount: 1,
 					summaryItems: [{ type: 'replace' as const, start: 12, end: 24 }],
+					summary: 'Sharpened the target line.',
 					usage: {
 						promptTokens: 3,
 						completionTokens: 1,
@@ -1161,9 +1164,114 @@ describe('EmendChatView selection edit submission', () => {
 
 		await viewPrototype.submitPrompt.call(context);
 
-		expect(context.messages[1]?.content).toBe(
-			'Edit applied — 1 changes tracked. Review in Track Changes.\n- Replaced line 2.',
+		expect(context.messages[1]?.content).toBe([
+			'Edit applied — 1 changes tracked. Review in Track Changes.',
+			'Target: Full note.',
+			'',
+			'Sharpened the target line.',
+			'',
+			'- Replaced line 2.',
+		].join('\n'));
+	});
+
+	it('renders a full-note summary with no bullets', async () => {
+		const fixture = createSelectionEditSubmission();
+		fixture.context.editTargetChoice = 'full-note';
+		fixture.context.displayedEditTarget = 'full-note';
+		const noItemResult = {
+			applied: true,
+			changeCount: 0,
+			summaryItems: [],
+			summary: 'Reviewed without changing the note.',
+			usage: {
+				promptTokens: 3,
+				completionTokens: 1,
+				totalTokens: 4,
+				source: 'provider' as const,
+			},
+		};
+		fixture.requestChatCompletion.mockResolvedValueOnce(noItemResult);
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.context.messages[1]?.content).toBe([
+			'Edit applied — 0 changes tracked. Review in Track Changes.',
+			'Target: Full note.',
+			'',
+			'Reviewed without changing the note.',
+		].join('\n'));
+	});
+
+	it('renders the Selection target and model summary as persisted plain content', async () => {
+		const fixture = createSelectionEditSubmission({
+			summary: 'Renamed **beta** to delta.',
+		});
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		const expected = [
+			'Edit applied — 2 changes tracked. Review in Track Changes.',
+			'Target: Selection.',
+			'',
+			'Renamed **beta** to delta.',
+			'',
+			'- Replaced line 1.',
+		].join('\n');
+		expect(fixture.context.messages[1]?.content).toBe(expected);
+		const saved = fixture.savedSnapshots[1]?.[1];
+		expect(saved?.content).toBe(expected);
+		expect(Object.prototype.hasOwnProperty.call(saved, 'summary')).toBe(false);
+	});
+
+	it('renders a no-op summary after the exact no-op sentence', async () => {
+		const fixture = createSelectionEditSubmission();
+		fixture.requestSelectionEdit.mockResolvedValueOnce({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+			summary: 'Reviewed without changing the selection.',
+			usage: {
+				promptTokens: 2,
+				completionTokens: 1,
+				totalTokens: 3,
+				source: 'provider',
+			},
+		});
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.context.messages[1]?.content).toBe(
+			'No changes were needed.\n\nReviewed without changing the selection.',
 		);
+		expect(fixture.savedSnapshots[1]?.[1]?.content).toBe(
+			'No changes were needed.\n\nReviewed without changing the selection.',
+		);
+	});
+
+	it('never renders a summary field from a read-only response', async () => {
+		const fixture = createSelectionEditSubmission();
+		fixture.context.selectedMode = 'ask';
+		const readOnlyResult = {
+			content: 'Answer',
+			reasoning: '',
+			summary: 'Read-only model prose must stay hidden.',
+			usage: {
+				promptTokens: 3,
+				completionTokens: 1,
+				totalTokens: 4,
+				source: 'provider' as const,
+			},
+		};
+		fixture.requestChatCompletion.mockImplementationOnce(async (submission) => {
+			submission.callbacks.onContent?.('Answer');
+			return readOnlyResult;
+		});
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.context.messages[1]?.content).toBe('Answer');
+		expect(fixture.context.messages[1]?.content).not.toContain('Read-only model prose');
+		expect(fixture.savedSnapshots[1]?.[1]?.content).toBe('Answer');
 	});
 
 	it('keeps explicit Full note on the ordinary request despite a usable selection', async () => {

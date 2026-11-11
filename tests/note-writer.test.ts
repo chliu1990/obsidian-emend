@@ -43,7 +43,7 @@ function makeWriter(currentText = '# Note\nOriginal text') {
 }
 
 describe('applyPreparedEdit', () => {
-	it('writes a validated Edit response once and returns its summary items after the write', async () => {
+	it('writes a validated Edit response once and returns its summary items and summary after the write', async () => {
 		const context = makeContext();
 		const { writer } = makeWriter();
 		const annotatedMarkdown = '# Note\n{~~Original~>Edited~~} text';
@@ -51,7 +51,12 @@ describe('applyPreparedEdit', () => {
 		const result = await applyPreparedEdit(
 			'edit',
 			context,
-			{ annotatedMarkdown, changeCount: 1, summaryItems: SUMMARY_ITEMS },
+			{
+				annotatedMarkdown,
+				changeCount: 1,
+				summaryItems: SUMMARY_ITEMS,
+				summary: 'Tightened the opening.',
+			},
 			writer,
 		);
 
@@ -59,6 +64,7 @@ describe('applyPreparedEdit', () => {
 			applied: true,
 			changeCount: 1,
 			summaryItems: SUMMARY_ITEMS,
+			summary: 'Tightened the opening.',
 		});
 		expect(result.summaryItems).toBe(SUMMARY_ITEMS);
 		expect(writer.readCurrentText).toHaveBeenCalledExactlyOnceWith(context.file);
@@ -69,7 +75,7 @@ describe('applyPreparedEdit', () => {
 		);
 	});
 
-	it('does not write, re-read, or return summary items for an unchanged response', async () => {
+	it('does not write or re-read but keeps the summary for an unchanged response', async () => {
 		const context = makeContext();
 		const { writer } = makeWriter();
 
@@ -80,11 +86,17 @@ describe('applyPreparedEdit', () => {
 				annotatedMarkdown: context.sourceText,
 				changeCount: 0,
 				summaryItems: SUMMARY_ITEMS,
+				summary: 'Reviewed without changing anything.',
 			},
 			writer,
 		);
 
-		expect(result).toEqual({ applied: false, changeCount: 0, summaryItems: [] });
+		expect(result).toEqual({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+			summary: 'Reviewed without changing anything.',
+		});
 		expect(writer.readCurrentText).not.toHaveBeenCalled();
 		expect(writer.write).not.toHaveBeenCalled();
 	});
@@ -107,6 +119,7 @@ describe('applyPreparedEdit', () => {
 			changeCount: 0,
 			summaryItems: commentItems,
 		});
+		expect(result.summary).toBeUndefined();
 		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
 			context.file,
 			annotatedMarkdown,
@@ -197,6 +210,7 @@ describe('applyPreparedEdit', () => {
 					annotatedMarkdown: '# Note\n{--Original--} text',
 					changeCount: 1,
 					summaryItems: SUMMARY_ITEMS,
+					summary: 'Model prose must not leak from a read-only path.',
 				},
 				writer,
 			);
@@ -205,7 +219,9 @@ describe('applyPreparedEdit', () => {
 				applied: false,
 				changeCount: 0,
 				summaryItems: [],
+				summary: undefined,
 			});
+			expect(result.summary).toBeUndefined();
 			expect(writer.readCurrentText).not.toHaveBeenCalled();
 			expect(writer.isTargetCurrent).not.toHaveBeenCalled();
 			expect(writer.write).not.toHaveBeenCalled();

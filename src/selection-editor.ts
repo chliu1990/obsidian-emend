@@ -162,8 +162,21 @@ export function applyPreparedSelectionEdit(
 	signal?: AbortSignal,
 ): EditResult {
 	const annotatedFullText = `${snapshot.fullText.slice(0, snapshot.from)}${prepared.annotatedMarkdown}${snapshot.fullText.slice(snapshot.to)}`;
-	if (!canWriteToNote(mode) || annotatedFullText === snapshot.fullText) {
-		return { applied: false, changeCount: 0, summaryItems: [] };
+	if (!canWriteToNote(mode)) {
+		return {
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+			summary: undefined,
+		};
+	}
+	if (annotatedFullText === snapshot.fullText) {
+		return {
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+			summary: prepared.summary,
+		};
 	}
 
 	signal?.throwIfAborted();
@@ -171,7 +184,12 @@ export function applyPreparedSelectionEdit(
 		throw new Error(STALE_NOTE_ERROR);
 	}
 	if (!canWriteToNote(mode)) {
-		return { applied: false, changeCount: 0, summaryItems: [] };
+		return {
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+			summary: undefined,
+		};
 	}
 
 	signal?.throwIfAborted();
@@ -180,6 +198,7 @@ export function applyPreparedSelectionEdit(
 		applied: true,
 		changeCount: prepared.changeCount,
 		summaryItems: prepared.summaryItems,
+		summary: prepared.summary,
 	};
 }
 

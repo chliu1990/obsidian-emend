@@ -14,6 +14,7 @@ export interface EditResult {
 	applied: boolean;
 	changeCount: number;
 	summaryItems: readonly EditSummaryItem[];
+	summary?: string;
 }
 
 const STALE_NOTE_ERROR =
@@ -37,8 +38,21 @@ export async function applyPreparedEdit(
 	writer: NoteWriter,
 	signal?: AbortSignal,
 ): Promise<EditResult> {
-	if (!canWriteToNote(mode) || prepared.annotatedMarkdown === snapshot.sourceText) {
-		return { applied: false, changeCount: 0, summaryItems: [] };
+	if (!canWriteToNote(mode)) {
+		return {
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+			summary: undefined,
+		};
+	}
+	if (prepared.annotatedMarkdown === snapshot.sourceText) {
+		return {
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+			summary: prepared.summary,
+		};
 	}
 
 	const currentText = await writer.readCurrentText(snapshot.file);
@@ -51,12 +65,18 @@ export async function applyPreparedEdit(
 	}
 
 	if (!canWriteToNote(mode)) {
-		return { applied: false, changeCount: 0, summaryItems: [] };
+		return {
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+			summary: undefined,
+		};
 	}
 	await writer.write(snapshot.file, prepared.annotatedMarkdown);
 	return {
 		applied: true,
 		changeCount: prepared.changeCount,
 		summaryItems: prepared.summaryItems,
+		summary: prepared.summary,
 	};
 }

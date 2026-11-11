@@ -578,6 +578,86 @@ describe('EditRequestCoordinator', () => {
 		);
 	});
 
+	it('returns the envelope summary with the applied result and never writes it', async () => {
+		const sourceText = '# Note\nOriginal text';
+		const response = JSON.stringify({
+			summary: 'Replaced the opening.',
+			operations: [{ type: 'replace', target: 'Original', replacement: 'Edited' }],
+		});
+		const { coordinator, writer } = makeEditCoordinator(
+			editRequest(response),
+			sourceText,
+		);
+		const submission = makeEditSubmission();
+
+		const result = await coordinator.submit(submission);
+
+		expect(result).toMatchObject({
+			applied: true,
+			changeCount: 1,
+			summary: 'Replaced the opening.',
+		});
+		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
+			submission.context.file,
+			'# Note\n{~~Original~>Edited~~} text',
+		);
+		expect(
+			(writer.write as ReturnType<typeof vi.fn>).mock.calls[0]?.[1],
+		).not.toContain('Replaced the opening.');
+	});
+
+	it('returns the envelope summary for a no-op without writing', async () => {
+		const response = JSON.stringify({
+			summary: 'Reviewed the note without changing it.',
+			operations: [],
+		});
+		const { coordinator, writer } = makeEditCoordinator(
+			editRequest(response),
+			'# Note\nOriginal text',
+		);
+
+		const result = await coordinator.submit(makeEditSubmission());
+
+		expect(result).toMatchObject({
+			applied: false,
+			changeCount: 0,
+			summary: 'Reviewed the note without changing it.',
+		});
+		expect(writer.write).not.toHaveBeenCalled();
+	});
+
+	it('keeps only the successful candidate summary after a correction', async () => {
+		const sourceText = '# Note\nOriginal text';
+		const invalidResponse = JSON.stringify({
+			summary: 'Rejected summary.',
+			operations: [{ type: 'remove', target: 'missing' }],
+		});
+		const validResponse = JSON.stringify({
+			summary: 'Replaced Original with Edited.',
+			operations: [{ type: 'replace', target: 'Original', replacement: 'Edited' }],
+		});
+		const request = editRequest('');
+		request
+			.mockResolvedValueOnce({ content: invalidResponse, reasoning: '' })
+			.mockResolvedValueOnce({ content: validResponse, reasoning: '' });
+		const { coordinator, writer } = makeEditCoordinator(request, sourceText);
+		const onRetry = vi.fn();
+		const submission = makeEditSubmission({
+			callbacks: { onReasoning: vi.fn(), onRetry },
+		});
+
+		const result = await coordinator.submit(submission);
+
+		expect(request).toHaveBeenCalledTimes(2);
+		expect(onRetry).toHaveBeenCalledOnce();
+		expect(result.summary).toBe('Replaced Original with Edited.');
+		expect(result.summary).not.toContain('Rejected');
+		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
+			submission.context.file,
+			'# Note\n{~~Original~>Edited~~} text',
+		);
+	});
+
 	it('applies a comment-only operation with zero text changes and its summary item', async () => {
 		const sourceText = '# Note\nOriginal text';
 		const request = editRequest(JSON.stringify([

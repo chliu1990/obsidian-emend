@@ -246,7 +246,7 @@ describe('getSelectionContext', () => {
 });
 
 describe('applyPreparedSelectionEdit', () => {
-	it('replaces only the captured selection offsets and returns its summary items', () => {
+	it('replaces only the captured selection offsets and returns its summary items and summary', () => {
 		const snapshot = makeSnapshot();
 		const { adapter } = makeAdapter(snapshot);
 		const summaryItems = [{ type: 'replace', start: 0, end: 4 }] as const;
@@ -254,6 +254,7 @@ describe('applyPreparedSelectionEdit', () => {
 			annotatedMarkdown: '{~~beta~>delta~~}',
 			changeCount: 1,
 			summaryItems,
+			summary: 'Renamed beta to delta.',
 		};
 
 		const result = applyPreparedSelectionEdit(
@@ -263,7 +264,12 @@ describe('applyPreparedSelectionEdit', () => {
 			adapter,
 		);
 
-		expect(result).toEqual({ applied: true, changeCount: 1, summaryItems });
+		expect(result).toEqual({
+			applied: true,
+			changeCount: 1,
+			summaryItems,
+			summary: 'Renamed beta to delta.',
+		});
 		expect(result.summaryItems).toBe(summaryItems);
 		expect(adapter.readCurrentText).toHaveBeenCalledOnce();
 		expect(adapter.isTargetCurrent).toHaveBeenCalledOnce();
@@ -293,7 +299,7 @@ describe('applyPreparedSelectionEdit', () => {
 		);
 	});
 
-	it('does not re-read or replace an unchanged selection and returns no items', () => {
+	it('does not re-read or replace an unchanged selection and returns no items but keeps the summary', () => {
 		const snapshot = makeSnapshot();
 		const { adapter } = makeAdapter(snapshot);
 
@@ -304,11 +310,17 @@ describe('applyPreparedSelectionEdit', () => {
 				annotatedMarkdown: snapshot.selectedText,
 				changeCount: 0,
 				summaryItems: [{ type: 'replace', start: 0, end: 4 }],
+				summary: 'Reviewed without changing the selection.',
 			},
 			adapter,
 		);
 
-		expect(result).toEqual({ applied: false, changeCount: 0, summaryItems: [] });
+		expect(result).toEqual({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+			summary: 'Reviewed without changing the selection.',
+		});
 		expect(adapter.readCurrentText).not.toHaveBeenCalled();
 		expect(adapter.replaceRange).not.toHaveBeenCalled();
 	});
@@ -426,6 +438,7 @@ describe('applyPreparedSelectionEdit', () => {
 					annotatedMarkdown: '{--beta--}',
 					changeCount: 1,
 					summaryItems: [{ type: 'replace', start: 0, end: 4 }],
+					summary: 'Model prose must not leak from a read-only path.',
 				},
 				adapter,
 			);
@@ -434,7 +447,9 @@ describe('applyPreparedSelectionEdit', () => {
 				applied: false,
 				changeCount: 0,
 				summaryItems: [],
+				summary: undefined,
 			});
+			expect(result.summary).toBeUndefined();
 			expect(adapter.readCurrentText).not.toHaveBeenCalled();
 			expect(adapter.replaceRange).not.toHaveBeenCalled();
 		},
@@ -738,6 +753,39 @@ describe('SelectionEditRequestCoordinator', () => {
 			changeCount: 1,
 			usage: { source: 'estimated' },
 		});
+		expect(result.summary).toBeUndefined();
+		expect(adapter.replaceRange).toHaveBeenCalledExactlyOnceWith(
+			'{~~beta~>delta~~}',
+			snapshot.from,
+			snapshot.to,
+		);
+	});
+
+	it('returns the successful candidate summary and never the rejected one', async () => {
+		const snapshot = makeSnapshot();
+		const invalidResponse = JSON.stringify({
+			summary: 'Rejected summary.',
+			operations: [{ type: 'remove', target: 'missing' }],
+		});
+		const validResponse = JSON.stringify({
+			summary: 'Renamed beta to delta.',
+			operations: [{ type: 'replace', target: 'beta', replacement: 'delta' }],
+		});
+		const request = selectionRequest('');
+		request
+			.mockResolvedValueOnce({ content: invalidResponse, reasoning: '' })
+			.mockResolvedValueOnce({ content: validResponse, reasoning: '' });
+		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
+
+		const result = await coordinator.submit(makeSelectionSubmission(snapshot));
+
+		expect(request).toHaveBeenCalledTimes(2);
+		expect(result).toMatchObject({
+			applied: true,
+			changeCount: 1,
+			summary: 'Renamed beta to delta.',
+		});
+		expect(result.summaryItems).toEqual([{ type: 'replace', start: 0, end: 4 }]);
 		expect(adapter.replaceRange).toHaveBeenCalledExactlyOnceWith(
 			'{~~beta~>delta~~}',
 			snapshot.from,
@@ -996,7 +1044,9 @@ describe('SelectionEditRequestCoordinator', () => {
 
 		await expect(
 			coordinator.submit(makeSelectionSubmission(snapshot)),
-		).rejects.toThrow('Operation edit response must be a bare JSON array.');
+		).rejects.toThrow(
+			'Operation edit response must be a bare JSON array of operations or an envelope object with operations and an optional summary.',
+		);
 		expect(adapter.readCurrentText).not.toHaveBeenCalled();
 		expect(adapter.replaceRange).not.toHaveBeenCalled();
 	});
