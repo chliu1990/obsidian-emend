@@ -3579,9 +3579,9 @@ function createCapacityView(options: CapacityViewOptions = {}) {
 const INVALID_CAPACITY_TEXT =
 	'Context capacity settings are invalid. Requests are blocked until both token values are positive and the window exceeds the reserve.';
 const AUTHORITATIVE_INVALID_CAPACITY_TEXT =
-	'Requests are blocked until the context window and output reserve are positive token counts, with the context window larger than the reserve.';
+	'Context capacity settings are invalid. Requests are blocked until both token values are positive and the window exceeds the reserve.';
 const CAPACITY_EXCLUSION_TEXT =
-	'Not included: instructions and skills, additional-note contents, and later Web or correction rounds. The exact submission check remains authoritative.';
+	'Excluded from this estimate: instructions and skills, additional-note contents, the first Web round\'s system prompt and tool declarations, and later Web or correction rounds; the exact submission check remains authoritative.';
 
 function expectedCapacitySummary(
 	estimate: ReturnType<typeof buildDraftCapacityEstimate>,
@@ -3799,6 +3799,66 @@ describe('EmendChatView draft capacity estimate', () => {
 		expect(fixture.context.messages).toEqual([]);
 		expect(fixture.savedSnapshots).toEqual([]);
 		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+	});
+
+	it('refreshes the visible meter when a stale typed submission is blocked', async () => {
+		const fixture = createCapacityView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		if (!fixture.context.inputEl) {
+			throw new Error('Composer missing.');
+		}
+		fixture.context.inputEl.value = 'Question';
+		const staleSummary = findCapacitySummary(fixture.contentEl)?.textContent;
+		expect(staleSummary).toBe(
+			expectedCapacitySummary(fixture.askEstimate('')),
+		);
+		const blockedEstimate = fixture.askEstimate('Question');
+		fixture.provider.contextWindowTokens =
+			blockedEstimate.categories.estimatedInputTokens + 1;
+		fixture.provider.outputReserveTokens = 1;
+		fixture.render.mockClear();
+
+		const enter = keydownEvent();
+		viewPrototype.handleComposerKeydown.call(fixture.context, enter);
+
+		expect(enter.preventDefault).toHaveBeenCalledOnce();
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedCapacitySummary(fixture.askEstimate('Question')),
+		);
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).not.toBe(
+			staleSummary,
+		);
+		expect(fixture.context.draftCapacityBlocked).toBe(true);
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(true);
+		expect(noticeMessages()).toContain(
+			expectedBlockedNotice(fixture.askEstimate('Question')),
+		);
+		expect(fixture.render).not.toHaveBeenCalled();
+		expect(fixture.context.messages).toEqual([]);
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+	});
+
+	it('renders an unavailable meter instead of throwing from a settings callback', async () => {
+		const fixture = createCapacityView({
+			capacity: { contextWindowTokens: 1000, outputReserveTokens: 100 },
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		Object.defineProperty(fixture.context.plugin.settings, 'providers', {
+			configurable: true,
+			get() {
+				throw new Error('Unexpected settings failure.');
+			},
+		});
+
+		expect(() => {
+			viewPrototype.refreshCapacityEstimate.call(fixture.context);
+		}).not.toThrow();
+
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			'Draft estimate unavailable.',
+		);
+		expect(fixture.context.draftCapacityBlocked).toBe(false);
+		expect(noticeMessages()).toEqual([]);
 	});
 
 	it('keeps Send enabled and submits below capacity', async () => {

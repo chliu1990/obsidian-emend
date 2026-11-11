@@ -320,21 +320,27 @@ export class EmendChatView extends ItemView {
 		if (!this.capacityDisplay) {
 			return;
 		}
-		const target = this.captureDraftCapacityTarget(this.selectedMode);
-		const actionTarget = this.captureActionCapacityTarget(target);
-		const history = this.safeProviderHistory();
-		const estimate = target
-			? buildCapacityForTarget(
-				this.plugin.settings,
-				this.app,
-				target,
-				prompt,
-				history,
-			)
-			: undefined;
-		this.draftCapacityBlocked = estimate?.blocked ?? false;
-		this.capacityDisplay.render(estimate);
-		this.applyDraftCapacityControls(actionTarget, history);
+		try {
+			const target = this.captureDraftCapacityTarget(this.selectedMode);
+			const actionTarget = this.captureActionCapacityTarget(target);
+			const history = this.safeProviderHistory();
+			const estimate = target
+				? buildCapacityForTarget(
+					this.plugin.settings,
+					this.app,
+					target,
+					prompt,
+					history,
+				)
+				: undefined;
+			this.draftCapacityBlocked = estimate?.blocked ?? false;
+			this.capacityDisplay.render(estimate);
+			this.applyDraftCapacityControls(actionTarget, history);
+		} catch {
+			this.draftCapacityBlocked = false;
+			this.capacityDisplay.render(undefined);
+			this.applyDraftCapacityControls(undefined, []);
+		}
 	}
 
 	private captureDraftCapacityTarget(
@@ -981,6 +987,7 @@ export class EmendChatView extends ItemView {
 		);
 		if (capacityBlockMessage) {
 			new Notice(`Emend: ${capacityBlockMessage}`);
+			this.refreshDraftEstimate();
 			if (options?.fromQuickAction) {
 				const draft = this.inputEl?.value ?? '';
 				this.render();

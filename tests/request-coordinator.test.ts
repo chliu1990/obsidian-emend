@@ -1866,4 +1866,35 @@ describe('capacity abort precedence in coordinators', () => {
 		expect(loadAdditionalNotes).toHaveBeenCalledOnce();
 		expect(request).not.toHaveBeenCalled();
 	});
+
+	it('lets an abort during instruction loading win over a full-note capacity error', async () => {
+		const controller = new AbortController();
+		const {
+			coordinator,
+			loadAdditionalNotes,
+			loadInstructions,
+			request,
+			writer,
+		} = makeEditCoordinator(
+			successfulRequest(),
+			'# Note\nOriginal text',
+			capacityProviderForTokens(1),
+		);
+		loadInstructions.mockImplementation(async () => {
+			controller.abort();
+			return { skillTexts: new Map() };
+		});
+
+		const error = await coordinator
+			.submit(makeEditSubmission({ signal: controller.signal }))
+			.catch((thrown: unknown) => thrown);
+
+		expect(error).not.toBeInstanceOf(ContextCapacityError);
+		expect(error).toMatchObject({ name: 'AbortError' });
+		expect(loadAdditionalNotes).toHaveBeenCalledOnce();
+		expect(loadInstructions).toHaveBeenCalledOnce();
+		expect(request).not.toHaveBeenCalled();
+		expect(writer.readCurrentText).not.toHaveBeenCalled();
+		expect(writer.write).not.toHaveBeenCalled();
+	});
 });

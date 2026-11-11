@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	ContextCapacityError,
+	INVALID_CONTEXT_CAPACITY_MESSAGE,
 	accountRequestCharacters,
 	assertRequestWithinCapacity,
 	countRequestCharacters,
@@ -158,8 +159,9 @@ describe('resolveContextCapacity', () => {
 		if (state.kind !== 'invalid') {
 			throw new Error('Expected an invalid state.');
 		}
-		expect(state.reason).toContain('positive token counts');
-		expect(state.reason).toContain('larger than the reserve');
+		expect(state.reason).toBe(INVALID_CONTEXT_CAPACITY_MESSAGE);
+		expect(state.reason).toContain('both token values are positive');
+		expect(state.reason).toContain('window exceeds the reserve');
 	});
 });
 

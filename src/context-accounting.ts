@@ -47,7 +47,7 @@ export type ContextRequestKind =
 	| 'transport';
 
 export const INVALID_CONTEXT_CAPACITY_MESSAGE =
-	'Requests are blocked until the context window and output reserve are positive token counts, with the context window larger than the reserve.';
+	'Context capacity settings are invalid. Requests are blocked until both token values are positive and the window exceeds the reserve.';
 
 const CAPACITY_GUIDANCE: Record<ContextRequestKind, string> = {
 	'read-only': 'Reduce context, chat history, additional notes, or Web output.',

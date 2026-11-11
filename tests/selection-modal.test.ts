@@ -597,7 +597,9 @@ describe('SelectionModal draft capacity estimate', () => {
 		expect(summary?.textContent).toBe(
 			formatDraftCapacitySummary(defaultEstimateDraft('')),
 		);
-		expect(root?.attributes.role).toBe('status');
+		expect(root?.attributes.role).toBeUndefined();
+		expect(summary?.attributes.role).toBe('status');
+		expect(summary?.attributes['aria-live']).toBe('polite');
 		expect(textOf(contentEl)).toContain(CAPACITY_EXCLUSION_NOTE);
 
 		const childCount = contentEl.children.length;

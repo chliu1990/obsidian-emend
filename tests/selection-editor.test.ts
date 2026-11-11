@@ -1612,3 +1612,40 @@ describe('authoritative assembled-request capacity checks for selections', () =>
 		expect(adapter.replaceRange).not.toHaveBeenCalled();
 	});
 });
+
+describe('selection capacity abort precedence', () => {
+	it('lets an abort during instruction loading win over a capacity error', async () => {
+		const snapshot = makeSnapshot();
+		const controller = new AbortController();
+		const {
+			adapter,
+			coordinator,
+			loadAdditionalNotes,
+			loadInstructions,
+			request,
+		} = makeSelectionCoordinator(
+			selectionRequest('[]'),
+			snapshot,
+			{ skillTexts: new Map() },
+			capacityProviderForTokens(1),
+		);
+		loadInstructions.mockImplementation(async () => {
+			controller.abort();
+			return { skillTexts: new Map() };
+		});
+
+		const error = await coordinator
+			.submit(makeSelectionSubmission(snapshot, {
+				signal: controller.signal,
+			}))
+			.catch((thrown: unknown) => thrown);
+
+		expect(error).not.toBeInstanceOf(ContextCapacityError);
+		expect(error).toMatchObject({ name: 'AbortError' });
+		expect(loadAdditionalNotes).toHaveBeenCalledOnce();
+		expect(loadInstructions).toHaveBeenCalledOnce();
+		expect(request).not.toHaveBeenCalled();
+		expect(adapter.readCurrentText).not.toHaveBeenCalled();
+		expect(adapter.replaceRange).not.toHaveBeenCalled();
+	});
+});

@@ -248,10 +248,46 @@ describe('ContextCapacityDisplay', () => {
 			request: requestWith(),
 		}));
 
+		const summary = findAll(root, (element) =>
+			element.className.split(' ').includes('emend-context-capacity-summary'),
+		)[0];
 		expect(root.className).toContain('emend-context-capacity');
-		expect(root.attributes.role).toBe('status');
-		expect(root.attributes['aria-live']).toBe('polite');
-		expect(root.attributes['aria-label']).toBe('Draft token estimate');
+		expect(root.attributes.role).toBeUndefined();
+		expect(root.attributes['aria-live']).toBeUndefined();
+		expect(summary?.attributes.role).toBe('status');
+		expect(summary?.attributes['aria-live']).toBe('polite');
+		expect(summary?.attributes['aria-label']).toBe('Draft token estimate');
+	});
+
+	it('keeps a persistent summary live region separate from static details', () => {
+		const estimate = buildDraftCapacityEstimate({
+			provider: providerWith({ contextWindowTokens: 1000, outputReserveTokens: 100 }),
+			request: requestWith(),
+		});
+		const { container, display, root } = renderDisplay(estimate);
+		const summary = findAll(root, (element) =>
+			element.className.split(' ').includes('emend-context-capacity-summary'),
+		)[0];
+		display.render({ ...estimate, overCapacity: true, blocked: true });
+
+		const rootAfter = container.children[0];
+		if (!rootAfter) {
+			throw new Error('Capacity display root missing.');
+		}
+		const summaryAfter = findAll(rootAfter, (element) =>
+			element.className.split(' ').includes('emend-context-capacity-summary'),
+		)[0];
+		expect(summaryAfter).toBe(summary);
+		expect(summaryAfter?.attributes.role).toBe('status');
+		expect(
+			findAll(rootAfter, (element) => element.tagName === 'details'),
+		).toHaveLength(1);
+		expect(
+			findAll(summaryAfter as FakeElement, (element) => element.tagName === 'details'),
+		).toHaveLength(0);
+		expect(summaryAfter?.textContent).toBe(
+			'Estimated input: 4 tokens of 900 effective capacity. This draft is over capacity.',
+		);
 	});
 
 	it('renders the unconfigured summary and exclusions', () => {
@@ -268,7 +304,7 @@ describe('ContextCapacityDisplay', () => {
 		);
 		expect(root.className).toContain('is-unconfigured');
 		expect(textOf(root)).toContain(
-			'Not included: instructions and skills, additional-note contents, and later Web or correction rounds. The exact submission check remains authoritative.',
+			'Excluded from this estimate: instructions and skills, additional-note contents, the first Web round\'s system prompt and tool declarations, and later Web or correction rounds; the exact submission check remains authoritative.',
 		);
 		expect(textOf(root)).toContain('System: 1 tokens · Draft: 3 tokens · History: 0 tokens · Tools: 0 tokens');
 		expect(textOf(root)).toContain('Total: 4 tokens');
@@ -350,7 +386,7 @@ describe('ContextCapacityDisplay', () => {
 		});
 
 		expect(formatDraftCapacityBlockMessage(estimate)).toBe(
-			'Requests are blocked until the context window and output reserve are positive token counts, with the context window larger than the reserve.',
+			'Context capacity settings are invalid. Requests are blocked until both token values are positive and the window exceeds the reserve.',
 		);
 		expect(formatDraftCapacityBlockMessage(undefined)).toBeUndefined();
 		expect(formatDraftCapacityBlockMessage(buildDraftCapacityEstimate({
@@ -390,7 +426,7 @@ describe('ContextCapacityDisplay', () => {
 		expect(root.className).toContain('is-unavailable');
 		expect(textOf(root)).toContain('Draft estimate unavailable.');
 		expect(textOf(root)).toContain(
-			'Not included: instructions and skills, additional-note contents, and later Web or correction rounds. The exact submission check remains authoritative.',
+			'Excluded from this estimate: instructions and skills, additional-note contents, the first Web round\'s system prompt and tool declarations, and later Web or correction rounds; the exact submission check remains authoritative.',
 		);
 		expect(textOf(root)).not.toContain('Estimate details');
 	});

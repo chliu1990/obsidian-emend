@@ -26,10 +26,8 @@ export interface DraftCapacityEstimate {
 	blocked: boolean;
 }
 
-export const INVALID_CAPACITY_DISPLAY =
-	'Context capacity settings are invalid. Requests are blocked until both token values are positive and the window exceeds the reserve.';
 export const CAPACITY_EXCLUSION_NOTE =
-	'Not included: instructions and skills, additional-note contents, and later Web or correction rounds. The exact submission check remains authoritative.';
+	'Excluded from this estimate: instructions and skills, additional-note contents, the first Web round\'s system prompt and tool declarations, and later Web or correction rounds; the exact submission check remains authoritative.';
 export const CAPACITY_UNAVAILABLE = 'Draft estimate unavailable.';
 
 export function buildDraftCapacityEstimate(input: {
@@ -131,7 +129,7 @@ export function formatDraftCapacitySummary(
 	}
 	const { capacity, categories } = estimate;
 	if (capacity.kind === 'invalid') {
-		return INVALID_CAPACITY_DISPLAY;
+		return INVALID_CONTEXT_CAPACITY_MESSAGE;
 	}
 	if (capacity.kind === 'unconfigured') {
 		return `Estimated input: ${categories.estimatedInputTokens} tokens. Capacity checks are off.`;
@@ -160,37 +158,42 @@ export function formatDraftCapacityBlockMessage(
 
 export class ContextCapacityDisplay {
 	private rootEl: HTMLElement | null;
+	private summaryEl: HTMLElement | null;
+	private bodyEl: HTMLElement | null;
 	private detailsEl: HTMLDetailsElement | null = null;
 	private detailsOpen = false;
 
 	constructor(containerEl: HTMLElement) {
 		this.rootEl = containerEl.createDiv({
 			cls: 'emend-context-capacity is-unavailable',
+		});
+		this.summaryEl = this.rootEl.createDiv({
+			cls: 'emend-context-capacity-summary',
 			attr: {
 				role: 'status',
 				'aria-live': 'polite',
 				'aria-label': 'Draft token estimate',
 			},
 		});
+		this.bodyEl = this.rootEl.createDiv('emend-context-capacity-body');
 	}
 
 	render(estimate: DraftCapacityEstimate | undefined): void {
 		const rootEl = this.rootEl;
-		if (!rootEl) {
+		const summaryEl = this.summaryEl;
+		const bodyEl = this.bodyEl;
+		if (!rootEl || !summaryEl || !bodyEl) {
 			return;
 		}
 		this.detailsOpen = this.detailsEl?.open ?? this.detailsOpen;
 		this.detailsEl = null;
 		rootEl.className = `emend-context-capacity ${getStateClass(estimate)}`;
-		rootEl.empty();
-		rootEl.createDiv({
-			cls: 'emend-context-capacity-summary',
-			text: formatDraftCapacitySummary(estimate),
-		});
+		summaryEl.textContent = formatDraftCapacitySummary(estimate);
+		bodyEl.empty();
 		if (estimate) {
-			this.renderDetails(rootEl, estimate);
+			this.renderDetails(bodyEl, estimate);
 		}
-		rootEl.createDiv({
+		bodyEl.createDiv({
 			cls: 'emend-context-capacity-exclusion',
 			text: CAPACITY_EXCLUSION_NOTE,
 		});
@@ -199,12 +202,14 @@ export class ContextCapacityDisplay {
 	destroy(): void {
 		this.rootEl?.remove();
 		this.rootEl = null;
+		this.summaryEl = null;
+		this.bodyEl = null;
 		this.detailsEl = null;
 		this.detailsOpen = false;
 	}
 
-	private renderDetails(rootEl: HTMLElement, estimate: DraftCapacityEstimate) {
-		const detailsEl = rootEl.createEl('details', {
+	private renderDetails(containerEl: HTMLElement, estimate: DraftCapacityEstimate) {
+		const detailsEl = containerEl.createEl('details', {
 			cls: 'emend-context-capacity-details',
 		});
 		detailsEl.open = this.detailsOpen;
