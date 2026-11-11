@@ -116,17 +116,17 @@ Task 4 covered envelope precedence, unknown keys, missing/non-array operations, 
 
 Coverage includes exact singular/plural strings for all four types, ranges with original note lines and response order, CRLF and a target ending at a newline, all three insertion line-boundary pins (inside a line, line start, EOF after a trailing newline), Selection offset applied exactly once to ranges and insertion points, eight items as eight bullets, nine and twenty items as seven plus one aggregate, fixed aggregate order with singular/plural nouns, comment-only `changeCount: 0`, empty items, and a leakage test proving anchors/targets/replacements/comment text never appear in bullets. Chat tests prove the full-note path formats against `sourceText` with no offset, the Selection path adds `snapshot.from` once to reach a note-absolute line, and no-ops keep the exact no-change line plus the summary.
 
-The final full local gate ran at commit `f60fc60` and passed **40 Vitest files and 1181 tests**, ESLint, strict TypeScript plus the production build, and `git diff --check`. The production bundle built at that commit has SHA-256 `e745cb15122a4ca2c48fa64c9a028209000ba3124911c3bd66bfde4fe845001b`. The earlier documentation gate at `d20e0af` passed 1178 tests. The loopback evidence below was collected at `0bf8885` with bundle `e5d5bf8e…`.
+The final full local gate ran at commit `712b7e4` and passed **40 Vitest files and 1181 tests**, ESLint, strict TypeScript plus the production build, and `git diff --check`. The production bundle built at that commit has SHA-256 `1dc642f29408e7b4d6cda7c58559efbaaa04a60b55b4fb7966d0ae383a098e72`. The loopback evidence below used the same commit and bundle; later commits after that run are documentation-only.
 
 ## Real-Obsidian loopback evidence
 
 - Date: 2026-11-11, Asia/Shanghai.
 - Runtime: official Obsidian 1.15.0 AppImage under ignored `test_vault/emend-web-verify/tools/`, isolated Xvfb `:101`, CDP `19224`, and the CORS loopback OpenAI-compatible SSE mock at `127.0.0.1:18766`.
 - Data: only synthetic notes and a dummy SecretStorage credential under ignored `test_vault/emend-selection-chat-verify/`. No real provider, account, key, external or paid request, other vault, or fallback was used.
-- Bundle: the production `main.js` SHA-256 was `e5d5bf8ed39e5110e6f788e061bb0cd774dacb48b0632f17655d017304279f99`, built at HEAD `0bf8885`; the harness asserted the loaded copy matched the root bundle. It also asserts the connected CDP vault is the script's isolated runtime vault, preventing stale Obsidian processes from producing false evidence.
+- Tested HEAD: `712b7e4`.
+- Bundle: the production `main.js` SHA-256 was `1dc642f29408e7b4d6cda7c58559efbaaa04a60b55b4fb7966d0ae383a098e72`, built at that HEAD; the harness asserted the loaded copy matched the root bundle. It also asserts the connected CDP vault is the script's isolated runtime vault, preventing stale Obsidian processes from producing false evidence.
 - Command: `node test_vault/emend-selection-chat-verify/verify.mjs`.
-- Result: **17/17 scenarios and 348/348 assertions passed**.
-- Provenance caveat: the fix wave that corrected the `local-edit-status` annotation and history-permission prompt was not rerun through the loopback harness. That change affects provider-wire annotations, not visible chat output; the recorded run above predates it, and the ignored harness expectations were updated for future runs.
+- Result: **17/17 scenarios and 348/348 assertions passed**, including the corrected `local-edit-status` annotation in the full-note history scenario.
 
 New and strengthened scenarios:
 
