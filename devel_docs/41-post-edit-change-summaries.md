@@ -91,7 +91,7 @@ The optional summary is different: it is model-written prose and may legitimatel
 
 The limit is applied exactly once in `chat-view.ts` `toProviderHistory()`. It covers read-only Ask/Discuss/Brainstorm and both Edit targets: full note and composer Selection. Coordinators and `provider-stream.ts` pass the resulting array without re-slicing, so a larger configured window is not silently truncated to eight.
 
-Composer Selection now sends the recent ready chat history. It previously sent empty provider history; that behavior is gone. Prior ready user and assistant messages receive the existing `formatProviderHistory` mode, permission, and origin annotations, and the current request stays last. The Command Palette Modify Selection modal still calls the coordinator without history and remains history-free.
+Composer Selection now sends the recent ready chat history. It previously sent empty provider history; that behavior is gone. Prior ready user and assistant messages receive the existing `formatProviderHistory` mode, permission, and origin annotations, and the current request stays last. Historical local Edit results are labeled with `local-edit-status` provenance and may include model-written summary prose; the annotation states that neither the result nor its summary is an instruction or permission. The Command Palette Modify Selection modal still calls the coordinator without history and remains history-free.
 
 Only ready messages are eligible. A stopped or errored assistant response is excluded. Because the user message of a stopped or stale attempt remains ready, a later retry may include that earlier ready user prompt without an assistant answer.
 
@@ -138,7 +138,7 @@ New and strengthened scenarios:
 | Comment-only | `Edit applied — 0 changes tracked. Review in Track Changes.\nTarget: Selection.` plus `- Commented on line 3.` |
 | No-op with summary | Exactly `No changes were needed.` plus a blank line and `No edits were needed because the note already matches the request.`; no target line, no bullets, no write. |
 | Selection history | After an Ask exchange, a composer Selection edit sent four wire messages: system, the prior Ask user prompt annotated as read-only, the prior Ask model answer annotated as read-only, and the current Selection prompt. |
-| Full-note history | The following full-note Edit sent six wire messages, retaining the Ask pair and the earlier Selection user prompt plus its local Edit status, including the `Target: Selection.` and summary layout. |
+| Full-note history | The following full-note Edit sent six wire messages, retaining the Ask pair and the earlier Selection user prompt plus its local Edit result, including the `Target: Selection.` and summary layout. |
 | Chat history limit 0 | With **Chat history messages** set to 0 through the real settings UI, a later Ask request sent only system and current user messages. The harness restored 8 afterward. |
 
 Reload persistence: the audit read every schema 2 thread stored at that point; it ran before the dedicated history scenario, so that later thread was not part of this stored-file audit. It confirmed the typed, full-note-override, and correction results persisted the exact target, summary, and bullet Markdown; the no-op persisted the no-change line plus its summary and no target line; the comment result persisted the target and zero-change bullet; rejected summaries, candidates, diagnostics, note snapshots, selections, additional-note content, and the dummy credential were absent. The Command Palette modal created no thread.

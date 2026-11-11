@@ -166,6 +166,19 @@ describe('formatEditSummary', () => {
 		].join('\n'));
 	});
 
+	it('counts UTF-16 offsets after an astral character without shifting line numbers', () => {
+		const text = 'Intro 😀.\nTarget line.\nAfter.';
+		const start = text.indexOf('Target line.');
+
+		expect(formatEditSummary(1, [{
+			type: 'replace',
+			start,
+			end: start + 'Target line.'.length,
+		}], text, 0, FULL_NOTE)).toBe(
+			`${HEADER_ONE}\nTarget: Full note.\n\n- Replaced line 2.`,
+		);
+	});
+
 	it.each([
 		{
 			label: 'a point inside a line',

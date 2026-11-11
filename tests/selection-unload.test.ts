@@ -1,6 +1,7 @@
 import { MarkdownView, TFile } from 'obsidian';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import EmendPlugin from '../src/main';
+import { formatProviderHistory } from '../src/provider-history';
 import { requestAiResponse } from '../src/provider-stream';
 import type { StreamResult } from '../src/provider-stream';
 import { DEFAULT_SETTINGS } from '../src/settings';
@@ -122,8 +123,16 @@ describe('selection request plugin unload', () => {
 			commandView: MarkdownView,
 		) => boolean;
 
+		const requestSelectionEdit = vi.spyOn(plugin, 'requestSelectionEdit');
 		expect(execute(false, editor, view)).toBe(true);
 		await vi.waitFor(() => expect(requestAiResponse).toHaveBeenCalledOnce());
+		expect(requestSelectionEdit).toHaveBeenCalledOnce();
+		expect(requestSelectionEdit.mock.calls[0]).toHaveLength(5);
+		expect(requestSelectionEdit.mock.calls[0]?.[5]).toBeUndefined();
+		const modalRequest = vi.mocked(requestAiResponse).mock.calls[0]?.[0];
+		expect(modalRequest?.history).toEqual([]);
+		expect(formatProviderHistory(modalRequest?.history ?? [])).toEqual([]);
+		expect(JSON.stringify(modalRequest)).not.toContain('[Historical');
 		const modal = modalState.instances[0];
 		expect(modal?.signal?.aborted).toBe(false);
 		expect(unloadCallbacks).toHaveLength(1);

@@ -1200,7 +1200,8 @@ describe('EmendChatView selection edit submission', () => {
 	it('formats full-note summaries against the captured note source', async () => {
 		const file = new TFile();
 		file.path = 'Note.md';
-		const sourceText = 'Intro line.\nTarget line.\nOutro line.';
+		const sourceText = 'Intro line.\nSecond line.\nThird line.\nTarget line.\nOutro line.';
+		const targetStart = sourceText.indexOf('Target line.');
 		const context = {
 			inputEl: { value: 'Edit note' },
 			isSending: false,
@@ -1214,13 +1215,17 @@ describe('EmendChatView selection edit submission', () => {
 					sourceText,
 					selection: { from: 0, to: 0 },
 					noteLabel: file.path,
-					markdown: sourceText,
+					markdown: 'Window line.\nTarget line.',
 				}),
 				additionalNotesStore: new AdditionalNotesStore(),
 				requestChatCompletion: vi.fn(async () => ({
 					applied: true,
 					changeCount: 1,
-					summaryItems: [{ type: 'replace' as const, start: 12, end: 24 }],
+					summaryItems: [{
+						type: 'replace' as const,
+						start: targetStart,
+						end: targetStart + 'Target line.'.length,
+					}],
 					summary: 'Sharpened the target line.',
 					usage: {
 						promptTokens: 3,
@@ -1246,7 +1251,7 @@ describe('EmendChatView selection edit submission', () => {
 			'',
 			'Sharpened the target line.',
 			'',
-			'- Replaced line 2.',
+			'- Replaced line 4.',
 		].join('\n'));
 	});
 

@@ -227,7 +227,7 @@ function parseEditResponse(response: string): ParsedEditResponse {
 	const unknownKey = Object.keys(parsed).find((key) => !RESPONSE_FIELD_KEYS.includes(key));
 	if (unknownKey !== undefined) {
 		throw invalidResponseShape(
-			`Envelope response contains an unknown field "${unknownKey}"; use only operations and summary.`,
+			`Envelope response contains an unknown field ${JSON.stringify(unknownKey).slice(0, 80)}; use only operations and summary.`,
 		);
 	}
 	const operations = parsed.operations;
