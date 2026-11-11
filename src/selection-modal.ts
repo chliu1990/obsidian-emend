@@ -43,6 +43,7 @@ export class SelectionModal extends Modal {
 		this.contentEl.addClass('emend-selection-modal');
 		const targetFile = this.app.vault.getAbstractFileByPath(this.targetPath);
 		this.targetFile = targetFile instanceof TFile ? targetFile : null;
+		this.capacityDisplay = new ContextCapacityDisplay(this.contentEl);
 		const quickActionsEl = this.contentEl.createDiv('emend-chat-quick-actions');
 		for (const action of QUICK_ACTIONS) {
 			const button = quickActionsEl.createEl('button', {
@@ -82,7 +83,6 @@ export class SelectionModal extends Modal {
 		this.inputEl.addEventListener('input', () => {
 			this.refreshCapacityEstimate();
 		});
-		this.capacityDisplay = new ContextCapacityDisplay(this.contentEl);
 
 		const actionsEl = this.contentEl.createDiv('emend-chat-composer-actions');
 		this.cancelButton = actionsEl.createEl('button', {

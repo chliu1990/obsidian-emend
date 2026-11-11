@@ -156,18 +156,83 @@ export function formatDraftCapacityBlockMessage(
 	return undefined;
 }
 
+export interface ContextCapacityBarSegment {
+	key: 'system' | 'user' | 'history' | 'tools' | 'continuation' | 'free' | 'output';
+	tokens: number;
+	fraction: number;
+}
+
+export interface ContextCapacityBarModel {
+	estimatedInputTokens: number;
+	effectiveInputTokens?: number;
+	remainingInputTokens?: number;
+	remainingOutputTokens?: number;
+	segments: ContextCapacityBarSegment[];
+}
+
+export function buildContextCapacityBarModel(
+	estimate: DraftCapacityEstimate,
+): ContextCapacityBarModel {
+	const { capacity, categories } = estimate;
+	const estimatedInputTokens = categories.estimatedInputTokens;
+	if (capacity.kind !== 'valid') {
+		return { estimatedInputTokens, segments: [] };
+	}
+
+	const windowTokens = capacity.contextWindowTokens;
+	const reserveTokens = capacity.outputReserveTokens;
+	const remainingInputTokens = Math.max(
+		0,
+		windowTokens - reserveTokens - estimatedInputTokens,
+	);
+	const remainingOutputTokens = Math.max(
+		0,
+		Math.min(reserveTokens, windowTokens - estimatedInputTokens),
+	);
+	const denominator = Math.max(windowTokens, estimatedInputTokens);
+	const segments: ContextCapacityBarSegment[] = [
+		{ key: 'system', tokens: estimateTokensForCharacters(categories.system), fraction: 0 },
+		{ key: 'user', tokens: estimateTokensForCharacters(categories.user), fraction: 0 },
+		{ key: 'history', tokens: estimateTokensForCharacters(categories.history), fraction: 0 },
+		{ key: 'tools', tokens: estimateTokensForCharacters(categories.tools), fraction: 0 },
+	];
+	const continuationTokens = estimateTokensForCharacters(categories.continuation);
+	if (continuationTokens > 0) {
+		segments.push({ key: 'continuation', tokens: continuationTokens, fraction: 0 });
+	}
+	segments.push(
+		{ key: 'free', tokens: remainingInputTokens, fraction: 0 },
+		{ key: 'output', tokens: remainingOutputTokens, fraction: 0 },
+	);
+	for (const segment of segments) {
+		segment.fraction = segment.tokens / denominator;
+	}
+	return {
+		estimatedInputTokens,
+		effectiveInputTokens: capacity.effectiveInputTokens,
+		remainingInputTokens,
+		remainingOutputTokens,
+		segments,
+	};
+}
+
 export class ContextCapacityDisplay {
 	private rootEl: HTMLElement | null;
 	private summaryEl: HTMLElement | null;
 	private bodyEl: HTMLElement | null;
-	private detailsEl: HTMLDetailsElement | null = null;
-	private detailsOpen = false;
+	private detailsEl: HTMLElement | null;
+	private detailsVisible = false;
+	private detailsPinned = false;
+	private hasDetails = false;
+	private readonly onOutsidePointerDown: (event: PointerEvent) => void;
 
 	constructor(containerEl: HTMLElement) {
-		this.rootEl = containerEl.createDiv({
+		const rootEl = containerEl.createDiv({
 			cls: 'emend-context-capacity is-unavailable',
+			attr: { tabindex: '0' },
 		});
-		this.summaryEl = this.rootEl.createDiv({
+		this.rootEl = rootEl;
+		this.summaryEl = rootEl.createDiv({
 			cls: 'emend-context-capacity-summary',
 			attr: {
 				role: 'status',
@@ -175,57 +240,154 @@ export class ContextCapacityDisplay {
 				'aria-label': 'Draft token estimate',
 			},
 		});
-		this.bodyEl = this.rootEl.createDiv('emend-context-capacity-body');
+		this.bodyEl = rootEl.createDiv('emend-context-capacity-body');
+		this.detailsEl = rootEl.createDiv({
+			cls: 'emend-context-capacity-details',
+			attr: { role: 'tooltip' },
+		});
+		this.detailsEl.hidden = true;
+
+		rootEl.addEventListener('pointerenter', () => {
+			if (this.hasDetails) {
+				this.setDetailsVisible(true);
+			}
+		});
+		rootEl.addEventListener('focusin', () => {
+			if (this.hasDetails) {
+				this.setDetailsVisible(true);
+			}
+		});
+		rootEl.addEventListener('pointerleave', () => {
+			if (!this.detailsPinned) {
+				this.setDetailsVisible(false);
+			}
+		});
+		rootEl.addEventListener('focusout', () => {
+			if (!this.detailsPinned) {
+				this.setDetailsVisible(false);
+			}
+		});
+		rootEl.addEventListener('click', () => {
+			if (!this.hasDetails) {
+				return;
+			}
+			this.detailsPinned = !this.detailsPinned;
+			this.setDetailsVisible(this.detailsPinned);
+		});
+		rootEl.addEventListener('keydown', (event) => {
+			if (event.key !== 'Escape' || !this.detailsVisible) {
+				return;
+			}
+			event.preventDefault();
+			event.stopPropagation();
+			this.dismissDetails();
+		});
+		this.onOutsidePointerDown = (event) => {
+			if (
+				this.detailsVisible &&
+				event.target &&
+				!rootEl.contains(event.target as Node)
+			) {
+				this.dismissDetails();
+			}
+		};
+		rootEl.ownerDocument.addEventListener('pointerdown', this.onOutsidePointerDown);
 	}
 
 	render(estimate: DraftCapacityEstimate | undefined): void {
 		const rootEl = this.rootEl;
 		const summaryEl = this.summaryEl;
 		const bodyEl = this.bodyEl;
-		if (!rootEl || !summaryEl || !bodyEl) {
+		const detailsEl = this.detailsEl;
+		if (!rootEl || !summaryEl || !bodyEl || !detailsEl) {
 			return;
 		}
-		this.detailsOpen = this.detailsEl?.open ?? this.detailsOpen;
-		this.detailsEl = null;
 		rootEl.className = `emend-context-capacity ${getStateClass(estimate)}`;
 		summaryEl.textContent = formatDraftCapacitySummary(estimate);
 		bodyEl.empty();
-		if (estimate) {
-			this.renderDetails(bodyEl, estimate);
+		detailsEl.empty();
+		this.hasDetails = estimate !== undefined;
+		if (!estimate) {
+			this.detailsPinned = false;
+			this.setDetailsVisible(false);
+			return;
 		}
-		bodyEl.createDiv({
-			cls: 'emend-context-capacity-exclusion',
-			text: CAPACITY_EXCLUSION_NOTE,
-		});
+
+		if (estimate.capacity.kind === 'valid') {
+			const model = buildContextCapacityBarModel(estimate);
+			const meterEl = bodyEl.createDiv({
+				cls: 'emend-context-capacity-bar',
+				attr: {
+					role: 'meter',
+					'aria-label': 'Context capacity',
+					'aria-valuemin': '0',
+					'aria-valuemax': String(estimate.capacity.contextWindowTokens),
+					'aria-valuenow': String(Math.min(
+						model.estimatedInputTokens,
+						estimate.capacity.contextWindowTokens,
+					)),
+					'aria-valuetext': formatDraftCapacitySummary(estimate),
+				},
+			});
+			for (const segment of model.segments) {
+				const segmentEl = meterEl.createDiv(
+					`emend-context-capacity-segment is-${segment.key}`,
+				);
+				segmentEl.style.width = `${segment.fraction * 100}%`;
+			}
+		}
+		this.renderDetails(detailsEl, estimate);
+		this.setDetailsVisible(this.detailsVisible);
 	}
 
 	destroy(): void {
+		if (this.rootEl) {
+			this.rootEl.ownerDocument.removeEventListener(
+				'pointerdown',
+				this.onOutsidePointerDown,
+			);
+		}
 		this.rootEl?.remove();
 		this.rootEl = null;
 		this.summaryEl = null;
 		this.bodyEl = null;
 		this.detailsEl = null;
-		this.detailsOpen = false;
+		this.detailsVisible = false;
+		this.detailsPinned = false;
+		this.hasDetails = false;
+	}
+
+	private setDetailsVisible(visible: boolean): void {
+		this.detailsVisible = visible && this.hasDetails;
+		if (this.detailsEl) {
+			this.detailsEl.hidden = !this.detailsVisible;
+		}
+	}
+
+	private dismissDetails(): void {
+		this.detailsPinned = false;
+		this.setDetailsVisible(false);
 	}
 
 	private renderDetails(containerEl: HTMLElement, estimate: DraftCapacityEstimate) {
-		const detailsEl = containerEl.createEl('details', {
-			cls: 'emend-context-capacity-details',
-		});
-		detailsEl.open = this.detailsOpen;
-		this.detailsEl = detailsEl;
-		detailsEl.createEl('summary', { text: 'Estimate details' });
 		const addDetail = (text: string) => {
-			detailsEl.createDiv({ cls: 'emend-context-capacity-detail', text });
+			containerEl.createDiv({ cls: 'emend-context-capacity-detail', text });
 		};
 		const { capacity, categories } = estimate;
+		addDetail(`Estimated input: ${categories.estimatedInputTokens} tokens`);
 		if (capacity.kind === 'valid') {
+			const model = buildContextCapacityBarModel(estimate);
+			addDetail(`Remaining input: ${model.remainingInputTokens ?? 0} tokens`);
+			addDetail(`Remaining output: ${model.remainingOutputTokens ?? 0} tokens`);
+			addDetail(`Effective input capacity: ${capacity.effectiveInputTokens} tokens`);
 			addDetail(`Context window: ${capacity.contextWindowTokens} tokens`);
 			addDetail(`Output reserve: ${capacity.outputReserveTokens} tokens`);
-			addDetail(`Effective input capacity: ${capacity.effectiveInputTokens} tokens`);
 		}
 		addDetail(formatCategoryEstimates(categories));
-		addDetail(`Total: ${categories.estimatedInputTokens} tokens`);
+		containerEl.createDiv({
+			cls: 'emend-context-capacity-exclusion',
+			text: `Remaining input is a lower-bound estimate. ${CAPACITY_EXCLUSION_NOTE}`,
+		});
 	}
 }
 

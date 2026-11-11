@@ -515,6 +515,8 @@ export class EmendChatView extends ItemView {
 			});
 		}
 
+		this.capacityDisplay = new ContextCapacityDisplay(contentEl);
+
 		const messagesEl = contentEl.createDiv('emend-chat-messages');
 		this.messagesEl = messagesEl;
 		messagesEl.addEventListener('scroll', () => {
@@ -576,7 +578,6 @@ export class EmendChatView extends ItemView {
 		this.inputEl.addEventListener('input', () => {
 			this.refreshDraftEstimate();
 		});
-		this.capacityDisplay = new ContextCapacityDisplay(composerEl);
 
 		const actionsEl = composerEl.createDiv('emend-chat-composer-actions');
 		const webLabelEl = actionsEl.createEl('label', { cls: 'emend-chat-web-mode' });

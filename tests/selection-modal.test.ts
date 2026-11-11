@@ -28,8 +28,14 @@ class FakeElement {
 	readonly children: FakeElement[] = [];
 	readonly attributes: Record<string, string> = {};
 	readonly listeners = new Map<string, Array<() => void>>();
+	readonly ownerDocument = {
+		addEventListener: () => undefined,
+		removeEventListener: () => undefined,
+	};
+	readonly style: Record<string, string> = {};
 	className = '';
 	textContent = '';
+	hidden = false;
 	disabled = false;
 	value = '';
 	removed = false;
@@ -580,7 +586,7 @@ describe('SelectionModal quick actions', () => {
 });
 
 describe('SelectionModal draft capacity estimate', () => {
-	it('shows the shared estimate below the input and refreshes on input without re-rendering', () => {
+	it('shows the shared estimate above quick actions and refreshes on input without re-rendering', () => {
 		const estimateDraft = vi.fn(defaultEstimateDraft);
 		const { contentEl, input } = openModal(
 			vi.fn(async () => ({ applied: false, changeCount: 0, summaryItems: [] })),
@@ -616,27 +622,31 @@ describe('SelectionModal draft capacity estimate', () => {
 		expect(findCapacityRoot(contentEl)).toBe(root);
 	});
 
-	it('places the meter between the instruction textarea and the actions row', () => {
+	it('places the compact bar below the title and before quick actions and the input', () => {
 		const { contentEl, input } = openModal(vi.fn(async () => ({
 			applied: false,
 			changeCount: 0,
 			summaryItems: [],
 		})));
-		const textareaIndex = contentEl.children.indexOf(input as FakeElement);
-		const meterIndex = contentEl.children.indexOf(
-			findCapacityRoot(contentEl) as FakeElement,
+		const root = findCapacityRoot(contentEl);
+		const meterIndex = contentEl.children.indexOf(root as FakeElement);
+		const quickActionsIndex = contentEl.children.findIndex((element) =>
+			element.className.split(' ').includes('emend-chat-quick-actions'),
 		);
+		const textareaIndex = contentEl.children.indexOf(input as FakeElement);
 		const actionsIndex = contentEl.children.findIndex((element) =>
 			element.className.split(' ').includes('emend-chat-composer-actions'),
 		);
 
-		expect(textareaIndex).toBeGreaterThanOrEqual(0);
-		expect(meterIndex).toBeGreaterThan(textareaIndex);
-		expect(actionsIndex).toBeGreaterThan(meterIndex);
+		expect(meterIndex).toBe(0);
+		expect(quickActionsIndex).toBe(1);
+		expect(textareaIndex).toBeGreaterThan(quickActionsIndex);
+		expect(actionsIndex).toBeGreaterThan(textareaIndex);
+		expect(root?.attributes.tabindex).toBe('0');
 		expect(contentEl.className.split(' ')).toContain('emend-selection-modal');
 	});
 
-	it('uses the shared narrow-layout capacity styles in the modal', () => {
+	it('uses the shared narrow-layout floating-details styles in the modal', () => {
 		const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 		const { contentEl } = openModal(vi.fn(async () => ({
 			applied: false,
@@ -649,7 +659,7 @@ describe('SelectionModal draft capacity estimate', () => {
 			'emend-context-capacity',
 		);
 		expect(css).toMatch(
-			/@media \(max-width: 400px\) \{[\s\S]*?\.emend-context-capacity-detail \{[\s\S]*?padding-left: 0;/,
+			/@media \(max-width: 400px\) \{[\s\S]*?\.emend-context-capacity-details \{[\s\S]*?width: 100%;/,
 		);
 	});
 

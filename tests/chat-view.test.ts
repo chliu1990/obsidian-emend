@@ -1989,13 +1989,19 @@ describe('EmendChatView presentation', () => {
 class FakeElement {
 	readonly children: FakeElement[] = [];
 	readonly attributes: Record<string, string> = {};
-	readonly ownerDocument = { createElement: () => new FakeElement() };
+	readonly ownerDocument = {
+		createElement: () => new FakeElement(),
+		addEventListener: () => undefined,
+		removeEventListener: () => undefined,
+	};
+	readonly style: Record<string, string> = {};
 	className = '';
 	textContent = '';
 	title = '';
 	disabled = false;
 	value = '';
 	open = false;
+	hidden = false;
 	scrollTop = 0;
 	scrollHeight = 0;
 	clientHeight = 0;
@@ -3607,6 +3613,13 @@ function expectedBlockedNotice(
 	return `Emend: This draft is over capacity at about ${estimate.categories.estimatedInputTokens} input tokens of ${estimate.capacity.kind === 'valid' ? estimate.capacity.effectiveInputTokens : 0} effective capacity. Reduce the draft, chat history, or the selected target.`;
 }
 
+function findCapacityRoot(contentEl: FakeElement): FakeElement | undefined {
+	return findElements(
+		contentEl,
+		(element) => element.className.split(' ').includes('emend-context-capacity'),
+	)[0];
+}
+
 function findCapacitySummary(contentEl: FakeElement): FakeElement | undefined {
 	return findElements(
 		contentEl,
@@ -3670,6 +3683,39 @@ describe('EmendChatView draft capacity estimate', () => {
 
 	afterEach(() => {
 		vi.restoreAllMocks();
+	});
+
+	it('places the compact bar after mode controls and before messages, never in the composer', async () => {
+		const fixture = createCapacityView({
+			capacity: { contextWindowTokens: 1000, outputReserveTokens: 100 },
+		});
+
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+
+		const root = findCapacityRoot(fixture.contentEl);
+		const rootIndex = fixture.contentEl.children.indexOf(root as FakeElement);
+		const modeIndex = fixture.contentEl.children.findIndex((element) =>
+			element.className.split(' ').includes('emend-chat-mode-selector'),
+		);
+		const messagesIndex = fixture.contentEl.children.findIndex((element) =>
+			element.className.split(' ').includes('emend-chat-messages'),
+		);
+		const composer = fixture.contentEl.children.find((element) =>
+			element.className.split(' ').includes('emend-chat-composer'),
+		);
+		expect(root).toBeDefined();
+		expect(rootIndex).toBe(modeIndex + 1);
+		expect(messagesIndex).toBe(rootIndex + 1);
+		expect(rootIndex).toBeGreaterThan(0);
+		expect(findElements(root as FakeElement, (element) =>
+			element.attributes.role === 'meter',
+		)).toHaveLength(1);
+		expect(findElements(root as FakeElement, (element) =>
+			element.tagName === 'button',
+		)).toHaveLength(0);
+		expect(findElements(composer as FakeElement, (element) =>
+			element.className.split(' ').includes('emend-context-capacity'),
+		)).toHaveLength(0);
 	});
 
 	it('shows the shared read-only estimate without provider calls or vault reads', async () => {

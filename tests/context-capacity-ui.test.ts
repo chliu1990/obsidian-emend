@@ -5,6 +5,7 @@ import {
 	type ContextRequestText,
 } from '../src/context-accounting';
 import {
+	buildContextCapacityBarModel,
 	buildDraftCapacityEstimate,
 	buildFullNoteDraftEstimate,
 	buildReadOnlyDraftEstimate,
@@ -58,15 +59,55 @@ function requestWith(
 	};
 }
 
+interface FakeEvent {
+	type: string;
+	target: FakeElement;
+	key?: string;
+	preventDefault(): void;
+	stopPropagation(): void;
+}
+
+class FakeDocument {
+	private readonly listeners = new Map<string, Array<(event: FakeEvent) => void>>();
+
+	addEventListener(type: string, listener: (event: FakeEvent) => void) {
+		const listeners = this.listeners.get(type) ?? [];
+		listeners.push(listener);
+		this.listeners.set(type, listeners);
+	}
+
+	removeEventListener(type: string, listener: (event: FakeEvent) => void) {
+		const listeners = this.listeners.get(type) ?? [];
+		this.listeners.set(type, listeners.filter((candidate) => candidate !== listener));
+	}
+
+	dispatch(type: string, target: FakeElement, key?: string) {
+		const event: FakeEvent = { type, target, key, preventDefault: () => undefined, stopPropagation: () => undefined };
+		for (const listener of this.listeners.get(type) ?? []) {
+			listener(event);
+		}
+	}
+
+	listenerCount(type: string): number {
+		return this.listeners.get(type)?.length ?? 0;
+	}
+}
+
 class FakeElement {
 	readonly children: FakeElement[] = [];
 	readonly attributes: Record<string, string> = {};
+	readonly style: Record<string, string> = {};
 	className = '';
 	textContent = '';
-	open = false;
+	hidden = false;
 	removed = false;
+	parentElement: FakeElement | null = null;
+	private readonly listeners = new Map<string, Array<(event: FakeEvent) => void>>();
 
-	constructor(readonly tagName = 'div') {}
+	constructor(
+		readonly tagName = 'div',
+		readonly ownerDocument = new FakeDocument(),
+	) {}
 
 	createDiv(options?: string | { cls?: string; text?: string; attr?: Record<string, string> }) {
 		return this.append('div', options);
@@ -77,6 +118,23 @@ class FakeElement {
 		options?: { cls?: string; text?: string; attr?: Record<string, string> },
 	) {
 		return this.append(tagName, options);
+	}
+
+	addEventListener(type: string, listener: (event: FakeEvent) => void) {
+		const listeners = this.listeners.get(type) ?? [];
+		listeners.push(listener);
+		this.listeners.set(type, listeners);
+	}
+
+	dispatch(type: string, key?: string) {
+		const event: FakeEvent = { type, target: this, key, preventDefault: () => undefined, stopPropagation: () => undefined };
+		for (const listener of this.listeners.get(type) ?? []) {
+			listener(event);
+		}
+	}
+
+	contains(candidate: FakeElement): boolean {
+		return candidate === this || this.children.some((child) => child.contains(candidate));
 	}
 
 	empty() {
@@ -92,7 +150,8 @@ class FakeElement {
 		tagName: string,
 		options?: string | { cls?: string; text?: string; attr?: Record<string, string> },
 	) {
-		const child = new FakeElement(tagName);
+		const child = new FakeElement(tagName, this.ownerDocument);
+		child.parentElement = this;
 		if (typeof options === 'string') {
 			child.className = options;
 		} else {
@@ -115,6 +174,10 @@ function findAll(
 	];
 }
 
+function findByClass(root: FakeElement, className: string): FakeElement | undefined {
+	return findAll(root, (element) => element.className.split(' ').includes(className))[0];
+}
+
 function textOf(root: FakeElement): string {
 	return [root.textContent, ...root.children.map(textOf)].join('\n');
 }
@@ -129,6 +192,139 @@ function renderDisplay(estimate: DraftCapacityEstimate | undefined) {
 	}
 	return { container, display, root };
 }
+
+function estimateForBar(
+	tokens: Record<'system' | 'user' | 'history' | 'tools' | 'continuation', number>,
+	capacity: DraftCapacityEstimate['capacity'] = {
+		kind: 'valid',
+		contextWindowTokens: 100,
+		outputReserveTokens: 20,
+		effectiveInputTokens: 80,
+	},
+): DraftCapacityEstimate {
+	const estimatedInputTokens = tokens.system + tokens.user + tokens.history +
+		tokens.tools + tokens.continuation;
+	return {
+		capacity,
+		categories: {
+			system: tokens.system * 4,
+			user: tokens.user * 4,
+			history: tokens.history * 4,
+			tools: tokens.tools * 4,
+			continuation: tokens.continuation * 4,
+			total: estimatedInputTokens * 4,
+			estimatedInputTokens,
+		},
+		overCapacity: capacity.kind === 'valid' && estimatedInputTokens >= 80,
+		blocked: capacity.kind === 'invalid' ||
+			(capacity.kind === 'valid' && estimatedInputTokens >= 80),
+	};
+}
+
+describe('buildContextCapacityBarModel', () => {
+	it('uses known token fractions and exact remaining allowances at W=100 R=20 I=60', () => {
+		const model = buildContextCapacityBarModel(estimateForBar({
+			system: 10,
+			user: 20,
+			history: 15,
+			tools: 10,
+			continuation: 5,
+		}));
+
+		expect(model).toEqual({
+			estimatedInputTokens: 60,
+			effectiveInputTokens: 80,
+			remainingInputTokens: 20,
+			remainingOutputTokens: 20,
+			segments: [
+				{ key: 'system', tokens: 10, fraction: 0.1 },
+				{ key: 'user', tokens: 20, fraction: 0.2 },
+				{ key: 'history', tokens: 15, fraction: 0.15 },
+				{ key: 'tools', tokens: 10, fraction: 0.1 },
+				{ key: 'continuation', tokens: 5, fraction: 0.05 },
+				{ key: 'free', tokens: 20, fraction: 0.2 },
+				{ key: 'output', tokens: 20, fraction: 0.2 },
+			],
+		});
+	});
+
+	it.each([
+		{ user: 40, input: 80, remainingInput: 0, remainingOutput: 20 },
+		{ user: 50, input: 90, remainingInput: 0, remainingOutput: 10 },
+		{ user: 60, input: 100, remainingInput: 0, remainingOutput: 0 },
+		{ user: 80, input: 120, remainingInput: 0, remainingOutput: 0 },
+	])(
+		'computes remaining allowances at input $input',
+		({ user, input, remainingInput, remainingOutput }) => {
+			const model = buildContextCapacityBarModel(estimateForBar({
+				system: 10,
+				user,
+				history: 15,
+				tools: 10,
+				continuation: 5,
+			}));
+
+			expect(model.estimatedInputTokens).toBe(input);
+			expect(model.remainingInputTokens).toBe(remainingInput);
+			expect(model.remainingOutputTokens).toBe(remainingOutput);
+			expect(model.segments.every((segment) => segment.fraction <= 1)).toBe(true);
+			expect(model.segments.reduce((sum, segment) => sum + segment.fraction, 0))
+				.toBeCloseTo(1);
+		},
+	);
+
+	it('uses the overflow input as the fraction denominator', () => {
+		const model = buildContextCapacityBarModel(estimateForBar({
+			system: 10,
+			user: 80,
+			history: 15,
+			tools: 10,
+			continuation: 5,
+		}));
+
+		expect(model.segments.find((segment) => segment.key === 'user')?.fraction)
+			.toBe(80 / 120);
+		expect(model.segments.find((segment) => segment.key === 'free')?.tokens).toBe(0);
+		expect(model.segments.find((segment) => segment.key === 'output')?.tokens).toBe(0);
+	});
+
+	it.each([
+		{ kind: 'unconfigured' } as const,
+		{ kind: 'invalid', reason: 'Invalid capacity.' } as const,
+	])('omits proportional segments and capacity values for $kind capacity', (capacity) => {
+		const model = buildContextCapacityBarModel(estimateForBar({
+			system: 10,
+			user: 20,
+			history: 15,
+			tools: 10,
+			continuation: 5,
+		}, capacity));
+
+		expect(model).toEqual({ estimatedInputTokens: 60, segments: [] });
+	});
+
+	it('includes continuation only when its token estimate is nonzero', () => {
+		const withoutContinuation = buildContextCapacityBarModel(estimateForBar({
+			system: 10,
+			user: 20,
+			history: 15,
+			tools: 10,
+			continuation: 0,
+		}));
+		const withContinuation = buildContextCapacityBarModel(estimateForBar({
+			system: 10,
+			user: 20,
+			history: 15,
+			tools: 10,
+			continuation: 5,
+		}));
+
+		expect(withoutContinuation.segments.some((segment) => segment.key === 'continuation'))
+			.toBe(false);
+		expect(withContinuation.segments.find((segment) => segment.key === 'continuation'))
+			.toEqual({ key: 'continuation', tokens: 5, fraction: 0.05 });
+	});
+});
 
 describe('buildDraftCapacityEstimate', () => {
 	it('classifies unconfigured capacity as unchecked and unblocked', () => {
@@ -242,141 +438,203 @@ describe('buildDraftCapacityEstimate', () => {
 });
 
 describe('ContextCapacityDisplay', () => {
-	it('exposes a polite live status labelled as a draft token estimate', () => {
-		const { root } = renderDisplay(buildDraftCapacityEstimate({
-			provider: providerWith(),
-			request: requestWith(),
+	it('renders a focusable segmented meter with capped ARIA values and floating details', () => {
+		const { root } = renderDisplay(estimateForBar({
+			system: 10,
+			user: 20,
+			history: 15,
+			tools: 10,
+			continuation: 5,
 		}));
+		const summary = findByClass(root, 'emend-context-capacity-summary');
+		const meter = findByClass(root, 'emend-context-capacity-bar');
+		const tooltip = findByClass(root, 'emend-context-capacity-details');
+		const segments = findAll(root, (element) =>
+			element.className.split(' ').includes('emend-context-capacity-segment'),
+		);
 
-		const summary = findAll(root, (element) =>
-			element.className.split(' ').includes('emend-context-capacity-summary'),
-		)[0];
-		expect(root.className).toContain('emend-context-capacity');
+		expect(root.attributes.tabindex).toBe('0');
 		expect(root.attributes.role).toBeUndefined();
 		expect(root.attributes['aria-live']).toBeUndefined();
-		expect(summary?.attributes.role).toBe('status');
-		expect(summary?.attributes['aria-live']).toBe('polite');
-		expect(summary?.attributes['aria-label']).toBe('Draft token estimate');
-	});
-
-	it('keeps a persistent summary live region separate from static details', () => {
-		const estimate = buildDraftCapacityEstimate({
-			provider: providerWith({ contextWindowTokens: 1000, outputReserveTokens: 100 }),
-			request: requestWith(),
+		expect(summary?.attributes).toMatchObject({
+			role: 'status',
+			'aria-live': 'polite',
+			'aria-label': 'Draft token estimate',
 		});
-		const { container, display, root } = renderDisplay(estimate);
-		const summary = findAll(root, (element) =>
-			element.className.split(' ').includes('emend-context-capacity-summary'),
-		)[0];
-		display.render({ ...estimate, overCapacity: true, blocked: true });
-
-		const rootAfter = container.children[0];
-		if (!rootAfter) {
-			throw new Error('Capacity display root missing.');
-		}
-		const summaryAfter = findAll(rootAfter, (element) =>
-			element.className.split(' ').includes('emend-context-capacity-summary'),
-		)[0];
-		expect(summaryAfter).toBe(summary);
-		expect(summaryAfter?.attributes.role).toBe('status');
-		expect(
-			findAll(rootAfter, (element) => element.tagName === 'details'),
-		).toHaveLength(1);
-		expect(
-			findAll(summaryAfter as FakeElement, (element) => element.tagName === 'details'),
-		).toHaveLength(0);
-		expect(summaryAfter?.textContent).toBe(
-			'Estimated input: 4 tokens of 900 effective capacity. This draft is over capacity.',
+		expect(findAll(root, (element) => element.attributes.role === 'status'))
+			.toHaveLength(1);
+		expect(meter?.attributes).toMatchObject({
+			role: 'meter',
+			'aria-valuemin': '0',
+			'aria-valuemax': '100',
+			'aria-valuenow': '60',
+			'aria-valuetext': 'Estimated input: 60 tokens of 80 effective capacity.',
+		});
+		expect(segments.map((segment) => segment.style.width)).toEqual([
+			'10%', '20%', '15%', '10%', '5%', '20%', '20%',
+		]);
+		expect(segments.map((segment) => segment.className)).toEqual([
+			'emend-context-capacity-segment is-system',
+			'emend-context-capacity-segment is-user',
+			'emend-context-capacity-segment is-history',
+			'emend-context-capacity-segment is-tools',
+			'emend-context-capacity-segment is-continuation',
+			'emend-context-capacity-segment is-free',
+			'emend-context-capacity-segment is-output',
+		]);
+		expect(tooltip?.attributes.role).toBe('tooltip');
+		expect(tooltip?.hidden).toBe(true);
+		expect(findAll(root, (element) => element.tagName === 'details')).toHaveLength(0);
+		expect(textOf(tooltip as FakeElement)).toContain('Estimated input: 60 tokens');
+		expect(textOf(tooltip as FakeElement)).toContain('Remaining input: 20 tokens');
+		expect(textOf(tooltip as FakeElement)).toContain('Remaining output: 20 tokens');
+		expect(textOf(tooltip as FakeElement)).toContain('Effective input capacity: 80 tokens');
+		expect(textOf(tooltip as FakeElement)).toContain('Context window: 100 tokens');
+		expect(textOf(tooltip as FakeElement)).toContain('Output reserve: 20 tokens');
+		expect(textOf(tooltip as FakeElement)).toContain(
+			'System: 10 tokens · Draft: 20 tokens · History: 15 tokens · Tools: 10 tokens · Continuation: 5 tokens',
 		);
+		expect(textOf(tooltip as FakeElement)).toContain('lower-bound');
+		expect(textOf(tooltip as FakeElement)).toContain('Excluded from this estimate:');
 	});
 
-	it('renders the unconfigured summary and exclusions', () => {
-		const { root } = renderDisplay(buildDraftCapacityEstimate({
-			provider: providerWith(),
-			request: requestWith(),
+	it('caps overflow at the window and keeps the segments within the bar', () => {
+		const { root } = renderDisplay(estimateForBar({
+			system: 10,
+			user: 80,
+			history: 15,
+			tools: 10,
+			continuation: 5,
 		}));
-		const summary = findAll(root, (element) =>
-			element.className.split(' ').includes('emend-context-capacity-summary'),
-		)[0];
-
-		expect(summary?.textContent).toBe(
-			'Estimated input: 4 tokens. Capacity checks are off.',
+		const meter = findByClass(root, 'emend-context-capacity-bar');
+		const segments = findAll(root, (element) =>
+			element.className.split(' ').includes('emend-context-capacity-segment'),
 		);
-		expect(root.className).toContain('is-unconfigured');
-		expect(textOf(root)).toContain(
-			'Excluded from this estimate: instructions and skills, additional-note contents, the first Web round\'s system prompt and tool declarations, and later Web or correction rounds; the exact submission check remains authoritative.',
+
+		expect(meter?.attributes['aria-valuenow']).toBe('100');
+		expect(meter?.attributes['aria-valuetext']).toBe(
+			'Estimated input: 120 tokens of 80 effective capacity. This draft is over capacity.',
 		);
-		expect(textOf(root)).toContain('System: 1 tokens · Draft: 3 tokens · History: 0 tokens · Tools: 0 tokens');
-		expect(textOf(root)).toContain('Total: 4 tokens');
-		expect(textOf(root)).not.toContain('Context window:');
-		expect(textOf(root)).not.toContain('Output reserve:');
-		expect(textOf(root)).not.toContain('Effective input capacity:');
-	});
-
-	it('renders a valid below-capacity summary with folded capacity details', () => {
-		const { root } = renderDisplay(buildDraftCapacityEstimate({
-			provider: providerWith({ contextWindowTokens: 1000, outputReserveTokens: 100 }),
-			request: requestWith(),
-		}));
-		const summary = findAll(root, (element) =>
-			element.className.split(' ').includes('emend-context-capacity-summary'),
-		)[0];
-		const details = findAll(root, (element) => element.tagName === 'details')[0];
-
-		expect(summary?.textContent).toBe(
-			'Estimated input: 4 tokens of 900 effective capacity.',
-		);
-		expect(root.className).toContain('is-valid');
-		expect(root.className).not.toContain('is-over-capacity');
-		expect(details?.open).toBe(false);
-		expect(textOf(root)).toContain('Estimate details');
-		expect(textOf(root)).toContain('Context window: 1000 tokens');
-		expect(textOf(root)).toContain('Output reserve: 100 tokens');
-		expect(textOf(root)).toContain('Effective input capacity: 900 tokens');
-	});
-
-	it('renders the over-capacity summary and state', () => {
-		const { root } = renderDisplay(buildDraftCapacityEstimate({
-			provider: providerWith({ contextWindowTokens: 1000, outputReserveTokens: 996 }),
-			request: requestWith(),
-		}));
-		const summary = findAll(root, (element) =>
-			element.className.split(' ').includes('emend-context-capacity-summary'),
-		)[0];
-
-		expect(summary?.textContent).toBe(
-			'Estimated input: 4 tokens of 4 effective capacity. This draft is over capacity.',
-		);
+		expect(segments.reduce((sum, segment) => sum + Number.parseFloat(segment.style.width ?? '0'), 0))
+			.toBeCloseTo(100);
 		expect(root.className).toContain('is-over-capacity');
 	});
 
-	it('renders the invalid-settings summary and state', () => {
-		const { root } = renderDisplay(buildDraftCapacityEstimate({
-			provider: providerWith({ contextWindowTokens: 100, outputReserveTokens: 100 }),
-			request: requestWith(),
-		}));
-		const summary = findAll(root, (element) =>
-			element.className.split(' ').includes('emend-context-capacity-summary'),
-		)[0];
+	it.each([
+		{
+			name: 'unconfigured',
+			estimate: buildDraftCapacityEstimate({ provider: providerWith(), request: requestWith() }),
+			state: 'is-unconfigured',
+			summary: 'Estimated input: 4 tokens. Capacity checks are off.',
+		},
+		{
+			name: 'invalid',
+			estimate: buildDraftCapacityEstimate({
+				provider: providerWith({ contextWindowTokens: 100, outputReserveTokens: 100 }),
+				request: requestWith(),
+			}),
+			state: 'is-invalid',
+			summary: 'Context capacity settings are invalid. Requests are blocked until both token values are positive and the window exceeds the reserve.',
+		},
+		{
+			name: 'unavailable',
+			estimate: undefined,
+			state: 'is-unavailable',
+			summary: 'Draft estimate unavailable.',
+		},
+	])('shows the $name summary without a proportional bar', ({ estimate, state, summary }) => {
+		const { root } = renderDisplay(estimate);
 
-		expect(summary?.textContent).toBe(
-			'Context capacity settings are invalid. Requests are blocked until both token values are positive and the window exceeds the reserve.',
-		);
-		expect(root.className).toContain('is-invalid');
+		expect(findByClass(root, 'emend-context-capacity-summary')?.textContent).toBe(summary);
+		expect(findByClass(root, 'emend-context-capacity-bar')).toBeUndefined();
+		expect(root.className).toContain(state);
 	});
 
-	it('shows a nonzero continuation token estimate in the details', () => {
-		const { root } = renderDisplay(buildDraftCapacityEstimate({
-			provider: providerWith(),
-			request: requestWith({
-				continuation: [{ role: 'tool', toolCallId: 'call-1', content: 'result' }],
-			}),
+	it('shows on pointer entry and focus, and hides an unpinned panel on exit', () => {
+		const { root } = renderDisplay(estimateForBar({
+			system: 10,
+			user: 20,
+			history: 15,
+			tools: 10,
+			continuation: 5,
+		}));
+		const tooltip = findByClass(root, 'emend-context-capacity-details') as FakeElement;
+
+		root.dispatch('pointerenter');
+		expect(tooltip.hidden).toBe(false);
+		root.dispatch('pointerleave');
+		expect(tooltip.hidden).toBe(true);
+		root.dispatch('focusin');
+		expect(tooltip.hidden).toBe(false);
+		root.dispatch('focusout');
+		expect(tooltip.hidden).toBe(true);
+	});
+
+	it('pins on click until a second click and survives pointer and focus exit', () => {
+		const { root } = renderDisplay(estimateForBar({
+			system: 10,
+			user: 20,
+			history: 15,
+			tools: 10,
+			continuation: 5,
+		}));
+		const tooltip = findByClass(root, 'emend-context-capacity-details') as FakeElement;
+
+		root.dispatch('click');
+		root.dispatch('pointerleave');
+		root.dispatch('focusout');
+		expect(tooltip.hidden).toBe(false);
+		root.dispatch('click');
+		expect(tooltip.hidden).toBe(true);
+	});
+
+	it('refreshes an open tooltip without closing it or replacing the live summary', () => {
+		const initial = estimateForBar({
+			system: 10,
+			user: 20,
+			history: 15,
+			tools: 10,
+			continuation: 5,
+		});
+		const { display, root } = renderDisplay(initial);
+		const summary = findByClass(root, 'emend-context-capacity-summary');
+		const tooltip = findByClass(root, 'emend-context-capacity-details') as FakeElement;
+		root.dispatch('click');
+
+		display.render(estimateForBar({
+			system: 10,
+			user: 50,
+			history: 15,
+			tools: 10,
+			continuation: 5,
 		}));
 
-		expect(textOf(root)).toContain(
-			'System: 1 tokens · Draft: 3 tokens · History: 0 tokens · Tools: 0 tokens · Continuation: 2 tokens',
-		);
-		expect(textOf(root)).toContain('Total: 6 tokens');
+		expect(findByClass(root, 'emend-context-capacity-details')).toBe(tooltip);
+		expect(tooltip.hidden).toBe(false);
+		expect(textOf(tooltip)).toContain('Estimated input: 90 tokens');
+		expect(textOf(tooltip)).toContain('Remaining output: 10 tokens');
+		expect(findByClass(root, 'emend-context-capacity-summary')).toBe(summary);
+		expect(tooltip.attributes['aria-live']).toBeUndefined();
+	});
+
+	it('dismisses a pinned tooltip with Escape or an outside pointer press', () => {
+		const { root } = renderDisplay(estimateForBar({
+			system: 10,
+			user: 20,
+			history: 15,
+			tools: 10,
+			continuation: 5,
+		}));
+		const tooltip = findByClass(root, 'emend-context-capacity-details') as FakeElement;
+
+		root.dispatch('click');
+		root.dispatch('keydown', 'Escape');
+		expect(tooltip.hidden).toBe(true);
+		root.dispatch('click');
+		root.ownerDocument.dispatch('pointerdown', root);
+		expect(tooltip.hidden).toBe(false);
+		root.ownerDocument.dispatch('pointerdown', new FakeElement('div', root.ownerDocument));
+		expect(tooltip.hidden).toBe(true);
 	});
 
 	it('exposes the authoritative invalid message for blocked submissions', () => {
@@ -395,43 +653,7 @@ describe('ContextCapacityDisplay', () => {
 		}))).toBeUndefined();
 	});
 
-	it('preserves the folded details open state across renders', () => {
-		const estimate = buildDraftCapacityEstimate({
-			provider: providerWith({ contextWindowTokens: 1000, outputReserveTokens: 100 }),
-			request: requestWith(),
-		});
-		const { container, display, root } = renderDisplay(estimate);
-		const details = findAll(root, (element) => element.tagName === 'details')[0];
-		if (!details) {
-			throw new Error('Estimate details missing.');
-		}
-		details.open = true;
-
-		display.render(estimate);
-
-		const rootAfter = container.children[0];
-		if (!rootAfter) {
-			throw new Error('Capacity display root missing.');
-		}
-		const detailsAfter = findAll(
-			rootAfter,
-			(element) => element.tagName === 'details',
-		)[0];
-		expect(detailsAfter?.open).toBe(true);
-	});
-
-	it('renders the unavailable state when no estimate is supplied', () => {
-		const { root } = renderDisplay(undefined);
-
-		expect(root.className).toContain('is-unavailable');
-		expect(textOf(root)).toContain('Draft estimate unavailable.');
-		expect(textOf(root)).toContain(
-			'Excluded from this estimate: instructions and skills, additional-note contents, the first Web round\'s system prompt and tool declarations, and later Web or correction rounds; the exact submission check remains authoritative.',
-		);
-		expect(textOf(root)).not.toContain('Estimate details');
-	});
-
-	it('removes its root on destroy and ignores later renders', () => {
+	it('removes its root and document listener on destroy and ignores later renders', () => {
 		const { container, display, root } = renderDisplay(undefined);
 
 		display.destroy();
@@ -441,6 +663,7 @@ describe('ContextCapacityDisplay', () => {
 		}));
 
 		expect(root.removed).toBe(true);
+		expect(root.ownerDocument.listenerCount('pointerdown')).toBe(0);
 		expect(container.children).toHaveLength(1);
 		expect(textOf(root)).toContain('Draft estimate unavailable.');
 		expect(textOf(root)).not.toContain('Estimated input:');
