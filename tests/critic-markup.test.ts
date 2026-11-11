@@ -4,7 +4,7 @@ import {
 	prepareCriticMarkupEdit,
 	toRejectView,
 } from '../src/critic-markup';
-import type { EditPreparation } from '../src/edit-strategy';
+import type { EditPreparation, EditSummaryItem } from '../src/edit-strategy';
 
 function tokenSummary(text: string) {
 	return parseCriticMarkup(text).map((token) => ({
@@ -301,10 +301,25 @@ describe('sequential CriticMarkup edits', () => {
 });
 
 describe('edit preparation contract', () => {
-	it('retains the internal validated CriticMarkup preparation shape', () => {
+	it('retains the validated CriticMarkup preparation shape', () => {
+		expectTypeOf<ReturnType<typeof prepareCriticMarkupEdit>>().toEqualTypeOf<{
+			annotatedMarkdown: string;
+			changeCount: number;
+		}>();
+	});
+
+	it('requires operation summary metadata on the full EditPreparation', () => {
+		expectTypeOf<EditPreparation['summaryItems']>().toEqualTypeOf<
+			readonly EditSummaryItem[]
+		>();
+	});
+
+	it('pins the exact full EditPreparation shape', () => {
 		expectTypeOf<EditPreparation>().toEqualTypeOf<{
 			annotatedMarkdown: string;
 			changeCount: number;
+			summaryItems: readonly EditSummaryItem[];
+			summary?: string;
 		}>();
 	});
 });

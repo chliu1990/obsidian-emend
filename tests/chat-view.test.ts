@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AdditionalNotesStore } from '../src/additional-notes-store';
 import type { ShortcutEvent } from '../src/chat-shortcuts';
 import { EmendChatView, formatChatMessageForCopy, getUnreadPageCount } from '../src/chat-view';
+import type { EditSummaryItem } from '../src/edit-strategy';
 import { operationEditStrategy } from '../src/operation-edit-strategy';
 import type {
 	AiProviderRequest,
@@ -524,6 +525,7 @@ describe('EmendChatView edit target styles', () => {
 describe('EmendChatView provider history', () => {
 	it('filters transient entries and preserves metadata in the last eight ready messages', () => {
 		const context = {
+			plugin: { settings: { historyMessageLimit: 8 } },
 			messages: [
 				{ ...message('old-question', 'Note.md'), role: 'user' as const, content: 'Old question' },
 				{ ...message('old-answer', 'Note.md'), content: 'Old answer' },
@@ -556,6 +558,7 @@ describe('EmendChatView provider history', () => {
 
 	it('keeps retrieved sources with their historical answer so source IDs remain unambiguous', () => {
 		const context = {
+			plugin: { settings: { historyMessageLimit: 8 } },
 			messages: [{
 				...message('researched-answer', 'Note.md'),
 				content: 'Historical answer [S1]',
@@ -566,6 +569,57 @@ describe('EmendChatView provider history', () => {
 		expect(viewPrototype.toProviderHistory.call(context)[0]?.content).toBe(
 			'Historical answer [S1]\n\n### Sources\n- [S1] [Original source](https://example.test/original)',
 		);
+	});
+
+	it.each([
+		[8, 8],
+		[3, 3],
+	])('sends the last %i ready messages when the limit is %i', (limit, expectedCount) => {
+		const context = {
+			plugin: { settings: { historyMessageLimit: limit } },
+			messages: Array.from({ length: 12 }, (_, index) =>
+				message(`ready-${index}`, 'Note.md')
+			),
+		};
+
+		const history = viewPrototype.toProviderHistory.call(context);
+
+		expect(history).toHaveLength(expectedCount);
+		expect(history.map((entry) => entry.content)).toEqual(
+			Array.from(
+				{ length: expectedCount },
+				(_, offset) => `ready-${12 - expectedCount + offset}`,
+			),
+		);
+	});
+
+	it('sends no history when the limit is zero', () => {
+		const context = {
+			plugin: { settings: { historyMessageLimit: 0 } },
+			messages: [
+				message('question', 'Note.md'),
+				message('answer', 'Note.md'),
+			],
+		};
+
+		expect(viewPrototype.toProviderHistory.call(context)).toEqual([]);
+	});
+
+	it('filters transient entries before applying the limit', () => {
+		const context = {
+			plugin: { settings: { historyMessageLimit: 2 } },
+			messages: [
+				message('older', 'Note.md'),
+				message('newest', 'Note.md'),
+				{ ...message('loading', 'Note.md'), status: 'loading' as const },
+				{ ...message('error', 'Note.md'), status: 'error' as const },
+				{ ...message('stopped', 'Note.md'), status: 'stopped' as const },
+			],
+		};
+
+		expect(
+			viewPrototype.toProviderHistory.call(context).map((entry) => entry.content),
+		).toEqual(['older', 'newest']);
 	});
 });
 
@@ -803,6 +857,7 @@ describe('EmendChatView conversation saving', () => {
 				captureChatContext: () => requestContext,
 				additionalNotesStore: new AdditionalNotesStore(),
 				requestChatCompletion,
+				settings: { historyMessageLimit: 8 },
 			},
 			toProviderHistory: () => viewPrototype.toProviderHistory.call(context),
 			persistMessages: vi.fn(async (_path: string, messages: ChatMessage[]) => {
@@ -813,7 +868,7 @@ describe('EmendChatView conversation saving', () => {
 			closed: false,
 			activeController: null,
 		};
-		const summary = 'Edit applied — 1 changes tracked. Review in Track Changes.';
+		const summary = 'Edit applied — 1 changes tracked. Review in Track Changes.\nTarget: Full note.\n\n- Replaced line 1.';
 
 		await viewPrototype.submitPrompt.call(context);
 
@@ -895,15 +950,24 @@ describe('EmendChatView conversation saving', () => {
 	});
 });
 
-function createSelectionEditSubmission() {
+interface SelectionSubmissionOptions {
+	fullText?: string;
+	selectedText?: string;
+	from?: number;
+	to?: number;
+	summaryItems?: readonly EditSummaryItem[];
+	summary?: string;
+}
+
+function createSelectionEditSubmission(options: SelectionSubmissionOptions = {}) {
 	const file = new TFile();
 	file.path = 'Note.md';
 	const snapshot: SelectionSnapshot = {
 		file,
-		fullText: 'Alpha beta.',
-		selectedText: 'beta',
-		from: 6,
-		to: 10,
+		fullText: options.fullText ?? 'Alpha beta.',
+		selectedText: options.selectedText ?? 'beta',
+		from: options.from ?? 6,
+		to: options.to ?? 10,
 	};
 	const editor: SelectionEditorAdapter = {
 		readCurrentText: vi.fn(() => snapshot.fullText),
@@ -925,6 +989,7 @@ function createSelectionEditSubmission() {
 		_signal: AbortSignal,
 		_editor: SelectionEditorAdapter,
 		_additionalNotePaths: readonly string[],
+		_history: ProviderHistoryMessage[],
 		callbacks?: SelectionEditCallbacks,
 	): Promise<SelectionEditResult> => {
 		callbacks?.onReasoning?.('REJECTED raw JSON and diagnostics');
@@ -933,6 +998,8 @@ function createSelectionEditSubmission() {
 		return {
 			applied: true,
 			changeCount: 2,
+			summaryItems: options.summaryItems ?? [{ type: 'replace', start: 0, end: 4 }],
+			...(options.summary === undefined ? {} : { summary: options.summary }),
 			usage: {
 				promptTokens: 30,
 				completionTokens: 7,
@@ -994,7 +1061,7 @@ function createSelectionEditSubmission() {
 			additionalNotesStore,
 			requestChatCompletion,
 			requestSelectionEdit,
-			settings: { maxWebToolCalls: 8 },
+			settings: { maxWebToolCalls: 8, historyMessageLimit: 8 },
 		},
 		toProviderHistory: () => viewPrototype.toProviderHistory.call(context),
 		persistMessages: vi.fn(async (_path: string, messages: ChatMessage[]) => {
@@ -1026,6 +1093,7 @@ describe('EmendChatView selection edit submission', () => {
 	it('routes automatic displayed Selection through the exact native-editor request and normal saves', async () => {
 		const fixture = createSelectionEditSubmission();
 		fixture.additionalNotesStore.add('Note.md', 'Reference.md');
+		const summary = 'Edit applied — 2 changes tracked. Review in Track Changes.\nTarget: Selection.\n\n- Replaced line 1.';
 
 		await viewPrototype.submitPrompt.call(fixture.context);
 
@@ -1040,11 +1108,12 @@ describe('EmendChatView selection edit submission', () => {
 		expect(args?.[2].aborted).toBe(false);
 		expect(args?.[3]).toBe(fixture.editor);
 		expect(args?.[4]).toEqual(['Reference.md']);
-		expect(typeof args?.[5]?.onReasoning).toBe('function');
-		expect(typeof args?.[5]?.onRetry).toBe('function');
+		expect(args?.[5]).toEqual([]);
+		expect(typeof args?.[6]?.onReasoning).toBe('function');
+		expect(typeof args?.[6]?.onRetry).toBe('function');
 		expect(fixture.context.messages[1]).toMatchObject({
 			status: 'ready',
-			content: 'Edit applied — 2 changes tracked. Review in Track Changes.',
+			content: summary,
 			reasoning: 'Successful reasoning',
 			usage: {
 				promptTokens: 30,
@@ -1068,8 +1137,222 @@ describe('EmendChatView selection edit submission', () => {
 			(message) => message.content,
 		)).toEqual([
 			'Edit selection',
-			'Edit applied — 2 changes tracked. Review in Track Changes.',
+			summary,
 		]);
+	});
+
+	it('sends the same captured ready history as full-note and read-only requests', async () => {
+		const fixture = createSelectionEditSubmission();
+		fixture.context.messages.push(
+			{
+				...message('earlier-question', 'Note.md'),
+				role: 'user',
+				content: 'Earlier question',
+			},
+			message('earlier-answer', 'Note.md'),
+		);
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		const args = fixture.requestSelectionEdit.mock.calls[0];
+		expect(args?.[5]).toEqual([
+			{ role: 'user', content: 'Earlier question', mode: 'ask', origin: 'user' },
+			{ role: 'assistant', content: 'earlier-answer', mode: 'ask', origin: 'model' },
+		]);
+	});
+
+	it('adds the Selection start offset once to note-absolute summary lines', async () => {
+		const fixture = createSelectionEditSubmission({
+			fullText: 'Intro line.\nFirst target.\nSecond target.\nOutro line.',
+			selectedText: 'First target.\nSecond target.',
+			from: 12,
+			to: 40,
+			summaryItems: [{ type: 'replace', start: 0, end: 28 }],
+		});
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.context.messages[1]?.content).toBe(
+			'Edit applied — 2 changes tracked. Review in Track Changes.\nTarget: Selection.\n\n- Replaced lines 2–3.',
+		);
+	});
+
+	it('keeps the exact no-op text when a non-applied result carries summary items', async () => {
+		const fixture = createSelectionEditSubmission();
+		fixture.requestSelectionEdit.mockResolvedValueOnce({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [{ type: 'replace', start: 0, end: 4 }],
+			usage: {
+				promptTokens: 2,
+				completionTokens: 1,
+				totalTokens: 3,
+				source: 'provider',
+			},
+		});
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.context.messages[1]?.content).toBe('No changes were needed.');
+		expect(fixture.context.messages[1]?.content).not.toContain('- ');
+	});
+
+	it('formats full-note summaries against the captured note source', async () => {
+		const file = new TFile();
+		file.path = 'Note.md';
+		const sourceText = 'Intro line.\nSecond line.\nThird line.\nTarget line.\nOutro line.';
+		const targetStart = sourceText.indexOf('Target line.');
+		const context = {
+			inputEl: { value: 'Edit note' },
+			isSending: false,
+			isThreadLoading: false,
+			selectedMode: 'edit' as Mode,
+			displayedEditTarget: 'full-note' as const,
+			messages: [] as ChatMessage[],
+			plugin: {
+				captureChatContext: () => ({
+					file,
+					sourceText,
+					selection: { from: 0, to: 0 },
+					noteLabel: file.path,
+					markdown: 'Window line.\nTarget line.',
+				}),
+				additionalNotesStore: new AdditionalNotesStore(),
+				requestChatCompletion: vi.fn(async () => ({
+					applied: true,
+					changeCount: 1,
+					summaryItems: [{
+						type: 'replace' as const,
+						start: targetStart,
+						end: targetStart + 'Target line.'.length,
+					}],
+					summary: 'Sharpened the target line.',
+					usage: {
+						promptTokens: 3,
+						completionTokens: 1,
+						totalTokens: 4,
+						source: 'provider' as const,
+					},
+				})),
+			},
+			toProviderHistory: () => [],
+			persistMessages: vi.fn(async () => undefined),
+			render: vi.fn(),
+			scheduleMessageRender: vi.fn(),
+			closed: false,
+			activeController: null,
+		};
+
+		await viewPrototype.submitPrompt.call(context);
+
+		expect(context.messages[1]?.content).toBe([
+			'Edit applied — 1 changes tracked. Review in Track Changes.',
+			'Target: Full note.',
+			'',
+			'Sharpened the target line.',
+			'',
+			'- Replaced line 4.',
+		].join('\n'));
+	});
+
+	it('renders a full-note summary with no bullets', async () => {
+		const fixture = createSelectionEditSubmission();
+		fixture.context.editTargetChoice = 'full-note';
+		fixture.context.displayedEditTarget = 'full-note';
+		const noItemResult = {
+			applied: true,
+			changeCount: 0,
+			summaryItems: [],
+			summary: 'Reviewed without changing the note.',
+			usage: {
+				promptTokens: 3,
+				completionTokens: 1,
+				totalTokens: 4,
+				source: 'provider' as const,
+			},
+		};
+		fixture.requestChatCompletion.mockResolvedValueOnce(noItemResult);
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.context.messages[1]?.content).toBe([
+			'Edit applied — 0 changes tracked. Review in Track Changes.',
+			'Target: Full note.',
+			'',
+			'Reviewed without changing the note.',
+		].join('\n'));
+	});
+
+	it('renders the Selection target and model summary as persisted plain content', async () => {
+		const fixture = createSelectionEditSubmission({
+			summary: 'Renamed **beta** to delta.',
+		});
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		const expected = [
+			'Edit applied — 2 changes tracked. Review in Track Changes.',
+			'Target: Selection.',
+			'',
+			'Renamed **beta** to delta.',
+			'',
+			'- Replaced line 1.',
+		].join('\n');
+		expect(fixture.context.messages[1]?.content).toBe(expected);
+		const saved = fixture.savedSnapshots[1]?.[1];
+		expect(saved?.content).toBe(expected);
+		expect(Object.prototype.hasOwnProperty.call(saved, 'summary')).toBe(false);
+	});
+
+	it('renders a no-op summary after the exact no-op sentence', async () => {
+		const fixture = createSelectionEditSubmission();
+		fixture.requestSelectionEdit.mockResolvedValueOnce({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+			summary: 'Reviewed without changing the selection.',
+			usage: {
+				promptTokens: 2,
+				completionTokens: 1,
+				totalTokens: 3,
+				source: 'provider',
+			},
+		});
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.context.messages[1]?.content).toBe(
+			'No changes were needed.\n\nReviewed without changing the selection.',
+		);
+		expect(fixture.savedSnapshots[1]?.[1]?.content).toBe(
+			'No changes were needed.\n\nReviewed without changing the selection.',
+		);
+	});
+
+	it('never renders a summary field from a read-only response', async () => {
+		const fixture = createSelectionEditSubmission();
+		fixture.context.selectedMode = 'ask';
+		const readOnlyResult = {
+			content: 'Answer',
+			reasoning: '',
+			summary: 'Read-only model prose must stay hidden.',
+			usage: {
+				promptTokens: 3,
+				completionTokens: 1,
+				totalTokens: 4,
+				source: 'provider' as const,
+			},
+		};
+		fixture.requestChatCompletion.mockImplementationOnce(async (submission) => {
+			submission.callbacks.onContent?.('Answer');
+			return readOnlyResult;
+		});
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.context.messages[1]?.content).toBe('Answer');
+		expect(fixture.context.messages[1]?.content).not.toContain('Read-only model prose');
+		expect(fixture.savedSnapshots[1]?.[1]?.content).toBe('Answer');
 	});
 
 	it('keeps explicit Full note on the ordinary request despite a usable selection', async () => {
@@ -1153,6 +1436,7 @@ describe('EmendChatView selection edit submission', () => {
 		response.resolve({
 			applied: false,
 			changeCount: 0,
+			summaryItems: [],
 			usage: { promptTokens: 2, completionTokens: 1, totalTokens: 3, source: 'provider' },
 		});
 		await submission;
@@ -1198,6 +1482,7 @@ describe('EmendChatView selection edit submission', () => {
 		response.resolve({
 			applied: false,
 			changeCount: 0,
+			summaryItems: [],
 			usage: { promptTokens: 2, completionTokens: 1, totalTokens: 3, source: 'provider' },
 		});
 		await submission;
@@ -1231,6 +1516,7 @@ describe('EmendChatView selection edit submission', () => {
 		response.resolve({
 			applied: false,
 			changeCount: 0,
+			summaryItems: [],
 			usage: { promptTokens: 2, completionTokens: 1, totalTokens: 3, source: 'provider' },
 		});
 		await submission;

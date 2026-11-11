@@ -35,7 +35,7 @@ describe('edit validation feedback', () => {
 
 		const feedback = formatEditValidationFeedback(error);
 		const lines = feedback.split('\n');
-		expect(lines[0]).toBe('Return only a new complete bare JSON array of operations against the unchanged original snapshot.');
+		expect(lines[0]).toBe('Return only a new complete JSON array of operations, or an envelope object with operations and an optional summary, against the unchanged original snapshot.');
 		expect(lines).toHaveLength(2);
 		expect(JSON.parse(lines[1] ?? '')).toEqual({
 			code: 'missing-target',

@@ -64,7 +64,7 @@ export class EditSourceValidationError extends Error {
 	}
 }
 
-const RETRY_INSTRUCTION = 'Return only a new complete bare JSON array of operations against the unchanged original snapshot.';
+const RETRY_INSTRUCTION = 'Return only a new complete JSON array of operations, or an envelope object with operations and an optional summary, against the unchanged original snapshot.';
 
 export function formatEditValidationFeedback(error: EditResponseValidationError): string {
 	const diagnostic: Record<string, string | number | number[]> = { code: error.code };

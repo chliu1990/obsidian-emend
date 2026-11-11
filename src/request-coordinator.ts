@@ -113,7 +113,7 @@ export class ReadOnlyRequestCoordinator {
 				submission.prompt,
 				additionalNotes,
 			),
-			history: submission.history.slice(-8),
+			history: submission.history,
 		};
 		const callbacks = {
 			onEvent: (event: Parameters<Parameters<typeof requestAiResponse>[1]['onEvent']>[0]) => {
@@ -184,7 +184,7 @@ export class EditRequestCoordinator {
 				additionalNotes,
 				submission.context.sourceText,
 			),
-			history: submission.history.slice(-8),
+			history: submission.history,
 		};
 		const { prepared, usage } = await prepareEditResponse({
 			original: submission.context.sourceText,

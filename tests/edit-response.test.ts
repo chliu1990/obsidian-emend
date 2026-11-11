@@ -5,6 +5,7 @@ import {
 	EditSourceValidationError,
 } from '../src/edit-validation';
 import { prepareEditResponse } from '../src/edit-response';
+import { operationEditStrategy } from '../src/operation-edit-strategy';
 import {
 	requestAiResponse,
 	type AiProviderRequest,
@@ -25,6 +26,7 @@ const provider: ProviderConfig = {
 const prepared: EditPreparation = {
 	annotatedMarkdown: 'Original {++replacement++}',
 	changeCount: 1,
+	summaryItems: [],
 };
 
 function makeRequest(overrides: Partial<AiProviderRequest> = {}): AiProviderRequest {
@@ -104,7 +106,7 @@ describe('prepareEditResponse', () => {
 				{ role: 'assistant', content: 'not-json' },
 				{
 					role: 'user',
-					content: 'Return only a new complete bare JSON array of operations against the unchanged original snapshot.\n{"code":"missing-anchor","operation":2,"operationType":"replace","field":"target","matchCount":0,"matchLines":[1,2,3,4,5,6,7,8]}',
+					content: 'Return only a new complete JSON array of operations, or an envelope object with operations and an optional summary, against the unchanged original snapshot.\n{"code":"missing-anchor","operation":2,"operationType":"replace","field":"target","matchCount":0,"matchLines":[1,2,3,4,5,6,7,8]}',
 				},
 			],
 		});
@@ -153,6 +155,7 @@ describe('prepareEditResponse', () => {
 		const noOp: EditPreparation = {
 			annotatedMarkdown: 'Original snapshot',
 			changeCount: 0,
+			summaryItems: [],
 		};
 		const prepareEdit = vi.fn<EditStrategy['prepareEdit']>().mockReturnValue(noOp);
 		const requestRound = vi.fn<typeof requestAiResponse>()
@@ -169,6 +172,67 @@ describe('prepareEditResponse', () => {
 		expect(requestRound).toHaveBeenCalledTimes(1);
 		expect(prepareEdit).toHaveBeenCalledOnce();
 		expect(onRetry).not.toHaveBeenCalled();
+	});
+
+	it('returns only the second candidate summary and summary items after a real-strategy correction', async () => {
+		const original = '# Note\n```\nalpha\n```\nbeta';
+		const invalidResponse = JSON.stringify({
+			summary: 'Rejected summary.',
+			operations: [{ type: 'remove', target: 'alpha' }],
+		});
+		const validResponse = JSON.stringify({
+			summary: 'Replaced beta with delta.',
+			operations: [{ type: 'replace', target: 'beta', replacement: 'delta' }],
+		});
+		const requestRound = vi.fn<typeof requestAiResponse>()
+			.mockResolvedValueOnce(result(invalidResponse))
+			.mockResolvedValueOnce(result(validResponse));
+		const onRetry = vi.fn();
+
+		const response = await prepareEditResponse({
+			original,
+			request: makeRequest(),
+			editStrategy: operationEditStrategy,
+			requestRound,
+			signal: new AbortController().signal,
+			onRetry,
+		});
+
+		const betaStart = original.indexOf('beta');
+		expect(onRetry).toHaveBeenCalledOnce();
+		expect(requestRound).toHaveBeenCalledTimes(2);
+		expect(requestRound.mock.calls[1]?.[0].continuation?.[1]?.content).toContain(
+			'"code":"fenced-code-edit"',
+		);
+		expect(response.prepared.annotatedMarkdown).toBe(
+			'# Note\n```\nalpha\n```\n{~~beta~>delta~~}',
+		);
+		expect(response.prepared.changeCount).toBe(1);
+		expect(response.prepared.summary).toBe('Replaced beta with delta.');
+		expect(response.prepared.summary).not.toContain('Rejected');
+		expect(response.prepared.summaryItems).toEqual([
+			{ type: 'replace', start: betaStart, end: betaStart + 4 },
+		]);
+	});
+
+	it('rejects two real-strategy invalid candidates without a prepared result', async () => {
+		const original = '# Note\nAlpha beta.';
+		const requestRound = vi.fn<typeof requestAiResponse>()
+			.mockResolvedValueOnce(result(JSON.stringify([
+				{ type: 'remove', target: 'missing' },
+			])))
+			.mockResolvedValueOnce(result(JSON.stringify([
+				{ type: 'remove', target: 'also-missing' },
+			])));
+
+		await expect(prepareEditResponse({
+			original,
+			request: makeRequest(),
+			editStrategy: operationEditStrategy,
+			requestRound,
+			signal: new AbortController().signal,
+		})).rejects.toThrow(/not found/i);
+		expect(requestRound).toHaveBeenCalledTimes(2);
 	});
 
 	it('surfaces the second validation error without a third provider call', async () => {
@@ -254,9 +318,9 @@ describe('prepareEditResponse', () => {
 		));
 
 		expect(response.usage).toEqual({
-			promptTokens: 37,
+			promptTokens: 52,
 			completionTokens: 3,
-			totalTokens: 40,
+			totalTokens: 55,
 			source: 'estimated',
 		});
 	});

@@ -182,7 +182,7 @@ describe('ReadOnlyRequestCoordinator', () => {
 		}
 	});
 
-	it('caps provider history at the last eight ready messages', async () => {
+	it('passes the full ready history through unchanged', async () => {
 		const { coordinator, request } = makeCoordinator();
 		const history: ProviderHistoryMessage[] = Array.from(
 			{ length: 12 },
@@ -196,7 +196,7 @@ describe('ReadOnlyRequestCoordinator', () => {
 
 		await coordinator.submit(makeSubmission({ history }));
 
-		expect(request.mock.calls[0]?.[0].history).toEqual(history.slice(-8));
+		expect(request.mock.calls[0]?.[0].history).toEqual(history);
 	});
 
 	it('adds an estimated usage source using the exact request and response text', async () => {
@@ -504,6 +504,23 @@ describe('EditRequestCoordinator', () => {
 		);
 	});
 
+	it('passes the full ready history through unchanged', async () => {
+		const { coordinator, request } = makeEditCoordinator(editRequest('[]'));
+		const history: ProviderHistoryMessage[] = Array.from(
+			{ length: 12 },
+			(_, index) => ({
+				role: index % 2 === 0 ? 'user' : 'assistant',
+				content: `ready ${index}`,
+				mode: 'edit',
+				origin: index % 2 === 0 ? 'user' : 'local-edit-status',
+			}),
+		);
+
+		await coordinator.submit(makeEditSubmission({ history }));
+
+		expect(request.mock.calls[0]?.[0].history).toEqual(history);
+	});
+
 	it.each(QUICK_ACTIONS)(
 		'$id uses the same additional-note loading and prompt path',
 		async (action) => {
@@ -575,6 +592,109 @@ describe('EditRequestCoordinator', () => {
 		expect(request.mock.invocationCallOrder[0]).toBeLessThan(
 			(writer.write as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0] ??
 				0,
+		);
+	});
+
+	it('returns the envelope summary with the applied result and never writes it', async () => {
+		const sourceText = '# Note\nOriginal text';
+		const response = JSON.stringify({
+			summary: 'Replaced the opening.',
+			operations: [{ type: 'replace', target: 'Original', replacement: 'Edited' }],
+		});
+		const { coordinator, writer } = makeEditCoordinator(
+			editRequest(response),
+			sourceText,
+		);
+		const submission = makeEditSubmission();
+
+		const result = await coordinator.submit(submission);
+
+		expect(result).toMatchObject({
+			applied: true,
+			changeCount: 1,
+			summary: 'Replaced the opening.',
+		});
+		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
+			submission.context.file,
+			'# Note\n{~~Original~>Edited~~} text',
+		);
+		expect(
+			(writer.write as ReturnType<typeof vi.fn>).mock.calls[0]?.[1],
+		).not.toContain('Replaced the opening.');
+	});
+
+	it('returns the envelope summary for a no-op without writing', async () => {
+		const response = JSON.stringify({
+			summary: 'Reviewed the note without changing it.',
+			operations: [],
+		});
+		const { coordinator, writer } = makeEditCoordinator(
+			editRequest(response),
+			'# Note\nOriginal text',
+		);
+
+		const result = await coordinator.submit(makeEditSubmission());
+
+		expect(result).toMatchObject({
+			applied: false,
+			changeCount: 0,
+			summary: 'Reviewed the note without changing it.',
+		});
+		expect(writer.write).not.toHaveBeenCalled();
+	});
+
+	it('keeps only the successful candidate summary after a correction', async () => {
+		const sourceText = '# Note\nOriginal text';
+		const invalidResponse = JSON.stringify({
+			summary: 'Rejected summary.',
+			operations: [{ type: 'remove', target: 'missing' }],
+		});
+		const validResponse = JSON.stringify({
+			summary: 'Replaced Original with Edited.',
+			operations: [{ type: 'replace', target: 'Original', replacement: 'Edited' }],
+		});
+		const request = editRequest('');
+		request
+			.mockResolvedValueOnce({ content: invalidResponse, reasoning: '' })
+			.mockResolvedValueOnce({ content: validResponse, reasoning: '' });
+		const { coordinator, writer } = makeEditCoordinator(request, sourceText);
+		const onRetry = vi.fn();
+		const submission = makeEditSubmission({
+			callbacks: { onReasoning: vi.fn(), onRetry },
+		});
+
+		const result = await coordinator.submit(submission);
+
+		expect(request).toHaveBeenCalledTimes(2);
+		expect(onRetry).toHaveBeenCalledOnce();
+		expect(result.summary).toBe('Replaced Original with Edited.');
+		expect(result.summary).not.toContain('Rejected');
+		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
+			submission.context.file,
+			'# Note\n{~~Original~>Edited~~} text',
+		);
+	});
+
+	it('applies a comment-only operation with zero text changes and its summary item', async () => {
+		const sourceText = '# Note\nOriginal text';
+		const request = editRequest(JSON.stringify([
+			{ type: 'comment', target: 'Original', comment: 'Review this.' },
+		]));
+		const { coordinator, writer } = makeEditCoordinator(request, sourceText);
+		const submission = makeEditSubmission();
+
+		const result = await coordinator.submit(submission);
+
+		const originalStart = sourceText.indexOf('Original');
+		expect(result).toMatchObject({ applied: true, changeCount: 0 });
+		expect(result.summaryItems).toEqual([{
+			type: 'comment',
+			start: originalStart,
+			end: originalStart + 'Original'.length,
+		}]);
+		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
+			submission.context.file,
+			'# Note\nOriginal{>>Review this.<<} text',
 		);
 	});
 
@@ -769,6 +889,11 @@ describe('EditRequestCoordinator', () => {
 		expect(result).toEqual({
 			applied: true,
 			changeCount: 1,
+			summaryItems: [{
+				type: 'replace',
+				start: sourceText.indexOf('They have a plan.'),
+				end: sourceText.indexOf('They have a plan.') + 'They have a plan.'.length,
+			}],
 			usage: {
 				promptTokens: 30,
 				completionTokens: 7,
@@ -797,7 +922,7 @@ describe('EditRequestCoordinator', () => {
 		expect(correctionBaseRequest).toEqual(firstRequest);
 		expect(continuation?.[0]).toEqual({ role: 'assistant', content: 'not-json' });
 		expect(continuation?.[1]?.role).toBe('user');
-		expect(continuation?.[1]?.content).toContain('unchanged original snapshot');
+		expect(continuation?.[1]?.content).toContain('Return only a new complete JSON array of operations, or an envelope object with operations and an optional summary, against the unchanged original snapshot.');
 		expect(continuation?.[1]?.content).toContain('"code":"invalid-json"');
 	});
 

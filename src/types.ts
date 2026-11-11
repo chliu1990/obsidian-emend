@@ -87,4 +87,5 @@ export interface EmendSettings {
 	maxContextCharacters: number;
 	maxWebToolCalls: number;
 	maxWebContentCharactersPerCall: number;
+	historyMessageLimit: number;
 }

@@ -3,6 +3,7 @@ import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import type { AdditionalNoteSnapshot } from '../src/additional-notes-context';
 import type { EditPreparation } from '../src/edit-strategy';
 import { operationEditStrategy } from '../src/operation-edit-strategy';
+import { formatProviderHistory } from '../src/provider-history';
 import type {
 	AiProviderRequest,
 	StreamEvent,
@@ -22,6 +23,7 @@ import {
 import type {
 	InstructionPromptParts,
 	ProviderConfig,
+	ProviderHistoryMessage,
 	SelectionSnapshot,
 } from '../src/types';
 
@@ -246,12 +248,15 @@ describe('getSelectionContext', () => {
 });
 
 describe('applyPreparedSelectionEdit', () => {
-	it('replaces only the captured selection offsets', () => {
+	it('replaces only the captured selection offsets and returns its summary items and summary', () => {
 		const snapshot = makeSnapshot();
 		const { adapter } = makeAdapter(snapshot);
+		const summaryItems = [{ type: 'replace', start: 0, end: 4 }] as const;
 		const prepared: EditPreparation = {
 			annotatedMarkdown: '{~~beta~>delta~~}',
 			changeCount: 1,
+			summaryItems,
+			summary: 'Renamed beta to delta.',
 		};
 
 		const result = applyPreparedSelectionEdit(
@@ -261,7 +266,13 @@ describe('applyPreparedSelectionEdit', () => {
 			adapter,
 		);
 
-		expect(result).toEqual({ applied: true, changeCount: 1 });
+		expect(result).toEqual({
+			applied: true,
+			changeCount: 1,
+			summaryItems,
+			summary: 'Renamed beta to delta.',
+		});
+		expect(result.summaryItems).toBe(summaryItems);
 		expect(adapter.readCurrentText).toHaveBeenCalledOnce();
 		expect(adapter.isTargetCurrent).toHaveBeenCalledOnce();
 		expect(adapter.replaceRange).toHaveBeenCalledExactlyOnceWith(
@@ -279,7 +290,7 @@ describe('applyPreparedSelectionEdit', () => {
 		applyPreparedSelectionEdit(
 			'edit',
 			snapshot,
-			{ annotatedMarkdown: '{~~First\nSecond~>Combined lines~~}', changeCount: 1 },
+			{ annotatedMarkdown: '{~~First\nSecond~>Combined lines~~}', changeCount: 1, summaryItems: [] },
 			adapter,
 		);
 
@@ -290,35 +301,76 @@ describe('applyPreparedSelectionEdit', () => {
 		);
 	});
 
-	it('does not re-read or replace an unchanged selection', () => {
+	it('does not re-read or replace an unchanged selection and returns no items but keeps the summary', () => {
 		const snapshot = makeSnapshot();
 		const { adapter } = makeAdapter(snapshot);
 
 		const result = applyPreparedSelectionEdit(
 			'edit',
 			snapshot,
-			{ annotatedMarkdown: snapshot.selectedText, changeCount: 0 },
+			{
+				annotatedMarkdown: snapshot.selectedText,
+				changeCount: 0,
+				summaryItems: [{ type: 'replace', start: 0, end: 4 }],
+				summary: 'Reviewed without changing the selection.',
+			},
 			adapter,
 		);
 
-		expect(result).toEqual({ applied: false, changeCount: 0 });
+		expect(result).toEqual({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+			summary: 'Reviewed without changing the selection.',
+		});
 		expect(adapter.readCurrentText).not.toHaveBeenCalled();
 		expect(adapter.replaceRange).not.toHaveBeenCalled();
 	});
 
-	it('applies a valid comment-only selection edit with zero text changes', () => {
+	it('applies a valid comment-only selection edit with zero text changes and its comment item', () => {
 		const snapshot = makeSnapshot();
 		const { adapter } = makeAdapter(snapshot);
+		const commentItems = [{ type: 'comment', start: 0, end: 4 }] as const;
 
 		const result = applyPreparedSelectionEdit(
 			'edit',
 			snapshot,
-			{ annotatedMarkdown: 'beta{>>Review this.<<}', changeCount: 0 },
+			{
+				annotatedMarkdown: 'beta{>>Review this.<<}',
+				changeCount: 0,
+				summaryItems: commentItems,
+			},
 			adapter,
 		);
 
-		expect(result).toEqual({ applied: true, changeCount: 0 });
+		expect(result).toEqual({
+			applied: true,
+			changeCount: 0,
+			summaryItems: commentItems,
+		});
 		expect(adapter.replaceRange).toHaveBeenCalledOnce();
+	});
+
+	it('rejects without a result when the editor replacement fails', () => {
+		const snapshot = makeSnapshot();
+		const { adapter } = makeAdapter(snapshot);
+		const replaceError = new Error('Editor unavailable');
+		adapter.replaceRange = vi.fn(() => {
+			throw replaceError;
+		});
+
+		expect(() =>
+			applyPreparedSelectionEdit(
+				'edit',
+				snapshot,
+				{
+					annotatedMarkdown: '{~~beta~>delta~~}',
+					changeCount: 1,
+					summaryItems: [{ type: 'replace', start: 0, end: 4 }],
+				},
+				adapter,
+			),
+		).toThrow(replaceError);
 	});
 
 	it('rejects stale full text without replacing the selection', () => {
@@ -330,7 +382,7 @@ describe('applyPreparedSelectionEdit', () => {
 			applyPreparedSelectionEdit(
 				'edit',
 				snapshot,
-				{ annotatedMarkdown: '{~~beta~>delta~~}', changeCount: 1 },
+				{ annotatedMarkdown: '{~~beta~>delta~~}', changeCount: 1, summaryItems: [] },
 				adapter,
 			),
 		).toThrow(STALE_ERROR);
@@ -346,7 +398,7 @@ describe('applyPreparedSelectionEdit', () => {
 			applyPreparedSelectionEdit(
 				'edit',
 				snapshot,
-				{ annotatedMarkdown: '{~~beta~>delta~~}', changeCount: 1 },
+				{ annotatedMarkdown: '{~~beta~>delta~~}', changeCount: 1, summaryItems: [] },
 				adapter,
 			),
 		).toThrow(STALE_ERROR);
@@ -364,7 +416,7 @@ describe('applyPreparedSelectionEdit', () => {
 			applyPreparedSelectionEdit(
 				'edit',
 				snapshot,
-				{ annotatedMarkdown: '{~~beta~>delta~~}', changeCount: 1 },
+				{ annotatedMarkdown: '{~~beta~>delta~~}', changeCount: 1, summaryItems: [] },
 				adapter,
 				controller.signal,
 			);
@@ -384,11 +436,22 @@ describe('applyPreparedSelectionEdit', () => {
 			const result = applyPreparedSelectionEdit(
 				mode,
 				snapshot,
-				{ annotatedMarkdown: '{--beta--}', changeCount: 1 },
+				{
+					annotatedMarkdown: '{--beta--}',
+					changeCount: 1,
+					summaryItems: [{ type: 'replace', start: 0, end: 4 }],
+					summary: 'Model prose must not leak from a read-only path.',
+				},
 				adapter,
 			);
 
-			expect(result).toEqual({ applied: false, changeCount: 0 });
+			expect(result).toEqual({
+				applied: false,
+				changeCount: 0,
+				summaryItems: [],
+				summary: undefined,
+			});
+			expect(result.summary).toBeUndefined();
 			expect(adapter.readCurrentText).not.toHaveBeenCalled();
 			expect(adapter.replaceRange).not.toHaveBeenCalled();
 		},
@@ -488,6 +551,7 @@ function makeSelectionSubmission(
 		maxContextCharacters: 20,
 		smartSelectionContext: true,
 		additionalNotePaths: [],
+		history: [],
 		signal: new AbortController().signal,
 		...overrides,
 	};
@@ -692,6 +756,39 @@ describe('SelectionEditRequestCoordinator', () => {
 			changeCount: 1,
 			usage: { source: 'estimated' },
 		});
+		expect(result.summary).toBeUndefined();
+		expect(adapter.replaceRange).toHaveBeenCalledExactlyOnceWith(
+			'{~~beta~>delta~~}',
+			snapshot.from,
+			snapshot.to,
+		);
+	});
+
+	it('returns the successful candidate summary and never the rejected one', async () => {
+		const snapshot = makeSnapshot();
+		const invalidResponse = JSON.stringify({
+			summary: 'Rejected summary.',
+			operations: [{ type: 'remove', target: 'missing' }],
+		});
+		const validResponse = JSON.stringify({
+			summary: 'Renamed beta to delta.',
+			operations: [{ type: 'replace', target: 'beta', replacement: 'delta' }],
+		});
+		const request = selectionRequest('');
+		request
+			.mockResolvedValueOnce({ content: invalidResponse, reasoning: '' })
+			.mockResolvedValueOnce({ content: validResponse, reasoning: '' });
+		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
+
+		const result = await coordinator.submit(makeSelectionSubmission(snapshot));
+
+		expect(request).toHaveBeenCalledTimes(2);
+		expect(result).toMatchObject({
+			applied: true,
+			changeCount: 1,
+			summary: 'Renamed beta to delta.',
+		});
+		expect(result.summaryItems).toEqual([{ type: 'replace', start: 0, end: 4 }]);
 		expect(adapter.replaceRange).toHaveBeenCalledExactlyOnceWith(
 			'{~~beta~>delta~~}',
 			snapshot.from,
@@ -804,6 +901,7 @@ describe('SelectionEditRequestCoordinator', () => {
 		).resolves.toMatchObject({
 			applied: false,
 			changeCount: 0,
+			summaryItems: [],
 			usage: { source: 'estimated' },
 		});
 		expect(adapter.replaceRange).not.toHaveBeenCalled();
@@ -840,6 +938,7 @@ describe('SelectionEditRequestCoordinator', () => {
 		expect(result).toEqual({
 			applied: true,
 			changeCount: 1,
+			summaryItems: [{ type: 'replace', start: 0, end: 4 }],
 			usage: {
 				promptTokens: 11,
 				completionTokens: 5,
@@ -848,6 +947,64 @@ describe('SelectionEditRequestCoordinator', () => {
 			},
 		});
 		expect(request.mock.calls[0]?.[0].history).toEqual([]);
+	});
+
+	it('sends the captured ready history and counts it in estimated usage', async () => {
+		const snapshot = makeSnapshot();
+		const { coordinator, request } = makeSelectionCoordinator(
+			selectionRequest(replaceBetaResponse),
+			snapshot,
+		);
+		const history: ProviderHistoryMessage[] = Array.from(
+			{ length: 12 },
+			(_, index) => ({
+				role: index % 2 === 0 ? 'user' : 'assistant',
+				content: `ready ${index}`,
+				mode: 'ask',
+				origin: index % 2 === 0 ? 'user' : 'model',
+			}),
+		);
+
+		const result = await coordinator.submit(
+			makeSelectionSubmission(snapshot, { history }),
+		);
+
+		const requestArg = request.mock.calls[0]?.[0];
+		if (!requestArg) {
+			throw new Error('Provider request missing.');
+		}
+		expect(requestArg.history).toEqual(history);
+		const historyCharacters = formatProviderHistory(requestArg.history).reduce(
+			(sum, item) => sum + item.content.length,
+			0,
+		);
+		const promptTokens = Math.max(
+			1,
+			Math.ceil(
+				(requestArg.systemPrompt.length +
+					requestArg.userPrompt.length +
+					historyCharacters) /
+					4,
+			),
+		);
+		const completionTokens = Math.max(
+			1,
+			Math.ceil(replaceBetaResponse.length / 4),
+		);
+		expect(result.usage).toEqual({
+			promptTokens,
+			completionTokens,
+			totalTokens: promptTokens + completionTokens,
+			source: 'estimated',
+		});
+		expect(result.usage.promptTokens).toBeGreaterThan(
+			Math.max(
+				1,
+				Math.ceil(
+					(requestArg.systemPrompt.length + requestArg.userPrompt.length) / 4,
+				),
+			),
+		);
 	});
 
 	it('notifies retry and sums provider usage across two correction rounds', async () => {
@@ -874,6 +1031,7 @@ describe('SelectionEditRequestCoordinator', () => {
 		expect(result).toEqual({
 			applied: true,
 			changeCount: 1,
+			summaryItems: [{ type: 'replace', start: 0, end: 4 }],
 			usage: {
 				promptTokens: 30,
 				completionTokens: 5,
@@ -928,6 +1086,7 @@ describe('SelectionEditRequestCoordinator', () => {
 		expect(result).toEqual({
 			applied: true,
 			changeCount: 1,
+			summaryItems: [{ type: 'replace', start: 0, end: 4 }],
 			usage: {
 				promptTokens,
 				completionTokens,
@@ -946,7 +1105,9 @@ describe('SelectionEditRequestCoordinator', () => {
 
 		await expect(
 			coordinator.submit(makeSelectionSubmission(snapshot)),
-		).rejects.toThrow('Operation edit response must be a bare JSON array.');
+		).rejects.toThrow(
+			'Operation edit response must be a bare JSON array of operations or an envelope object with operations and an optional summary.',
+		);
 		expect(adapter.readCurrentText).not.toHaveBeenCalled();
 		expect(adapter.replaceRange).not.toHaveBeenCalled();
 	});
@@ -1083,6 +1244,11 @@ describe('SelectionEditRequestCoordinator', () => {
 			changeCount: 1,
 			usage: { source: 'estimated' },
 		});
+		expect(result.summaryItems).toEqual([{
+			type: 'replace',
+			start: 0,
+			end: snapshot.selectedText.length,
+		}]);
 		expect(request).toHaveBeenCalledTimes(2);
 		expect(loadAdditionalNotes).toHaveBeenCalledOnce();
 		expect(loadInstructions).toHaveBeenCalledOnce();
@@ -1104,7 +1270,7 @@ describe('SelectionEditRequestCoordinator', () => {
 		const { continuation, ...correctionBaseRequest } = secondRequest;
 		expect(correctionBaseRequest).toEqual(firstRequest);
 		expect(continuation?.[0]).toEqual({ role: 'assistant', content: 'not-json' });
-		expect(continuation?.[1]?.content).toContain('unchanged original snapshot');
+		expect(continuation?.[1]?.content).toContain('Return only a new complete JSON array of operations, or an envelope object with operations and an optional summary, against the unchanged original snapshot.');
 		expect(continuation?.[1]?.content).toContain('"code":"invalid-json"');
 	});
 

@@ -1,8 +1,13 @@
-import { App, TFile } from 'obsidian';
+import { App, Notice, TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { AdditionalNotesStore } from '../src/additional-notes-store';
 import type { EditResult } from '../src/note-writer';
 import { operationEditStrategy } from '../src/operation-edit-strategy';
+import type {
+	AiProviderRequest,
+	StreamEvent,
+	StreamResult,
+} from '../src/provider-stream';
 import { QUICK_ACTIONS } from '../src/quick-actions';
 import {
 	SelectionEditRequestCoordinator,
@@ -243,12 +248,57 @@ describe('SelectionModal quick actions', () => {
 		);
 		store.clear('note.md');
 		expect(submitSelection.mock.calls[0]?.[2]).toEqual(['First.md', 'Second.md']);
-		response.resolve({ applied: false, changeCount: 0 });
+		response.resolve({ applied: false, changeCount: 0, summaryItems: [] });
 		await vi.waitFor(() => expect(input.disabled).toBe(false));
 	});
 
+	it.each([
+		{
+			label: 'applied',
+			result: {
+				applied: true,
+				changeCount: 1,
+				summaryItems: [],
+				summary: 'MODEL SUMMARY MUST NOT APPEAR.',
+			},
+			expected: 'Selection updated — 1 changes tracked. Review in Track Changes.',
+		},
+		{
+			label: 'no-op',
+			result: {
+				applied: false,
+				changeCount: 0,
+				summaryItems: [],
+				summary: 'MODEL SUMMARY MUST NOT APPEAR.',
+			},
+			expected: 'No changes were needed.',
+		},
+	])('keeps the $label Notice free of the model summary', async ({ result, expected }) => {
+		const response = deferred<EditResult>();
+		const submitSelection = vi.fn(() => response.promise);
+		const { contentEl, input } = openModal(submitSelection);
+		if (!input) {
+			throw new Error('Selection input missing.');
+		}
+		input.value = 'Clarify this selection.';
+		const noticeMessages = (Notice as unknown as { readonly messages: string[] }).messages;
+		const noticeCount = noticeMessages.length;
+		findElements(contentEl, (element) =>
+			element.className.split(' ').includes('emend-chat-primary-button')
+		)[0]?.click();
+
+		response.resolve(result);
+
+		await vi.waitFor(() => expect(noticeMessages.length).toBe(noticeCount + 1));
+		expect(noticeMessages.slice(noticeCount)).toEqual([expected]);
+	});
+
 	it('submits the renamed target paths for typed input', async () => {
-		const submitSelection = vi.fn(async () => ({ applied: false, changeCount: 0 }));
+		const submitSelection = vi.fn(async () => ({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+		}));
 		const store = new AdditionalNotesStore();
 		store.add('note.md', 'Context.md');
 		const { contentEl, input, targetFile } = openModal(submitSelection, store);
@@ -273,7 +323,11 @@ describe('SelectionModal quick actions', () => {
 	it.each(QUICK_ACTIONS)(
 		'$id submits the renamed target paths after the modal opens',
 		async (action) => {
-			const submitSelection = vi.fn(async () => ({ applied: false, changeCount: 0 }));
+			const submitSelection = vi.fn(async () => ({
+				applied: false,
+				changeCount: 0,
+				summaryItems: [],
+			}));
 			const store = new AdditionalNotesStore();
 			store.add('note.md', 'Context.md');
 			const { contentEl, targetFile } = openModal(submitSelection, store);
@@ -306,7 +360,7 @@ describe('SelectionModal quick actions', () => {
 		expect(cancelButton?.disabled).toBe(true);
 		expect(cancelButton?.textContent).toBe('Stopping...');
 
-		response.resolve({ applied: false, changeCount: 0 });
+		response.resolve({ applied: false, changeCount: 0, summaryItems: [] });
 
 		await vi.waitFor(() => {
 			expect(cancelButton?.disabled).toBe(false);
@@ -354,6 +408,7 @@ describe('SelectionModal quick actions', () => {
 					maxContextCharacters: 1000,
 					smartSelectionContext: true,
 					additionalNotePaths: [],
+					history: [],
 					signal,
 				})
 			);
@@ -389,7 +444,12 @@ describe('SelectionModal quick actions', () => {
 			replaceRange: vi.fn(),
 		};
 		const secondRound = deferred<{ content: string; reasoning: string }>();
-		const request = vi.fn(() => secondRound.promise);
+		const request = vi.fn(
+			async (
+				_request: AiProviderRequest,
+				_callbacks: { onEvent(event: StreamEvent): void },
+			): Promise<StreamResult> => secondRound.promise,
+		);
 		request.mockImplementationOnce(async () => ({
 			content: 'not json',
 			reasoning: '',
@@ -409,6 +469,7 @@ describe('SelectionModal quick actions', () => {
 				maxContextCharacters: 1000,
 				smartSelectionContext: true,
 				additionalNotePaths: [],
+				history: [],
 				signal,
 			})
 		);
@@ -429,6 +490,7 @@ describe('SelectionModal quick actions', () => {
 			expect(additionalButtons.every((item) => !item.disabled)).toBe(true);
 		});
 		expect(submitSelection).toHaveBeenCalledOnce();
+		expect(request.mock.calls.map((call) => call[0].history)).toEqual([[], []]);
 		expect(editor.readCurrentText).not.toHaveBeenCalled();
 		expect(editor.replaceRange).not.toHaveBeenCalled();
 	});

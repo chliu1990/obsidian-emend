@@ -39,6 +39,7 @@ import {
 import type {
 	EmendSettings,
 	Mode,
+	ProviderHistoryMessage,
 	ProviderId,
 	SelectionSnapshot,
 } from './types';
@@ -382,6 +383,7 @@ export default class EmendPlugin extends Plugin {
 		signal: AbortSignal,
 		editor: ReturnType<typeof createSelectionEditorAdapter>,
 		additionalNotePaths: readonly string[] = [],
+		history: ProviderHistoryMessage[] = [],
 		callbacks?: SelectionEditCallbacks,
 	): Promise<SelectionEditResult> {
 		if (!prompt.trim()) {
@@ -414,6 +416,7 @@ export default class EmendPlugin extends Plugin {
 				),
 				smartSelectionContext: this.settings.smartSelectionContext,
 				additionalNotePaths,
+				history,
 				notePath: this.settings.includeNotePathInContext
 					? `${this.app.vault.getName()}/${snapshot.file.path}`
 					: undefined,

@@ -71,6 +71,7 @@ export const DEFAULT_SETTINGS: EmendSettings = {
 	maxContextCharacters: 12000,
 	maxWebToolCalls: 8,
 	maxWebContentCharactersPerCall: 20000,
+	historyMessageLimit: 8,
 };
 
 export function normalizeSettings(data: unknown): EmendSettings {
@@ -113,6 +114,7 @@ export function normalizeSettings(data: unknown): EmendSettings {
 		maxWebContentCharactersPerCall: normalizeWebContentCharacterLimit(
 			root.maxWebContentCharactersPerCall,
 		),
+		historyMessageLimit: normalizeHistoryMessageLimit(root.historyMessageLimit),
 	};
 }
 
@@ -340,6 +342,25 @@ export class EmendSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
+			.setName('Chat history messages')
+			// eslint-disable-next-line obsidianmd/ui/sentence-case -- Ask, Discuss, and Brainstorm are mode names.
+			.setDesc('Recent ready messages sent with each request. Set 0 to disable chat history. Applies to Ask, Discuss, Brainstorm, and both full-note and Selection Edit.')
+			.addText((text) => {
+				text.inputEl.type = 'number';
+				text.inputEl.min = '0';
+				text.inputEl.max = '50';
+				text.inputEl.step = '1';
+				text
+					.setPlaceholder(String(DEFAULT_SETTINGS.historyMessageLimit))
+					.setValue(String(this.plugin.settings.historyMessageLimit))
+					.onChange(async (value) => {
+						this.plugin.settings.historyMessageLimit =
+							normalizeHistoryMessageLimit(Number.parseInt(value, 10));
+						await this.plugin.saveSettings();
+					});
+			});
+
+		new Setting(containerEl)
 			.setName('Context character limit')
 			.setDesc('Maximum characters sent around selected text or the caret position in long notes.')
 			.addText((text) => {
@@ -487,6 +508,12 @@ function normalizeWebContentCharacterLimit(value: unknown) {
 	return typeof value === 'number' && Number.isFinite(value)
 		? Math.min(100000, Math.max(1000, Math.floor(value)))
 		: DEFAULT_SETTINGS.maxWebContentCharactersPerCall;
+}
+
+function normalizeHistoryMessageLimit(value: unknown) {
+	return typeof value === 'number' && Number.isFinite(value)
+		? Math.min(50, Math.max(0, Math.floor(value)))
+		: DEFAULT_SETTINGS.historyMessageLimit;
 }
 
 function stringOrDefault(value: unknown, fallback: string) {

@@ -6,7 +6,12 @@ import type {
 	SelectionEditCallbacks,
 	SelectionEditorAdapter,
 } from '../src/selection-editor';
-import type { ChatMessage, Mode, SelectionSnapshot } from '../src/types';
+import type {
+	ChatMessage,
+	Mode,
+	ProviderHistoryMessage,
+	SelectionSnapshot,
+} from '../src/types';
 
 const viewPrototype = EmendChatView.prototype as unknown as {
 	submitPrompt(this: unknown, prompt?: string): Promise<void>;
@@ -56,8 +61,15 @@ describe('quick action submission', () => {
 			isThreadLoading: false,
 			messages: [] as ChatMessage[],
 			plugin: {
-				captureChatContext: () => ({ file: { path: 'Note.md' } }),
-				requestChatCompletion: vi.fn(async () => ({ applied: true, changeCount: 2 })),
+				captureChatContext: () => ({
+					file: { path: 'Note.md' },
+					sourceText: 'Alpha beta.',
+				}),
+				requestChatCompletion: vi.fn(async () => ({
+					applied: true,
+					changeCount: 2,
+					summaryItems: [{ type: 'replace', start: 0, end: 5 }],
+				})),
 			},
 			toProviderHistory: () => [],
 			persistMessages: vi.fn(async (_path: string, messages: ChatMessage[]) => {
@@ -84,7 +96,7 @@ describe('quick action submission', () => {
 			{ role: 'user', content: action.prompt, mode: 'edit' },
 			{
 				role: 'assistant',
-				content: 'Edit applied — 2 changes tracked. Review in Track Changes.',
+				content: 'Edit applied — 2 changes tracked. Review in Track Changes.\nTarget: Full note.\n\n- Replaced line 1.',
 				mode: 'edit',
 			},
 		]);
@@ -113,6 +125,7 @@ describe('quick action submission', () => {
 			_signal: AbortSignal,
 			_editor: SelectionEditorAdapter,
 			_additionalNotePaths: readonly string[],
+			_history: readonly ProviderHistoryMessage[],
 			_callbacks?: SelectionEditCallbacks,
 		) => ({
 			applied: true,
@@ -160,8 +173,9 @@ describe('quick action submission', () => {
 		expect(args?.[2]).toBeInstanceOf(AbortSignal);
 		expect(args?.[3]).toBe(editor);
 		expect(args?.[4]).toEqual([]);
-		expect(typeof args?.[5]?.onReasoning).toBe('function');
-		expect(typeof args?.[5]?.onRetry).toBe('function');
+		expect(args?.[5]).toEqual([]);
+		expect(typeof args?.[6]?.onReasoning).toBe('function');
+		expect(typeof args?.[6]?.onRetry).toBe('function');
 		expect(requestChatCompletion).not.toHaveBeenCalled();
 		expect(captureChatContext).not.toHaveBeenCalled();
 		expect(context.messages).toHaveLength(2);

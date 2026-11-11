@@ -11,6 +11,7 @@ import { AdditionalNotesControl } from './additional-notes-ui';
 import { EMEND_BUILD_ID } from './build-info';
 import type EmendPlugin from './main';
 import { getComposerShortcut, getDefaultShortcutLabels } from './chat-shortcuts';
+import { formatEditSummary, formatNoChangeSummary } from './edit-summary';
 import type { RequestContext } from './context';
 import {
 	resolveEditTarget,
@@ -763,6 +764,7 @@ export class EmendChatView extends ItemView {
 						controller.signal,
 						capturedTarget.target.editor,
 						additionalNotePaths,
+						history,
 						callbacks,
 					)
 					: await this.plugin.requestChatCompletion({
@@ -774,9 +776,24 @@ export class EmendChatView extends ItemView {
 						callbacks,
 						signal: controller.signal,
 					});
+				const summaryText = capturedTarget.type === 'selection'
+					? capturedTarget.target.snapshot.fullText
+					: capturedTarget.context.sourceText;
+				const summaryOffset = capturedTarget.type === 'selection'
+					? capturedTarget.target.snapshot.from
+					: 0;
 				loadingMessage.content = result.applied
-					? `Edit applied — ${result.changeCount} changes tracked. Review in Track Changes.`
-					: 'No changes were needed.';
+					? formatEditSummary(
+						result.changeCount,
+						result.summaryItems,
+						summaryText,
+						summaryOffset,
+						{
+							target: capturedTarget.type === 'selection' ? 'selection' : 'full-note',
+							summary: result.summary,
+						},
+					)
+					: formatNoChangeSummary(result.summary);
 				loadingMessage.usage = result.usage;
 			} else {
 				const result = await this.plugin.requestChatCompletion({
@@ -898,19 +915,19 @@ export class EmendChatView extends ItemView {
 	}
 
 	private toProviderHistory(): ProviderHistoryMessage[] {
-		return this.messages
-			.filter((message) => message.status === 'ready')
-			.slice(-8)
-			.map((message) => ({
-				role: message.role,
-				content: message.role === 'assistant'
-					? formatChatMessageForCopy(message)
-					: message.content,
-				mode: message.mode,
-				origin: message.role === 'user'
-					? 'user'
-					: message.mode === 'edit' ? 'local-edit-status' : 'model',
-			}));
+		const limit = this.plugin.settings.historyMessageLimit;
+		const ready = this.messages.filter((message) => message.status === 'ready');
+		const selected = limit > 0 ? ready.slice(-limit) : [];
+		return selected.map((message) => ({
+			role: message.role,
+			content: message.role === 'assistant'
+				? formatChatMessageForCopy(message)
+				: message.content,
+			mode: message.mode,
+			origin: message.role === 'user'
+				? 'user'
+				: message.mode === 'edit' ? 'local-edit-status' : 'model',
+		}));
 	}
 
 	private getActiveModelLabel() {
