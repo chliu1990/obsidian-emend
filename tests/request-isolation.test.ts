@@ -69,6 +69,7 @@ function makePluginFixture(initialTexts: Record<string, string>) {
 			providers: { custom: provider },
 			includeNotePathInContext: false,
 			maxContextCharacters: 12000,
+			historyMessageLimit: 8,
 		},
 		app: {
 			vault: {
