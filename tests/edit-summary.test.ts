@@ -215,6 +215,32 @@ describe('formatEditSummary', () => {
 		].join('\n'));
 	});
 
+	it('aggregates a single remaining insertion and replacement with singular nouns', () => {
+		const fullText = Array.from({ length: 9 }, (_value, index) => `Line ${index + 1}.`).join('\n');
+		const starts = lineStarts(fullText);
+		const startsOf = (index: number) => starts[index] ?? 0;
+		const lengthOf = (index: number) => `Line ${index + 1}.`.length;
+		const items: EditSummaryItem[] = [
+			...Array.from({ length: 7 }, (_value, index) => ({
+				type: 'replace' as const,
+				start: startsOf(index),
+				end: startsOf(index) + lengthOf(index),
+			})),
+			{
+				type: 'insert',
+				start: startsOf(7),
+				end: startsOf(7) + lengthOf(7),
+				insertionPoint: startsOf(7),
+			},
+			{ type: 'replace', start: startsOf(8), end: startsOf(8) + lengthOf(8) },
+		];
+
+		const summary = formatEditSummary(9, items, fullText, 0).split('\n');
+
+		expect(summary).toHaveLength(9);
+		expect(summary[8]).toBe('- And 1 more insertion, 1 more replacement.');
+	});
+
 	it('keeps comment-only edits on the provided zero change count', () => {
 		expect(formatEditSummary(0, [
 			{ type: 'comment', start: 6, end: 11 },

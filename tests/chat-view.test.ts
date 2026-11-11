@@ -1083,20 +1083,40 @@ describe('EmendChatView selection edit submission', () => {
 		]);
 	});
 
-	it('maps Selection-local summary items onto note-absolute lines', async () => {
+	it('adds the Selection start offset once to note-absolute summary lines', async () => {
 		const fixture = createSelectionEditSubmission({
-			fullText: 'Intro line.\nTarget line.\nOutro line.',
-			selectedText: 'Target line.',
+			fullText: 'Intro line.\nFirst target.\nSecond target.\nOutro line.',
+			selectedText: 'First target.\nSecond target.',
 			from: 12,
-			to: 24,
-			summaryItems: [{ type: 'replace', start: 0, end: 12 }],
+			to: 40,
+			summaryItems: [{ type: 'replace', start: 0, end: 28 }],
 		});
 
 		await viewPrototype.submitPrompt.call(fixture.context);
 
 		expect(fixture.context.messages[1]?.content).toBe(
-			'Edit applied — 2 changes tracked. Review in Track Changes.\n- Replaced line 2.',
+			'Edit applied — 2 changes tracked. Review in Track Changes.\n- Replaced lines 2–3.',
 		);
+	});
+
+	it('keeps the exact no-op text when a non-applied result carries summary items', async () => {
+		const fixture = createSelectionEditSubmission();
+		fixture.requestSelectionEdit.mockResolvedValueOnce({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [{ type: 'replace', start: 0, end: 4 }],
+			usage: {
+				promptTokens: 2,
+				completionTokens: 1,
+				totalTokens: 3,
+				source: 'provider',
+			},
+		});
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.context.messages[1]?.content).toBe('No changes were needed.');
+		expect(fixture.context.messages[1]?.content).not.toContain('- ');
 	});
 
 	it('formats full-note summaries against the captured note source', async () => {
