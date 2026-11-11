@@ -436,6 +436,13 @@
 	gap: 12px;
 }
 
+.emend-web-review-disclosure {
+	margin-top: 4px;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	line-height: 1.4;
+}
+
 .emend-web-review-call {
 	display: flex;
 	flex-direction: column;

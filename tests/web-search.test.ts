@@ -15,42 +15,74 @@ function raw(name: string, args: unknown): ProviderToolCall {
 }
 
 describe('parseWebToolCall', () => {
-	it('parses and trims a valid search query', () => {
-		expect(parseWebToolCall(raw('web_search', { query: '  DeepSeek API  ' }))).toEqual({
+	it('parses and trims a valid search query and extraction goal', () => {
+		expect(parseWebToolCall(raw('web_search', {
+			query: '  DeepSeek API  ',
+			extractionGoal: '  Find the streaming request fields.  ',
+		}))).toEqual({
 			id: 'call-1',
 			name: 'web_search',
 			query: 'DeepSeek API',
+			extractionGoal: 'Find the streaming request fields.',
 		});
 	});
 
-	it('accepts 128 Unicode characters and rejects 129', () => {
+	it('accepts 128 Unicode characters and rejects 129 in queries', () => {
 		const query = '🔍'.repeat(128);
-		expect(parseWebToolCall(raw('web_search', { query }))).toEqual({
+		expect(parseWebToolCall(raw('web_search', { query, extractionGoal: 'Find evidence.' }))).toEqual({
 			id: 'call-1',
 			name: 'web_search',
 			query,
+			extractionGoal: 'Find evidence.',
 		});
-		expect(() => parseWebToolCall(raw('web_search', { query: `${query}🔍` }))).toThrow(
-			'1 to 128',
-		);
+		expect(() => parseWebToolCall(raw('web_search', {
+			query: `${query}🔍`,
+			extractionGoal: 'Find evidence.',
+		}))).toThrow('1 to 128');
+	});
+
+	it.each(['web_search', 'web_fetch'] as const)('accepts 1000 and rejects 1001 Unicode code points in %s goals', (name) => {
+		const extractionGoal = '🎯'.repeat(1000);
+		const target = name === 'web_search'
+			? { query: 'Emend' }
+			: { url: 'https://example.test/docs' };
+		expect(parseWebToolCall(raw(name, { ...target, extractionGoal }))).toMatchObject({
+			extractionGoal,
+		});
+		expect(() => parseWebToolCall(raw(name, {
+			...target,
+			extractionGoal: `${extractionGoal}🎯`,
+		}))).toThrow('1 to 1000');
 	});
 
 	it.each([
-		['unknown tool', raw('other_tool', { query: 'Emend' })],
-		['blank query', raw('web_search', { query: '  ' })],
-		['multiline query', raw('web_search', { query: 'one\ntwo' })],
-		['extra search field', raw('web_search', { query: 'Emend', count: 50 })],
-		['missing query', raw('web_search', {})],
+		['unknown tool', raw('other_tool', { query: 'Emend', extractionGoal: 'Find evidence.' })],
+		['blank query', raw('web_search', { query: '  ', extractionGoal: 'Find evidence.' })],
+		['multiline query', raw('web_search', { query: 'one\ntwo', extractionGoal: 'Find evidence.' })],
+		['wrong-type query', raw('web_search', { query: 42, extractionGoal: 'Find evidence.' })],
+		['extra search field', raw('web_search', { query: 'Emend', extractionGoal: 'Find evidence.', count: 50 })],
+		['missing query', raw('web_search', { extractionGoal: 'Find evidence.' })],
+		['missing search goal', raw('web_search', { query: 'Emend' })],
+		['wrong-type search goal', raw('web_search', { query: 'Emend', extractionGoal: 42 })],
+		['empty search goal', raw('web_search', { query: 'Emend', extractionGoal: '  ' })],
+		['missing fetch goal', raw('web_fetch', { url: 'https://example.test/docs' })],
+		['wrong-type fetch goal', raw('web_fetch', { url: 'https://example.test/docs', extractionGoal: null })],
+		['empty fetch goal', raw('web_fetch', { url: 'https://example.test/docs', extractionGoal: '' })],
+		['extra fetch field', raw('web_fetch', { url: 'https://example.test/docs', extractionGoal: 'Find evidence.', count: 1 })],
 		['invalid JSON', raw('web_search', '{')],
 	])('rejects %s', (_label, call) => {
 		expect(() => parseWebToolCall(call)).toThrow();
 	});
 
-	it('normalizes a valid fetch URL', () => {
-		expect(parseWebToolCall(raw('web_fetch', { url: ' https://example.test/docs ' }))).toEqual({
+	it('normalizes a valid fetch URL and trims its extraction goal', () => {
+		expect(parseWebToolCall(raw('web_fetch', {
+			url: ' https://example.test/docs ',
+			extractionGoal: '  Extract the installation steps.  ',
+		}))).toEqual({
 			id: 'call-1',
 			name: 'web_fetch',
 			url: 'https://example.test/docs',
+			extractionGoal: 'Extract the installation steps.',
 		});
 	});
 
@@ -60,7 +92,7 @@ describe('parseWebToolCall', () => {
 		'not a URL',
 		`https://example.test/${'x'.repeat(8192)}`,
 	])('rejects unsafe fetch URL %s', (url) => {
-		expect(() => parseWebToolCall(raw('web_fetch', { url }))).toThrow();
+		expect(() => parseWebToolCall(raw('web_fetch', { url, extractionGoal: 'Find evidence.' }))).toThrow();
 	});
 });
 

@@ -27,6 +27,7 @@ import type { SelectionEditTarget } from './selection-editor';
 import { formatTokenUsage } from './token-usage';
 import type { ChatMessage, Mode, ProviderHistoryMessage } from './types';
 import { WebSearchModal } from './web-search-modal';
+import { WEB_EXTRACTION_DISCLOSURE } from './web-search';
 import type {
 	WebActivityRecord,
 	WebSearchActivity,
@@ -36,7 +37,15 @@ import type {
 } from './web-search';
 
 export const EMEND_CHAT_VIEW_TYPE = 'emend-chat-view';
-export const WEB_SEARCH_DISCLOSURE = 'DeepSeek may generate search queries and fetch URLs from note context. Review asks before each batch; Auto runs directly. Successful search/fetch calls may be billed separately. Queries, URLs, and outcomes are stored locally with ready chats.';
+export const WEB_SEARCH_DISCLOSURE = `DeepSeek may generate search queries and fetch URLs from note context. Review asks before each batch; Auto runs directly. Successful search/fetch calls may be billed separately. Queries, URLs, and outcomes are stored locally with ready chats. ${WEB_EXTRACTION_DISCLOSURE}`;
+
+function formatExtractionWarning(failedExtractions: number) {
+	return `Emend could not extract information from ${failedExtractions} web ${failedExtractions === 1 ? 'query' : 'queries'}. The answer may be incomplete.`;
+}
+
+function formatSearchWarning(failedSearches: number) {
+	return `Emend could not complete ${failedSearches} web ${failedSearches === 1 ? 'search' : 'searches'}. The answer may be incomplete.`;
+}
 
 const MODE_PLACEHOLDERS: Record<Mode, string> = {
 	ask: 'Ask about the active note...',
@@ -792,6 +801,7 @@ export class EmendChatView extends ItemView {
 							webSearch: {
 								mode: webSearchMode,
 								maxToolCalls: this.plugin.settings.maxWebToolCalls,
+								maxContentCharactersPerCall: this.plugin.settings.maxWebContentCharactersPerCall,
 								reviewCalls: (calls: readonly WebToolCall[]) =>
 									this.reviewWebCalls(calls, controller.signal),
 								onActivity: (activity: WebSearchActivity) => {
@@ -808,6 +818,19 @@ export class EmendChatView extends ItemView {
 				const unreadPages = getUnreadPageCount(result.activities);
 				if (unreadPages > 0) {
 					loadingMessage.content += `${loadingMessage.content ? '\n\n' : ''}Emend could not read ${unreadPages} requested page${unreadPages === 1 ? '' : 's'}. The answer may be incomplete.`;
+				}
+				if (result.failedExtractions > 0) {
+					loadingMessage.content += `${loadingMessage.content ? '\n\n' : ''}${formatExtractionWarning(result.failedExtractions)}`;
+				}
+				if (result.failedSearches > 0) {
+					loadingMessage.content += `${loadingMessage.content ? '\n\n' : ''}${formatSearchWarning(result.failedSearches)}`;
+				}
+				if (result.omittedEvidence) {
+					loadingMessage.content += `${loadingMessage.content ? '\n\n' : ''}Emend omitted some extracted evidence to fit the per-call output cap. The answer may be incomplete.`;
+				}
+				if (result.skippedWebCalls > 0) {
+					const skipped = result.skippedWebCalls;
+					loadingMessage.content += `${loadingMessage.content ? '\n\n' : ''}Web retrieval reached the ${this.plugin.settings.maxWebToolCalls}-call limit. ${skipped} proposed ${skipped === 1 ? 'call was' : 'calls were'} skipped; the answer may be incomplete.`;
 				}
 			}
 			controller.signal.throwIfAborted();
@@ -910,6 +933,7 @@ export function getUnreadPageCount(activities: WebActivityRecord[] | undefined) 
 			.filter((activity) =>
 				activity.type === 'fetch' &&
 				activity.status === 'failed' &&
+				activity.failureKind !== 'extraction' &&
 				!completedTargets.has(activity.target)
 			)
 			.map((activity) => activity.target),
@@ -927,6 +951,52 @@ export function formatChatMessageForCopy(message: ChatMessage) {
 	return `${message.content}\n\n### Sources\n${sourceList}`;
 }
 
+const WEB_FAILURE_REASON_LABELS: Record<string, string | undefined> = {
+	network: 'network',
+	http: 'HTTP',
+	empty: 'empty page',
+	reader: 'reader',
+};
+
+const WEB_READER_FAILURE_LABELS: Record<string, string | undefined> = {
+	format: 'reader format',
+	provider: 'reader service',
+	limit: 'reader limit',
+};
+
+function formatWebFailureReason(activity: WebActivityRecord) {
+	const attempts = activity.attempts !== undefined && activity.attempts > 1
+		? `${activity.attempts} attempts`
+		: undefined;
+	const reason = formatWebFailureCategory(activity);
+	if (!reason) {
+		return attempts;
+	}
+	return attempts ? `${reason}, ${attempts}` : reason;
+}
+
+function formatWebFailureCategory(activity: WebActivityRecord) {
+	if (!activity.failureReason) {
+		return undefined;
+	}
+	if (activity.failureReason === 'http' && activity.failureStatus !== undefined) {
+		return `HTTP ${activity.failureStatus}`;
+	}
+	if (activity.failureReason === 'reader' && activity.readerFailureKind) {
+		return WEB_READER_FAILURE_LABELS[activity.readerFailureKind]
+			?? WEB_FAILURE_REASON_LABELS.reader;
+	}
+	return WEB_FAILURE_REASON_LABELS[activity.failureReason];
+}
+
+function formatWebActivityText(activity: WebActivityRecord) {
+	const type = activity.type === 'search' ? 'Search' : 'Fetch';
+	const status = activity.status.charAt(0).toUpperCase() + activity.status.slice(1);
+	const reason = activity.status === 'failed' ? formatWebFailureReason(activity) : undefined;
+	const label = reason ? `${status} (${reason})` : status;
+	return `${type} · ${label} · ${activity.target}`;
+}
+
 function renderWebActivities(
 	containerEl: HTMLElement,
 	activities: WebActivityRecord[] | undefined,
@@ -938,11 +1008,9 @@ function renderWebActivities(
 	detailsEl.open = false;
 	detailsEl.createEl('summary', { text: `Web activity (${activities.length})` });
 	for (const activity of activities) {
-		const type = activity.type === 'search' ? 'Search' : 'Fetch';
-		const status = activity.status.charAt(0).toUpperCase() + activity.status.slice(1);
 		detailsEl.createDiv({
 			cls: 'emend-chat-web-activity-item',
-			text: `${type} · ${status} · ${activity.target}`,
+			text: formatWebActivityText(activity),
 		});
 	}
 }

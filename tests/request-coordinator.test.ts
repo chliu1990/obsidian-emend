@@ -143,6 +143,10 @@ describe('ReadOnlyRequestCoordinator', () => {
 			const result = await coordinator.submit(submission);
 
 			expect(result.content).toBe('Streamed answer');
+			expect(result.failedExtractions).toBe(0);
+			expect(result.skippedWebCalls).toBe(0);
+			expect(result.failedSearches).toBe(0);
+			expect(result.omittedEvidence).toBe(false);
 			expect(submission.callbacks.onContent).toHaveBeenCalledExactlyOnceWith(
 				'Streamed answer',
 			);
@@ -1072,7 +1076,7 @@ describe('EditRequestCoordinator', () => {
 
 
 describe('ReadOnlyRequestCoordinator web routing', () => {
-	it.each(['review', 'auto'] as const)('routes %s submissions through the web coordinator with captured options', async (mode) => {
+	it.each(['review', 'auto'] as const)('routes %s submissions with the isolated question, cap, failures, and all rounds', async (mode) => {
 		const ordinaryRequest = successfulRequest();
 		const webSubmit = vi.fn(async (
 			request: AiProviderRequest,
@@ -1081,17 +1085,36 @@ describe('ReadOnlyRequestCoordinator web routing', () => {
 			options.callbacks.onEvent({ type: 'content', text: 'Web answer' });
 			return {
 				content: 'Web answer',
-				reasoning: '',
+				reasoning: 'Main reasoning',
 				sources: [{ id: 'S1', title: 'Source', url: 'https://example.test/source' }],
 				activities: [],
-				rounds: [{
-					request,
-					result: {
-						content: 'Web answer',
-						reasoning: '',
-						usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12 },
+				failedExtractions: 2,
+				skippedWebCalls: 3,
+				failedSearches: 4,
+				omittedEvidence: true,
+				rounds: [
+					{
+						request,
+						result: {
+							content: '',
+							reasoning: 'Main reasoning',
+							usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12 },
+						},
 					},
-				}],
+					{
+						request: {
+							provider,
+							systemPrompt: 'Reader system',
+							userPrompt: 'Reader question',
+							history: [],
+						},
+						result: {
+							content: '{}',
+							reasoning: 'Private reader reasoning',
+							usage: { promptTokens: 20, completionTokens: 5, totalTokens: 25 },
+						},
+					},
+				],
 			};
 		});
 		const coordinator = new ReadOnlyRequestCoordinator({
@@ -1105,17 +1128,110 @@ describe('ReadOnlyRequestCoordinator web routing', () => {
 			calls: Parameters<WebSearchRunOptions['reviewCalls']>[0],
 		) => calls);
 		const onActivity = vi.fn();
+		const submission = makeSubmission({
+			prompt: 'Only this typed question',
+			webSearch: {
+				mode,
+				maxToolCalls: 7,
+				maxContentCharactersPerCall: 12345,
+				reviewCalls,
+				onActivity,
+			},
+		});
 
-		const result = await coordinator.submit(makeSubmission({
-			webSearch: { mode, maxToolCalls: 7, reviewCalls, onActivity },
-		}));
+		const result = await coordinator.submit(submission);
 
 		expect(ordinaryRequest).not.toHaveBeenCalled();
 		expect(webSubmit).toHaveBeenCalledOnce();
-		expect(webSubmit.mock.calls[0]?.[1]).toMatchObject({ mode, maxToolCalls: 7, reviewCalls, onActivity });
+		const [webRequest, webOptions] = webSubmit.mock.calls[0] ?? [];
+		expect(webRequest?.userPrompt).toContain('Active note Markdown:');
+		expect(webRequest?.userPrompt).toContain('User message:\nOnly this typed question');
+		expect(webOptions).toMatchObject({
+			mode,
+			maxToolCalls: 7,
+			maxContentCharactersPerCall: 12345,
+			question: 'Only this typed question',
+			reviewCalls,
+			onActivity,
+		});
+		expect(webOptions?.question).not.toBe(webRequest?.userPrompt);
+		expect(webOptions?.question).not.toContain('Active note Markdown:');
 		expect(result.content).toBe('Web answer');
+		expect(result.reasoning).toBe('Main reasoning');
+		expect(result.failedExtractions).toBe(2);
+		expect(result.skippedWebCalls).toBe(3);
+		expect(result.failedSearches).toBe(4);
+		expect(result.omittedEvidence).toBe(true);
 		expect(result.sources).toEqual([{ id: 'S1', title: 'Source', url: 'https://example.test/source' }]);
-		expect(result.usage).toEqual({ promptTokens: 10, completionTokens: 2, totalTokens: 12, source: 'provider' });
+		expect(result.usage).toEqual({ promptTokens: 30, completionTokens: 7, totalTokens: 37, source: 'provider' });
+	});
+
+	it('estimates every main and reader round independently when reader usage is missing', async () => {
+		const webSubmit = vi.fn(async (
+			request: AiProviderRequest,
+			_options: WebSearchRunOptions,
+		): Promise<WebToolLoopResult> => ({
+			content: 'Web answer',
+			reasoning: '',
+			sources: [],
+			activities: [],
+			failedExtractions: 0,
+			failedSearches: 0,
+			skippedWebCalls: 0,
+			omittedEvidence: false,
+			rounds: [
+				{
+					request,
+					result: {
+						content: 'Web answer',
+						reasoning: '',
+						usage: { promptTokens: 100, completionTokens: 100, totalTokens: 200 },
+					},
+				},
+				{
+					request: {
+						provider,
+						systemPrompt: '1234',
+						userPrompt: '12345678',
+						history: [],
+					},
+					result: { content: '1234', reasoning: '12' },
+				},
+			],
+		}));
+		const coordinator = new ReadOnlyRequestCoordinator({
+			provider,
+			loadAdditionalNotes: makeAdditionalNotesLoader(),
+			loadInstructions: async () => ({ skillTexts: new Map() }),
+			request: successfulRequest(),
+			webSearch: { submit: webSubmit },
+		});
+
+		const result = await coordinator.submit(makeSubmission({
+			webSearch: {
+				mode: 'auto',
+				maxToolCalls: 8,
+				maxContentCharactersPerCall: 20000,
+				reviewCalls: async (calls) => calls,
+				onActivity: vi.fn(),
+			},
+		}));
+
+		const mainRequest = webSubmit.mock.calls[0]?.[0];
+		const mainPromptTokens = Math.max(1, Math.ceil(
+			((mainRequest?.systemPrompt.length ?? 0) + (mainRequest?.userPrompt.length ?? 0)) / 4,
+		));
+		const mainCompletionTokens = Math.ceil('Web answer'.length / 4);
+		const readerPromptTokens = Math.ceil(('1234'.length + '12345678'.length) / 4);
+		const readerCompletionTokens = Math.ceil(('1234'.length + '12'.length) / 4);
+		const promptTokens = mainPromptTokens + readerPromptTokens;
+		const completionTokens = mainCompletionTokens + readerCompletionTokens;
+		expect(result.usage).toEqual({
+			promptTokens,
+			completionTokens,
+			totalTokens: promptTokens + completionTokens,
+			source: 'estimated',
+		});
 	});
 
 	it('does not silently use ordinary chat when web support is unavailable', async () => {
@@ -1131,6 +1247,7 @@ describe('ReadOnlyRequestCoordinator web routing', () => {
 			webSearch: {
 				mode: 'auto',
 				maxToolCalls: 8,
+				maxContentCharactersPerCall: 20000,
 				reviewCalls: async (calls) => calls,
 				onActivity: vi.fn(),
 			},

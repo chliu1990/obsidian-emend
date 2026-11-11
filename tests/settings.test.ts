@@ -7,6 +7,7 @@ import {
 	DEFAULT_SETTINGS,
 	EmendSettingTab,
 	normalizeSettings,
+	sanitizeSettings,
 } from '../src/settings';
 import type EmendPlugin from '../src/main';
 import type { Setting as MockSetting } from './mocks/obsidian';
@@ -213,6 +214,7 @@ describe('normalizeSettings', () => {
 			smartSelectionContext: false,
 			maxContextCharacters: 24000,
 			maxWebToolCalls: 12,
+			maxWebContentCharactersPerCall: 24000,
 		};
 
 		expect(normalizeSettings(data)).toEqual(data);
@@ -256,6 +258,73 @@ describe('normalizeSettings', () => {
 		expect(normalizeSettings({ maxWebToolCalls: 99 }).maxWebToolCalls).toBe(20);
 		expect(normalizeSettings({ maxWebToolCalls: '8' }).maxWebToolCalls).toBe(8);
 		expect(normalizeSettings({ maxWebToolCalls: Number.NaN }).maxWebToolCalls).toBe(8);
+	});
+
+	it('defaults, floors, and clamps the per-call web output character cap', () => {
+		expect(DEFAULT_SETTINGS.maxWebContentCharactersPerCall).toBe(20000);
+		expect(normalizeSettings({}).maxWebContentCharactersPerCall).toBe(20000);
+		expect(normalizeSettings({
+			maxWebContentCharactersPerCall: 19999.9,
+		}).maxWebContentCharactersPerCall).toBe(19999);
+		expect(normalizeSettings({
+			maxWebContentCharactersPerCall: 999,
+		}).maxWebContentCharactersPerCall).toBe(1000);
+		expect(normalizeSettings({
+			maxWebContentCharactersPerCall: 100001,
+		}).maxWebContentCharactersPerCall).toBe(100000);
+	});
+
+	it.each([
+		null,
+		'20000',
+		Number.NaN,
+		Number.POSITIVE_INFINITY,
+		Number.NEGATIVE_INFINITY,
+		[],
+		{},
+	])('restores the default per-call web output cap for malformed value %#', (
+		maxWebContentCharactersPerCall,
+	) => {
+		expect(normalizeSettings({
+			maxWebContentCharactersPerCall,
+		}).maxWebContentCharactersPerCall).toBe(20000);
+	});
+
+	it('sanitizes API keys without changing provider configs or independent web limits', () => {
+		const normalized = normalizeSettings({
+			maxWebContentCharactersPerCall: 30000,
+			providers: {
+				deepseek: {
+					baseUrl: 'https://deepseek.example.test/v1',
+					apiKey: 'deepseek-secret',
+				},
+				kimi: { model: 'kimi-custom', apiKey: 'kimi-secret' },
+				custom: { requestUsage: true, apiKey: 'custom-secret' },
+			},
+		});
+
+		const sanitized = sanitizeSettings(normalized);
+
+		expect(sanitized.maxWebContentCharactersPerCall).toBe(30000);
+		expect(sanitized.maxWebToolCalls).toBe(8);
+		expect(sanitized.providers.deepseek).toEqual({
+			...DEFAULT_SETTINGS.providers.deepseek,
+			baseUrl: 'https://deepseek.example.test/v1',
+			apiKey: '',
+		});
+		expect(sanitized.providers.kimi).toEqual({
+			...DEFAULT_SETTINGS.providers.kimi,
+			model: 'kimi-custom',
+			apiKey: '',
+		});
+		expect(sanitized.providers.custom).toEqual({
+			...DEFAULT_SETTINGS.providers.custom,
+			requestUsage: true,
+			apiKey: '',
+		});
+		expect(normalized.providers.deepseek.apiKey).toBe('deepseek-secret');
+		expect(normalized.providers.kimi.apiKey).toBe('kimi-secret');
+		expect(normalized.providers.custom.apiKey).toBe('custom-secret');
 	});
 
 	it('does not retain legacy providers or instruction-file settings', () => {
@@ -442,6 +511,44 @@ function createModelSettingsTab() {
 function displaySettings(tab: EmendSettingTab) {
 	(tab as unknown as { display(): void }).display();
 }
+
+describe('EmendSettingTab web output cap', () => {
+	beforeEach(() => {
+		settingInstances.length = 0;
+	});
+
+	it('describes executed-call limits, graceful skipped calls, and independent output caps', () => {
+		const { tab } = createModelSettingsTab();
+		displaySettings(tab);
+
+		const description = latestSetting('Web tool call limit').description;
+		expect(description).toContain('Maximum executed Search/Fetch calls');
+		expect(description).toContain('remaining calls in model order');
+		expect(description).toContain('skips only the excess');
+		expect(description).toContain('independent output cap');
+		expect(description).toContain('cap × calls');
+		expect(description).not.toContain('Maximum model-requested');
+		expect(description).not.toContain('No calls in the final batch');
+	});
+
+	it('normalizes and saves the numeric per-call cap without changing provider configs', async () => {
+		const { plugin, tab } = createModelSettingsTab();
+		displaySettings(tab);
+		const text = latestSetting('Web output cap per call (characters)').texts[0];
+		if (!text) throw new Error('Missing web output cap input');
+
+		expect(text.inputEl.type).toBe('number');
+		expect(text.inputEl.min).toBe('1000');
+		expect(text.inputEl.step).toBe('1');
+		expect(text.value).toBe('20000');
+		await text.onChangeHandler('19999.9');
+
+		expect(plugin.settings.maxWebContentCharactersPerCall).toBe(19999);
+		expect(plugin.settings.maxWebToolCalls).toBe(8);
+		expect(plugin.settings.providers).toEqual(DEFAULT_SETTINGS.providers);
+		expect(plugin.saveSettings).toHaveBeenCalledOnce();
+	});
+});
 
 describe('EmendSettingTab model discovery', () => {
 	beforeEach(() => {

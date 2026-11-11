@@ -336,6 +336,39 @@ describe('requestAiResponse', () => {
 		expect(body).not.toHaveProperty('stream_options');
 	});
 
+	it('adds response_format only when the request asks for JSON mode', async () => {
+		const withJson = mockStream([
+			'data: {"choices":[{"delta":{"content":"{}"}}]}\n\n',
+			'data: [DONE]\n\n',
+		]);
+
+		await requestAiResponse(
+			makeRequest({ responseFormat: 'json_object' }),
+			{ onEvent: vi.fn() },
+			new AbortController().signal,
+		);
+
+		const [, jsonInit] = withJson.mock.calls[0] as [string, RequestInit];
+		const jsonBody = JSON.parse(jsonInit.body as string) as Record<string, unknown>;
+		expect(jsonBody.response_format).toEqual({ type: 'json_object' });
+
+		vi.unstubAllGlobals();
+		const withoutJson = mockStream([
+			'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
+			'data: [DONE]\n\n',
+		]);
+
+		await requestAiResponse(
+			makeRequest(),
+			{ onEvent: vi.fn() },
+			new AbortController().signal,
+		);
+
+		const [, plainInit] = withoutJson.mock.calls[0] as [string, RequestInit];
+		const plainBody = JSON.parse(plainInit.body as string) as Record<string, unknown>;
+		expect(plainBody).not.toHaveProperty('response_format');
+	});
+
 	it('emits stream events and returns accumulated text, reasoning, and usage', async () => {
 		mockStream([
 			'data: {"choices":[{"delta":{"content":"Hello","reasoning_content":"Think"}}]}\n\n',

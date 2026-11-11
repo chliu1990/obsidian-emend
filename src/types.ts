@@ -86,4 +86,5 @@ export interface EmendSettings {
 	smartSelectionContext: boolean;
 	maxContextCharacters: number;
 	maxWebToolCalls: number;
+	maxWebContentCharactersPerCall: number;
 }

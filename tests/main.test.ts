@@ -554,6 +554,7 @@ describe('EmendPlugin web provider guard', () => {
 			webSearch: {
 				mode: 'auto',
 				maxToolCalls: 8,
+				maxContentCharactersPerCall: 20000,
 				reviewCalls: async (calls) => calls,
 				onActivity: vi.fn(),
 			},

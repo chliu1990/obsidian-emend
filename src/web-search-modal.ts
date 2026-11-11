@@ -1,10 +1,15 @@
 import { App, Modal } from 'obsidian';
 import type { ProviderToolCall } from './provider-stream';
-import { parseWebToolCall, type WebToolCall } from './web-search';
+import {
+	parseWebToolCall,
+	WEB_EXTRACTION_DISCLOSURE,
+	type WebToolCall,
+} from './web-search';
 
 interface WebCallInput {
 	call: WebToolCall;
 	inputEl: HTMLInputElement;
+	goalInputEl: HTMLInputElement;
 }
 
 export class WebSearchModal extends Modal {
@@ -29,6 +34,10 @@ export class WebSearchModal extends Modal {
 		this.contentEl.addClass('emend-web-review-modal');
 		this.inputs = [];
 		this.errorEl = null;
+		this.contentEl.createDiv({
+			cls: 'emend-web-review-disclosure',
+			text: WEB_EXTRACTION_DISCLOSURE,
+		});
 
 		for (const [index, call] of this.calls.entries()) {
 			const rowEl = this.contentEl.createDiv('emend-web-review-call');
@@ -42,10 +51,21 @@ export class WebSearchModal extends Modal {
 				attr: {
 					type: 'text',
 					'data-call-id': call.id,
+					'data-field': 'target',
 				},
 			});
 			inputEl.value = call.name === 'web_search' ? call.query : call.url;
-			this.inputs.push({ call, inputEl });
+			rowEl.createEl('label', { text: `Extraction goal ${index + 1}` });
+			const goalInputEl = rowEl.createEl('input', {
+				cls: 'emend-web-review-input',
+				attr: {
+					type: 'text',
+					'data-call-id': call.id,
+					'data-field': 'extractionGoal',
+				},
+			});
+			goalInputEl.value = call.extractionGoal;
+			this.inputs.push({ call, inputEl, goalInputEl });
 		}
 
 		const actionsEl = this.contentEl.createDiv('emend-web-review-actions');
@@ -78,8 +98,8 @@ export class WebSearchModal extends Modal {
 	private approve() {
 		let reviewed: WebToolCall[];
 		try {
-			reviewed = this.inputs.map(({ call, inputEl }) => parseWebToolCall(
-				toProviderToolCall(call, inputEl.value),
+			reviewed = this.inputs.map(({ call, inputEl, goalInputEl }) => parseWebToolCall(
+				toProviderToolCall(call, inputEl.value, goalInputEl.value),
 			));
 		} catch (error) {
 			this.showError(error instanceof Error ? error.message : String(error));
@@ -103,12 +123,12 @@ export class WebSearchModal extends Modal {
 	}
 }
 
-function toProviderToolCall(call: WebToolCall, value: string): ProviderToolCall {
+function toProviderToolCall(call: WebToolCall, value: string, extractionGoal: string): ProviderToolCall {
 	return {
 		id: call.id,
 		name: call.name,
 		arguments: JSON.stringify(call.name === 'web_search'
-			? { query: value }
-			: { url: value }),
+			? { query: value, extractionGoal }
+			: { url: value, extractionGoal }),
 	};
 }
