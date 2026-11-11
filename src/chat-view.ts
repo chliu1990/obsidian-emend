@@ -18,7 +18,7 @@ import {
 	type DraftCapacityEstimate,
 } from './context-capacity-ui';
 import { formatEditSummary, formatNoChangeSummary } from './edit-summary';
-import type { RequestContext } from './context';
+import { formatVaultQualifiedPath, type RequestContext } from './context';
 import {
 	resolveEditTarget,
 	type EditTargetChoice,
@@ -36,7 +36,7 @@ import {
 	buildSelectionUserPrompt,
 	type SelectionEditTarget,
 } from './selection-editor';
-import { DEFAULT_SETTINGS } from './settings';
+import { normalizeContextLimit } from './settings';
 import { formatTokenUsage } from './token-usage';
 import type {
 	ChatMessage,
@@ -115,6 +115,10 @@ export class EmendChatView extends ItemView {
 		action: QuickAction;
 		button: HTMLButtonElement;
 	}> = [];
+	private readonly quickActionCapacityMessages = new Map<
+		QuickAction['id'],
+		string
+	>();
 	private draftCapacityBlocked = false;
 	private readonly drafts = new Map<string, string>();
 
@@ -167,6 +171,7 @@ export class EmendChatView extends ItemView {
 		this.capacityDisplay = null;
 		this.sendButtonEl = null;
 		this.quickActionButtons = [];
+		this.quickActionCapacityMessages?.clear();
 		this.draftCapacityBlocked = false;
 		this.inputEl = null;
 		this.editTargetSelectEl = null;
@@ -195,6 +200,9 @@ export class EmendChatView extends ItemView {
 		this.render();
 		if (this.inputEl) {
 			this.inputEl.value = draft;
+		}
+		if (this.capacityDisplay) {
+			this.refreshDraftEstimate(draft);
 		}
 	}
 
@@ -262,7 +270,8 @@ export class EmendChatView extends ItemView {
 		if (!this.capacityDisplay) {
 			return;
 		}
-		const target = this.captureDraftCapacityTarget();
+		const target = this.captureDraftCapacityTarget(this.selectedMode);
+		const actionTarget = this.captureActionCapacityTarget(target);
 		const history = this.safeProviderHistory();
 		const estimate = target
 			? buildCapacityForTarget(
@@ -275,29 +284,64 @@ export class EmendChatView extends ItemView {
 			: undefined;
 		this.draftCapacityBlocked = estimate?.blocked ?? false;
 		this.capacityDisplay.render(estimate);
-		this.applyDraftCapacityControls(target, history);
+		this.applyDraftCapacityControls(actionTarget, history);
 	}
 
-	private captureDraftCapacityTarget(): DraftCapacityTarget | undefined {
-		try {
-			if (this.selectedMode === 'edit' && this.displayedEditTarget === 'selection') {
-				const { snapshot } = this.plugin.captureSelectionEditTarget();
-				return { type: 'selection', mode: 'edit', snapshot };
+	private captureDraftCapacityTarget(
+		mode: Mode,
+	): DraftCapacityTarget | undefined {
+		if (mode === 'edit') {
+			if (this.displayedEditTarget === 'selection') {
+				const snapshot = this.captureSelectionSnapshot();
+				return snapshot
+					? { type: 'selection', mode: 'edit', snapshot }
+					: undefined;
 			}
-			const context = this.plugin.captureChatContext();
-			if (!context) {
-				return undefined;
-			}
-			return this.selectedMode === 'edit'
+			const context = this.captureComposerContext();
+			return context
 				? { type: 'full-note', mode: 'edit', context }
-				: { type: 'read-only', mode: this.selectedMode, context };
+				: undefined;
+		}
+		const context = this.captureComposerContext();
+		return context ? { type: 'read-only', mode, context } : undefined;
+	}
+
+	private captureSelectionSnapshot(): SelectionSnapshot | undefined {
+		try {
+			return this.plugin.captureSelectionEditTarget().snapshot;
 		} catch {
 			return undefined;
 		}
 	}
 
+	private captureComposerContext(): RequestContext | undefined {
+		try {
+			return this.plugin.captureChatContext();
+		} catch {
+			return undefined;
+		}
+	}
+
+	private captureActionCapacityTarget(
+		draftTarget: DraftCapacityTarget | undefined,
+	): DraftCapacityTarget | undefined {
+		if (this.displayedEditTarget === 'selection') {
+			return this.selectedMode === 'edit'
+				? draftTarget
+				: this.captureDraftCapacityTarget('edit');
+		}
+		if (draftTarget?.type === 'read-only') {
+			return {
+				type: 'full-note',
+				mode: 'edit',
+				context: draftTarget.context,
+			};
+		}
+		return draftTarget;
+	}
+
 	private applyDraftCapacityControls(
-		target: DraftCapacityTarget | undefined,
+		actionTarget: DraftCapacityTarget | undefined,
 		history: ProviderHistoryMessage[],
 	) {
 		if (this.sendButtonEl && !this.isSending) {
@@ -309,17 +353,22 @@ export class EmendChatView extends ItemView {
 			isSending: this.isSending,
 			isThreadLoading: this.isThreadLoading,
 		});
+		this.quickActionCapacityMessages?.clear();
 		for (const { action, button } of this.quickActionButtons) {
-			const estimate = target
+			const estimate = actionTarget
 				? buildCapacityForTarget(
 					this.plugin.settings,
 					this.app,
-					target,
+					actionTarget,
 					action.prompt,
 					history,
 				)
 				: undefined;
+			const blockMessage = formatDraftCapacityBlockMessage(estimate);
 			button.disabled = quickActionsDisabled || (estimate?.blocked ?? false);
+			if (blockMessage) {
+				this.quickActionCapacityMessages?.set(action.id, blockMessage);
+			}
 		}
 	}
 
@@ -345,6 +394,7 @@ export class EmendChatView extends ItemView {
 		this.capacityDisplay = null;
 		this.sendButtonEl = null;
 		this.quickActionButtons = [];
+		this.quickActionCapacityMessages?.clear();
 		const { contentEl } = this;
 		contentEl.empty();
 		contentEl.addClass('emend-chat-view');
@@ -477,6 +527,9 @@ export class EmendChatView extends ItemView {
 			this.render();
 			if (this.inputEl) {
 				this.inputEl.value = draft;
+			}
+			if (this.capacityDisplay) {
+				this.refreshDraftEstimate(draft);
 			}
 		});
 		const editTargetLabelEl = actionsEl.createEl('label', {
@@ -785,6 +838,11 @@ export class EmendChatView extends ItemView {
 			isSending: this.isSending,
 			isThreadLoading: this.isThreadLoading,
 		})) {
+			return;
+		}
+		const blockMessage = this.quickActionCapacityMessages?.get(action.id);
+		if (blockMessage) {
+			new Notice(`Emend: ${blockMessage}`);
 			return;
 		}
 		this.selectedMode = action.mode;
@@ -1113,22 +1171,21 @@ function buildCapacityForTarget(
 	prompt: string,
 	history: ProviderHistoryMessage[],
 ): DraftCapacityEstimate | undefined {
-	try {
-		const provider = settings.providers[settings.activeProvider];
-		if (!provider) {
-			return undefined;
-		}
-		return buildDraftCapacityEstimate({
-			provider,
-			request: {
-				systemPrompt: getDraftCapacitySystemPrompt(target),
-				userPrompt: getDraftCapacityUserPrompt(settings, app, target, prompt),
-				history,
-			},
-		});
-	} catch {
+	if (!settings || !settings.providers) {
 		return undefined;
 	}
+	const provider = settings.providers[settings.activeProvider];
+	if (!provider) {
+		return undefined;
+	}
+	return buildDraftCapacityEstimate({
+		provider,
+		request: {
+			systemPrompt: getDraftCapacitySystemPrompt(target),
+			userPrompt: getDraftCapacityUserPrompt(settings, app, target, prompt),
+			history,
+		},
+	});
 }
 
 function getDraftCapacitySystemPrompt(target: DraftCapacityTarget): string {
@@ -1161,15 +1218,16 @@ function getDraftCapacityUserPrompt(
 			return buildSelectionUserPrompt({
 				snapshot: target.snapshot,
 				prompt,
-				maxContextCharacters: Math.max(
-					1000,
-					settings.maxContextCharacters ||
-						DEFAULT_SETTINGS.maxContextCharacters,
+				maxContextCharacters: normalizeContextLimit(
+					settings.maxContextCharacters,
 				),
 				smartSelectionContext: settings.smartSelectionContext,
 				additionalNotes: [],
 				notePath: settings.includeNotePathInContext
-					? `${app.vault.getName()}/${target.snapshot.file.path}`
+					? formatVaultQualifiedPath(
+						app.vault.getName(),
+						target.snapshot.file.path,
+					)
 					: undefined,
 			});
 	}

@@ -1,6 +1,7 @@
 import {
 	accountRequestCharacters,
 	estimateTokensForCharacters,
+	INVALID_CONTEXT_CAPACITY_MESSAGE,
 	resolveContextCapacity,
 	type ContextCapacityState,
 	type ContextRequestText,
@@ -64,7 +65,7 @@ export function formatDraftCapacityBlockMessage(
 		return undefined;
 	}
 	if (estimate.capacity.kind === 'invalid') {
-		return INVALID_CAPACITY_DISPLAY;
+		return INVALID_CONTEXT_CAPACITY_MESSAGE;
 	}
 	if (estimate.capacity.kind === 'valid' && estimate.overCapacity) {
 		return `This draft is over capacity at about ${estimate.categories.estimatedInputTokens} input tokens of ${estimate.capacity.effectiveInputTokens} effective capacity. Reduce the draft, chat history, or the selected target.`;
@@ -74,6 +75,8 @@ export function formatDraftCapacityBlockMessage(
 
 export class ContextCapacityDisplay {
 	private rootEl: HTMLElement | null;
+	private detailsEl: HTMLDetailsElement | null = null;
+	private detailsOpen = false;
 
 	constructor(containerEl: HTMLElement) {
 		this.rootEl = containerEl.createDiv({
@@ -91,10 +94,12 @@ export class ContextCapacityDisplay {
 		if (!rootEl) {
 			return;
 		}
+		this.detailsOpen = this.detailsEl?.open ?? this.detailsOpen;
+		this.detailsEl = null;
 		rootEl.className = `emend-context-capacity ${getStateClass(estimate)}`;
 		rootEl.empty();
 		rootEl.createDiv({
-			cls: `emend-context-capacity-summary${estimate?.blocked ? ' is-blocking' : ''}`,
+			cls: 'emend-context-capacity-summary',
 			text: formatDraftCapacitySummary(estimate),
 		});
 		if (estimate) {
@@ -109,13 +114,16 @@ export class ContextCapacityDisplay {
 	destroy(): void {
 		this.rootEl?.remove();
 		this.rootEl = null;
+		this.detailsEl = null;
+		this.detailsOpen = false;
 	}
 
 	private renderDetails(rootEl: HTMLElement, estimate: DraftCapacityEstimate) {
 		const detailsEl = rootEl.createEl('details', {
 			cls: 'emend-context-capacity-details',
 		});
-		detailsEl.open = false;
+		detailsEl.open = this.detailsOpen;
+		this.detailsEl = detailsEl;
 		detailsEl.createEl('summary', { text: 'Estimate details' });
 		const addDetail = (text: string) => {
 			detailsEl.createDiv({ cls: 'emend-context-capacity-detail', text });

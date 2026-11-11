@@ -700,7 +700,7 @@ function normalizeDiscoveredModels(value: unknown): DiscoveredModel[] {
 	return models;
 }
 
-function normalizeContextLimit(value: unknown) {
+export function normalizeContextLimit(value: unknown) {
 	return typeof value === 'number' && Number.isFinite(value)
 		? Math.max(1000, Math.floor(value))
 		: DEFAULT_SETTINGS.maxContextCharacters;

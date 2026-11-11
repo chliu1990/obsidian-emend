@@ -6,6 +6,7 @@ import {
 import {
 	buildDraftCapacityEstimate,
 	ContextCapacityDisplay,
+	formatDraftCapacityBlockMessage,
 	type DraftCapacityEstimate,
 } from '../src/context-capacity-ui';
 import type { ProviderConfig } from '../src/types';
@@ -325,6 +326,47 @@ describe('ContextCapacityDisplay', () => {
 			'System: 1 tokens · Draft: 3 · History: 0 · Tools: 0 · Continuation: 2',
 		);
 		expect(textOf(root)).toContain('Total: 6 tokens');
+	});
+
+	it('exposes the authoritative invalid message for blocked submissions', () => {
+		const estimate = buildDraftCapacityEstimate({
+			provider: providerWith({ contextWindowTokens: 100, outputReserveTokens: 100 }),
+			request: requestWith(),
+		});
+
+		expect(formatDraftCapacityBlockMessage(estimate)).toBe(
+			'Requests are blocked until the context window and output reserve are positive token counts, with the context window larger than the reserve.',
+		);
+		expect(formatDraftCapacityBlockMessage(undefined)).toBeUndefined();
+		expect(formatDraftCapacityBlockMessage(buildDraftCapacityEstimate({
+			provider: providerWith(),
+			request: requestWith(),
+		}))).toBeUndefined();
+	});
+
+	it('preserves the folded details open state across renders', () => {
+		const estimate = buildDraftCapacityEstimate({
+			provider: providerWith({ contextWindowTokens: 1000, outputReserveTokens: 100 }),
+			request: requestWith(),
+		});
+		const { container, display, root } = renderDisplay(estimate);
+		const details = findAll(root, (element) => element.tagName === 'details')[0];
+		if (!details) {
+			throw new Error('Estimate details missing.');
+		}
+		details.open = true;
+
+		display.render(estimate);
+
+		const rootAfter = container.children[0];
+		if (!rootAfter) {
+			throw new Error('Capacity display root missing.');
+		}
+		const detailsAfter = findAll(
+			rootAfter,
+			(element) => element.tagName === 'details',
+		)[0];
+		expect(detailsAfter?.open).toBe(true);
 	});
 
 	it('renders the unavailable state when no estimate is supplied', () => {

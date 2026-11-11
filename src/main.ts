@@ -4,6 +4,7 @@ import { AdditionalNotesStore } from './additional-notes-store';
 import { EMEND_CHAT_VIEW_TYPE, EmendChatView } from './chat-view';
 import {
 	captureRequestContext,
+	formatVaultQualifiedPath,
 	type RequestContext,
 } from './context';
 import { ConversationStore } from './conversation-store';
@@ -31,8 +32,8 @@ import {
 import { SelectionModal } from './selection-modal';
 import { ApiKeyStorage } from './secret-storage';
 import {
-	DEFAULT_SETTINGS,
 	EmendSettingTab,
+	normalizeContextLimit,
 	normalizeSettings,
 	sanitizeSettings,
 } from './settings';
@@ -303,11 +304,7 @@ export default class EmendPlugin extends Plugin {
 		}
 
 		return captureRequestContext(markdownView, {
-			maxCharacters: Math.max(
-				1000,
-				this.settings.maxContextCharacters ||
-					DEFAULT_SETTINGS.maxContextCharacters,
-			),
+			maxCharacters: normalizeContextLimit(this.settings.maxContextCharacters),
 			includeNotePath: this.settings.includeNotePathInContext,
 		});
 	}
@@ -409,16 +406,17 @@ export default class EmendPlugin extends Plugin {
 			return coordinator.submit({
 				snapshot,
 				prompt,
-				maxContextCharacters: Math.max(
-					1000,
-					this.settings.maxContextCharacters ||
-						DEFAULT_SETTINGS.maxContextCharacters,
+				maxContextCharacters: normalizeContextLimit(
+					this.settings.maxContextCharacters,
 				),
 				smartSelectionContext: this.settings.smartSelectionContext,
 				additionalNotePaths,
 				history,
 				notePath: this.settings.includeNotePathInContext
-					? `${this.app.vault.getName()}/${snapshot.file.path}`
+					? formatVaultQualifiedPath(
+						this.app.vault.getName(),
+						snapshot.file.path,
+					)
 					: undefined,
 				signal,
 				callbacks,
@@ -436,11 +434,7 @@ export default class EmendPlugin extends Plugin {
 			activeNotePath,
 			signal,
 			includeNotePath: this.settings.includeNotePathInContext,
-			maxCharacters: Math.max(
-				1000,
-				this.settings.maxContextCharacters ||
-					DEFAULT_SETTINGS.maxContextCharacters,
-			),
+			maxCharacters: normalizeContextLimit(this.settings.maxContextCharacters),
 		});
 	}
 
