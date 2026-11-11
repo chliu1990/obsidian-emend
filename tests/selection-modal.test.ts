@@ -788,6 +788,64 @@ describe('SelectionModal draft capacity estimate', () => {
 		).not.toHaveBeenCalled();
 	});
 
+	it('keeps the typed draft estimate and Modify state after a blocked stale-enabled quick action', () => {
+		const candidate = providerWith({
+			contextWindowTokens: 1000,
+			outputReserveTokens: 100,
+		});
+		const blockedCandidate = providerWith({
+			contextWindowTokens: 100,
+			outputReserveTokens: 96,
+		});
+		const action = QUICK_ACTIONS[1];
+		let actionCapacityChanged = false;
+		const submitSelection = vi.fn(async () => ({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+		}));
+		const { contentEl, input } = openModal(
+			submitSelection,
+			new AdditionalNotesStore(),
+			'note.md',
+			(prompt) => estimateForPrompt(
+				prompt,
+				prompt === action.prompt && actionCapacityChanged
+					? blockedCandidate
+					: candidate,
+			),
+		);
+		if (!input) {
+			throw new Error('Selection input missing.');
+		}
+		const actionButton = findAction(contentEl, action.id);
+		const submitButton = findButtonByClass(contentEl, 'emend-chat-primary-button');
+		expect(actionButton?.disabled).toBe(false);
+		const draft = 'Polish this.';
+		input.value = draft;
+		input.dispatch('input');
+		const typedSummary = findCapacitySummary(contentEl)?.textContent;
+		actionCapacityChanged = true;
+		const blockedAction = estimateForPrompt(action.prompt, blockedCandidate);
+		expect(estimateForPrompt(draft, candidate).blocked).toBe(false);
+		expect(blockedAction.blocked).toBe(true);
+		const noticeMessages = (Notice as unknown as { readonly messages: string[] })
+			.messages;
+		const noticeCount = noticeMessages.length;
+
+		actionButton?.click();
+
+		expect(submitSelection).not.toHaveBeenCalled();
+		expect(noticeMessages.length).toBe(noticeCount + 1);
+		expect(noticeMessages[noticeMessages.length - 1]).toBe(
+			`Emend: ${formatDraftCapacityBlockMessage(blockedAction)}`,
+		);
+		expect(findCapacitySummary(contentEl)?.textContent).toBe(typedSummary);
+		expect(input.value).toBe(draft);
+		expect(submitButton?.disabled).toBe(false);
+		expect(actionButton?.disabled).toBe(true);
+	});
+
 	it('keeps a passing submit history-free and free of additional-note contents', async () => {
 		const estimateDraft = vi.fn(defaultEstimateDraft);
 		const store = new AdditionalNotesStore();
