@@ -1,6 +1,14 @@
+import { readFileSync } from 'node:fs';
 import { App, Notice, TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { AdditionalNotesStore } from '../src/additional-notes-store';
+import {
+	buildDraftCapacityEstimate,
+	CAPACITY_EXCLUSION_NOTE,
+	formatDraftCapacityBlockMessage,
+	formatDraftCapacitySummary,
+	type DraftCapacityEstimate,
+} from '../src/context-capacity-ui';
 import type { EditResult } from '../src/note-writer';
 import { operationEditStrategy } from '../src/operation-edit-strategy';
 import type {
@@ -24,6 +32,8 @@ class FakeElement {
 	textContent = '';
 	disabled = false;
 	value = '';
+	removed = false;
+	focusCalls = 0;
 
 	constructor(readonly tagName = 'div') {}
 
@@ -60,7 +70,11 @@ class FakeElement {
 		if (this.disabled) {
 			return;
 		}
-		for (const listener of this.listeners.get('click') ?? []) {
+		this.dispatch('click');
+	}
+
+	dispatch(type: string) {
+		for (const listener of this.listeners.get(type) ?? []) {
 			listener();
 		}
 	}
@@ -69,7 +83,13 @@ class FakeElement {
 		this.children.length = 0;
 	}
 
-	focus() {}
+	focus() {
+		this.focusCalls += 1;
+	}
+
+	remove() {
+		this.removed = true;
+	}
 
 	private append(
 		tagName: string,
@@ -110,6 +130,7 @@ function openModal(
 	) => Promise<EditResult>,
 	store = new AdditionalNotesStore(),
 	targetPath = 'note.md',
+	estimateDraft: (prompt: string) => DraftCapacityEstimate = defaultEstimateDraft,
 ) {
 	const contentEl = new FakeElement();
 	const targetFile = new TFile();
@@ -122,7 +143,13 @@ function openModal(
 			),
 		},
 	});
-	const modal = new SelectionModal(app, submitSelection, store, targetPath);
+	const modal = new SelectionModal(
+		app,
+		submitSelection,
+		store,
+		targetPath,
+		estimateDraft,
+	);
 	Object.assign(modal, {
 		contentEl,
 		setTitle: vi.fn(),
@@ -175,6 +202,59 @@ const provider: ProviderConfig = {
 	outputReserveTokens: null,
 	contextCapacityInvalid: false,
 };
+
+function providerWith(
+	fields: Partial<
+		Pick<
+			ProviderConfig,
+			'contextWindowTokens' | 'outputReserveTokens' | 'contextCapacityInvalid'
+		>
+	>,
+): ProviderConfig {
+	return { ...provider, ...fields };
+}
+
+function estimateForPrompt(
+	prompt: string,
+	candidate: ProviderConfig = provider,
+): DraftCapacityEstimate {
+	return buildDraftCapacityEstimate({
+		provider: candidate,
+		request: { systemPrompt: 'sys', userPrompt: prompt, history: [] },
+	});
+}
+
+function defaultEstimateDraft(prompt: string): DraftCapacityEstimate {
+	return estimateForPrompt(prompt);
+}
+
+function findCapacityRoot(contentEl: FakeElement) {
+	return findElements(
+		contentEl,
+		(element) => element.className.split(' ').includes('emend-context-capacity'),
+	)[0];
+}
+
+function findCapacitySummary(contentEl: FakeElement) {
+	return findElements(
+		contentEl,
+		(element) =>
+			element.className.split(' ').includes('emend-context-capacity-summary'),
+	)[0];
+}
+
+function findButtonByClass(contentEl: FakeElement, className: string) {
+	return findElements(
+		contentEl,
+		(element) =>
+			element.tagName === 'button' &&
+			element.className.split(' ').includes(className),
+	)[0];
+}
+
+function textOf(root: FakeElement): string {
+	return [root.textContent, ...root.children.map(textOf)].join('\n');
+}
 
 describe('SelectionModal quick actions', () => {
 	it.each(QUICK_ACTIONS)(
@@ -496,5 +576,250 @@ describe('SelectionModal quick actions', () => {
 		expect(request.mock.calls.map((call) => call[0].history)).toEqual([[], []]);
 		expect(editor.readCurrentText).not.toHaveBeenCalled();
 		expect(editor.replaceRange).not.toHaveBeenCalled();
+	});
+});
+
+describe('SelectionModal draft capacity estimate', () => {
+	it('shows the shared estimate below the input and refreshes on input without re-rendering', () => {
+		const estimateDraft = vi.fn(defaultEstimateDraft);
+		const { contentEl, input } = openModal(
+			vi.fn(async () => ({ applied: false, changeCount: 0, summaryItems: [] })),
+			new AdditionalNotesStore(),
+			'note.md',
+			estimateDraft,
+		);
+		if (!input) {
+			throw new Error('Selection input missing.');
+		}
+		const root = findCapacityRoot(contentEl);
+		const summary = findCapacitySummary(contentEl);
+		expect(estimateDraft).toHaveBeenCalledWith('');
+		expect(summary?.textContent).toBe(
+			formatDraftCapacitySummary(defaultEstimateDraft('')),
+		);
+		expect(root?.attributes.role).toBe('status');
+		expect(textOf(contentEl)).toContain(CAPACITY_EXCLUSION_NOTE);
+
+		const childCount = contentEl.children.length;
+		const focusCalls = input.focusCalls;
+		input.value = 'A longer typed draft';
+		input.dispatch('input');
+
+		expect(estimateDraft).toHaveBeenCalledWith('A longer typed draft');
+		expect(findCapacitySummary(contentEl)?.textContent).toBe(
+			formatDraftCapacitySummary(defaultEstimateDraft('A longer typed draft')),
+		);
+		expect(contentEl.children.length).toBe(childCount);
+		expect(input.focusCalls).toBe(focusCalls);
+		expect(findCapacityRoot(contentEl)).toBe(root);
+	});
+
+	it('places the meter between the instruction textarea and the actions row', () => {
+		const { contentEl, input } = openModal(vi.fn(async () => ({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+		})));
+		const textareaIndex = contentEl.children.indexOf(input as FakeElement);
+		const meterIndex = contentEl.children.indexOf(
+			findCapacityRoot(contentEl) as FakeElement,
+		);
+		const actionsIndex = contentEl.children.findIndex((element) =>
+			element.className.split(' ').includes('emend-chat-composer-actions'),
+		);
+
+		expect(textareaIndex).toBeGreaterThanOrEqual(0);
+		expect(meterIndex).toBeGreaterThan(textareaIndex);
+		expect(actionsIndex).toBeGreaterThan(meterIndex);
+		expect(contentEl.className.split(' ')).toContain('emend-selection-modal');
+	});
+
+	it('uses the shared narrow-layout capacity styles in the modal', () => {
+		const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+		const { contentEl } = openModal(vi.fn(async () => ({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+		})));
+
+		expect(contentEl.className.split(' ')).toContain('emend-selection-modal');
+		expect(findCapacityRoot(contentEl)?.className.split(' ')).toContain(
+			'emend-context-capacity',
+		);
+		expect(css).toMatch(
+			/@media \(max-width: 400px\) \{[\s\S]*?\.emend-context-capacity-detail \{[\s\S]*?padding-left: 0;/,
+		);
+	});
+
+	it('shows the invalid text and disables modify and every action while keeping Cancel usable', () => {
+		const invalidProvider = providerWith({
+			contextWindowTokens: 100,
+			outputReserveTokens: 100,
+		});
+		const { contentEl, quickActions, input } = openModal(
+			vi.fn(async () => ({ applied: false, changeCount: 0, summaryItems: [] })),
+			new AdditionalNotesStore(),
+			'note.md',
+			(prompt) => estimateForPrompt(prompt, invalidProvider),
+		);
+		const submitButton = findButtonByClass(contentEl, 'emend-chat-primary-button');
+		const cancelButton = findButtonByClass(contentEl, 'emend-chat-secondary-button');
+
+		expect(findCapacitySummary(contentEl)?.textContent).toBe(
+			formatDraftCapacitySummary(estimateForPrompt('', invalidProvider)),
+		);
+		expect(findCapacityRoot(contentEl)?.className).toContain('is-invalid');
+		expect(submitButton?.disabled).toBe(true);
+		expect(quickActions.every((button) => button.disabled)).toBe(true);
+		expect(cancelButton?.disabled).toBe(false);
+		expect(input?.disabled).toBe(false);
+	});
+
+	it('disables only quick actions whose own prompt is blocked', async () => {
+		const fixTokens = estimateForPrompt(QUICK_ACTIONS[0].prompt).categories
+			.estimatedInputTokens;
+		const conciseTokens = estimateForPrompt(QUICK_ACTIONS[1].prompt).categories
+			.estimatedInputTokens;
+		const examplesTokens = estimateForPrompt(QUICK_ACTIONS[2].prompt).categories
+			.estimatedInputTokens;
+		expect(conciseTokens).toBeLessThan(fixTokens);
+		expect(examplesTokens).toBeGreaterThan(fixTokens);
+		const boundaryProvider = providerWith({
+			contextWindowTokens: fixTokens + 1,
+			outputReserveTokens: 1,
+		});
+		const estimateDraft = vi.fn(
+			(prompt: string) => estimateForPrompt(prompt, boundaryProvider),
+		);
+		const submitSelection = vi.fn(async () => ({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+		}));
+		const { contentEl } = openModal(
+			submitSelection,
+			new AdditionalNotesStore(),
+			'note.md',
+			estimateDraft,
+		);
+
+		expect(estimateDraft).toHaveBeenCalledWith(QUICK_ACTIONS[0].prompt);
+		expect(estimateDraft).toHaveBeenCalledWith(QUICK_ACTIONS[1].prompt);
+		expect(estimateDraft).toHaveBeenCalledWith(QUICK_ACTIONS[2].prompt);
+		expect(findAction(contentEl, 'fix-grammar')?.disabled).toBe(true);
+		expect(findAction(contentEl, 'add-examples')?.disabled).toBe(true);
+		expect(findAction(contentEl, 'make-concise')?.disabled).toBe(false);
+		expect(findButtonByClass(contentEl, 'emend-chat-primary-button')?.disabled).toBe(
+			false,
+		);
+
+		findAction(contentEl, 'fix-grammar')?.click();
+		expect(submitSelection).not.toHaveBeenCalled();
+
+		findAction(contentEl, 'make-concise')?.click();
+		await vi.waitFor(() =>
+			expect(submitSelection).toHaveBeenCalledWith(
+				QUICK_ACTIONS[1].prompt,
+				expect.any(AbortSignal),
+				[],
+			)
+		);
+	});
+
+	it('blocks a stale-enabled submit with a fresh estimate and no request', () => {
+		const candidate = providerWith({
+			contextWindowTokens: 1000,
+			outputReserveTokens: 100,
+		});
+		const submitSelection = vi.fn(async () => ({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+		}));
+		const { modal, contentEl, input } = openModal(
+			submitSelection,
+			new AdditionalNotesStore(),
+			'note.md',
+			(prompt) => estimateForPrompt(prompt, candidate),
+		);
+		if (!input) {
+			throw new Error('Selection input missing.');
+		}
+		const draft = 'x'.repeat(400);
+		input.value = draft;
+		input.dispatch('input');
+		const submitButton = findButtonByClass(contentEl, 'emend-chat-primary-button');
+		expect(submitButton?.disabled).toBe(false);
+
+		candidate.contextWindowTokens = 100;
+		candidate.outputReserveTokens = 96;
+		const blocked = estimateForPrompt(draft, candidate);
+		const noticeMessages = (Notice as unknown as { readonly messages: string[] })
+			.messages;
+		const noticeCount = noticeMessages.length;
+
+		submitButton?.click();
+
+		expect(blocked.blocked).toBe(true);
+		expect(noticeMessages.length).toBe(noticeCount + 1);
+		expect(noticeMessages[noticeMessages.length - 1]).toBe(
+			`Emend: ${formatDraftCapacityBlockMessage(blocked)}`,
+		);
+		expect(submitSelection).not.toHaveBeenCalled();
+		expect(input.value).toBe(draft);
+		expect(
+			(modal as unknown as { close: ReturnType<typeof vi.fn> }).close,
+		).not.toHaveBeenCalled();
+	});
+
+	it('keeps a passing submit history-free and free of additional-note contents', async () => {
+		const estimateDraft = vi.fn(defaultEstimateDraft);
+		const store = new AdditionalNotesStore();
+		store.add('note.md', 'Context.md');
+		const submitSelection = vi.fn(async () => ({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+		}));
+		const { contentEl, input } = openModal(
+			submitSelection,
+			store,
+			'note.md',
+			estimateDraft,
+		);
+		if (!input) {
+			throw new Error('Selection input missing.');
+		}
+		input.value = 'Clarify this selection.';
+		input.dispatch('input');
+
+		findButtonByClass(contentEl, 'emend-chat-primary-button')?.click();
+
+		await vi.waitFor(() =>
+			expect(submitSelection).toHaveBeenCalledWith(
+				'Clarify this selection.',
+				expect.any(AbortSignal),
+				['Context.md'],
+			)
+		);
+		expect(estimateDraft).toHaveBeenCalledWith('Clarify this selection.');
+		expect(submitSelection.mock.calls[0]).toHaveLength(3);
+		expect(textOf(contentEl)).toContain(CAPACITY_EXCLUSION_NOTE);
+	});
+
+	it('destroys the meter on close', () => {
+		const { modal, contentEl } = openModal(vi.fn(async () => ({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+		})));
+		const root = findCapacityRoot(contentEl);
+		if (!root) {
+			throw new Error('Capacity root missing.');
+		}
+
+		modal.onClose();
+
+		expect(root.removed).toBe(true);
 	});
 });

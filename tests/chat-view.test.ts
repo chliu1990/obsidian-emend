@@ -92,6 +92,7 @@ describe('EmendChatView header styles', () => {
 });
 
 const viewPrototype = EmendChatView.prototype as unknown as {
+	onOpen(this: unknown): Promise<void>;
 	refreshTargetNote(this: unknown): Promise<void>;
 	submitPrompt(this: unknown): Promise<void>;
 	handleComposerKeydown(
@@ -718,6 +719,8 @@ describe('EmendChatView conversation loading', () => {
 			activeModelEl: null,
 			inputEl: null,
 			contentEl: { empty: vi.fn() },
+			clearCapacityRefreshTimer: vi.fn(),
+			unsubscribeAdditionalNotes: null,
 		};
 
 		await viewPrototype.onClose.call(context);
@@ -4277,5 +4280,251 @@ describe('EmendChatView draft capacity estimate', () => {
 		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
 			expectedCapacitySummary(expected),
 		);
+	});
+});
+
+function createWiredCapacityView(options: CapacityViewOptions = {}) {
+	const fixture = createCapacityView(options);
+	const handlers = new Map<string, (...args: unknown[]) => void>();
+	const registerEvent = vi.fn();
+	const register = vi.fn();
+	const context = fixture.context as unknown as Record<string, unknown>;
+	const app = (fixture.context as unknown as { app: Record<string, unknown> }).app;
+	app.scope = new Scope();
+	app.workspace = {
+		on: (event: string, handler: (...args: unknown[]) => void) => {
+			handlers.set(event, handler);
+			return event;
+		},
+	};
+	context.registerEvent = registerEvent;
+	context.register = register;
+	let activeNotePath = 'Note.md';
+	const plugin = (fixture.context as unknown as {
+		plugin: Record<string, unknown>;
+	}).plugin;
+	plugin.getActiveNotePath = () => activeNotePath;
+	return {
+		...fixture,
+		handlers,
+		registerEvent,
+		register,
+		setActiveNotePath: (path: string) => {
+			activeNotePath = path;
+		},
+	};
+}
+
+async function waitForCapacityRefresh() {
+	await new Promise<void>((resolve) => {
+		window.setTimeout(resolve, 220);
+	});
+}
+
+describe('EmendChatView capacity refresh sources', () => {
+	beforeEach(() => {
+		vi.stubGlobal('window', {
+			setTimeout,
+			clearTimeout,
+		});
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.restoreAllMocks();
+	});
+
+	it('refreshes once per debounced editor content burst without reads or requests', async () => {
+		const fixture = createWiredCapacityView({
+			capacity: { contextWindowTokens: 1000, outputReserveTokens: 100 },
+		});
+		await viewPrototype.onOpen.call(fixture.context);
+		expect(fixture.registerEvent).toHaveBeenCalledTimes(2);
+		expect(fixture.register).toHaveBeenCalledWith(expect.any(Function));
+		const editorChange = fixture.handlers.get('editor-change');
+		expect(editorChange).toBeDefined();
+		expect(fixture.handlers.get('editor-selection-change')).toBeDefined();
+
+		fixture.captureChatContext.mockClear();
+		fixture.requestContext.markdown = 'Fresh editor content for the estimate.';
+		editorChange?.();
+		editorChange?.();
+		editorChange?.();
+		expect(fixture.captureChatContext).not.toHaveBeenCalled();
+
+		await waitForCapacityRefresh();
+
+		expect(fixture.captureChatContext).toHaveBeenCalledTimes(1);
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedCapacitySummary(fixture.askEstimate('')),
+		);
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(fixture.read).not.toHaveBeenCalled();
+
+		fixture.captureChatContext.mockClear();
+		editorChange?.();
+		await waitForCapacityRefresh();
+		expect(fixture.captureChatContext).toHaveBeenCalledTimes(1);
+	});
+
+	it('refreshes from caret-window changes in read-only modes', async () => {
+		const fixture = createWiredCapacityView({
+			capacity: { contextWindowTokens: 1000, outputReserveTokens: 100 },
+		});
+		await viewPrototype.onOpen.call(fixture.context);
+		fixture.requestContext.markdown = 'Caret moved to another paragraph.';
+
+		fixture.handlers.get('editor-selection-change')?.();
+		await waitForCapacityRefresh();
+
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedCapacitySummary(fixture.askEstimate('')),
+		);
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+	});
+
+	it('refreshes the automatic Edit target when the selection appears', async () => {
+		const fixture = createWiredCapacityView({
+			mode: 'edit',
+			selectedText: 'beta',
+			capacity: { contextWindowTokens: 1000, outputReserveTokens: 100 },
+		});
+		let usableSelection = false;
+		(
+			fixture.context.plugin as unknown as {
+				hasUsableSelection: () => boolean;
+			}
+		).hasUsableSelection = () => usableSelection;
+		await viewPrototype.onOpen.call(fixture.context);
+		expect(fixture.context.displayedEditTarget).toBe('full-note');
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedCapacitySummary(fixture.fullNoteEstimate('')),
+		);
+
+		usableSelection = true;
+		fixture.handlers.get('editor-selection-change')?.();
+		await waitForCapacityRefresh();
+
+		expect(fixture.context.displayedEditTarget).toBe('selection');
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedCapacitySummary(fixture.selectionEstimate('')),
+		);
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(fixture.editor.replaceRange).not.toHaveBeenCalled();
+	});
+
+	it('applies a capacity change made by a settings save', async () => {
+		const fixture = createWiredCapacityView({
+			capacity: { contextWindowTokens: 1000, outputReserveTokens: 100 },
+		});
+		await viewPrototype.onOpen.call(fixture.context);
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(false);
+
+		fixture.provider.contextWindowTokens = 100;
+		fixture.provider.outputReserveTokens = 96;
+		viewPrototype.refreshCapacityEstimate.call(fixture.context);
+
+		const estimate = fixture.askEstimate('');
+		expect(estimate.overCapacity).toBe(true);
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedCapacitySummary(estimate),
+		);
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(true);
+		const quickActions = findElements(
+			fixture.contentEl,
+			(element) => element.className.split(' ').includes('emend-chat-quick-action'),
+		);
+		expect(quickActions.every((button) => button.disabled)).toBe(true);
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(fixture.read).not.toHaveBeenCalled();
+	});
+
+	it('refreshes when an additional note is selected without reading its contents', async () => {
+		const fixture = createWiredCapacityView({
+			capacity: { contextWindowTokens: 1000, outputReserveTokens: 100 },
+		});
+		await viewPrototype.onOpen.call(fixture.context);
+		const before = findCapacitySummary(fixture.contentEl)?.textContent;
+		fixture.captureChatContext.mockClear();
+
+		fixture.additionalNotesStore.add('Note.md', 'Extra.md');
+		expect(fixture.captureChatContext).not.toHaveBeenCalled();
+
+		await waitForCapacityRefresh();
+
+		expect(fixture.captureChatContext).toHaveBeenCalledTimes(1);
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(before);
+		expect(fixture.read).not.toHaveBeenCalled();
+	});
+
+	it('ends a note switch and same-note thread refresh with a fresh estimate', async () => {
+		const fixture = createWiredCapacityView({
+			capacity: { contextWindowTokens: 1000, outputReserveTokens: 100 },
+			historyMessageLimit: 8,
+		});
+		await viewPrototype.onOpen.call(fixture.context);
+		expect(fixture.context.notePath).toBe('Note.md');
+
+		fixture.requestContext.file.path = 'Other.md';
+		fixture.requestContext.noteLabel = 'Other.md';
+		fixture.requestContext.markdown = 'Other note body for the estimate.';
+		fixture.requestContext.sourceText = 'Other note body for the estimate.';
+		fixture.setActiveNotePath('Other.md');
+
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+
+		expect(fixture.context.notePath).toBe('Other.md');
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedCapacitySummary(fixture.askEstimate('')),
+		);
+
+		const withoutHistory = fixture.askEstimate('');
+		fixture.context.messages.push(
+			{ ...message('earlier-question', 'Other.md'), role: 'user' },
+			message('earlier-answer', 'Other.md'),
+		);
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const withHistory = fixture.askEstimate('');
+
+		expect(withHistory.categories.history).toBeGreaterThan(
+			withoutHistory.categories.history,
+		);
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedCapacitySummary(withHistory),
+		);
+	});
+
+	it('cancels the pending refresh and unsubscribes when the view closes', async () => {
+		const fixture = createWiredCapacityView({
+			capacity: { contextWindowTokens: 1000, outputReserveTokens: 100 },
+		});
+		const store = fixture.additionalNotesStore;
+		const originalSubscribe = store.subscribe.bind(store);
+		vi.spyOn(store, 'subscribe').mockImplementation((listener) => {
+			const unsubscribe = originalSubscribe(listener);
+			return vi.fn(unsubscribe);
+		});
+		await viewPrototype.onOpen.call(fixture.context);
+		const registeredUnsubscribe = fixture.register.mock.calls
+			.map((call) => call[0] as unknown)
+			.find(
+				(value): value is ReturnType<typeof vi.fn> =>
+					typeof value === 'function',
+			);
+		expect(registeredUnsubscribe).toBeDefined();
+		fixture.captureChatContext.mockClear();
+
+		fixture.handlers.get('editor-change')?.();
+		await viewPrototype.onClose.call(fixture.context);
+
+		expect(registeredUnsubscribe).toHaveBeenCalledTimes(1);
+		await waitForCapacityRefresh();
+		expect(fixture.captureChatContext).not.toHaveBeenCalled();
+
+		fixture.handlers.get('editor-change')?.();
+		await waitForCapacityRefresh();
+		expect(fixture.captureChatContext).not.toHaveBeenCalled();
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(fixture.read).not.toHaveBeenCalled();
 	});
 });

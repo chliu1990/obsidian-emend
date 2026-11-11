@@ -7,7 +7,17 @@ import {
 	type ContextRequestText,
 	type RequestCharacterCategories,
 } from './context-accounting';
-import type { ProviderConfig } from './types';
+import type { RequestContext } from './context';
+import { getEditStrategy } from './edit-strategy';
+import { getSystemPrompt } from './mode';
+import { buildUserPrompt } from './request-coordinator';
+import { buildSelectionUserPrompt } from './selection-editor';
+import type {
+	Mode,
+	ProviderConfig,
+	ProviderHistoryMessage,
+	SelectionSnapshot,
+} from './types';
 
 export interface DraftCapacityEstimate {
 	capacity: ContextCapacityState;
@@ -36,6 +46,81 @@ export function buildDraftCapacityEstimate(input: {
 		overCapacity,
 		blocked: capacity.kind === 'invalid' || overCapacity,
 	};
+}
+
+export function buildReadOnlyDraftEstimate(input: {
+	provider: ProviderConfig;
+	context: RequestContext;
+	mode: Exclude<Mode, 'edit'>;
+	prompt: string;
+	history: ProviderHistoryMessage[];
+	notePath?: string;
+}): DraftCapacityEstimate {
+	const context = withNotePath(input.context, input.notePath);
+	return buildDraftCapacityEstimate({
+		provider: input.provider,
+		request: {
+			systemPrompt: getSystemPrompt(input.mode, undefined),
+			userPrompt: buildUserPrompt(context, input.prompt, []),
+			history: input.history,
+		},
+	});
+}
+
+export function buildFullNoteDraftEstimate(input: {
+	provider: ProviderConfig;
+	context: RequestContext;
+	prompt: string;
+	history: ProviderHistoryMessage[];
+	notePath?: string;
+}): DraftCapacityEstimate {
+	const context = withNotePath(input.context, input.notePath);
+	return buildDraftCapacityEstimate({
+		provider: input.provider,
+		request: {
+			systemPrompt: getEditStrategy().getFullNotePrompt(undefined),
+			userPrompt: buildUserPrompt(
+				context,
+				input.prompt,
+				[],
+				context.sourceText,
+			),
+			history: input.history,
+		},
+	});
+}
+
+export function buildSelectionDraftEstimate(input: {
+	provider: ProviderConfig;
+	snapshot: SelectionSnapshot;
+	prompt: string;
+	maxContextCharacters: number;
+	smartSelectionContext: boolean;
+	notePath?: string;
+	history: ProviderHistoryMessage[];
+}): DraftCapacityEstimate {
+	return buildDraftCapacityEstimate({
+		provider: input.provider,
+		request: {
+			systemPrompt: getEditStrategy().getSelectionPrompt(undefined),
+			userPrompt: buildSelectionUserPrompt({
+				snapshot: input.snapshot,
+				prompt: input.prompt,
+				maxContextCharacters: input.maxContextCharacters,
+				smartSelectionContext: input.smartSelectionContext,
+				additionalNotes: [],
+				notePath: input.notePath,
+			}),
+			history: input.history,
+		},
+	});
+}
+
+function withNotePath(
+	context: RequestContext,
+	notePath: string | undefined,
+): RequestContext {
+	return notePath === undefined ? context : { ...context, notePath };
 }
 
 export function formatDraftCapacitySummary(

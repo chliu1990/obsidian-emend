@@ -6,13 +6,16 @@ import {
 	Scope,
 	setIcon,
 	WorkspaceLeaf,
+	type EventRef,
 } from 'obsidian';
 import { AdditionalNotesControl } from './additional-notes-ui';
 import { EMEND_BUILD_ID } from './build-info';
 import type EmendPlugin from './main';
 import { getComposerShortcut, getDefaultShortcutLabels } from './chat-shortcuts';
 import {
-	buildDraftCapacityEstimate,
+	buildFullNoteDraftEstimate,
+	buildReadOnlyDraftEstimate,
+	buildSelectionDraftEstimate,
 	ContextCapacityDisplay,
 	formatDraftCapacityBlockMessage,
 	type DraftCapacityEstimate,
@@ -24,18 +27,13 @@ import {
 	type EditTargetChoice,
 	type ResolvedEditTarget,
 } from './edit-target';
-import { getEditStrategy } from './edit-strategy';
-import { getSystemPrompt, MODES } from './mode';
+import { MODES } from './mode';
 import {
 	areQuickActionsDisabled,
 	QUICK_ACTIONS,
 	type QuickAction,
 } from './quick-actions';
-import { buildUserPrompt } from './request-coordinator';
-import {
-	buildSelectionUserPrompt,
-	type SelectionEditTarget,
-} from './selection-editor';
+import type { SelectionEditTarget } from './selection-editor';
 import { normalizeContextLimit } from './settings';
 import { formatTokenUsage } from './token-usage';
 import type {
@@ -72,6 +70,12 @@ const MODE_PLACEHOLDERS: Record<Mode, string> = {
 	discuss: 'Discuss an idea in the active note...',
 	brainstorm: 'Brainstorm ideas for the active note...',
 };
+
+const CAPACITY_REFRESH_DEBOUNCE_MS = 150;
+
+interface UntypedWorkspaceEvents {
+	on(name: string, callback: (...data: unknown[]) => unknown): EventRef;
+}
 
 type DraftCapacityTarget =
 	| { type: 'read-only'; mode: Exclude<Mode, 'edit'>; context: RequestContext }
@@ -110,6 +114,8 @@ export class EmendChatView extends ItemView {
 	private noteLoadGeneration = 0;
 	private additionalNotesControl: AdditionalNotesControl | null = null;
 	private capacityDisplay: ContextCapacityDisplay | null = null;
+	private capacityRefreshTimer: number | null = null;
+	private unsubscribeAdditionalNotes: (() => void) | null = null;
 	private sendButtonEl: HTMLButtonElement | null = null;
 	private quickActionButtons: Array<{
 		action: QuickAction;
@@ -141,12 +147,16 @@ export class EmendChatView extends ItemView {
 	protected async onOpen() {
 		this.closed = false;
 		this.registerComposerScope();
+		this.registerCapacityRefreshSources();
 		this.render();
 		await this.refreshTargetNote();
 	}
 
 	protected async onClose() {
 		this.closed = true;
+		this.clearCapacityRefreshTimer();
+		this.unsubscribeAdditionalNotes?.();
+		this.unsubscribeAdditionalNotes = null;
 		this.isThreadLoading = false;
 		this.noteLoadGeneration++;
 		this.notePath = null;
@@ -177,7 +187,51 @@ export class EmendChatView extends ItemView {
 		if (!this.capacityDisplay) {
 			return;
 		}
+		this.clearCapacityRefreshTimer();
 		this.refreshDraftEstimate();
+	}
+
+	private registerCapacityRefreshSources() {
+		this.registerEvent(
+			this.app.workspace.on('editor-change', () => {
+				this.scheduleCapacityRefresh();
+			}),
+		);
+		const untypedWorkspace = this.app.workspace as unknown as UntypedWorkspaceEvents;
+		this.registerEvent(
+			untypedWorkspace.on('editor-selection-change', () => {
+				this.scheduleCapacityRefresh();
+			}),
+		);
+		const unsubscribe = this.plugin.additionalNotesStore.subscribe(() => {
+			this.scheduleCapacityRefresh();
+		});
+		this.unsubscribeAdditionalNotes = unsubscribe;
+		this.register(unsubscribe);
+	}
+
+	private scheduleCapacityRefresh() {
+		if (this.closed || !this.capacityDisplay) {
+			return;
+		}
+		this.clearCapacityRefreshTimer();
+		this.capacityRefreshTimer = window.setTimeout(() => {
+			this.capacityRefreshTimer = null;
+			if (this.closed || !this.capacityDisplay) {
+				return;
+			}
+			this.refreshEditTargetControl();
+			this.refreshDraftEstimate();
+		}, CAPACITY_REFRESH_DEBOUNCE_MS);
+	}
+
+	private clearCapacityRefreshTimer() {
+		const timer = this.capacityRefreshTimer;
+		if (timer === null || timer === undefined) {
+			return;
+		}
+		window.clearTimeout(timer);
+		this.capacityRefreshTimer = null;
 	}
 
 	refreshActiveModelLabel() {
@@ -1207,57 +1261,38 @@ function buildCapacityForTarget(
 	if (!provider) {
 		return undefined;
 	}
-	return buildDraftCapacityEstimate({
-		provider,
-		request: {
-			systemPrompt: getDraftCapacitySystemPrompt(target),
-			userPrompt: getDraftCapacityUserPrompt(settings, app, target, prompt),
-			history,
-		},
-	});
-}
-
-function getDraftCapacitySystemPrompt(target: DraftCapacityTarget): string {
-	if (target.type === 'selection') {
-		return getEditStrategy().getSelectionPrompt(undefined);
-	}
-	if (target.type === 'full-note') {
-		return getEditStrategy().getFullNotePrompt(undefined);
-	}
-	return getSystemPrompt(target.mode, undefined);
-}
-
-function getDraftCapacityUserPrompt(
-	settings: EmendSettings,
-	app: VaultNameSource,
-	target: DraftCapacityTarget,
-	prompt: string,
-): string {
 	switch (target.type) {
 		case 'read-only':
-			return buildUserPrompt(target.context, prompt, []);
-		case 'full-note':
-			return buildUserPrompt(
-				target.context,
+			return buildReadOnlyDraftEstimate({
+				provider,
+				context: target.context,
+				mode: target.mode,
 				prompt,
-				[],
-				target.context.sourceText,
-			);
+				history,
+			});
+		case 'full-note':
+			return buildFullNoteDraftEstimate({
+				provider,
+				context: target.context,
+				prompt,
+				history,
+			});
 		case 'selection':
-			return buildSelectionUserPrompt({
+			return buildSelectionDraftEstimate({
+				provider,
 				snapshot: target.snapshot,
 				prompt,
 				maxContextCharacters: normalizeContextLimit(
 					settings.maxContextCharacters,
 				),
 				smartSelectionContext: settings.smartSelectionContext,
-				additionalNotes: [],
 				notePath: settings.includeNotePathInContext
 					? formatVaultQualifiedPath(
 						app.vault.getName(),
 						target.snapshot.file.path,
 					)
 					: undefined,
+				history,
 			});
 	}
 }

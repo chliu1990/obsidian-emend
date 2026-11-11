@@ -7,6 +7,10 @@ import {
 	formatVaultQualifiedPath,
 	type RequestContext,
 } from './context';
+import {
+	buildSelectionDraftEstimate,
+	type DraftCapacityEstimate,
+} from './context-capacity-ui';
 import { ConversationStore } from './conversation-store';
 import { DeepSeekWebSearchCoordinator } from './deepseek-web';
 import { getEditStrategy } from './edit-strategy';
@@ -174,6 +178,7 @@ export default class EmendPlugin extends Plugin {
 						),
 						this.additionalNotesStore,
 						snapshot.file.path,
+						(prompt) => this.estimateSelectionDraft(snapshot, prompt),
 					);
 					this.register(() => modal.close());
 					modal.open();
@@ -225,6 +230,7 @@ export default class EmendPlugin extends Plugin {
 	async saveSettings() {
 		await this.saveData(sanitizeSettings(this.settings));
 		this.refreshChatModelLabels();
+		this.refreshChatCapacityDisplays();
 	}
 
 	private refreshChatModelLabels() {
@@ -235,6 +241,38 @@ export default class EmendPlugin extends Plugin {
 				leaf.view.refreshActiveModelLabel();
 			}
 		}
+	}
+
+	private refreshChatCapacityDisplays() {
+		for (const leaf of this.app.workspace.getLeavesOfType(
+			EMEND_CHAT_VIEW_TYPE,
+		)) {
+			if (leaf.view instanceof EmendChatView) {
+				leaf.view.refreshCapacityEstimate();
+			}
+		}
+	}
+
+	estimateSelectionDraft(
+		snapshot: SelectionSnapshot,
+		prompt: string,
+	): DraftCapacityEstimate {
+		return buildSelectionDraftEstimate({
+			provider: this.settings.providers[this.settings.activeProvider],
+			snapshot,
+			prompt,
+			maxContextCharacters: normalizeContextLimit(
+				this.settings.maxContextCharacters,
+			),
+			smartSelectionContext: this.settings.smartSelectionContext,
+			notePath: this.settings.includeNotePathInContext
+				? formatVaultQualifiedPath(
+					this.app.vault.getName(),
+					snapshot.file.path,
+				)
+				: undefined,
+			history: [],
+		});
 	}
 
 	async activateChatView() {

@@ -1,3 +1,4 @@
+import { TFile } from 'obsidian';
 import { describe, expect, it } from 'vitest';
 import {
 	accountRequestCharacters,
@@ -5,11 +6,25 @@ import {
 } from '../src/context-accounting';
 import {
 	buildDraftCapacityEstimate,
+	buildFullNoteDraftEstimate,
+	buildReadOnlyDraftEstimate,
+	buildSelectionDraftEstimate,
 	ContextCapacityDisplay,
 	formatDraftCapacityBlockMessage,
 	type DraftCapacityEstimate,
 } from '../src/context-capacity-ui';
-import type { ProviderConfig } from '../src/types';
+import type { RequestContext } from '../src/context';
+import { formatVaultQualifiedPath } from '../src/context';
+import { getEditStrategy } from '../src/edit-strategy';
+import { getSystemPrompt } from '../src/mode';
+import { buildUserPrompt } from '../src/request-coordinator';
+import { buildSelectionUserPrompt } from '../src/selection-editor';
+import type {
+	Mode,
+	ProviderConfig,
+	ProviderHistoryMessage,
+	SelectionSnapshot,
+} from '../src/types';
 
 type CapacityFields = Pick<
 	ProviderConfig,
@@ -393,5 +408,259 @@ describe('ContextCapacityDisplay', () => {
 		expect(container.children).toHaveLength(1);
 		expect(textOf(root)).toContain('Draft estimate unavailable.');
 		expect(textOf(root)).not.toContain('Estimated input:');
+	});
+});
+
+function draftContext(overrides: Partial<RequestContext> = {}): RequestContext {
+	const file = new TFile();
+	file.path = 'Note.md';
+	return {
+		file,
+		sourceText: `Alpha beta gamma. ${'Context sentence. '.repeat(80)}`,
+		selection: { from: 6, to: 10 },
+		noteLabel: file.path,
+		markdown: 'Alpha beta gamma.',
+		...overrides,
+	};
+}
+
+function draftSnapshot(
+	context: RequestContext,
+	overrides: Partial<SelectionSnapshot> = {},
+): SelectionSnapshot {
+	return {
+		file: context.file,
+		fullText: context.sourceText,
+		selectedText: 'beta',
+		from: 6,
+		to: 10,
+		...overrides,
+	};
+}
+
+function draftHistory(): ProviderHistoryMessage[] {
+	return [
+		{ role: 'user', content: 'Earlier question', mode: 'ask', origin: 'user' },
+		{ role: 'assistant', content: 'Earlier answer', mode: 'ask', origin: 'model' },
+	];
+}
+
+describe('shared draft estimate builders', () => {
+	const provider = providerWith({
+		contextWindowTokens: 1000,
+		outputReserveTokens: 100,
+	});
+
+	it.each([
+		'ask',
+		'discuss',
+		'brainstorm',
+	] as const)('matches the direct %s read-only assembly', (mode: Exclude<Mode, 'edit'>) => {
+		const context = draftContext({ notePath: 'Vault/Note.md' });
+		const history = draftHistory();
+
+		const estimate = buildReadOnlyDraftEstimate({
+			provider,
+			context,
+			mode,
+			prompt: 'Question about the note.',
+			history,
+		});
+		const expected = buildDraftCapacityEstimate({
+			provider,
+			request: {
+				systemPrompt: getSystemPrompt(mode, undefined),
+				userPrompt: buildUserPrompt(context, 'Question about the note.', []),
+				history,
+			},
+		});
+
+		expect(estimate).toEqual(expected);
+		expect(estimate.categories.history).toBeGreaterThan(0);
+	});
+
+	it('uses the bounded read-only Markdown instead of the complete source', () => {
+		const context = draftContext({ markdown: 'Window only.' });
+
+		const readOnly = buildReadOnlyDraftEstimate({
+			provider,
+			context,
+			mode: 'ask',
+			prompt: 'Question',
+			history: [],
+		});
+		const fullNote = buildFullNoteDraftEstimate({
+			provider,
+			context,
+			prompt: 'Question',
+			history: [],
+		});
+
+		expect(readOnly.categories.user).toBeLessThan(fullNote.categories.user);
+		expect(readOnly).toEqual(buildDraftCapacityEstimate({
+			provider,
+			request: {
+				systemPrompt: getSystemPrompt('ask', undefined),
+				userPrompt: buildUserPrompt(context, 'Question', []),
+				history: [],
+			},
+		}));
+	});
+
+	it('matches the direct full-note assembly with the complete source', () => {
+		const context = draftContext({
+			sourceText: `Intro.\n${'Long paragraph. '.repeat(300)}`,
+			markdown: 'Window only.',
+			notePath: 'Vault/Note.md',
+		});
+		const history = draftHistory();
+
+		const estimate = buildFullNoteDraftEstimate({
+			provider,
+			context,
+			prompt: 'Fix the wording.',
+			history,
+		});
+		const expected = buildDraftCapacityEstimate({
+			provider,
+			request: {
+				systemPrompt: getEditStrategy().getFullNotePrompt(undefined),
+				userPrompt: buildUserPrompt(
+					context,
+					'Fix the wording.',
+					[],
+					context.sourceText,
+				),
+				history,
+			},
+		});
+
+		expect(estimate).toEqual(expected);
+		expect(estimate).toEqual(buildDraftCapacityEstimate({
+			provider,
+			request: {
+				systemPrompt: getEditStrategy().getFullNotePrompt(undefined),
+				userPrompt: buildUserPrompt(context, 'Fix the wording.', [], context.sourceText),
+				history,
+			},
+		}));
+	});
+
+	it.each([
+		{ smartSelectionContext: true, includePath: true },
+		{ smartSelectionContext: true, includePath: false },
+		{ smartSelectionContext: false, includePath: true },
+		{ smartSelectionContext: false, includePath: false },
+	])(
+		'matches the direct Selection assembly (smart=$smartSelectionContext, path=$includePath)',
+		({ smartSelectionContext, includePath }) => {
+			const context = draftContext({
+				sourceText: `Alpha ${'word '.repeat(400)}beta ${'tail '.repeat(200)}`,
+				notePath: includePath ? 'Vault/Note.md' : undefined,
+			});
+			const snapshot = draftSnapshot(context);
+			const history = draftHistory();
+			const notePath = includePath
+				? formatVaultQualifiedPath('Vault', snapshot.file.path)
+				: undefined;
+
+			const estimate = buildSelectionDraftEstimate({
+				provider,
+				snapshot,
+				prompt: 'Tighten this selection.',
+				maxContextCharacters: 1000,
+				smartSelectionContext,
+				notePath,
+				history,
+			});
+			const expected = buildDraftCapacityEstimate({
+				provider,
+				request: {
+					systemPrompt: getEditStrategy().getSelectionPrompt(undefined),
+					userPrompt: buildSelectionUserPrompt({
+						snapshot,
+						prompt: 'Tighten this selection.',
+						maxContextCharacters: 1000,
+						smartSelectionContext,
+						additionalNotes: [],
+						notePath,
+					}),
+					history,
+				},
+			});
+
+			expect(estimate).toEqual(expected);
+		},
+	);
+
+	it('lets an explicit note path override the captured context path', () => {
+		const context = draftContext({ notePath: 'Vault/Captured.md' });
+
+		const overridden = buildReadOnlyDraftEstimate({
+			provider,
+			context,
+			mode: 'ask',
+			prompt: 'Question',
+			history: [],
+			notePath: 'Vault/Override-with-a-longer-path.md',
+		});
+		const captured = buildReadOnlyDraftEstimate({
+			provider,
+			context,
+			mode: 'ask',
+			prompt: 'Question',
+			history: [],
+			notePath: undefined,
+		});
+
+		expect(overridden).toEqual(buildDraftCapacityEstimate({
+			provider,
+			request: {
+				systemPrompt: getSystemPrompt('ask', undefined),
+				userPrompt: buildUserPrompt(
+					{ ...context, notePath: 'Vault/Override-with-a-longer-path.md' },
+					'Question',
+					[],
+				),
+				history: [],
+			},
+		}));
+		expect(captured).toEqual(buildDraftCapacityEstimate({
+			provider,
+			request: {
+				systemPrompt: getSystemPrompt('ask', undefined),
+				userPrompt: buildUserPrompt(context, 'Question', []),
+				history: [],
+			},
+		}));
+		expect(overridden.categories).not.toEqual(captured.categories);
+	});
+
+	it('shares the equality boundary and blocking state with submission accounting', () => {
+		const context = draftContext({ markdown: 'Alpha beta gamma.' });
+		const tokens = buildReadOnlyDraftEstimate({
+			provider: providerWith(),
+			context,
+			mode: 'ask',
+			prompt: '',
+			history: [],
+		}).categories.estimatedInputTokens;
+		const boundaryProvider = providerWith({
+			contextWindowTokens: tokens + 1,
+			outputReserveTokens: 1,
+		});
+
+		const estimate = buildReadOnlyDraftEstimate({
+			provider: boundaryProvider,
+			context,
+			mode: 'ask',
+			prompt: '',
+			history: [],
+		});
+
+		expect(estimate.categories.estimatedInputTokens).toBe(tokens);
+		expect(estimate.capacity).toMatchObject({ effectiveInputTokens: tokens });
+		expect(estimate.overCapacity).toBe(true);
+		expect(estimate.blocked).toBe(true);
 	});
 });
