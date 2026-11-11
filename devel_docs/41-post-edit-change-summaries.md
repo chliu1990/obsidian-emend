@@ -79,7 +79,7 @@ Task 3 wrote `tests/edit-summary.test.ts` and updated chat fixtures before imple
 
 Coverage includes exact singular/plural strings for all four types, ranges with original note lines and response order, CRLF and a target ending at a newline, all three insertion line-boundary pins (inside a line, line start, EOF after a trailing newline), Selection offset applied exactly once to ranges and insertion points, eight items as eight bullets, nine and twenty items as seven plus one aggregate, fixed aggregate order with singular/plural nouns, comment-only `changeCount: 0`, empty items as header only, and a leakage test proving anchors/targets/replacements/comment text never appear. Chat tests prove the full-note path formats against `sourceText` with no offset, the Selection path adds `snapshot.from` once to reach a note-absolute line, and no-ops keep the exact existing text.
 
-The full local gate passed **40 Vitest files and 1118 tests**, ESLint, strict TypeScript plus the production build, and `git diff --check`.
+The full local gate passed **40 Vitest files and 1123 tests**, ESLint, strict TypeScript plus the production build, and `git diff --check` at gate commit `339a7d5` (the review-polish commit; the only later branch commits are documentation-only and do not change the tested tree).
 
 ## Real-Obsidian loopback evidence
 
