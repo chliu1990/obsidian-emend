@@ -242,13 +242,13 @@ function getStateClass(estimate: DraftCapacityEstimate | undefined): string {
 function formatCategoryEstimates(categories: RequestCharacterCategories): string {
 	const parts = [
 		`System: ${estimateTokensForCharacters(categories.system)} tokens`,
-		`Draft: ${estimateTokensForCharacters(categories.user)}`,
-		`History: ${estimateTokensForCharacters(categories.history)}`,
-		`Tools: ${estimateTokensForCharacters(categories.tools)}`,
+		`Draft: ${estimateTokensForCharacters(categories.user)} tokens`,
+		`History: ${estimateTokensForCharacters(categories.history)} tokens`,
+		`Tools: ${estimateTokensForCharacters(categories.tools)} tokens`,
 	];
 	const continuation = estimateTokensForCharacters(categories.continuation);
 	if (continuation > 0) {
-		parts.push(`Continuation: ${continuation}`);
+		parts.push(`Continuation: ${continuation} tokens`);
 	}
 	return parts.join(' · ');
 }

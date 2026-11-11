@@ -270,7 +270,7 @@ describe('ContextCapacityDisplay', () => {
 		expect(textOf(root)).toContain(
 			'Not included: instructions and skills, additional-note contents, and later Web or correction rounds. The exact submission check remains authoritative.',
 		);
-		expect(textOf(root)).toContain('System: 1 tokens · Draft: 3 · History: 0 · Tools: 0');
+		expect(textOf(root)).toContain('System: 1 tokens · Draft: 3 tokens · History: 0 tokens · Tools: 0 tokens');
 		expect(textOf(root)).toContain('Total: 4 tokens');
 		expect(textOf(root)).not.toContain('Context window:');
 		expect(textOf(root)).not.toContain('Output reserve:');
@@ -338,7 +338,7 @@ describe('ContextCapacityDisplay', () => {
 		}));
 
 		expect(textOf(root)).toContain(
-			'System: 1 tokens · Draft: 3 · History: 0 · Tools: 0 · Continuation: 2',
+			'System: 1 tokens · Draft: 3 tokens · History: 0 tokens · Tools: 0 tokens · Continuation: 2 tokens',
 		);
 		expect(textOf(root)).toContain('Total: 6 tokens');
 	});
