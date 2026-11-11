@@ -115,7 +115,7 @@ export function toRejectView(text: string): string {
 export function prepareCriticMarkupEdit(
 	original: string,
 	response: string,
-): EditPreparation {
+): Omit<EditPreparation, 'summaryItems'> {
 	if (response.trim().length === 0) {
 		throw new Error('CriticMarkup edit response is empty.');
 	}

@@ -62,6 +62,7 @@ describe('operation EditStrategy protocol', () => {
 		])).toEqual({
 			annotatedMarkdown: 'Alpha {++new ++}beta',
 			changeCount: 1,
+			summaryItems: [{ type: 'insert', start: 6, end: 10, insertionPoint: 6 }],
 		});
 	});
 
@@ -71,6 +72,7 @@ describe('operation EditStrategy protocol', () => {
 		])).toEqual({
 			annotatedMarkdown: 'Alpha{++ new++} beta',
 			changeCount: 1,
+			summaryItems: [{ type: 'insert', start: 0, end: 5, insertionPoint: 5 }],
 		});
 	});
 
@@ -78,6 +80,7 @@ describe('operation EditStrategy protocol', () => {
 		expect(prepare('Alpha beta', [{ type: 'remove', target: 'beta' }])).toEqual({
 			annotatedMarkdown: 'Alpha {--beta--}',
 			changeCount: 1,
+			summaryItems: [{ type: 'remove', start: 6, end: 10 }],
 		});
 	});
 
@@ -87,6 +90,7 @@ describe('operation EditStrategy protocol', () => {
 		])).toEqual({
 			annotatedMarkdown: 'Alpha {~~beta~>gamma~~}',
 			changeCount: 1,
+			summaryItems: [{ type: 'replace', start: 6, end: 10 }],
 		});
 	});
 
@@ -96,6 +100,7 @@ describe('operation EditStrategy protocol', () => {
 		])).toEqual({
 			annotatedMarkdown: 'They {~~have~>has~~} a plan.',
 			changeCount: 1,
+			summaryItems: [{ type: 'replace', start: 0, end: 17 }],
 		});
 	});
 
@@ -110,6 +115,7 @@ describe('operation EditStrategy protocol', () => {
 		])).toEqual({
 			annotatedMarkdown: 'The quick {~~brown~>red~~} fox {~~jumps~>leaps~~} over the lazy dog.',
 			changeCount: 2,
+			summaryItems: [{ type: 'replace', start: 0, end: 44 }],
 		});
 	});
 
@@ -124,6 +130,7 @@ describe('operation EditStrategy protocol', () => {
 		])).toEqual({
 			annotatedMarkdown: 'I have one.\nI {~~have~>has~~} one.',
 			changeCount: 1,
+			summaryItems: [{ type: 'replace', start: 12, end: 23 }],
 		});
 	});
 
@@ -133,6 +140,7 @@ describe('operation EditStrategy protocol', () => {
 		])).toEqual({
 			annotatedMarkdown: 'Alpha beta',
 			changeCount: 0,
+			summaryItems: [],
 		});
 	});
 
@@ -142,6 +150,7 @@ describe('operation EditStrategy protocol', () => {
 		])).toEqual({
 			annotatedMarkdown: 'Alpha beta{>>Review this.<<}',
 			changeCount: 0,
+			summaryItems: [{ type: 'comment', start: 6, end: 10 }],
 		});
 	});
 
@@ -149,6 +158,7 @@ describe('operation EditStrategy protocol', () => {
 		expect(prepare('Alpha beta', [])).toEqual({
 			annotatedMarkdown: 'Alpha beta',
 			changeCount: 0,
+			summaryItems: [],
 		});
 	});
 
@@ -179,6 +189,10 @@ describe('operation EditStrategy protocol', () => {
 		])).toEqual({
 			annotatedMarkdown: '前🙂\n{~~第一行~>新しい🙂~~}\n{--第二--}行\n{++終\n++}後',
 			changeCount: 3,
+			summaryItems: [
+				{ type: 'replace', start: 4, end: 11 },
+				{ type: 'insert', start: 12, end: 13, insertionPoint: 12 },
+			],
 		});
 	});
 
@@ -233,6 +247,7 @@ describe('operation EditStrategy protocol', () => {
 		])).toEqual({
 			annotatedMarkdown: '{++Existing++} {~~alpha~>beta~~}',
 			changeCount: 1,
+			summaryItems: [{ type: 'replace', start: 15, end: 20 }],
 		});
 	});
 
@@ -378,6 +393,116 @@ describe('operation EditStrategy protocol', () => {
 			{ type: 'replace', target: 'Alpha', replacement: 'Changed' },
 			{ type: 'remove', target: 'missing' },
 		])).toThrow();
+	});
+});
+
+describe('operation summary metadata', () => {
+	it('retains the anchor range and actual zero-width point for insertions', () => {
+		const before = prepare('Alpha beta', [
+			{ type: 'insert', anchor: 'beta', position: 'before', text: 'new ' },
+		]);
+		const after = prepare('Alpha beta', [
+			{ type: 'insert', anchor: 'Alpha', position: 'after', text: ' new' },
+		]);
+
+		expect(before.summaryItems).toEqual([
+			{ type: 'insert', start: 6, end: 10, insertionPoint: 6 },
+		]);
+		expect(after.summaryItems).toEqual([
+			{ type: 'insert', start: 0, end: 5, insertionPoint: 5 },
+		]);
+	});
+
+	it('retains deletion, substitution, and comment ranges in response order', () => {
+		const preparation = prepare('Alpha beta gamma delta', [
+			{ type: 'comment', target: 'delta', comment: 'Review' },
+			{ type: 'remove', target: 'beta' },
+			{ type: 'replace', target: 'gamma', replacement: 'changed' },
+		]);
+
+		expect(preparation.summaryItems).toEqual([
+			{ type: 'comment', start: 17, end: 22 },
+			{ type: 'remove', start: 6, end: 10 },
+			{ type: 'replace', start: 11, end: 16 },
+		]);
+		expect(preparation.changeCount).toBe(2);
+	});
+
+	it('keeps a comment item even though no tracked text changes are counted', () => {
+		const preparation = prepare('Alpha beta', [
+			{ type: 'comment', target: 'beta', comment: 'Review this.' },
+		]);
+
+		expect(preparation.changeCount).toBe(0);
+		expect(preparation.summaryItems).toEqual([
+			{ type: 'comment', start: 6, end: 10 },
+		]);
+	});
+
+	it.each(['insert', 'remove', 'replace', 'comment'] as const)(
+		'retains the selected repeated occurrence for %s',
+		(type) => {
+			const operation = type === 'insert'
+				? { type, anchor: 'same', position: 'after', text: '!', occurrence: 2 }
+				: type === 'remove'
+					? { type, target: 'same', occurrence: 2 }
+					: type === 'replace'
+						? { type, target: 'same', replacement: 'new', occurrence: 2 }
+						: { type, target: 'same', comment: 'note', occurrence: 2 };
+
+			expect(prepare('same same same', [operation]).summaryItems).toEqual([
+				type === 'insert'
+					? { type, start: 5, end: 9, insertionPoint: 9 }
+					: { type, start: 5, end: 9 },
+			]);
+		},
+	);
+
+	it('uses UTF-16 source offsets for Unicode, CRLF, and multiline ranges', () => {
+		const original = '前🙂\r\n第一行\r\n第二行\r\n後';
+		const preparation = prepare(original, [
+			{
+				type: 'replace',
+				target: '第一行\r\n第二行',
+				replacement: '新しい🙂\r\n行',
+			},
+			{ type: 'insert', anchor: '後', position: 'before', text: '終\r\n' },
+		]);
+
+		expect(preparation.summaryItems).toEqual([
+			{ type: 'replace', start: 5, end: 13 },
+			{ type: 'insert', start: 15, end: 16, insertionPoint: 15 },
+		]);
+		expect(preparation.changeCount).toBe(3);
+	});
+
+	it('keeps selection metadata relative to the selection rather than absolute guard ranges', () => {
+		const preparation = operationEditStrategy.prepareEdit(
+			'alpha beta',
+			JSON.stringify([
+				{ type: 'insert', anchor: 'alpha', position: 'after', text: '!' },
+				{ type: 'replace', target: 'beta', replacement: 'changed' },
+			]),
+			{ fullText: 'Before\nalpha beta\nAfter', from: 7, to: 17 },
+		);
+
+		expect(preparation.summaryItems).toEqual([
+			{ type: 'insert', start: 0, end: 5, insertionPoint: 5 },
+			{ type: 'replace', start: 6, end: 10 },
+		]);
+	});
+
+	it('omits identical replacements and empty responses from summary metadata', () => {
+		expect(prepare('Alpha beta', [
+			{ type: 'replace', target: 'beta', replacement: 'beta' },
+		]).summaryItems).toEqual([]);
+		expect(prepare('Alpha beta', [
+			{ type: 'replace', target: 'beta', replacement: 'beta' },
+			{ type: 'remove', target: 'Alpha ' },
+		]).summaryItems).toEqual([
+			{ type: 'remove', start: 0, end: 6 },
+		]);
+		expect(prepare('Alpha beta', []).summaryItems).toEqual([]);
 	});
 });
 

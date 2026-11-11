@@ -1,5 +1,9 @@
 import { prepareCriticMarkupEdit } from './critic-markup';
-import type { EditSourceContext, EditStrategy } from './edit-strategy';
+import type {
+	EditSourceContext,
+	EditStrategy,
+	EditSummaryItem,
+} from './edit-strategy';
 import {
 	EditResponseValidationError,
 	EditSourceValidationError,
@@ -50,6 +54,11 @@ interface CompiledRange extends OriginalRange {
 	order: number;
 }
 
+interface CompiledEditOperations {
+	compiledMarkdown: string;
+	summaryItems: readonly EditSummaryItem[];
+}
+
 const MINIMAL_TARGET_PROMPT = 'For every edit, use the smallest complete semantic target that contains the change. Put independent edits in separate nonoverlapping operations instead of broadening one target. Use insert for pure additions and remove for pure deletions. When text repeats, keep the target minimal and use occurrence rather than broadening the target.';
 const MARKDOWN_STRUCTURE_PROMPT = 'Do not target or insert inside fenced code. Inline code targets must include the complete backtick-delimited span. Tables allow only text edits within one existing header or body cell; do not edit rows, columns, or delimiter rows, and do not insert newlines or unescaped | separators.';
 
@@ -88,9 +97,9 @@ export const operationEditStrategy: EditStrategy = {
 			throw new EditSourceValidationError();
 		}
 
-		let compiled: string;
+		let compiled: CompiledEditOperations;
 		try {
-			compiled = compileEditOperations(original, response, sourceContext);
+			compiled = compileEditOperationsWithSummary(original, response, sourceContext);
 		} catch (error) {
 			if (error instanceof EditResponseValidationError) {
 				throw error;
@@ -102,7 +111,11 @@ export const operationEditStrategy: EditStrategy = {
 		}
 
 		try {
-			return prepareCriticMarkupEdit(original, compiled);
+			const preparation = prepareCriticMarkupEdit(original, compiled.compiledMarkdown);
+			return {
+				...preparation,
+				summaryItems: compiled.summaryItems,
+			};
 		} catch {
 			throw new EditResponseValidationError(
 				'compiled-markup-rejected',
@@ -117,6 +130,14 @@ export function compileEditOperations(
 	response: string,
 	sourceContext?: EditSourceContext,
 ): string {
+	return compileEditOperationsWithSummary(original, response, sourceContext).compiledMarkdown;
+}
+
+function compileEditOperationsWithSummary(
+	original: string,
+	response: string,
+	sourceContext?: EditSourceContext,
+): CompiledEditOperations {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(response);
@@ -169,12 +190,38 @@ export function compileEditOperations(
 		to: original.length,
 	}, changes);
 
+	const summaryItems = resolved
+		.filter(({ operation }) => !isUnchangedReplacement(operation))
+		.map(summaryItemFor);
+
 	changes.sort((left, right) => right.start - left.start || right.order - left.order);
 	let compiled = original;
 	for (const change of changes) {
 		compiled = `${compiled.slice(0, change.start)}${change.text}${compiled.slice(change.end)}`;
 	}
-	return compiled;
+	return { compiledMarkdown: compiled, summaryItems };
+}
+
+function isUnchangedReplacement(operation: EditOperation): boolean {
+	return operation.type === 'replace' && operation.target === operation.replacement;
+}
+
+function summaryItemFor({ operation, anchorRange }: ResolvedOperation): EditSummaryItem {
+	if (operation.type === 'insert') {
+		return {
+			type: operation.type,
+			start: anchorRange.start,
+			end: anchorRange.end,
+			insertionPoint: operation.position === 'before'
+				? anchorRange.start
+				: anchorRange.end,
+		};
+	}
+	return {
+		type: operation.type,
+		start: anchorRange.start,
+		end: anchorRange.end,
+	};
 }
 
 function validateMarkdownStructure(

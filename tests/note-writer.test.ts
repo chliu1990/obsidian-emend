@@ -47,7 +47,7 @@ describe('applyPreparedEdit', () => {
 		const result = await applyPreparedEdit(
 			'edit',
 			context,
-			{ annotatedMarkdown, changeCount: 1 },
+			{ annotatedMarkdown, changeCount: 1, summaryItems: [] },
 			writer,
 		);
 
@@ -67,7 +67,7 @@ describe('applyPreparedEdit', () => {
 		const result = await applyPreparedEdit(
 			'edit',
 			context,
-			{ annotatedMarkdown: context.sourceText, changeCount: 0 },
+			{ annotatedMarkdown: context.sourceText, changeCount: 0, summaryItems: [] },
 			writer,
 		);
 
@@ -84,7 +84,7 @@ describe('applyPreparedEdit', () => {
 		const result = await applyPreparedEdit(
 			'edit',
 			context,
-			{ annotatedMarkdown, changeCount: 0 },
+			{ annotatedMarkdown, changeCount: 0, summaryItems: [] },
 			writer,
 		);
 
@@ -106,6 +106,7 @@ describe('applyPreparedEdit', () => {
 				{
 					annotatedMarkdown: '# Note\n{++Added++}\nOriginal text',
 					changeCount: 1,
+					summaryItems: [],
 				},
 				writer,
 			),
@@ -126,6 +127,7 @@ describe('applyPreparedEdit', () => {
 				{
 					annotatedMarkdown: '# Note\n{++Added++}\nOriginal text',
 					changeCount: 1,
+					summaryItems: [],
 				},
 				writer,
 			),
@@ -152,6 +154,7 @@ describe('applyPreparedEdit', () => {
 			{
 				annotatedMarkdown: '# Note\n{~~Original~>Edited~~} text',
 				changeCount: 1,
+				summaryItems: [],
 			},
 			writer,
 			controller.signal,
@@ -175,6 +178,7 @@ describe('applyPreparedEdit', () => {
 				{
 					annotatedMarkdown: '# Note\n{--Original--} text',
 					changeCount: 1,
+					summaryItems: [],
 				},
 				writer,
 			);

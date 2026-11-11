@@ -252,6 +252,7 @@ describe('applyPreparedSelectionEdit', () => {
 		const prepared: EditPreparation = {
 			annotatedMarkdown: '{~~beta~>delta~~}',
 			changeCount: 1,
+			summaryItems: [],
 		};
 
 		const result = applyPreparedSelectionEdit(
@@ -279,7 +280,7 @@ describe('applyPreparedSelectionEdit', () => {
 		applyPreparedSelectionEdit(
 			'edit',
 			snapshot,
-			{ annotatedMarkdown: '{~~First\nSecond~>Combined lines~~}', changeCount: 1 },
+			{ annotatedMarkdown: '{~~First\nSecond~>Combined lines~~}', changeCount: 1, summaryItems: [] },
 			adapter,
 		);
 
@@ -297,7 +298,7 @@ describe('applyPreparedSelectionEdit', () => {
 		const result = applyPreparedSelectionEdit(
 			'edit',
 			snapshot,
-			{ annotatedMarkdown: snapshot.selectedText, changeCount: 0 },
+			{ annotatedMarkdown: snapshot.selectedText, changeCount: 0, summaryItems: [] },
 			adapter,
 		);
 
@@ -313,7 +314,7 @@ describe('applyPreparedSelectionEdit', () => {
 		const result = applyPreparedSelectionEdit(
 			'edit',
 			snapshot,
-			{ annotatedMarkdown: 'beta{>>Review this.<<}', changeCount: 0 },
+			{ annotatedMarkdown: 'beta{>>Review this.<<}', changeCount: 0, summaryItems: [] },
 			adapter,
 		);
 
@@ -330,7 +331,7 @@ describe('applyPreparedSelectionEdit', () => {
 			applyPreparedSelectionEdit(
 				'edit',
 				snapshot,
-				{ annotatedMarkdown: '{~~beta~>delta~~}', changeCount: 1 },
+				{ annotatedMarkdown: '{~~beta~>delta~~}', changeCount: 1, summaryItems: [] },
 				adapter,
 			),
 		).toThrow(STALE_ERROR);
@@ -346,7 +347,7 @@ describe('applyPreparedSelectionEdit', () => {
 			applyPreparedSelectionEdit(
 				'edit',
 				snapshot,
-				{ annotatedMarkdown: '{~~beta~>delta~~}', changeCount: 1 },
+				{ annotatedMarkdown: '{~~beta~>delta~~}', changeCount: 1, summaryItems: [] },
 				adapter,
 			),
 		).toThrow(STALE_ERROR);
@@ -364,7 +365,7 @@ describe('applyPreparedSelectionEdit', () => {
 			applyPreparedSelectionEdit(
 				'edit',
 				snapshot,
-				{ annotatedMarkdown: '{~~beta~>delta~~}', changeCount: 1 },
+				{ annotatedMarkdown: '{~~beta~>delta~~}', changeCount: 1, summaryItems: [] },
 				adapter,
 				controller.signal,
 			);
@@ -384,7 +385,7 @@ describe('applyPreparedSelectionEdit', () => {
 			const result = applyPreparedSelectionEdit(
 				mode,
 				snapshot,
-				{ annotatedMarkdown: '{--beta--}', changeCount: 1 },
+				{ annotatedMarkdown: '{--beta--}', changeCount: 1, summaryItems: [] },
 				adapter,
 			);
 

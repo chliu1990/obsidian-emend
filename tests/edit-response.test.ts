@@ -25,6 +25,7 @@ const provider: ProviderConfig = {
 const prepared: EditPreparation = {
 	annotatedMarkdown: 'Original {++replacement++}',
 	changeCount: 1,
+	summaryItems: [],
 };
 
 function makeRequest(overrides: Partial<AiProviderRequest> = {}): AiProviderRequest {
@@ -153,6 +154,7 @@ describe('prepareEditResponse', () => {
 		const noOp: EditPreparation = {
 			annotatedMarkdown: 'Original snapshot',
 			changeCount: 0,
+			summaryItems: [],
 		};
 		const prepareEdit = vi.fn<EditStrategy['prepareEdit']>().mockReturnValue(noOp);
 		const requestRound = vi.fn<typeof requestAiResponse>()
