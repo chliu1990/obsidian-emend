@@ -765,6 +765,10 @@ describe('SelectionModal draft capacity estimate', () => {
 		expect(noticeMessages[noticeMessages.length - 1]).toBe(
 			`Emend: ${formatDraftCapacityBlockMessage(blocked)}`,
 		);
+		expect(findCapacitySummary(contentEl)?.textContent).toBe(
+			formatDraftCapacitySummary(blocked),
+		);
+		expect(submitButton?.disabled).toBe(true);
 		expect(submitSelection).not.toHaveBeenCalled();
 		expect(input.value).toBe(draft);
 		expect(

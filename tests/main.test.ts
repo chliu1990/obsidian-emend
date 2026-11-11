@@ -10,7 +10,10 @@ import {
 import EmendPlugin from '../src/main';
 import type { ReadOnlySubmission } from '../src/request-coordinator';
 import { SelectionModal } from '../src/selection-modal';
-import type { SelectionEditorAdapter } from '../src/selection-editor';
+import {
+	SelectionEditRequestCoordinator,
+	type SelectionEditorAdapter,
+} from '../src/selection-editor';
 import { DEFAULT_SETTINGS, normalizeContextLimit } from '../src/settings';
 import type {
 	ChatMessage,
@@ -779,6 +782,85 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 		expect(plugin.estimateSelectionDraft(snapshot, 'Tighten this.').capacity.kind).toBe(
 			'invalid',
 		);
+	});
+
+	it('uses the same Selection request options for submission and the draft estimate', async () => {
+		const settings = selectionSettings();
+		const file = new TFile();
+		file.path = 'Selection.md';
+		const fullText = 'BeforebetaAfter';
+		const snapshot: SelectionSnapshot = {
+			file,
+			fullText,
+			selectedText: 'beta',
+			from: 6,
+			to: 10,
+		};
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, {
+			settings,
+			app: { vault: { getName: () => 'Vault' } },
+			getApiKey: () => 'dummy-key',
+		});
+		let captured:
+			| {
+				maxContextCharacters: number;
+				smartSelectionContext: boolean;
+				notePath?: string;
+			}
+			| undefined;
+		const submitSpy = vi
+			.spyOn(SelectionEditRequestCoordinator.prototype, 'submit')
+			.mockImplementation(async (submission) => {
+				captured = submission;
+				return {
+					applied: false,
+					changeCount: 0,
+					summaryItems: [],
+					usage: {
+						promptTokens: 1,
+						completionTokens: 1,
+						totalTokens: 2,
+						source: 'provider' as const,
+					},
+				};
+			});
+		try {
+			const editor: SelectionEditorAdapter = {
+				readCurrentText: () => fullText,
+				isTargetCurrent: () => true,
+				replaceRange: vi.fn(),
+			};
+
+			await plugin.requestSelectionEdit(
+				snapshot,
+				'Tighten this.',
+				new AbortController().signal,
+				editor,
+				[],
+				[],
+			);
+
+			expect(captured).toBeDefined();
+			expect(captured).toMatchObject({
+				maxContextCharacters: 1000,
+				smartSelectionContext: false,
+				notePath: 'Vault/Selection.md',
+			});
+			const estimate = plugin.estimateSelectionDraft(snapshot, 'Tighten this.');
+			expect(estimate).toEqual(buildSelectionDraftEstimate({
+				provider: settings.providers[settings.activeProvider],
+				snapshot,
+				prompt: 'Tighten this.',
+				maxContextCharacters: captured?.maxContextCharacters ?? 0,
+				smartSelectionContext: captured?.smartSelectionContext ?? true,
+				notePath: captured?.notePath,
+				history: [],
+			}));
+			expect(estimate.categories.history).toBe(0);
+		} finally {
+			submitSpy.mockRestore();
+		}
 	});
 
 	it('passes the plugin estimate callback to the command selection modal', async () => {

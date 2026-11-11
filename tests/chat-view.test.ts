@@ -184,6 +184,7 @@ function createEditTargetView(options: {
 		inputEl: null as FakeElement | null,
 		drafts: new Map<string, string>(),
 		additionalNotesControl: null,
+		capacityRefreshTimer: null as number | null,
 		pendingMessages: new Set<ChatMessage>(),
 		messageBodyEls: new Map<string, HTMLElement>(),
 		activeModelEl: null,
@@ -3506,6 +3507,7 @@ function createCapacityView(options: CapacityViewOptions = {}) {
 		quickActionButtons: [] as Array<{ action: { id: string; prompt: string }; button: FakeElement }>,
 		quickActionCapacityMessages: new Map<string, string>(),
 		capacityDisplay: null,
+		capacityRefreshTimer: null as number | null,
 		draftCapacityBlocked: false,
 		persistMessages: vi.fn(async (_path: string, messages: ChatMessage[]) => {
 			savedSnapshots.push(messages.map((message) => ({ ...message })));

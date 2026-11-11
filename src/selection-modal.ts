@@ -184,10 +184,10 @@ export class SelectionModal extends Modal {
 			return;
 		}
 
-		const capacityBlockMessage = formatDraftCapacityBlockMessage(
-			this.safeEstimateDraft(submittedPrompt),
-		);
+		const estimate = this.safeEstimateDraft(submittedPrompt);
+		const capacityBlockMessage = formatDraftCapacityBlockMessage(estimate);
 		if (capacityBlockMessage) {
+			this.refreshCapacityEstimate(submittedPrompt);
 			new Notice(`Emend: ${capacityBlockMessage}`);
 			return;
 		}

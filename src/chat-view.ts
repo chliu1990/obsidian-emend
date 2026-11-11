@@ -197,6 +197,7 @@ export class EmendChatView extends ItemView {
 				this.scheduleCapacityRefresh();
 			}),
 		);
+		// Obsidian documents this event at runtime, but the installed 1.14.4 typings omit it; this narrow cast is the only typed-compatible registration.
 		const untypedWorkspace = this.app.workspace as unknown as UntypedWorkspaceEvents;
 		this.registerEvent(
 			untypedWorkspace.on('editor-selection-change', () => {
@@ -227,7 +228,7 @@ export class EmendChatView extends ItemView {
 
 	private clearCapacityRefreshTimer() {
 		const timer = this.capacityRefreshTimer;
-		if (timer === null || timer === undefined) {
+		if (timer === null) {
 			return;
 		}
 		window.clearTimeout(timer);

@@ -261,16 +261,7 @@ export default class EmendPlugin extends Plugin {
 			provider: this.settings.providers[this.settings.activeProvider],
 			snapshot,
 			prompt,
-			maxContextCharacters: normalizeContextLimit(
-				this.settings.maxContextCharacters,
-			),
-			smartSelectionContext: this.settings.smartSelectionContext,
-			notePath: this.settings.includeNotePathInContext
-				? formatVaultQualifiedPath(
-					this.app.vault.getName(),
-					snapshot.file.path,
-				)
-				: undefined,
+			...this.getSelectionRequestOptions(snapshot),
 			history: [],
 		});
 	}
@@ -444,22 +435,28 @@ export default class EmendPlugin extends Plugin {
 			return coordinator.submit({
 				snapshot,
 				prompt,
-				maxContextCharacters: normalizeContextLimit(
-					this.settings.maxContextCharacters,
-				),
-				smartSelectionContext: this.settings.smartSelectionContext,
+				...this.getSelectionRequestOptions(snapshot),
 				additionalNotePaths,
 				history,
-				notePath: this.settings.includeNotePathInContext
-					? formatVaultQualifiedPath(
-						this.app.vault.getName(),
-						snapshot.file.path,
-					)
-					: undefined,
 				signal,
 				callbacks,
 			});
 		});
+	}
+
+	private getSelectionRequestOptions(snapshot: SelectionSnapshot) {
+		return {
+			maxContextCharacters: normalizeContextLimit(
+				this.settings.maxContextCharacters,
+			),
+			smartSelectionContext: this.settings.smartSelectionContext,
+			notePath: this.settings.includeNotePathInContext
+				? formatVaultQualifiedPath(
+					this.app.vault.getName(),
+					snapshot.file.path,
+				)
+				: undefined,
+		};
 	}
 
 	private loadAdditionalNotes(
