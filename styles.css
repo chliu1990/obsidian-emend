@@ -255,6 +255,49 @@
 	resize: vertical;
 }
 
+.emend-context-capacity {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+	margin-top: 4px;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	line-height: 1.4;
+	overflow-wrap: anywhere;
+}
+
+.emend-context-capacity-summary {
+	min-width: 0;
+}
+
+.emend-context-capacity.is-over-capacity .emend-context-capacity-summary {
+	color: var(--text-warning);
+}
+
+.emend-context-capacity.is-invalid .emend-context-capacity-summary {
+	color: var(--text-error);
+}
+
+.emend-context-capacity-details {
+	min-width: 0;
+}
+
+.emend-context-capacity-details summary {
+	cursor: pointer;
+	color: var(--text-muted);
+}
+
+.emend-context-capacity-detail {
+	padding-left: var(--size-4-3);
+	overflow-wrap: anywhere;
+}
+
+.emend-context-capacity-exclusion {
+	color: var(--text-faint);
+	overflow-wrap: anywhere;
+}
+
 .emend-chat-composer-actions {
 	display: flex;
 	align-items: center;
@@ -390,6 +433,10 @@
 
 	.emend-chat-composer-actions {
 		flex-wrap: wrap;
+	}
+
+	.emend-context-capacity-detail {
+		padding-left: 0;
 	}
 
 	.emend-chat-edit-target {

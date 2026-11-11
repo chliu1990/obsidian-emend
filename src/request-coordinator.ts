@@ -225,7 +225,7 @@ export class EditRequestCoordinator {
 	}
 }
 
-function buildUserPrompt(
+export function buildUserPrompt(
 	context: RequestContext,
 	prompt: string,
 	additionalNotes: readonly AdditionalNoteSnapshot[],

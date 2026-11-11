@@ -225,7 +225,14 @@ export class SelectionEditRequestCoordinator {
 		const request = {
 			provider: this.dependencies.provider,
 			systemPrompt: this.dependencies.editStrategy.getSelectionPrompt(instructions),
-			userPrompt: buildSelectionUserPrompt(submission, additionalNotes),
+			userPrompt: buildSelectionUserPrompt({
+				snapshot: submission.snapshot,
+				prompt: submission.prompt,
+				maxContextCharacters: submission.maxContextCharacters,
+				smartSelectionContext: submission.smartSelectionContext,
+				additionalNotes,
+				notePath: submission.notePath,
+			}),
 			history: submission.history,
 		};
 		submission.signal.throwIfAborted();
@@ -257,29 +264,35 @@ export class SelectionEditRequestCoordinator {
 	}
 }
 
-function buildSelectionUserPrompt(
-	submission: SelectionEditSubmission,
-	additionalNotes: readonly AdditionalNoteSnapshot[],
-): string {
-	const { snapshot } = submission;
+export interface SelectionPromptInput {
+	snapshot: SelectionSnapshot;
+	prompt: string;
+	maxContextCharacters: number;
+	smartSelectionContext: boolean;
+	additionalNotes: readonly AdditionalNoteSnapshot[];
+	notePath?: string;
+}
+
+export function buildSelectionUserPrompt(input: SelectionPromptInput): string {
+	const { snapshot } = input;
 	const parts: string[] = [];
-	const notePath = submission.notePath?.trim();
+	const notePath = input.notePath?.trim();
 	if (notePath) {
 		parts.push('Active note path:', notePath, '');
 	}
 	parts.push(`Selected text:\n${snapshot.selectedText}`, '');
-	if (submission.smartSelectionContext) {
+	if (input.smartSelectionContext) {
 		const context = buildSmartSelectionContext(
 			snapshot.fullText,
 			snapshot.from,
 			snapshot.to,
-			submission.maxContextCharacters,
+			input.maxContextCharacters,
 		);
 		parts.push(`Context:\n${context.contextText}`, '');
 	} else {
 		const context = getSelectionContext(
 			snapshot,
-			submission.maxContextCharacters,
+			input.maxContextCharacters,
 		);
 		parts.push(
 			`Context before:\n${context.before}`,
@@ -288,10 +301,10 @@ function buildSelectionUserPrompt(
 			'',
 		);
 	}
-	const additionalNotesPrompt = formatAdditionalNotesPrompt(additionalNotes);
+	const additionalNotesPrompt = formatAdditionalNotesPrompt(input.additionalNotes);
 	if (additionalNotesPrompt) {
 		parts.push(additionalNotesPrompt, '');
 	}
-	parts.push('User message:', submission.prompt);
+	parts.push('User message:', input.prompt);
 	return parts.join('\n');
 }

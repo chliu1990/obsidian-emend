@@ -1,11 +1,17 @@
 import { readFileSync } from 'node:fs';
 import { MarkdownRenderer, Notice, Scope, TFile } from 'obsidian';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AdditionalNotesStore } from '../src/additional-notes-store';
 import type { ShortcutEvent } from '../src/chat-shortcuts';
 import { EmendChatView, formatChatMessageForCopy, getUnreadPageCount } from '../src/chat-view';
+import { buildDraftCapacityEstimate } from '../src/context-capacity-ui';
+import { getEditStrategy } from '../src/edit-strategy';
 import type { EditSummaryItem } from '../src/edit-strategy';
+import { getSystemPrompt } from '../src/mode';
 import { operationEditStrategy } from '../src/operation-edit-strategy';
+import { QUICK_ACTIONS } from '../src/quick-actions';
+import { buildUserPrompt } from '../src/request-coordinator';
+import { buildSelectionUserPrompt } from '../src/selection-editor';
 import type {
 	AiProviderRequest,
 	StreamEvent,
@@ -103,6 +109,8 @@ const viewPrototype = EmendChatView.prototype as unknown as {
 	getDisplayText(this: unknown): string;
 	onClose(this: unknown): Promise<void>;
 	toProviderHistory(this: unknown): ProviderHistoryMessage[];
+	refreshDraftEstimate(this: unknown, prompt?: string): void;
+	refreshCapacityEstimate(this: unknown): void;
 };
 
 function message(id: string, sourcePath: string): ChatMessage {
@@ -150,7 +158,15 @@ function createEditTargetView(options: {
 			requestChatCompletion,
 			settings: {
 				activeProvider: 'custom',
-				providers: { custom: { name: 'Local', model: 'Test model' } },
+				providers: {
+					custom: {
+						name: 'Local',
+						model: 'Test model',
+						contextWindowTokens: null,
+						outputReserveTokens: null,
+						contextCapacityInvalid: false,
+					},
+				},
 			},
 		},
 		notePath: null as string | null,
@@ -374,7 +390,6 @@ describe('EmendChatView edit target control', () => {
 			contentEl,
 			read,
 			requestChatCompletion,
-			captureChatContext,
 			setSelectedText,
 		} = createEditTargetView({ selectedText: 'beta' });
 		await viewPrototype.refreshTargetNote.call(context);
@@ -393,7 +408,6 @@ describe('EmendChatView edit target control', () => {
 		expect(context.displayedEditTarget).toBe('full-note');
 		expect(context.inputEl?.value).toBe('');
 		expect(requestChatCompletion).not.toHaveBeenCalled();
-		expect(captureChatContext).not.toHaveBeenCalled();
 		expect(read).not.toHaveBeenCalled();
 	});
 
@@ -1595,7 +1609,15 @@ describe('EmendChatView additional notes', () => {
 				additionalNotesStore,
 				settings: {
 					activeProvider: 'custom',
-					providers: { custom: { name: 'Local', model: 'Test model' } },
+					providers: {
+					custom: {
+						name: 'Local',
+						model: 'Test model',
+						contextWindowTokens: null,
+						outputReserveTokens: null,
+						contextCapacityInvalid: false,
+					},
+				},
 				},
 			},
 			notePath: null as string | null,
@@ -1688,7 +1710,15 @@ describe('EmendChatView additional notes', () => {
 				requestChatCompletion,
 				settings: {
 					activeProvider: 'custom',
-					providers: { custom: { name: 'Local', model: 'Test model' } },
+					providers: {
+					custom: {
+						name: 'Local',
+						model: 'Test model',
+						contextWindowTokens: null,
+						outputReserveTokens: null,
+						contextCapacityInvalid: false,
+					},
+				},
 				},
 			},
 			notePath: null as string | null,
@@ -1963,6 +1993,7 @@ class FakeElement {
 	scrollHeight = 0;
 	clientHeight = 0;
 	isConnected = true;
+	removed = false;
 
 	constructor(readonly tagName = 'div') {}
 
@@ -2020,6 +2051,10 @@ class FakeElement {
 	empty() {
 		this.children.length = 0;
 		this.textContent = '';
+	}
+
+	remove() {
+		this.removed = true;
 	}
 
 	private append(
@@ -3302,5 +3337,656 @@ describe('EmendChatView render-end response alignment', () => {
 
 		expect(messagesEl.scrollTop).toBe(200);
 		expect(context.responseStartMessageId).toBeNull();
+	});
+});
+
+type CapacityFields = Pick<
+	ProviderConfig,
+	'contextWindowTokens' | 'outputReserveTokens' | 'contextCapacityInvalid'
+>;
+
+interface CapacityViewOptions {
+	mode?: Mode;
+	selectedText?: string;
+	sourceText?: string;
+	markdown?: string;
+	selectionFrom?: number;
+	selectionTo?: number;
+	capacity?: Partial<CapacityFields>;
+	includeNotePath?: boolean;
+	historyMessageLimit?: number;
+}
+
+function capacityProvider(fields: Partial<CapacityFields> = {}): ProviderConfig {
+	return {
+		name: 'Local',
+		baseUrl: 'http://127.0.0.1:8787/v1',
+		apiKey: 'dummy-test-key',
+		model: 'Test model',
+		reasoningEffort: 'low',
+		requestUsage: false,
+		discoveredModels: [],
+		contextWindowTokens: null,
+		outputReserveTokens: null,
+		contextCapacityInvalid: false,
+		...fields,
+	};
+}
+
+function createCapacityView(options: CapacityViewOptions = {}) {
+	const sourceText = options.sourceText ?? 'Alpha beta.';
+	const markdown = options.markdown ?? sourceText;
+	const selectedText = options.selectedText ?? '';
+	const includeNotePath = options.includeNotePath ?? false;
+	const file = new TFile();
+	file.path = 'Note.md';
+	const snapshot: SelectionSnapshot = {
+		file,
+		fullText: sourceText,
+		selectedText: selectedText || 'beta',
+		from: options.selectionFrom ?? (selectedText ? sourceText.indexOf(selectedText) : 6),
+		to: options.selectionTo ?? (selectedText
+			? sourceText.indexOf(selectedText) + selectedText.length
+			: 10),
+	};
+	const provider = capacityProvider(options.capacity);
+	const requestContext = {
+		file,
+		sourceText,
+		selection: { from: snapshot.from, to: snapshot.to },
+		noteLabel: file.path,
+		notePath: includeNotePath ? `Vault/${file.path}` : undefined,
+		markdown,
+	};
+	const editor = {
+		readCurrentText: () => sourceText,
+		isTargetCurrent: () => true,
+		replaceRange: vi.fn(),
+	};
+	const contentEl = new FakeElement();
+	const read = vi.fn();
+	const captureChatContext = vi.fn(() => requestContext);
+	const captureSelectionEditTarget = vi.fn(() => ({ snapshot, editor }));
+	const additionalNotesStore = new AdditionalNotesStore();
+	const requestChatCompletion = vi.fn(async (submission: {
+		mode: Mode;
+		prompt: string;
+		history: ProviderHistoryMessage[];
+		additionalNotePaths: readonly string[];
+		callbacks?: { onContent?: (text: string) => void };
+	}) => {
+		submission.callbacks?.onContent?.('Answer');
+		return {
+			content: 'Answer',
+			reasoning: '',
+			failedExtractions: 0,
+			failedSearches: 0,
+			skippedWebCalls: 0,
+			omittedEvidence: false,
+			usage: {
+				promptTokens: 3,
+				completionTokens: 1,
+				totalTokens: 4,
+				source: 'provider' as const,
+			},
+		};
+	});
+	const requestSelectionEdit = vi.fn(async () => ({
+		applied: false,
+		changeCount: 0,
+		usage: {
+			promptTokens: 3,
+			completionTokens: 1,
+			totalTokens: 4,
+			source: 'provider' as const,
+		},
+	}));
+	const savedSnapshots: ChatMessage[][] = [];
+	const context = {
+		app: { vault: { getName: () => 'Vault', adapter: { read } } },
+		contentEl,
+		plugin: {
+			getActiveNotePath: () => file.path,
+			getActiveNoteLabel: () => file.path,
+			hasUsableSelection: () => Boolean(selectedText.trim()),
+			captureChatContext,
+			captureSelectionEditTarget,
+			conversationStore: { load: vi.fn(async () => []) },
+			additionalNotesStore,
+			requestChatCompletion,
+			requestSelectionEdit,
+			settings: {
+				activeProvider: 'custom',
+				providers: { custom: provider },
+				defaultMode: 'ask',
+				includeNotePathInContext: includeNotePath,
+				smartSelectionContext: true,
+				maxContextCharacters: 12000,
+				maxWebToolCalls: 8,
+				maxWebContentCharactersPerCall: 20000,
+				historyMessageLimit: options.historyMessageLimit ?? 0,
+			},
+		},
+		notePath: null as string | null,
+		noteLoadGeneration: 0,
+		messages: [] as ChatMessage[],
+		selectedMode: options.mode ?? 'ask',
+		webSearchMode: 'off' as const,
+		isThreadLoading: false,
+		isSending: false,
+		activeController: null as AbortController | null,
+		closed: false,
+		inputEl: null as FakeElement | null,
+		drafts: new Map<string, string>(),
+		additionalNotesControl: null,
+		pendingMessages: new Set<ChatMessage>(),
+		messageBodyEls: new Map<string, HTMLElement>(),
+		activeModelEl: null,
+		editTargetChoice: 'auto' as 'auto' | 'full-note' | 'selection',
+		displayedEditTarget: 'full-note' as 'full-note' | 'selection',
+		editTargetSelectEl: null as FakeElement | null,
+		webReviewModal: null,
+		pendingRenderFrame: null,
+		pendingMarkdownRenders: 0,
+		pendingScrollRestore: null,
+		responseStartMessageId: null,
+		followLatestMessages: true,
+		renderGeneration: 0,
+		cancelPendingRender: vi.fn(),
+		sendButtonEl: null as FakeElement | null,
+		quickActionButtons: [] as Array<{ action: { id: string; prompt: string }; button: FakeElement }>,
+		capacityDisplay: null,
+		draftCapacityBlocked: false,
+		persistMessages: vi.fn(async (_path: string, messages: ChatMessage[]) => {
+			savedSnapshots.push(messages.map((message) => ({ ...message })));
+		}),
+		scheduleMessageRender: vi.fn(),
+	};
+	Object.setPrototypeOf(context, EmendChatView.prototype);
+	const render = vi.fn(() => viewPrototype.render.call(context));
+	Object.assign(context, { render });
+
+	const history = () => viewPrototype.toProviderHistory.call(context);
+	const askEstimate = (prompt: string) => buildDraftCapacityEstimate({
+		provider,
+		request: {
+			systemPrompt: getSystemPrompt('ask'),
+			userPrompt: buildUserPrompt(requestContext, prompt, []),
+			history: history(),
+		},
+	});
+	const fullNoteEstimate = (prompt: string) => buildDraftCapacityEstimate({
+		provider,
+		request: {
+			systemPrompt: getEditStrategy().getFullNotePrompt(undefined),
+			userPrompt: buildUserPrompt(requestContext, prompt, [], sourceText),
+			history: history(),
+		},
+	});
+	const selectionEstimate = (prompt: string) => buildDraftCapacityEstimate({
+		provider,
+		request: {
+			systemPrompt: getEditStrategy().getSelectionPrompt(undefined),
+			userPrompt: buildSelectionUserPrompt({
+				snapshot,
+				prompt,
+				maxContextCharacters: 12000,
+				smartSelectionContext: true,
+				additionalNotes: [],
+				notePath: includeNotePath ? `Vault/${file.path}` : undefined,
+			}),
+			history: history(),
+		},
+	});
+
+	return {
+		context,
+		contentEl,
+		render,
+		read,
+		provider,
+		requestContext,
+		snapshot,
+		editor,
+		additionalNotesStore,
+		captureChatContext,
+		captureSelectionEditTarget,
+		requestChatCompletion,
+		requestSelectionEdit,
+		savedSnapshots,
+		askEstimate,
+		fullNoteEstimate,
+		selectionEstimate,
+	};
+}
+
+const INVALID_CAPACITY_TEXT =
+	'Context capacity settings are invalid. Requests are blocked until both token values are positive and the window exceeds the reserve.';
+const CAPACITY_EXCLUSION_TEXT =
+	'Not included: instructions and skills, additional-note contents, and later Web or correction rounds. The exact submission check remains authoritative.';
+
+function expectedCapacitySummary(
+	estimate: ReturnType<typeof buildDraftCapacityEstimate>,
+): string {
+	const tokens = estimate.categories.estimatedInputTokens;
+	if (estimate.capacity.kind === 'invalid') {
+		return INVALID_CAPACITY_TEXT;
+	}
+	if (estimate.capacity.kind === 'unconfigured') {
+		return `Estimated input: ${tokens} tokens. Capacity checks are off.`;
+	}
+	const base =
+		`Estimated input: ${tokens} tokens of ${estimate.capacity.effectiveInputTokens} effective capacity.`;
+	return estimate.overCapacity ? `${base} This draft is over capacity.` : base;
+}
+
+function expectedBlockedNotice(
+	estimate: ReturnType<typeof buildDraftCapacityEstimate>,
+): string {
+	if (estimate.capacity.kind === 'invalid') {
+		return `Emend: ${INVALID_CAPACITY_TEXT}`;
+	}
+	return `Emend: This draft is over capacity at about ${estimate.categories.estimatedInputTokens} input tokens of ${estimate.capacity.kind === 'valid' ? estimate.capacity.effectiveInputTokens : 0} effective capacity. Reduce the draft, chat history, or the selected target.`;
+}
+
+function findCapacitySummary(contentEl: FakeElement): FakeElement | undefined {
+	return findElements(
+		contentEl,
+		(element) => element.className.split(' ').includes('emend-context-capacity-summary'),
+	)[0];
+}
+
+function findSendButton(contentEl: FakeElement): FakeElement | undefined {
+	return findElements(
+		contentEl,
+		(element) => element.tagName === 'button' && element.textContent === 'Send',
+	)[0];
+}
+
+function findQuickActionButton(
+	contentEl: FakeElement,
+	id: string,
+): FakeElement | undefined {
+	return findElements(
+		contentEl,
+		(element) => element.attributes['data-action-id'] === id,
+	)[0];
+}
+
+function noticeMessages(): string[] {
+	return (Notice as unknown as { messages: string[] }).messages;
+}
+
+function keydownEvent(overrides: Partial<ShortcutEvent> = {}) {
+	return {
+		key: 'Enter',
+		metaKey: false,
+		ctrlKey: false,
+		shiftKey: false,
+		altKey: false,
+		preventDefault: vi.fn(),
+		...overrides,
+	};
+}
+
+describe('EmendChatView draft capacity estimate', () => {
+	beforeEach(() => {
+		noticeMessages().length = 0;
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it('shows the shared read-only estimate without provider calls or vault reads', async () => {
+		const fixture = createCapacityView({
+			capacity: { contextWindowTokens: 1000, outputReserveTokens: 100 },
+		});
+
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+
+		const estimate = fixture.askEstimate('');
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedCapacitySummary(estimate),
+		);
+		expect(fixture.context.draftCapacityBlocked).toBe(false);
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(false);
+		const quickActions = findElements(
+			fixture.contentEl,
+			(element) => element.className.split(' ').includes('emend-chat-quick-action'),
+		);
+		expect(quickActions).toHaveLength(3);
+		expect(quickActions.every((button) => !button.disabled)).toBe(true);
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(fixture.read).not.toHaveBeenCalled();
+	});
+
+	it('updates the estimate while typing without re-rendering or losing the composer', async () => {
+		const fixture = createCapacityView({
+			capacity: { contextWindowTokens: 1000, outputReserveTokens: 100 },
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const input = fixture.context.inputEl;
+		if (!input) {
+			throw new Error('Composer missing.');
+		}
+		const before = findCapacitySummary(fixture.contentEl)?.textContent;
+		fixture.render.mockClear();
+		fixture.captureChatContext.mockClear();
+
+		input.value = 'A longer typed draft';
+		input.dispatch('input');
+
+		const estimate = fixture.askEstimate('A longer typed draft');
+		const after = findCapacitySummary(fixture.contentEl)?.textContent;
+		expect(after).toBe(expectedCapacitySummary(estimate));
+		expect(after).not.toBe(before);
+		expect(fixture.render).not.toHaveBeenCalled();
+		expect(fixture.context.inputEl).toBe(input);
+		expect(input.value).toBe('A longer typed draft');
+		expect(fixture.captureChatContext).toHaveBeenCalled();
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(fixture.read).not.toHaveBeenCalled();
+	});
+
+	it('blocks Send, Enter, Mod+Enter, and quick actions when the draft is at capacity', async () => {
+		const fixture = createCapacityView({
+			capacity: { contextWindowTokens: 100, outputReserveTokens: 96 },
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const input = fixture.context.inputEl;
+		if (!input) {
+			throw new Error('Composer missing.');
+		}
+		input.value = 'Question';
+		input.dispatch('input');
+
+		const estimate = fixture.askEstimate('Question');
+		expect(estimate.overCapacity).toBe(true);
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedCapacitySummary(estimate),
+		);
+		expect(fixture.context.draftCapacityBlocked).toBe(true);
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(true);
+		const quickActions = findElements(
+			fixture.contentEl,
+			(element) => element.className.split(' ').includes('emend-chat-quick-action'),
+		);
+		expect(quickActions.every((button) => button.disabled)).toBe(true);
+
+		const enter = keydownEvent();
+		viewPrototype.handleComposerKeydown.call(fixture.context, enter);
+		expect(enter.preventDefault).toHaveBeenCalledOnce();
+		expect(noticeMessages()).toContain(expectedBlockedNotice(estimate));
+
+		const modEnter = keydownEvent({ metaKey: true });
+		viewPrototype.handleComposerKeydown.call(fixture.context, modEnter);
+		expect(modEnter.preventDefault).toHaveBeenCalledOnce();
+
+		const shiftEnter = keydownEvent({ shiftKey: true });
+		viewPrototype.handleComposerKeydown.call(fixture.context, shiftEnter);
+		expect(shiftEnter.preventDefault).not.toHaveBeenCalled();
+
+		const quickAction = findQuickActionButton(fixture.contentEl, 'fix-grammar');
+		quickAction?.dispatch('click');
+
+		expect(fixture.context.messages).toEqual([]);
+		expect(fixture.savedSnapshots).toEqual([]);
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
+		expect(fixture.editor.replaceRange).not.toHaveBeenCalled();
+	});
+
+	it('blocks submissions and shows the invalid-capacity text for invalid settings', async () => {
+		const fixture = createCapacityView({
+			capacity: { contextWindowTokens: 100, outputReserveTokens: 100 },
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const input = fixture.context.inputEl;
+		if (!input) {
+			throw new Error('Composer missing.');
+		}
+		input.value = 'Question';
+
+		const estimate = fixture.askEstimate('Question');
+		expect(estimate.capacity.kind).toBe('invalid');
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(INVALID_CAPACITY_TEXT);
+		expect(fixture.context.draftCapacityBlocked).toBe(true);
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(true);
+		const quickActions = findElements(
+			fixture.contentEl,
+			(element) => element.className.split(' ').includes('emend-chat-quick-action'),
+		);
+		expect(quickActions.every((button) => button.disabled)).toBe(true);
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(noticeMessages()).toContain(expectedBlockedNotice(estimate));
+		expect(fixture.context.messages).toEqual([]);
+		expect(fixture.savedSnapshots).toEqual([]);
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+	});
+
+	it('keeps Send enabled and submits below capacity', async () => {
+		const fixture = createCapacityView({
+			capacity: { contextWindowTokens: 100000, outputReserveTokens: 1000 },
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const input = fixture.context.inputEl;
+		if (!input) {
+			throw new Error('Composer missing.');
+		}
+		input.value = 'Question';
+		input.dispatch('input');
+
+		const estimate = fixture.askEstimate('Question');
+		expect(estimate.blocked).toBe(false);
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedCapacitySummary(estimate),
+		);
+		expect(fixture.context.draftCapacityBlocked).toBe(false);
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(false);
+		expect(noticeMessages()).toEqual([]);
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.requestChatCompletion).toHaveBeenCalledOnce();
+		expect(fixture.requestChatCompletion.mock.calls[0]?.[0].prompt).toBe('Question');
+		expect(fixture.context.messages).toHaveLength(2);
+	});
+
+	it('uses the complete full-note source instead of the bounded Markdown window', async () => {
+		const sourceText = `Intro.\n${'Long paragraph. '.repeat(300)}`;
+		const fixture = createCapacityView({
+			mode: 'edit',
+			sourceText,
+			markdown: 'Window only.',
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		expect(fixture.context.displayedEditTarget).toBe('full-note');
+
+		const fullTokens = fixture.fullNoteEstimate('').categories.estimatedInputTokens;
+		const windowTokens = buildDraftCapacityEstimate({
+			provider: fixture.provider,
+			request: {
+				systemPrompt: getSystemPrompt('ask'),
+				userPrompt: buildUserPrompt(fixture.requestContext, '', []),
+				history: [],
+			},
+		}).categories.estimatedInputTokens;
+		expect(windowTokens).toBeLessThan(fullTokens);
+
+		fixture.provider.contextWindowTokens = fullTokens + 1;
+		fixture.provider.outputReserveTokens = 1;
+		viewPrototype.refreshCapacityEstimate.call(fixture.context);
+
+		const estimate = fixture.fullNoteEstimate('');
+		expect(estimate.capacity).toMatchObject({ effectiveInputTokens: fullTokens });
+		expect(estimate.overCapacity).toBe(true);
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			`Estimated input: ${fullTokens} tokens of ${fullTokens} effective capacity. This draft is over capacity.`,
+		);
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(true);
+		expect(fixture.captureSelectionEditTarget).not.toHaveBeenCalled();
+	});
+
+	it('shows an unavailable estimate and does not block when the target capture fails', async () => {
+		const fixture = createCapacityView({
+			mode: 'edit',
+			selectedText: 'beta',
+			capacity: { contextWindowTokens: 1000, outputReserveTokens: 100 },
+		});
+		fixture.captureSelectionEditTarget.mockImplementation(() => {
+			throw new Error('Select non-whitespace text first.');
+		});
+
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			'Draft estimate unavailable.',
+		);
+		expect(fixture.context.draftCapacityBlocked).toBe(false);
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(false);
+		const quickActions = findElements(
+			fixture.contentEl,
+			(element) => element.className.split(' ').includes('emend-chat-quick-action'),
+		);
+		expect(quickActions.every((button) => !button.disabled)).toBe(true);
+
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Edit selection';
+		}
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(noticeMessages()).toContain(
+			'Emend: Select non-whitespace text first.',
+		);
+		expect(fixture.context.messages).toEqual([]);
+		expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+	});
+
+	it('uses the captured Selection snapshot and updates when the Edit target changes', async () => {
+		const fixture = createCapacityView({
+			mode: 'edit',
+			selectedText: 'beta',
+			selectionFrom: 6,
+			selectionTo: 10,
+			includeNotePath: true,
+			capacity: { contextWindowTokens: 1000, outputReserveTokens: 100 },
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+
+		expect(fixture.context.displayedEditTarget).toBe('selection');
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedCapacitySummary(fixture.selectionEstimate('')),
+		);
+		expect(fixture.captureSelectionEditTarget).toHaveBeenCalled();
+		expect(fixture.captureChatContext).not.toHaveBeenCalled();
+
+		const select = findEditTargetSelect(fixture.contentEl);
+		if (select) {
+			select.value = 'full-note';
+			select.dispatch('change');
+		}
+
+		expect(fixture.context.displayedEditTarget).toBe('full-note');
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedCapacitySummary(fixture.fullNoteEstimate('')),
+		);
+		expect(fixture.captureChatContext).toHaveBeenCalled();
+	});
+
+	it('counts recent ready chat history in the estimate', async () => {
+		const fixture = createCapacityView({
+			capacity: { contextWindowTokens: 1000, outputReserveTokens: 100 },
+			historyMessageLimit: 8,
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const withoutHistory = fixture.askEstimate('');
+		fixture.context.messages.push(
+			{
+				...message('earlier-question', 'Note.md'),
+				role: 'user',
+				content: 'Earlier question',
+			},
+			message('earlier-answer', 'Note.md'),
+		);
+
+		viewPrototype.refreshCapacityEstimate.call(fixture.context);
+
+		const withHistory = fixture.askEstimate('');
+		expect(withHistory.categories.history).toBeGreaterThan(0);
+		expect(withHistory.categories.estimatedInputTokens).toBeGreaterThan(
+			withoutHistory.categories.estimatedInputTokens,
+		);
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedCapacitySummary(withHistory),
+		);
+	});
+
+	it('visibly excludes additional notes and keeps their contents out of the estimate', async () => {
+		const fixture = createCapacityView({
+			capacity: { contextWindowTokens: 1000, outputReserveTokens: 100 },
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const before = findCapacitySummary(fixture.contentEl)?.textContent;
+		expect(textOf(fixture.contentEl)).toContain(CAPACITY_EXCLUSION_TEXT);
+
+		fixture.additionalNotesStore.add('Note.md', 'Extra.md');
+		viewPrototype.refreshCapacityEstimate.call(fixture.context);
+
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(before);
+		expect(fixture.read).not.toHaveBeenCalled();
+	});
+
+	it('disables and blocks only the quick actions whose own prompt is over capacity', async () => {
+		const fixture = createCapacityView({ mode: 'edit' });
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+
+		const fixEstimate = fixture.fullNoteEstimate(QUICK_ACTIONS[0].prompt);
+		const conciseEstimate = fixture.fullNoteEstimate(QUICK_ACTIONS[1].prompt);
+		const examplesEstimate = fixture.fullNoteEstimate(QUICK_ACTIONS[2].prompt);
+		const fixTokens = fixEstimate.categories.estimatedInputTokens;
+		expect(conciseEstimate.categories.estimatedInputTokens).toBeLessThan(fixTokens);
+		expect(examplesEstimate.categories.estimatedInputTokens).toBeGreaterThanOrEqual(
+			fixTokens,
+		);
+
+		fixture.provider.contextWindowTokens = fixTokens + 1;
+		fixture.provider.outputReserveTokens = 1;
+		viewPrototype.refreshCapacityEstimate.call(fixture.context);
+
+		expect(findQuickActionButton(fixture.contentEl, 'fix-grammar')?.disabled).toBe(true);
+		expect(findQuickActionButton(fixture.contentEl, 'add-examples')?.disabled).toBe(true);
+		expect(findQuickActionButton(fixture.contentEl, 'make-concise')?.disabled).toBe(false);
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(false);
+
+		findQuickActionButton(fixture.contentEl, 'fix-grammar')?.dispatch('click');
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(fixture.context.messages).toEqual([]);
+
+		findQuickActionButton(fixture.contentEl, 'make-concise')?.dispatch('click');
+		await vi.waitFor(() => expect(fixture.requestChatCompletion).toHaveBeenCalledOnce());
+		expect(fixture.requestChatCompletion.mock.calls[0]?.[0].prompt).toBe(
+			QUICK_ACTIONS[1].prompt,
+		);
+	});
+
+	it('recomputes after a mode switch without submitting a request', async () => {
+		const fixture = createCapacityView({
+			capacity: { contextWindowTokens: 1000, outputReserveTokens: 100 },
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedCapacitySummary(fixture.askEstimate('')),
+		);
+
+		viewPrototype.setMode.call(fixture.context, 'edit');
+
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedCapacitySummary(fixture.fullNoteEstimate('')),
+		);
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
 	});
 });
