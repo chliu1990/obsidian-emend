@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { Notice, Setting } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { INVALID_CONTEXT_CAPACITY_MESSAGE } from '../src/context-accounting';
 import { discoverProviderModels } from '../src/model-discovery';
 import {
 	AI_PROVIDERS,
@@ -1122,19 +1123,29 @@ describe('EmendSettingTab context capacity', () => {
 		settingInstances.length = 0;
 	});
 
-	function capacitySettingNamesSince(start: number) {
-		return settingInstances.slice(start).map((setting) => setting.name);
+	function capacityText(name: string) {
+		const text = latestSetting(name).texts[0];
+		if (!text) {
+			throw new Error(`Missing capacity input: ${name}`);
+		}
+		return text;
 	}
 
-	it('renders bounded token inputs with unconfigured empty values and placeholders', () => {
+	function fireInput(text: MockSetting['texts'][number], value: string) {
+		text.inputEl.value = value;
+		text.onChangeHandler(value);
+	}
+
+	function fireChange(text: MockSetting['texts'][number]) {
+		text.inputEl.dispatchEvent({ type: 'change' });
+	}
+
+	it('renders bounded token inputs, hidden status, and both-values copy', () => {
 		const { tab } = createModelSettingsTab();
 		displaySettings(tab);
 
-		const windowText = latestSetting('Context window (tokens)').texts[0];
-		const reserveText = latestSetting('Output reserve (tokens)').texts[0];
-		if (!windowText || !reserveText) {
-			throw new Error('Missing capacity inputs');
-		}
+		const windowText = capacityText('Context window (tokens)');
+		const reserveText = capacityText('Output reserve (tokens)');
 
 		expect(windowText.inputEl.type).toBe('number');
 		expect(windowText.inputEl.min).toBe('1');
@@ -1146,33 +1157,78 @@ describe('EmendSettingTab context capacity', () => {
 		expect(reserveText.inputEl.step).toBe('1');
 		expect(reserveText.placeholder).toBe('e.g. 8000');
 		expect(reserveText.value).toBe('');
-		expect(capacitySettingNamesSince(0)).not.toContain('Context capacity');
-	});
-
-	it('shows configured numbers and an invalid warning at display time', () => {
-		const { plugin, tab } = createModelSettingsTab();
-		plugin.settings.providers.deepseek.contextWindowTokens = 8000;
-		plugin.settings.providers.deepseek.outputReserveTokens = 8000;
-		plugin.settings.providers.deepseek.contextCapacityInvalid = true;
-
-		displaySettings(tab);
-
-		expect(latestSetting('Context window (tokens)').texts[0]?.value).toBe('8000');
-		expect(latestSetting('Output reserve (tokens)').texts[0]?.value).toBe('8000');
-		expect(latestSetting('Context capacity').description).toContain(
-			'Requests are blocked until both values are positive',
+		expect(latestSetting('Context window (tokens)').description).toContain(
+			'Both token values are required',
 		);
+		expect(latestSetting('Output reserve (tokens)').description).toContain(
+			'Both token values are required',
+		);
+		const status = latestSetting('Context capacity');
+		expect(status.description).toBe('');
+		expect(status.settingEl.style.display).toBe('none');
 	});
 
-	it('saves a valid pair, clears the marker, and removes the warning', async () => {
+	it('shows configured numbers and the invalid warning at display time', () => {
+		const { plugin, tab } = createModelSettingsTab();
+		plugin.settings.providers.deepseek.contextWindowTokens = 8000;
+		plugin.settings.providers.deepseek.outputReserveTokens = 8000;
+		plugin.settings.providers.deepseek.contextCapacityInvalid = true;
+
+		displaySettings(tab);
+
+		expect(capacityText('Context window (tokens)').value).toBe('8000');
+		expect(capacityText('Output reserve (tokens)').value).toBe('8000');
+		const status = latestSetting('Context capacity');
+		expect(status.description).toBe(INVALID_CONTEXT_CAPACITY_MESSAGE);
+		expect(status.settingEl.style.display).toBe('');
+	});
+
+	it('retains typed text and commits only on the change event', async () => {
+		const { plugin, tab } = createModelSettingsTab();
+		displaySettings(tab);
+		const renderedCount = settingInstances.length;
+		const windowText = capacityText('Context window (tokens)');
+		const status = latestSetting('Context capacity');
+
+		for (const value of ['1', '12', '128', '1280', '12800', '128000']) {
+			fireInput(windowText, value);
+		}
+
+		expect(windowText.inputEl.value).toBe('128000');
+		expect(settingInstances).toHaveLength(renderedCount);
+		expect(plugin.saveSettings).not.toHaveBeenCalled();
+		expect(status.description).toBe(INVALID_CONTEXT_CAPACITY_MESSAGE);
+		expect(status.settingEl.style.display).toBe('');
+
+		fireChange(windowText);
+		await Promise.resolve();
+
+		expect(plugin.saveSettings).toHaveBeenCalledOnce();
+		expect(plugin.settings.providers.deepseek).toMatchObject({
+			contextWindowTokens: 128000,
+			outputReserveTokens: null,
+			contextCapacityInvalid: true,
+		});
+		expect(settingInstances).toHaveLength(renderedCount);
+		expect(windowText.inputEl.value).toBe('128000');
+	});
+
+	it('commits a valid pair on change and updates the warning in place', async () => {
 		const { plugin, tab } = createModelSettingsTab();
 		plugin.settings.providers.deepseek.contextWindowTokens = 8000;
 		plugin.settings.providers.deepseek.outputReserveTokens = 8000;
 		plugin.settings.providers.deepseek.contextCapacityInvalid = true;
 		displaySettings(tab);
-		const renderedBefore = settingInstances.length;
+		const renderedCount = settingInstances.length;
+		const windowText = capacityText('Context window (tokens)');
+		const status = latestSetting('Context capacity');
 
-		await latestSetting('Context window (tokens)').texts[0]?.onChangeHandler('128000');
+		fireInput(windowText, '128000');
+		expect(status.description).toBe('');
+		expect(plugin.saveSettings).not.toHaveBeenCalled();
+
+		fireChange(windowText);
+		await Promise.resolve();
 
 		expect(plugin.settings.providers.deepseek).toMatchObject({
 			contextWindowTokens: 128000,
@@ -1180,19 +1236,23 @@ describe('EmendSettingTab context capacity', () => {
 			contextCapacityInvalid: false,
 		});
 		expect(plugin.saveSettings).toHaveBeenCalledOnce();
-		expect(capacitySettingNamesSince(renderedBefore)).not.toContain(
-			'Context capacity',
-		);
+		expect(settingInstances).toHaveLength(renderedCount);
+		expect(status.description).toBe('');
+		expect(status.settingEl.style.display).toBe('');
 	});
 
-	it('marks an equal reserve invalid and re-renders the warning', async () => {
+	it('marks an equal reserve invalid on change in place', async () => {
 		const { plugin, tab } = createModelSettingsTab();
 		plugin.settings.providers.deepseek.contextWindowTokens = 128000;
 		plugin.settings.providers.deepseek.outputReserveTokens = 8000;
 		displaySettings(tab);
-		const renderedBefore = settingInstances.length;
+		const renderedCount = settingInstances.length;
+		const reserveText = capacityText('Output reserve (tokens)');
+		const status = latestSetting('Context capacity');
 
-		await latestSetting('Output reserve (tokens)').texts[0]?.onChangeHandler('128000');
+		fireInput(reserveText, '128000');
+		fireChange(reserveText);
+		await Promise.resolve();
 
 		expect(plugin.settings.providers.deepseek).toMatchObject({
 			contextWindowTokens: 128000,
@@ -1200,27 +1260,30 @@ describe('EmendSettingTab context capacity', () => {
 			contextCapacityInvalid: true,
 		});
 		expect(plugin.saveSettings).toHaveBeenCalledOnce();
-		expect(capacitySettingNamesSince(renderedBefore)).toContain(
-			'Context capacity',
-		);
+		expect(settingInstances).toHaveLength(renderedCount);
+		expect(status.description).toBe(INVALID_CONTEXT_CAPACITY_MESSAGE);
+		expect(status.settingEl.style.display).toBe('');
 	});
 
-	it('treats an unparsable input as invalid without discarding the other value', async () => {
+	it('clears an unparsable input on commit without discarding the other value', async () => {
 		const { plugin, tab } = createModelSettingsTab();
 		plugin.settings.providers.deepseek.outputReserveTokens = 8000;
 		displaySettings(tab);
-		const renderedBefore = settingInstances.length;
+		const windowText = capacityText('Context window (tokens)');
+		const status = latestSetting('Context capacity');
 
-		await latestSetting('Context window (tokens)').texts[0]?.onChangeHandler('abc');
+		fireInput(windowText, 'abc');
+		fireChange(windowText);
+		await Promise.resolve();
 
 		expect(plugin.settings.providers.deepseek).toMatchObject({
 			contextWindowTokens: null,
 			outputReserveTokens: 8000,
 			contextCapacityInvalid: true,
 		});
-		expect(capacitySettingNamesSince(renderedBefore)).toContain(
-			'Context capacity',
-		);
+		expect(plugin.saveSettings).toHaveBeenCalledOnce();
+		expect(windowText.inputEl.value).toBe('');
+		expect(status.description).toBe(INVALID_CONTEXT_CAPACITY_MESSAGE);
 	});
 
 	it('treats clearing both inputs as an explicit return to unconfigured', async () => {
@@ -1229,10 +1292,23 @@ describe('EmendSettingTab context capacity', () => {
 		plugin.settings.providers.deepseek.outputReserveTokens = 8000;
 		plugin.settings.providers.deepseek.contextCapacityInvalid = true;
 		displaySettings(tab);
+		const status = latestSetting('Context capacity');
+		const windowText = capacityText('Context window (tokens)');
+		const reserveText = capacityText('Output reserve (tokens)');
 
-		await latestSetting('Context window (tokens)').texts[0]?.onChangeHandler('');
-		const renderedBefore = settingInstances.length;
-		await latestSetting('Output reserve (tokens)').texts[0]?.onChangeHandler('');
+		fireInput(windowText, '');
+		fireChange(windowText);
+		await Promise.resolve();
+		expect(plugin.settings.providers.deepseek).toMatchObject({
+			contextWindowTokens: null,
+			outputReserveTokens: 8000,
+			contextCapacityInvalid: true,
+		});
+
+		fireInput(reserveText, '');
+		expect(status.description).toBe(INVALID_CONTEXT_CAPACITY_MESSAGE);
+		fireChange(reserveText);
+		await Promise.resolve();
 
 		expect(plugin.settings.providers.deepseek).toMatchObject({
 			contextWindowTokens: null,
@@ -1240,17 +1316,49 @@ describe('EmendSettingTab context capacity', () => {
 			contextCapacityInvalid: false,
 		});
 		expect(plugin.saveSettings).toHaveBeenCalledTimes(2);
-		expect(capacitySettingNamesSince(renderedBefore)).not.toContain(
-			'Context capacity',
-		);
+		expect(status.description).toBe('');
+		expect(status.settingEl.style.display).toBe('none');
 	});
 
-	it('changes only the active provider capacity', async () => {
+	it('clears persisted malformed capacity through the reset button', async () => {
+		const { plugin, tab } = createModelSettingsTab();
+		plugin.settings.providers.deepseek.contextCapacityInvalid = true;
+		displaySettings(tab);
+		const status = latestSetting('Context capacity');
+		const reset = status.buttons[0];
+		if (!reset) {
+			throw new Error('Missing clear capacity button');
+		}
+
+		expect(status.description).toBe(INVALID_CONTEXT_CAPACITY_MESSAGE);
+		expect(reset.text).toBe('Clear capacity settings');
+
+		await reset.clickHandler();
+
+		expect(plugin.settings.providers.deepseek).toMatchObject({
+			contextWindowTokens: null,
+			outputReserveTokens: null,
+			contextCapacityInvalid: false,
+		});
+		expect(plugin.saveSettings).toHaveBeenCalledOnce();
+		expect(status.description).toBe('');
+		expect(status.settingEl.style.display).toBe('none');
+		expect(capacityText('Context window (tokens)').inputEl.value).toBe('');
+		expect(capacityText('Output reserve (tokens)').inputEl.value).toBe('');
+	});
+
+	it('changes only the active provider capacity on commit', async () => {
 		const { plugin, tab } = createModelSettingsTab();
 		displaySettings(tab);
+		const windowText = capacityText('Context window (tokens)');
+		const reserveText = capacityText('Output reserve (tokens)');
 
-		await latestSetting('Context window (tokens)').texts[0]?.onChangeHandler('64000');
-		await latestSetting('Output reserve (tokens)').texts[0]?.onChangeHandler('4000');
+		fireInput(windowText, '64000');
+		fireChange(windowText);
+		await Promise.resolve();
+		fireInput(reserveText, '4000');
+		fireChange(reserveText);
+		await Promise.resolve();
 
 		expect(plugin.settings.providers.deepseek).toMatchObject({
 			contextWindowTokens: 64000,
@@ -1267,5 +1375,6 @@ describe('EmendSettingTab context capacity', () => {
 			outputReserveTokens: null,
 			contextCapacityInvalid: false,
 		});
+		expect(plugin.saveSettings).toHaveBeenCalledTimes(2);
 	});
 });

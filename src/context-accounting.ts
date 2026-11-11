@@ -46,8 +46,8 @@ export type ContextRequestKind =
 	| 'selection'
 	| 'transport';
 
-const INVALID_CAPACITY_MESSAGE =
-	'Context capacity is invalid. Enter positive token counts for both the context window and output reserve, with the context window larger than the reserve.';
+export const INVALID_CONTEXT_CAPACITY_MESSAGE =
+	'Requests are blocked until the context window and output reserve are positive token counts, with the context window larger than the reserve.';
 
 const CAPACITY_GUIDANCE: Record<ContextRequestKind, string> = {
 	'read-only': 'Reduce context, chat history, additional notes, or Web output.',
@@ -84,7 +84,7 @@ export function resolveContextCapacity(
 	} = config;
 	if (contextWindowTokens === null && outputReserveTokens === null) {
 		return contextCapacityInvalid
-			? { kind: 'invalid', reason: INVALID_CAPACITY_MESSAGE }
+			? { kind: 'invalid', reason: INVALID_CONTEXT_CAPACITY_MESSAGE }
 			: { kind: 'unconfigured' };
 	}
 	if (
@@ -93,12 +93,12 @@ export function resolveContextCapacity(
 		!isPositiveInteger(contextWindowTokens) ||
 		!isPositiveInteger(outputReserveTokens)
 	) {
-		return { kind: 'invalid', reason: INVALID_CAPACITY_MESSAGE };
+		return { kind: 'invalid', reason: INVALID_CONTEXT_CAPACITY_MESSAGE };
 	}
 
 	const effectiveInputTokens = contextWindowTokens - outputReserveTokens;
 	if (effectiveInputTokens <= 0) {
-		return { kind: 'invalid', reason: INVALID_CAPACITY_MESSAGE };
+		return { kind: 'invalid', reason: INVALID_CONTEXT_CAPACITY_MESSAGE };
 	}
 
 	return {
@@ -116,7 +116,7 @@ export function requireValidContextCapacity(
 	if (capacity.kind === 'invalid') {
 		throw new ContextCapacityError(
 			'invalid-context-capacity',
-			INVALID_CAPACITY_MESSAGE,
+			INVALID_CONTEXT_CAPACITY_MESSAGE,
 		);
 	}
 	return capacity;
@@ -133,7 +133,7 @@ export function assertRequestWithinCapacity(
 	if (capacity.kind === 'invalid') {
 		throw new ContextCapacityError(
 			'invalid-context-capacity',
-			INVALID_CAPACITY_MESSAGE,
+			INVALID_CONTEXT_CAPACITY_MESSAGE,
 		);
 	}
 

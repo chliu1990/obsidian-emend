@@ -191,6 +191,8 @@ describe('request character accounting', () => {
 
 		const categories = accountRequestCharacters(request);
 
+		const expectedSystem = 'system text'.length;
+		const expectedUser = 'user text'.length;
 		const expectedHistory = formatProviderHistory(history).reduce(
 			(sum, message) => sum + message.content.length,
 			0,
@@ -199,29 +201,32 @@ describe('request character accounting', () => {
 			'web_search'.length +
 			'{"query":"alpha"}'.length +
 			'result text'.length;
+		const expectedTools = JSON.stringify(tools).length;
+		const expectedTotal = expectedSystem +
+			expectedUser +
+			expectedHistory +
+			expectedContinuation +
+			expectedTools;
+		const expectedTokens = [
+			expectedSystem,
+			expectedUser,
+			expectedHistory,
+			expectedContinuation,
+			expectedTools,
+		].reduce(
+			(sum, characters) => sum + Math.max(1, Math.ceil(characters / 4)),
+			0,
+		);
 		expect(categories).toMatchObject({
-			system: 'system text'.length,
-			user: 'user text'.length,
+			system: expectedSystem,
+			user: expectedUser,
 			history: expectedHistory,
 			continuation: expectedContinuation,
-			tools: JSON.stringify(tools).length,
+			tools: expectedTools,
 		});
-		expect(categories.total).toBe(
-			categories.system +
-				categories.user +
-				categories.history +
-				categories.continuation +
-				categories.tools,
-		);
-		const expectedTokens = [
-			categories.system,
-			categories.user,
-			categories.history,
-			categories.continuation,
-			categories.tools,
-		].reduce((sum, characters) => sum + estimateTokensForCharacters(characters), 0);
+		expect(categories.total).toBe(expectedTotal);
 		expect(categories.estimatedInputTokens).toBe(expectedTokens);
-		expect(countRequestCharacters(request)).toBe(categories.total);
+		expect(countRequestCharacters(request)).toBe(expectedTotal);
 	});
 
 	it('counts annotated history exactly as the provider history formatter emits it', () => {

@@ -1,5 +1,8 @@
-import { App, Notice, PluginSettingTab, setIcon, Setting } from 'obsidian';
-import { resolveContextCapacity } from './context-accounting';
+import { App, Notice, PluginSettingTab, setIcon, Setting, type TextComponent } from 'obsidian';
+import {
+	INVALID_CONTEXT_CAPACITY_MESSAGE,
+	resolveContextCapacity,
+} from './context-accounting';
 import { discoverProviderModels } from './model-discovery';
 import type EmendPlugin from './main';
 import type {
@@ -307,55 +310,123 @@ export class EmendSettingTab extends PluginSettingTab {
 				}),
 			);
 
+		let windowText: TextComponent | null = null;
+		let reserveText: TextComponent | null = null;
+		let windowDraft =
+			config.contextWindowTokens === null ? '' : String(config.contextWindowTokens);
+		let reserveDraft =
+			config.outputReserveTokens === null ? '' : String(config.outputReserveTokens);
+
+		const previewCapacity = () => resolveContextCapacity(
+			resolveProviderCapacityFields(
+				parseCapacityInput(windowDraft),
+				parseCapacityInput(reserveDraft),
+				windowDraft.trim() === '' && reserveDraft.trim() === ''
+					? config.contextCapacityInvalid
+					: false,
+			),
+		);
+
+		let capacityStatus: Setting | null = null;
+		const refreshCapacityStatus = () => {
+			if (!capacityStatus) {
+				return;
+			}
+			const invalid = previewCapacity().kind === 'invalid';
+			const configured = config.contextWindowTokens !== null ||
+				config.outputReserveTokens !== null ||
+				windowDraft.trim() !== '' ||
+				reserveDraft.trim() !== '';
+			capacityStatus.setDesc(
+				invalid ? INVALID_CONTEXT_CAPACITY_MESSAGE : '',
+			);
+			capacityStatus.settingEl.style.display =
+				invalid || configured ? '' : 'none';
+		};
+
+		const commitCapacity = async () => {
+			applyProviderCapacityPair(
+				config,
+				parseCapacityInput(windowDraft),
+				parseCapacityInput(reserveDraft),
+			);
+			const canonicalWindow = config.contextWindowTokens === null
+				? ''
+				: String(config.contextWindowTokens);
+			if (windowDraft !== canonicalWindow) {
+				windowDraft = canonicalWindow;
+				windowText?.setValue(canonicalWindow);
+			}
+			const canonicalReserve = config.outputReserveTokens === null
+				? ''
+				: String(config.outputReserveTokens);
+			if (reserveDraft !== canonicalReserve) {
+				reserveDraft = canonicalReserve;
+				reserveText?.setValue(canonicalReserve);
+			}
+			refreshCapacityStatus();
+			await this.plugin.saveSettings();
+		};
+
 		new Setting(containerEl)
 			.setName('Context window (tokens)')
-			.setDesc('Tokens the provider can accept in one request. Leave empty to disable capacity checks.')
+			.setDesc('Both token values are required. Leave both empty to disable capacity checks.')
 			.addText((text) => {
+				windowText = text;
 				text.inputEl.type = 'number';
 				text.inputEl.min = '1';
 				text.inputEl.step = '1';
 				text
 					// eslint-disable-next-line obsidianmd/ui/sentence-case -- Numeric example placeholder.
 					.setPlaceholder('e.g. 128000')
-					.setValue(
-						config.contextWindowTokens === null
-							? ''
-							: String(config.contextWindowTokens),
-					)
-					.onChange(async (value) => {
-						updateProviderCapacity(config, 'contextWindowTokens', value);
-						await this.plugin.saveSettings();
-						this.renderSettings();
+					.setValue(windowDraft)
+					.onChange((value) => {
+						windowDraft = value;
+						refreshCapacityStatus();
 					});
+				text.inputEl.addEventListener('change', () => {
+					void commitCapacity();
+				});
 			});
 
 		new Setting(containerEl)
 			.setName('Output reserve (tokens)')
-			.setDesc('Tokens reserved for the response. Leave empty to disable capacity checks.')
+			.setDesc('Both token values are required. Leave both empty to disable capacity checks.')
 			.addText((text) => {
+				reserveText = text;
 				text.inputEl.type = 'number';
 				text.inputEl.min = '1';
 				text.inputEl.step = '1';
 				text
 					// eslint-disable-next-line obsidianmd/ui/sentence-case -- Numeric example placeholder.
 					.setPlaceholder('e.g. 8000')
-					.setValue(
-						config.outputReserveTokens === null
-							? ''
-							: String(config.outputReserveTokens),
-					)
-					.onChange(async (value) => {
-						updateProviderCapacity(config, 'outputReserveTokens', value);
-						await this.plugin.saveSettings();
-						this.renderSettings();
+					.setValue(reserveDraft)
+					.onChange((value) => {
+						reserveDraft = value;
+						refreshCapacityStatus();
 					});
+				text.inputEl.addEventListener('change', () => {
+					void commitCapacity();
+				});
 			});
 
-		if (resolveContextCapacity(config).kind === 'invalid') {
-			new Setting(containerEl)
-				.setName('Context capacity')
-				.setDesc('Requests are blocked until both values are positive and the context window is larger than the output reserve.');
-		}
+		capacityStatus = new Setting(containerEl)
+			.setName('Context capacity')
+			.setDesc('')
+			.addButton((button) => {
+				button
+					.setButtonText('Clear capacity settings')
+					.onClick(async () => {
+						windowDraft = '';
+						reserveDraft = '';
+						windowText?.setValue('');
+						reserveText?.setValue('');
+						applyProviderCapacityPair(config, null, null);
+						refreshCapacityStatus();
+						await this.plugin.saveSettings();
+					});
+			});
+		refreshCapacityStatus();
 
 		new Setting(containerEl)
 			.setName('Default mode')
@@ -598,18 +669,13 @@ function parseCapacityInput(value: string): unknown {
 	return Number.isNaN(parsed) ? trimmed : parsed;
 }
 
-function updateProviderCapacity(
+function applyProviderCapacityPair(
 	config: ProviderConfig,
-	field: 'contextWindowTokens' | 'outputReserveTokens',
-	value: string,
+	rawWindow: unknown,
+	rawReserve: unknown,
 ) {
-	const parsed = parseCapacityInput(value);
 	// A user edit states the full pair, so it resolves any persisted malformed marker.
-	const capacity = resolveProviderCapacityFields(
-		field === 'contextWindowTokens' ? parsed : config.contextWindowTokens,
-		field === 'outputReserveTokens' ? parsed : config.outputReserveTokens,
-		false,
-	);
+	const capacity = resolveProviderCapacityFields(rawWindow, rawReserve, false);
 	config.contextWindowTokens = capacity.contextWindowTokens;
 	config.outputReserveTokens = capacity.outputReserveTokens;
 	config.contextCapacityInvalid = capacity.contextCapacityInvalid;
