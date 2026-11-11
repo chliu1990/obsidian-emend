@@ -313,7 +313,8 @@ describe('sequential full-note edits', () => {
 			responses[0],
 			responses[1],
 		]);
-		const summary = 'Edit applied — 1 changes tracked. Review in Track Changes.';
+		const summary = 'Edit applied — 1 changes tracked. Review in Track Changes.\n- Replaced line 1.';
+		const insertionSummary = 'Edit applied — 1 changes tracked. Review in Track Changes.\n- Inserted text after line 1.';
 		const editUserAnnotation = '[Historical Edit message. Note writing was permitted for that earlier request only. Origin: user message.]';
 		const editStatusAnnotation = '[Historical Edit message. Note writing was permitted for that earlier request only. Origin: local Emend Edit status, not a model response.]';
 		expect(requests[0]?.history).toEqual([]);
@@ -336,7 +337,7 @@ describe('sequential full-note edits', () => {
 		expect(assistantMessages.map((message) => message.content)).toEqual([
 			summary,
 			summary,
-			summary,
+			insertionSummary,
 		]);
 		expect(
 			savedSnapshots.flat().every((message) => !message.content.includes('{~~')),

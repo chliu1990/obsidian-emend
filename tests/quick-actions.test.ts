@@ -56,8 +56,15 @@ describe('quick action submission', () => {
 			isThreadLoading: false,
 			messages: [] as ChatMessage[],
 			plugin: {
-				captureChatContext: () => ({ file: { path: 'Note.md' } }),
-				requestChatCompletion: vi.fn(async () => ({ applied: true, changeCount: 2 })),
+				captureChatContext: () => ({
+					file: { path: 'Note.md' },
+					sourceText: 'Alpha beta.',
+				}),
+				requestChatCompletion: vi.fn(async () => ({
+					applied: true,
+					changeCount: 2,
+					summaryItems: [{ type: 'replace', start: 0, end: 5 }],
+				})),
 			},
 			toProviderHistory: () => [],
 			persistMessages: vi.fn(async (_path: string, messages: ChatMessage[]) => {
@@ -84,7 +91,7 @@ describe('quick action submission', () => {
 			{ role: 'user', content: action.prompt, mode: 'edit' },
 			{
 				role: 'assistant',
-				content: 'Edit applied — 2 changes tracked. Review in Track Changes.',
+				content: 'Edit applied — 2 changes tracked. Review in Track Changes.\n- Replaced line 1.',
 				mode: 'edit',
 			},
 		]);

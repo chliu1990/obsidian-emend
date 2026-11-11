@@ -11,6 +11,7 @@ import { AdditionalNotesControl } from './additional-notes-ui';
 import { EMEND_BUILD_ID } from './build-info';
 import type EmendPlugin from './main';
 import { getComposerShortcut, getDefaultShortcutLabels } from './chat-shortcuts';
+import { formatEditSummary } from './edit-summary';
 import type { RequestContext } from './context';
 import {
 	resolveEditTarget,
@@ -775,7 +776,16 @@ export class EmendChatView extends ItemView {
 						signal: controller.signal,
 					});
 				loadingMessage.content = result.applied
-					? `Edit applied — ${result.changeCount} changes tracked. Review in Track Changes.`
+					? formatEditSummary(
+						result.changeCount,
+						result.summaryItems,
+						capturedTarget.type === 'selection'
+							? capturedTarget.target.snapshot.fullText
+							: capturedTarget.context.sourceText,
+						capturedTarget.type === 'selection'
+							? capturedTarget.target.snapshot.from
+							: 0,
+					)
 					: 'No changes were needed.';
 				loadingMessage.usage = result.usage;
 			} else {

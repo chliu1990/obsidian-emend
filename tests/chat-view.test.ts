@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AdditionalNotesStore } from '../src/additional-notes-store';
 import type { ShortcutEvent } from '../src/chat-shortcuts';
 import { EmendChatView, formatChatMessageForCopy, getUnreadPageCount } from '../src/chat-view';
+import type { EditSummaryItem } from '../src/edit-strategy';
 import { operationEditStrategy } from '../src/operation-edit-strategy';
 import type {
 	AiProviderRequest,
@@ -813,7 +814,7 @@ describe('EmendChatView conversation saving', () => {
 			closed: false,
 			activeController: null,
 		};
-		const summary = 'Edit applied — 1 changes tracked. Review in Track Changes.';
+		const summary = 'Edit applied — 1 changes tracked. Review in Track Changes.\n- Replaced line 1.';
 
 		await viewPrototype.submitPrompt.call(context);
 
@@ -895,15 +896,23 @@ describe('EmendChatView conversation saving', () => {
 	});
 });
 
-function createSelectionEditSubmission() {
+interface SelectionSubmissionOptions {
+	fullText?: string;
+	selectedText?: string;
+	from?: number;
+	to?: number;
+	summaryItems?: readonly EditSummaryItem[];
+}
+
+function createSelectionEditSubmission(options: SelectionSubmissionOptions = {}) {
 	const file = new TFile();
 	file.path = 'Note.md';
 	const snapshot: SelectionSnapshot = {
 		file,
-		fullText: 'Alpha beta.',
-		selectedText: 'beta',
-		from: 6,
-		to: 10,
+		fullText: options.fullText ?? 'Alpha beta.',
+		selectedText: options.selectedText ?? 'beta',
+		from: options.from ?? 6,
+		to: options.to ?? 10,
 	};
 	const editor: SelectionEditorAdapter = {
 		readCurrentText: vi.fn(() => snapshot.fullText),
@@ -933,7 +942,7 @@ function createSelectionEditSubmission() {
 		return {
 			applied: true,
 			changeCount: 2,
-			summaryItems: [],
+			summaryItems: options.summaryItems ?? [{ type: 'replace', start: 0, end: 4 }],
 			usage: {
 				promptTokens: 30,
 				completionTokens: 7,
@@ -1027,6 +1036,7 @@ describe('EmendChatView selection edit submission', () => {
 	it('routes automatic displayed Selection through the exact native-editor request and normal saves', async () => {
 		const fixture = createSelectionEditSubmission();
 		fixture.additionalNotesStore.add('Note.md', 'Reference.md');
+		const summary = 'Edit applied — 2 changes tracked. Review in Track Changes.\n- Replaced line 1.';
 
 		await viewPrototype.submitPrompt.call(fixture.context);
 
@@ -1045,7 +1055,7 @@ describe('EmendChatView selection edit submission', () => {
 		expect(typeof args?.[5]?.onRetry).toBe('function');
 		expect(fixture.context.messages[1]).toMatchObject({
 			status: 'ready',
-			content: 'Edit applied — 2 changes tracked. Review in Track Changes.',
+			content: summary,
 			reasoning: 'Successful reasoning',
 			usage: {
 				promptTokens: 30,
@@ -1069,8 +1079,71 @@ describe('EmendChatView selection edit submission', () => {
 			(message) => message.content,
 		)).toEqual([
 			'Edit selection',
-			'Edit applied — 2 changes tracked. Review in Track Changes.',
+			summary,
 		]);
+	});
+
+	it('maps Selection-local summary items onto note-absolute lines', async () => {
+		const fixture = createSelectionEditSubmission({
+			fullText: 'Intro line.\nTarget line.\nOutro line.',
+			selectedText: 'Target line.',
+			from: 12,
+			to: 24,
+			summaryItems: [{ type: 'replace', start: 0, end: 12 }],
+		});
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.context.messages[1]?.content).toBe(
+			'Edit applied — 2 changes tracked. Review in Track Changes.\n- Replaced line 2.',
+		);
+	});
+
+	it('formats full-note summaries against the captured note source', async () => {
+		const file = new TFile();
+		file.path = 'Note.md';
+		const sourceText = 'Intro line.\nTarget line.\nOutro line.';
+		const context = {
+			inputEl: { value: 'Edit note' },
+			isSending: false,
+			isThreadLoading: false,
+			selectedMode: 'edit' as Mode,
+			displayedEditTarget: 'full-note' as const,
+			messages: [] as ChatMessage[],
+			plugin: {
+				captureChatContext: () => ({
+					file,
+					sourceText,
+					selection: { from: 0, to: 0 },
+					noteLabel: file.path,
+					markdown: sourceText,
+				}),
+				additionalNotesStore: new AdditionalNotesStore(),
+				requestChatCompletion: vi.fn(async () => ({
+					applied: true,
+					changeCount: 1,
+					summaryItems: [{ type: 'replace' as const, start: 12, end: 24 }],
+					usage: {
+						promptTokens: 3,
+						completionTokens: 1,
+						totalTokens: 4,
+						source: 'provider' as const,
+					},
+				})),
+			},
+			toProviderHistory: () => [],
+			persistMessages: vi.fn(async () => undefined),
+			render: vi.fn(),
+			scheduleMessageRender: vi.fn(),
+			closed: false,
+			activeController: null,
+		};
+
+		await viewPrototype.submitPrompt.call(context);
+
+		expect(context.messages[1]?.content).toBe(
+			'Edit applied — 1 changes tracked. Review in Track Changes.\n- Replaced line 2.',
+		);
 	});
 
 	it('keeps explicit Full note on the ordinary request despite a usable selection', async () => {
