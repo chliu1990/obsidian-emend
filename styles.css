@@ -271,6 +271,13 @@
 	min-width: 0;
 }
 
+.emend-context-capacity-body {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
 .emend-context-capacity.is-over-capacity .emend-context-capacity-summary {
 	color: var(--text-warning);
 }

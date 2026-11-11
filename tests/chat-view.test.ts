@@ -4246,6 +4246,11 @@ describe('EmendChatView draft capacity estimate', () => {
 		viewPrototype.refreshCapacityEstimate.call(fixture.context);
 		expect(findQuickActionButton(fixture.contentEl, 'fix-grammar')?.disabled).toBe(false);
 		expect(fixture.context.selectedMode).toBe('ask');
+		if (!fixture.context.inputEl) {
+			throw new Error('Composer missing.');
+		}
+		fixture.context.inputEl.value = 'Question';
+		const staleSummary = findCapacitySummary(fixture.contentEl)?.textContent;
 
 		fixture.provider.contextWindowTokens = emptyEditTokens + 2;
 		const blockedEstimate = fixture.fullNoteEstimate(QUICK_ACTIONS[0].prompt);
@@ -4256,6 +4261,13 @@ describe('EmendChatView draft capacity estimate', () => {
 
 		expect(fixture.context.selectedMode).toBe('ask');
 		expect(fixture.render).not.toHaveBeenCalled();
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedCapacitySummary(fixture.askEstimate('Question')),
+		);
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).not.toBe(
+			staleSummary,
+		);
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(false);
 		expect(noticeMessages()).toContain(expectedBlockedNotice(blockedEstimate));
 		expect(fixture.context.messages).toEqual([]);
 		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();

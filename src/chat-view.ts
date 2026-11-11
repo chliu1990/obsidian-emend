@@ -919,6 +919,7 @@ export class EmendChatView extends ItemView {
 		}
 		const { blockMessage } = this.evaluateQuickActionCapacity(action);
 		if (blockMessage) {
+			this.refreshDraftEstimate();
 			new Notice(`Emend: ${blockMessage}`);
 			return;
 		}
