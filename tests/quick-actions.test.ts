@@ -6,7 +6,12 @@ import type {
 	SelectionEditCallbacks,
 	SelectionEditorAdapter,
 } from '../src/selection-editor';
-import type { ChatMessage, Mode, SelectionSnapshot } from '../src/types';
+import type {
+	ChatMessage,
+	Mode,
+	ProviderHistoryMessage,
+	SelectionSnapshot,
+} from '../src/types';
 
 const viewPrototype = EmendChatView.prototype as unknown as {
 	submitPrompt(this: unknown, prompt?: string): Promise<void>;
@@ -120,6 +125,7 @@ describe('quick action submission', () => {
 			_signal: AbortSignal,
 			_editor: SelectionEditorAdapter,
 			_additionalNotePaths: readonly string[],
+			_history: readonly ProviderHistoryMessage[],
 			_callbacks?: SelectionEditCallbacks,
 		) => ({
 			applied: true,
@@ -167,8 +173,9 @@ describe('quick action submission', () => {
 		expect(args?.[2]).toBeInstanceOf(AbortSignal);
 		expect(args?.[3]).toBe(editor);
 		expect(args?.[4]).toEqual([]);
-		expect(typeof args?.[5]?.onReasoning).toBe('function');
-		expect(typeof args?.[5]?.onRetry).toBe('function');
+		expect(args?.[5]).toEqual([]);
+		expect(typeof args?.[6]?.onReasoning).toBe('function');
+		expect(typeof args?.[6]?.onRetry).toBe('function');
 		expect(requestChatCompletion).not.toHaveBeenCalled();
 		expect(captureChatContext).not.toHaveBeenCalled();
 		expect(context.messages).toHaveLength(2);

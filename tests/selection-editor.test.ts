@@ -1270,7 +1270,7 @@ describe('SelectionEditRequestCoordinator', () => {
 		const { continuation, ...correctionBaseRequest } = secondRequest;
 		expect(correctionBaseRequest).toEqual(firstRequest);
 		expect(continuation?.[0]).toEqual({ role: 'assistant', content: 'not-json' });
-		expect(continuation?.[1]?.content).toContain('unchanged original snapshot');
+		expect(continuation?.[1]?.content).toContain('Return only a new complete JSON array of operations, or an envelope object with operations and an optional summary, against the unchanged original snapshot.');
 		expect(continuation?.[1]?.content).toContain('"code":"invalid-json"');
 	});
 

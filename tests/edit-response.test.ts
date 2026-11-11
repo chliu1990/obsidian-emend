@@ -106,7 +106,7 @@ describe('prepareEditResponse', () => {
 				{ role: 'assistant', content: 'not-json' },
 				{
 					role: 'user',
-					content: 'Return only a new complete JSON array of operations or an envelope object with operations and an optional summary against the unchanged original snapshot.\n{"code":"missing-anchor","operation":2,"operationType":"replace","field":"target","matchCount":0,"matchLines":[1,2,3,4,5,6,7,8]}',
+					content: 'Return only a new complete JSON array of operations, or an envelope object with operations and an optional summary, against the unchanged original snapshot.\n{"code":"missing-anchor","operation":2,"operationType":"replace","field":"target","matchCount":0,"matchLines":[1,2,3,4,5,6,7,8]}',
 				},
 			],
 		});
@@ -318,9 +318,9 @@ describe('prepareEditResponse', () => {
 		));
 
 		expect(response.usage).toEqual({
-			promptTokens: 51,
+			promptTokens: 52,
 			completionTokens: 3,
-			totalTokens: 54,
+			totalTokens: 55,
 			source: 'estimated',
 		});
 	});
