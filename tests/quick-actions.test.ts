@@ -40,6 +40,10 @@ describe('quick action submission', () => {
 			notePath: 'Note.md',
 			isSending: false,
 			isThreadLoading: false,
+			evaluateQuickActionCapacity: () => ({
+				estimate: undefined,
+				blockMessage: undefined,
+			}),
 			submitPrompt: vi.fn(async (_prompt: string) => {}),
 		};
 
@@ -47,7 +51,9 @@ describe('quick action submission', () => {
 
 		expect(context.selectedMode).toBe('edit');
 		expect(context.submitPrompt).toHaveBeenCalledTimes(1);
-		expect(context.submitPrompt).toHaveBeenCalledWith(action.prompt);
+		expect(context.submitPrompt).toHaveBeenCalledWith(action.prompt, {
+			fromQuickAction: true,
+		});
 	});
 
 	it('displays and persists the prompt and concise Edit result through normal submission', async () => {
@@ -72,6 +78,10 @@ describe('quick action submission', () => {
 				})),
 			},
 			toProviderHistory: () => [],
+			evaluateQuickActionCapacity: () => ({
+				estimate: undefined,
+				blockMessage: undefined,
+			}),
 			persistMessages: vi.fn(async (_path: string, messages: ChatMessage[]) => {
 				savedSnapshots.push(messages.map((message) => ({ ...message })));
 			}),
@@ -150,6 +160,10 @@ describe('quick action submission', () => {
 				requestSelectionEdit,
 			},
 			toProviderHistory: () => [],
+			evaluateQuickActionCapacity: () => ({
+				estimate: undefined,
+				blockMessage: undefined,
+			}),
 			persistMessages: vi.fn(async () => undefined),
 			render: vi.fn(),
 			scheduleMessageRender: vi.fn(),
@@ -164,7 +178,9 @@ describe('quick action submission', () => {
 		await viewPrototype.submitQuickAction.call(context, action);
 
 		expect(context.submitPrompt).toHaveBeenCalledTimes(1);
-		expect(context.submitPrompt).toHaveBeenCalledWith(action.prompt);
+		expect(context.submitPrompt).toHaveBeenCalledWith(action.prompt, {
+			fromQuickAction: true,
+		});
 		expect(context.selectedMode).toBe('edit');
 		expect(requestSelectionEdit).toHaveBeenCalledTimes(1);
 		const args = requestSelectionEdit.mock.calls[0];
