@@ -334,6 +334,26 @@
 	background: var(--color-cyan);
 }
 
+.emend-context-capacity-category.is-system {
+	color: var(--interactive-accent);
+}
+
+.emend-context-capacity-category.is-user {
+	color: var(--color-blue);
+}
+
+.emend-context-capacity-category.is-history {
+	color: var(--color-purple);
+}
+
+.emend-context-capacity-category.is-tools {
+	color: var(--color-orange);
+}
+
+.emend-context-capacity-category.is-continuation {
+	color: var(--color-cyan);
+}
+
 .emend-context-capacity-segment.is-free {
 	background: var(--background-modifier-border);
 }

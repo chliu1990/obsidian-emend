@@ -468,15 +468,18 @@ describe('ContextCapacityDisplay', () => {
 			'aria-live': 'polite',
 			'aria-label': 'Draft token estimate',
 		});
+		expect(summary?.attributes.id).toBeTruthy();
 		expect(findAll(root, (element) => element.attributes.role === 'status'))
 			.toHaveLength(1);
 		expect(meter?.attributes).toMatchObject({
 			role: 'meter',
+			'aria-labelledby': summary?.attributes.id,
 			'aria-valuemin': '0',
 			'aria-valuemax': '100',
 			'aria-valuenow': '60',
 			'aria-valuetext': 'Estimated input: 60 tokens of 80 effective capacity.',
 		});
+		expect(meter?.attributes['aria-label']).toBeUndefined();
 		expect(segments.map((segment) => segment.style.width)).toEqual([
 			'10%', '20%', '15%', '10%', '5%', '20%', '20%',
 		]);
@@ -498,9 +501,34 @@ describe('ContextCapacityDisplay', () => {
 		expect(textOf(tooltip as FakeElement)).toContain('Effective input capacity: 80 tokens');
 		expect(textOf(tooltip as FakeElement)).toContain('Context window: 100 tokens');
 		expect(textOf(tooltip as FakeElement)).toContain('Output reserve: 20 tokens');
-		expect(textOf(tooltip as FakeElement)).toContain(
-			'System: 10 tokens · Draft: 20 tokens · History: 15 tokens · Tools: 10 tokens · Continuation: 5 tokens',
+		const categories = findAll(tooltip as FakeElement, (element) =>
+			element.className.split(' ').includes('emend-context-capacity-category'),
 		);
+		expect(categories.map((category) => [category.className, category.textContent])).toEqual([
+			['emend-context-capacity-category is-system', 'System: 10 tokens · '],
+			['emend-context-capacity-category is-user', 'Draft: 20 tokens · '],
+			['emend-context-capacity-category is-history', 'History: 15 tokens · '],
+			['emend-context-capacity-category is-tools', 'Tools: 10 tokens · '],
+			['emend-context-capacity-category is-continuation', 'Continuation: 5 tokens'],
+		]);
+		const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+		const colors = {
+			system: '--interactive-accent',
+			user: '--color-blue',
+			history: '--color-purple',
+			tools: '--color-orange',
+			continuation: '--color-cyan',
+		};
+		for (const [key, color] of Object.entries(colors)) {
+			const segmentRule = css.match(new RegExp(
+				`\\.emend-context-capacity-segment\\.is-${key}\\s*\\{([^}]*)\\}`,
+			))?.[1] ?? '';
+			const categoryRule = css.match(new RegExp(
+				`\\.emend-context-capacity-category\\.is-${key}\\s*\\{([^}]*)\\}`,
+			))?.[1] ?? '';
+			expect(segmentRule).toContain(`background: var(${color});`);
+			expect(categoryRule).toContain(`color: var(${color});`);
+		}
 		expect(textOf(tooltip as FakeElement)).toContain('lower-bound');
 		expect(textOf(tooltip as FakeElement)).toContain('Excluded from this estimate:');
 	});

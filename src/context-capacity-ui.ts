@@ -226,12 +226,15 @@ export class ContextCapacityDisplay {
 	private detailsVisible = false;
 	private detailsPinned = false;
 	private hasDetails = false;
+	private readonly summaryId: string;
 	private readonly onOutsidePointerDown: (event: PointerEvent) => void;
 	private readonly onDocumentKeyDown: (event: KeyboardEvent) => void;
 
 	constructor(containerEl: HTMLElement) {
+		const summaryId = `emend-context-capacity-summary-${nextContextCapacityDisplayId}`;
 		const detailsId = `emend-context-capacity-details-${nextContextCapacityDisplayId}`;
 		nextContextCapacityDisplayId += 1;
+		this.summaryId = summaryId;
 		const rootEl = containerEl.createDiv({
 			cls: 'emend-context-capacity is-unavailable',
 			attr: { tabindex: '0', 'aria-describedby': detailsId },
@@ -240,6 +243,7 @@ export class ContextCapacityDisplay {
 		this.summaryEl = rootEl.createDiv({
 			cls: 'emend-context-capacity-summary',
 			attr: {
+				id: summaryId,
 				role: 'status',
 				'aria-live': 'polite',
 				'aria-label': 'Draft token estimate',
@@ -328,7 +332,7 @@ export class ContextCapacityDisplay {
 				cls: 'emend-context-capacity-bar',
 				attr: {
 					role: 'meter',
-					'aria-label': 'Context capacity',
+					'aria-labelledby': this.summaryId,
 					'aria-valuemin': '0',
 					'aria-valuemax': String(estimate.capacity.contextWindowTokens),
 					'aria-valuenow': String(Math.min(
@@ -396,7 +400,7 @@ export class ContextCapacityDisplay {
 			addDetail(`Context window: ${capacity.contextWindowTokens} tokens`);
 			addDetail(`Output reserve: ${capacity.outputReserveTokens} tokens`);
 		}
-		addDetail(formatCategoryEstimates(categories));
+		renderCategoryEstimates(containerEl, categories);
 		containerEl.createDiv({
 			cls: 'emend-context-capacity-exclusion',
 			text: `Remaining input is a lower-bound estimate. ${CAPACITY_EXCLUSION_NOTE}`,
@@ -419,16 +423,27 @@ function getStateClass(estimate: DraftCapacityEstimate | undefined): string {
 		: 'is-valid';
 }
 
-function formatCategoryEstimates(categories: RequestCharacterCategories): string {
+function renderCategoryEstimates(
+	containerEl: HTMLElement,
+	categories: RequestCharacterCategories,
+): void {
 	const parts = [
-		`System: ${estimateTokensForCharacters(categories.system)} tokens`,
-		`Draft: ${estimateTokensForCharacters(categories.user)} tokens`,
-		`History: ${estimateTokensForCharacters(categories.history)} tokens`,
-		`Tools: ${estimateTokensForCharacters(categories.tools)} tokens`,
+		{ key: 'system', text: `System: ${estimateTokensForCharacters(categories.system)} tokens` },
+		{ key: 'user', text: `Draft: ${estimateTokensForCharacters(categories.user)} tokens` },
+		{ key: 'history', text: `History: ${estimateTokensForCharacters(categories.history)} tokens` },
+		{ key: 'tools', text: `Tools: ${estimateTokensForCharacters(categories.tools)} tokens` },
 	];
 	const continuation = estimateTokensForCharacters(categories.continuation);
 	if (continuation > 0) {
-		parts.push(`Continuation: ${continuation} tokens`);
+		parts.push({ key: 'continuation', text: `Continuation: ${continuation} tokens` });
 	}
-	return parts.join(' · ');
+	const categoriesEl = containerEl.createDiv({
+		cls: 'emend-context-capacity-detail emend-context-capacity-categories',
+	});
+	for (const [index, part] of parts.entries()) {
+		categoriesEl.createEl('span', {
+			cls: `emend-context-capacity-category is-${part.key}`,
+			text: `${part.text}${index < parts.length - 1 ? ' · ' : ''}`,
+		});
+	}
 }
