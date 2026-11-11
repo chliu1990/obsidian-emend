@@ -116,7 +116,7 @@ Task 4 covered envelope precedence, unknown keys, missing/non-array operations, 
 
 Coverage includes exact singular/plural strings for all four types, ranges with original note lines and response order, CRLF and a target ending at a newline, all three insertion line-boundary pins (inside a line, line start, EOF after a trailing newline), Selection offset applied exactly once to ranges and insertion points, eight items as eight bullets, nine and twenty items as seven plus one aggregate, fixed aggregate order with singular/plural nouns, comment-only `changeCount: 0`, empty items, and a leakage test proving anchors/targets/replacements/comment text never appear in bullets. Chat tests prove the full-note path formats against `sourceText` with no offset, the Selection path adds `snapshot.from` once to reach a note-absolute line, and no-ops keep the exact no-change line plus the summary.
 
-The final full local gate ran at commit `d20e0af` and passed **40 Vitest files and 1178 tests**, ESLint, strict TypeScript plus the production build, and `git diff --check`. The production bundle built at that commit has SHA-256 `32fc41a1262ac6fbdae62504e0c33188841727ec2090c8b6ebb8e5cf319ba7dc`. The last code commit is `1df4918`; later branch commits change documentation and the ignored harness only. The loopback evidence below was collected at `0bf8885` with bundle `e5d5bf8e…`, before those documentation-only commits; the `src/` tree is identical.
+The final full local gate ran at commit `f60fc60` and passed **40 Vitest files and 1181 tests**, ESLint, strict TypeScript plus the production build, and `git diff --check`. The production bundle built at that commit has SHA-256 `e745cb15122a4ca2c48fa64c9a028209000ba3124911c3bd66bfde4fe845001b`. The earlier documentation gate at `d20e0af` passed 1178 tests. The loopback evidence below was collected at `0bf8885` with bundle `e5d5bf8e…`.
 
 ## Real-Obsidian loopback evidence
 
@@ -126,6 +126,7 @@ The final full local gate ran at commit `d20e0af` and passed **40 Vitest files a
 - Bundle: the production `main.js` SHA-256 was `e5d5bf8ed39e5110e6f788e061bb0cd774dacb48b0632f17655d017304279f99`, built at HEAD `0bf8885`; the harness asserted the loaded copy matched the root bundle. It also asserts the connected CDP vault is the script's isolated runtime vault, preventing stale Obsidian processes from producing false evidence.
 - Command: `node test_vault/emend-selection-chat-verify/verify.mjs`.
 - Result: **17/17 scenarios and 348/348 assertions passed**.
+- Provenance caveat: the fix wave that corrected the `local-edit-status` annotation and history-permission prompt was not rerun through the loopback harness. That change affects provider-wire annotations, not visible chat output; the recorded run above predates it, and the ignored harness expectations were updated for future runs.
 
 New and strengthened scenarios:
 
