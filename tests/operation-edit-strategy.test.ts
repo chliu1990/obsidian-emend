@@ -492,6 +492,22 @@ describe('operation summary metadata', () => {
 		]);
 	});
 
+	it('keeps selection remove and comment metadata relative to the selection start', () => {
+		const preparation = operationEditStrategy.prepareEdit(
+			'alpha beta gamma',
+			JSON.stringify([
+				{ type: 'remove', target: 'beta' },
+				{ type: 'comment', target: 'gamma', comment: 'Review' },
+			]),
+			{ fullText: 'Before\nalpha beta gamma\nAfter', from: 7, to: 23 },
+		);
+
+		expect(preparation.summaryItems).toEqual([
+			{ type: 'remove', start: 6, end: 10 },
+			{ type: 'comment', start: 11, end: 16 },
+		]);
+	});
+
 	it('omits identical replacements and empty responses from summary metadata', () => {
 		expect(prepare('Alpha beta', [
 			{ type: 'replace', target: 'beta', replacement: 'beta' },

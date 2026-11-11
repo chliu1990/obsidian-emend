@@ -101,6 +101,14 @@ describe('formatEditSummary', () => {
 		);
 	});
 
+	it('falls back to a before insertion when insertionPoint is absent', () => {
+		expect(formatEditSummary(1, [
+			{ type: 'insert', start: 6, end: 10 },
+		], 'Alpha beta gamma.', 0)).toBe(
+			`${HEADER_ONE}\n- Inserted text before line 1.`,
+		);
+	});
+
 	it('adds the Selection source offset exactly once to ranges and insertion points', () => {
 		const fullText = 'a\nb\nc\nd\ne';
 		const replaceItems: EditSummaryItem[] = [{ type: 'replace', start: 0, end: 1 }];

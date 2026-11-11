@@ -13,7 +13,7 @@ No provider, writer, persistence-schema, or message-type behavior changed. The s
 - Items are produced from the resolved, validated Operations after unchanged replacements are filtered out, in model response order. A declared target may compile to multiple minimized replacement hunks, so items and `changeCount` are not one-to-one; a valid comment-only Operation has `changeCount: 0` and still yields a comment item. Bullets describe the Operation type, not the compiled hunk: a `replace` that replacement minimization compiles to a pure insertion still reports `Replaced line N.`
 - Full-note items are relative to the complete captured note source. Selection items are selection-local: offsets are relative to `selectedText`, not the note.
 - `insertionPoint` exists only for `insert`. It equals `start` for an insertion before the anchor and `end` for an insertion after the anchor.
-- `summaryItems` appears only on successful `applied: true` results, after the vault writer or native editor replacement already ran. Unchanged, denied, stale, aborted, and failed results expose empty items and never reach the formatter.
+- `summaryItems` appears only on successful `applied: true` results, after the vault writer or native editor replacement already ran. Unchanged, denied, stale, and failed results expose empty items and never reach the formatter. An aborted attempt never produces a ready summary or persistence: when an abort arrives while the full-note `vault.modify` is awaited, the write can still return `applied: true`, the summary can be assigned, and the following `controller.signal.throwIfAborted()` flips the message to stopped while retaining its content in memory only.
 - These items are transient. They are not persisted, not sent to any provider, and not rendered on their own.
 
 ## Format
@@ -30,7 +30,7 @@ Lines are 1-based UTF-16 offsets split on `\n`, so CRLF text works without norma
 
 - `lineAt(fullText, offset)` is the number of `\n` before `offset` plus one, clamped to `[0, fullText.length]`. Offset `0` is line 1; `fullText.length` is the final line, which is the empty final line when the text ends with `\n`.
 - A non-insert range with `end > start` reports `first = lineAt(start)` and `last = lineAt(end - 1)`, so a target ending at a newline does not claim the following line. A defensive zero-width non-insert range collapses to one line.
-- An insertion names the one line containing its point: `lineAt(insertionPoint)`. A point inside a line uses that line, a point at a line start uses the new line, and EOF after a trailing newline uses the final empty line. The preposition is `before` when `insertionPoint === start` and `after` otherwise.
+- An insertion names the one line containing its point: `lineAt(insertionPoint)`. A point inside a line uses that line, a point at a line start uses the new line, and EOF after a trailing newline uses the final empty line. The preposition is `before` when `insertionPoint === start` and `after` otherwise. A defensive insert item without `insertionPoint` falls back to `start`, so it reports `before`.
 
 Bullets use the exact action wording:
 
@@ -87,6 +87,7 @@ The full local gate passed **40 Vitest files and 1118 tests**, ESLint, strict Ty
 - Runtime: official Obsidian 1.15.0 AppImage already under ignored `test_vault/emend-web-verify/tools/`, isolated Xvfb `:101`, CDP `19224`, and the CORS loopback OpenAI-compatible SSE mock at `127.0.0.1:18766`.
 - Data: only synthetic notes and a dummy SecretStorage credential under ignored `test_vault/emend-selection-chat-verify/`. No real provider, account, key, external or paid request, other vault, or fallback was used.
 - Bundle: the production `main.js` SHA-256 was `91b3871331f87d78e152781889e1c8af7216a67294ed6c22f94f09d0a75b00dd`, and the harness asserted the loaded copy matched the root bundle.
+- Provenance: the harness copied `main.js` built from the working tree that became commit `709a248` (the visible feature commit). Later branch commits changed tests and documentation, plus a behavior-neutral hoist of the summary source/offset locals in `chat-view.ts`, so this loopback evidence applies to the same displayed behavior.
 - Command: `node test_vault/emend-selection-chat-verify/verify.mjs`.
 - Result: **15/15 scenarios and 298/298 assertions passed**. The harness now asserts rendered summary structure (header paragraph plus `<li>` text) and persisted Markdown for representative scenarios.
 
@@ -107,7 +108,7 @@ Reload persistence: every stored ready assistant Edit message contained the exac
 
 ## Unverified items
 
-- Windows and macOS rendering, native undo, and physical keyboard input were not exercised.
+- Windows and macOS rendering and physical keyboard input were not exercised. Native undo and redo were asserted and passed in loopback scenario 01, which restored the original selection and redo restored the annotated selection.
 - The harness exercises a one-item summary only; the eight-bullet cap and aggregate order are covered by unit tests, not real Obsidian rendering.
 - Comment-only display used a synthetic comment; real Track Changes comment presentation for these exact bullets was not separately re-inspected.
 - Non-ASCII line counting relies on UTF-16 offsets and is covered by unit tests plus the existing café/emoji notes, not by a dedicated new summary scenario.

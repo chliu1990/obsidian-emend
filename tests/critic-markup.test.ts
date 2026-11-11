@@ -313,4 +313,12 @@ describe('edit preparation contract', () => {
 			readonly EditSummaryItem[]
 		>();
 	});
+
+	it('pins the exact full EditPreparation shape', () => {
+		expectTypeOf<EditPreparation>().toEqualTypeOf<{
+			annotatedMarkdown: string;
+			changeCount: number;
+			summaryItems: readonly EditSummaryItem[];
+		}>();
+	});
 });

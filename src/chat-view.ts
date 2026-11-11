@@ -775,16 +775,18 @@ export class EmendChatView extends ItemView {
 						callbacks,
 						signal: controller.signal,
 					});
+				const summaryText = capturedTarget.type === 'selection'
+					? capturedTarget.target.snapshot.fullText
+					: capturedTarget.context.sourceText;
+				const summaryOffset = capturedTarget.type === 'selection'
+					? capturedTarget.target.snapshot.from
+					: 0;
 				loadingMessage.content = result.applied
 					? formatEditSummary(
 						result.changeCount,
 						result.summaryItems,
-						capturedTarget.type === 'selection'
-							? capturedTarget.target.snapshot.fullText
-							: capturedTarget.context.sourceText,
-						capturedTarget.type === 'selection'
-							? capturedTarget.target.snapshot.from
-							: 0,
+						summaryText,
+						summaryOffset,
 					)
 					: 'No changes were needed.';
 				loadingMessage.usage = result.usage;
