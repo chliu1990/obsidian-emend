@@ -1479,7 +1479,7 @@ describe('EmendChatView session runtime', () => {
 	});
 
 	it.each(['note-switch', 'close', 'stop'] as const)(
-		'does not persist or mark an assistant ready when %s aborts the final save',
+		'does not mark an assistant ready or apply returned metadata when %s aborts a final save that later succeeds',
 		async (abortKind) => {
 			const fixture = createEditTargetView();
 			const first = makeSession('a1');
@@ -1502,9 +1502,6 @@ describe('EmendChatView session runtime', () => {
 					if (sessionId === 'a1') {
 						if (appended.role === 'assistant') {
 							await finalSave.promise;
-							if (options?.signal?.aborted) {
-								throw new DOMException('Response stopped.', 'AbortError');
-							}
 						}
 						persistedFirst = {
 							...persistedFirst,
@@ -1542,25 +1539,93 @@ describe('EmendChatView session runtime', () => {
 			} else {
 				fixture.context.activeController?.abort();
 			}
+			fixture.render.mockClear();
 			finalSave.resolve();
 			await submission;
 
 			expect(request?.loadingMessage.status).toBe('stopped');
 			expect(first.title).toBe('New chat');
-			expect(persistedFirst.title).toBe('New chat');
-			expect(persistedFirst.messages.map((item) => item.role)).toEqual(['user']);
+			expect(first.updatedAt).toBe(1);
+			expect(persistedFirst.title).toBe('Aborted answer title');
+			expect(persistedFirst.messages.map((item) => item.role)).toEqual(['user', 'assistant']);
 			expect(first.messages.filter((item) => item.status === 'ready').map((item) => item.role))
 				.toEqual(['user']);
+			expect(fixture.context.responseStartMessageId).toBeNull();
 			if (abortKind === 'note-switch') {
-				fixture.setActivePath('A.md');
-				await viewPrototype.refreshTargetNote.call(fixture.context);
-				expect(fixture.context.sessions[0]?.title).toBe('New chat');
-				expect(viewPrototype.toProviderHistory.call(fixture.context)).toEqual([
-					{ role: 'user', content: 'Aborted answer title', mode: 'ask', origin: 'user' },
-				]);
+				expect(fixture.context.activeSessionId).toBe('b1');
+				expect(fixture.context.messages).toEqual([]);
+				expect(fixture.render).not.toHaveBeenCalled();
+			} else if (abortKind === 'close') {
+				expect(fixture.render).not.toHaveBeenCalled();
+			} else {
+				expect(fixture.context.activeRequest).toBeNull();
+				expect(fixture.context.activeController).toBeNull();
+				expect(fixture.context.isSending).toBe(false);
 			}
 		},
 	);
+
+	it('clears an aborted final-save request and permits a successful retry', async () => {
+		const fixture = createEditTargetView();
+		const session = makeSession('a1');
+		fixture.conversationStore.loadConversation.mockResolvedValue(
+			loadedConversation([session]),
+		);
+		const finalSave = deferred<void>();
+		fixture.conversationStore.appendReadyMessage.mockImplementation(
+			async (_notePath, _sessionId, appended, options) => {
+				if (appended.role === 'assistant' && appended.content === 'Stopped answer') {
+					await finalSave.promise;
+				}
+				return {
+					...session,
+					title: appended.role === 'assistant'
+						? deriveAutomaticTitle(options?.titlePrompt ?? '')
+						: session.title,
+					messages: [...session.messages, appended],
+				};
+			},
+		);
+		fixture.requestChatCompletion
+			.mockImplementationOnce(async ({ callbacks }) => {
+				callbacks.onContent('Stopped answer');
+				return { content: 'Stopped answer', reasoning: '' };
+			})
+			.mockImplementationOnce(async ({ callbacks }) => {
+				callbacks.onContent('Retry answer');
+				return { content: 'Retry answer', reasoning: '' };
+			});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Stopped question';
+		}
+		const stoppedSubmission = viewPrototype.submitPrompt.call(fixture.context);
+		await vi.waitFor(() => expect(fixture.conversationStore.appendReadyMessage).toHaveBeenCalledTimes(2));
+		fixture.context.activeController?.abort();
+		finalSave.resolve();
+		await stoppedSubmission;
+
+		expect(fixture.context.activeRequest).toBeNull();
+		expect(fixture.context.activeController).toBeNull();
+		expect(fixture.context.isSending).toBe(false);
+		expect(fixture.context.messages[1]?.status).toBe('stopped');
+
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Retry question';
+		}
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.requestChatCompletion).toHaveBeenCalledTimes(2);
+		expect(fixture.context.messages[3]).toMatchObject({
+			role: 'assistant',
+			status: 'ready',
+			content: 'Retry answer',
+		});
+		expect(session.title).toBe('Retry question');
+		expect(fixture.context.activeRequest).toBeNull();
+		expect(fixture.context.activeController).toBeNull();
+		expect(fixture.context.isSending).toBe(false);
+	});
 
 	it('does not apply stale initial-save metadata after a session transition', async () => {
 		const fixture = createEditTargetView();

@@ -1356,6 +1356,7 @@ export class EmendChatView extends ItemView {
 				}
 			}
 		} finally {
+			// An aborted request must still release itself; only a newer request suppresses cleanup.
 			if (this.activeRequest === request) {
 				this.activeRequest = null;
 				if (this.activeController === controller) {
