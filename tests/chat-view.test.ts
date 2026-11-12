@@ -190,6 +190,92 @@ function loadedConversation(
 	};
 }
 
+async function beginDelayedTransientCreate(abortKind: 'stop' | 'note-switch') {
+	const fixture = createEditTargetView();
+	const initialCreate = deferred<void>();
+	let persisted: ChatSession | undefined;
+	let firstCreate = true;
+	fixture.conversationStore.loadConversation.mockImplementation(async (notePath: string) => {
+		if (notePath === 'A.md' && persisted) {
+			return loadedConversation([persisted]);
+		}
+		return loadedConversation([]);
+	});
+	fixture.conversationStore.createSession.mockImplementation(async (_notePath, session) => {
+		if (firstCreate) {
+			firstCreate = false;
+			await initialCreate.promise;
+		}
+		persisted = { ...session, updatedAt: 999 };
+		return persisted;
+	});
+	fixture.conversationStore.appendReadyMessage.mockImplementation(
+		async (_notePath, sessionId, appended, options) => {
+			const session = persisted?.id === sessionId ? persisted : makeSession(sessionId);
+			const updated = {
+				...session,
+				title: options?.titlePrompt === undefined
+					? session.title
+					: deriveAutomaticTitle(options.titlePrompt),
+				messages: [...session.messages, appended],
+			};
+			if (sessionId === persisted?.id) {
+				persisted = updated;
+			}
+			return updated;
+		},
+	);
+	fixture.conversationStore.renameSession.mockImplementation(
+		async (_notePath, sessionId, title) => {
+			const session = persisted?.id === sessionId ? persisted : makeSession(sessionId);
+			const renamed = { ...session, title, titleSource: 'manual' as const };
+			if (sessionId === persisted?.id) {
+				persisted = renamed;
+			}
+			return renamed;
+		},
+	);
+	fixture.conversationStore.deleteSession.mockImplementation(async () => {
+		persisted = undefined;
+		return { activeSessionId: null };
+	});
+	fixture.requestChatCompletion.mockImplementation(async ({ callbacks }) => {
+		callbacks.onContent('Retry answer');
+		return { content: 'Retry answer', reasoning: '' };
+	});
+	await viewPrototype.refreshTargetNote.call(fixture.context);
+	const transientId = fixture.context.activeSessionId;
+	if (!transientId) {
+		throw new Error('Transient session missing.');
+	}
+	const transient = fixture.context.sessions[0];
+	const originalUpdatedAt = transient?.updatedAt;
+	if (fixture.context.inputEl) {
+		fixture.context.inputEl.value = 'Initial question';
+	}
+	const submission = viewPrototype.submitPrompt.call(fixture.context);
+	await vi.waitFor(() => expect(fixture.conversationStore.createSession).toHaveBeenCalledOnce());
+	if (abortKind === 'stop') {
+		fixture.context.activeController?.abort();
+	} else {
+		fixture.setActivePath('B.md');
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+	}
+	initialCreate.resolve();
+	await submission;
+	if (abortKind === 'note-switch') {
+		fixture.setActivePath('A.md');
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+	}
+	return {
+		fixture,
+		transient,
+		transientId,
+		originalUpdatedAt,
+		persisted: () => persisted,
+	};
+}
+
 function prepareSubmissionFixture(target: unknown) {
 	Object.setPrototypeOf(target, EmendChatView.prototype);
 	const context = target as {
@@ -1673,35 +1759,71 @@ describe('EmendChatView session runtime', () => {
 		expect(first.messages[1]?.status).toBe('stopped');
 	});
 
-	it('keeps stale transient cache and metadata untouched after the user create succeeds', async () => {
-		const fixture = createEditTargetView();
-		const initialCreate = deferred<void>();
-		fixture.conversationStore.createSession.mockImplementation(async (_notePath, session) => {
-			await initialCreate.promise;
-			return { ...session, updatedAt: 999 };
-		});
-		await viewPrototype.refreshTargetNote.call(fixture.context);
-		const transientId = fixture.context.activeSessionId;
-		if (!transientId) {
-			throw new Error('Transient session missing.');
-		}
-		const transient = fixture.context.sessions[0];
-		const originalUpdatedAt = transient?.updatedAt;
+	it('clears a stopped create before an exact-ID retry instead of duplicate-creating', async () => {
+		const { fixture, transient, transientId, originalUpdatedAt } = await beginDelayedTransientCreate('stop');
+		expect.soft(fixture.context.transientSessionIds.has(transientId)).toBe(false);
+		expect.soft(fixture.context.transientSessions.has('A.md')).toBe(false);
+		expect.soft(transient?.updatedAt).toBe(originalUpdatedAt);
 		if (fixture.context.inputEl) {
-			fixture.context.inputEl.value = 'Question';
+			fixture.context.inputEl.value = 'Retry question';
 		}
-		const submission = viewPrototype.submitPrompt.call(fixture.context);
-		await vi.waitFor(() => expect(fixture.conversationStore.createSession).toHaveBeenCalledOnce());
 
-		fixture.setActivePath('B.md');
-		await viewPrototype.refreshTargetNote.call(fixture.context);
-		initialCreate.resolve();
-		await submission;
+		await viewPrototype.submitPrompt.call(fixture.context);
 
-		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
-		expect(fixture.context.transientSessionIds.has(transientId)).toBe(true);
-		expect(fixture.context.transientSessions.get('A.md')).toBe(transient);
-		expect(transient?.updatedAt).toBe(originalUpdatedAt);
+		expect(fixture.conversationStore.createSession).toHaveBeenCalledOnce();
+		expect(fixture.conversationStore.appendReadyMessage).toHaveBeenCalledTimes(2);
+		expect(fixture.conversationStore.appendReadyMessage.mock.calls.map((call) => call[1]))
+			.toEqual([transientId, transientId]);
+	});
+
+	it('clears a note-switched create before exact-ID New, Rename, retry, and Delete', async () => {
+		const { fixture, transient, transientId, originalUpdatedAt } = await beginDelayedTransientCreate('note-switch');
+		expect.soft(fixture.context.transientSessionIds.has(transientId)).toBe(false);
+		expect.soft(fixture.context.transientSessions.has('A.md')).toBe(false);
+		expect.soft(transient?.updatedAt).toBe(originalUpdatedAt);
+
+		await viewPrototype.createNewSession.call(fixture.context);
+		expect(fixture.conversationStore.createSession).toHaveBeenCalledTimes(2);
+		const newId = fixture.conversationStore.createSession.mock.calls[1]?.[1].id;
+		expect(newId).not.toBe(transientId);
+		await viewPrototype.switchActiveSession.call(fixture.context, transientId);
+		await viewPrototype.renameActiveSession.call(fixture.context, 'Recovered title');
+		expect(fixture.conversationStore.renameSession).toHaveBeenCalledExactlyOnceWith(
+			'A.md',
+			transientId,
+			'Recovered title',
+		);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Retry question';
+		}
+		await viewPrototype.submitPrompt.call(fixture.context);
+		expect(fixture.conversationStore.appendReadyMessage).toHaveBeenCalledTimes(2);
+		await viewPrototype.deleteActiveSession.call(fixture.context);
+		expect(fixture.conversationStore.deleteSession).toHaveBeenCalledExactlyOnceWith('A.md', transientId);
+	});
+
+	it('renames an already persisted session after a stopped create instead of duplicate-creating', async () => {
+		const { fixture, transientId } = await beginDelayedTransientCreate('stop');
+		expect.soft(fixture.context.transientSessionIds.has(transientId)).toBe(false);
+
+		await viewPrototype.renameActiveSession.call(fixture.context, 'Pinned title');
+
+		expect(fixture.conversationStore.createSession).toHaveBeenCalledOnce();
+		expect(fixture.conversationStore.renameSession).toHaveBeenCalledExactlyOnceWith(
+			'A.md',
+			transientId,
+			'Pinned title',
+		);
+	});
+
+	it('deletes an already persisted session after a stopped create instead of discarding only locally', async () => {
+		const { fixture, transientId } = await beginDelayedTransientCreate('stop');
+		expect.soft(fixture.context.transientSessionIds.has(transientId)).toBe(false);
+
+		await viewPrototype.deleteActiveSession.call(fixture.context);
+
+		expect(fixture.conversationStore.deleteSession).toHaveBeenCalledExactlyOnceWith('A.md', transientId);
+		expect(fixture.conversationStore.createSession).toHaveBeenCalledOnce();
 	});
 
 	it('aborts on close and ignores late stream content, errors, rendering, and cleanup', async () => {

@@ -57,7 +57,7 @@ The first valid mutation rereads and migrates the latest legacy data inside the 
 
 Opening an empty/missing/malformed/unsupported aggregate creates or reuses one runtime-only New chat. Merely opening a note does not persist it. The per-note transient cache preserves its exact ID, draft association, ready user messages left by a failed save, and transient error/stopped content across note switches in the same view lifetime. Actual plugin/Obsidian reload clears this runtime state.
 
-New from a sole empty transient materializes/replaces that session and transfers its draft instead of creating an invisible second empty session. If that transient has ready user messages from a failed initial save, New first recovers it and then creates/activates an empty session in a second mutation. Rename materializes a transient with a manual title. Transient Delete only replaces local runtime state and never rewrites missing, malformed, or future-version bytes. A successful first submission materializes the transient with its ready user; later assistant append cannot recreate a deleted ID.
+New from a sole empty transient materializes/replaces that session and transfers its draft instead of creating an invisible second empty session. If that transient has ready user messages from a failed initial save, New first recovers it and then creates/activates an empty session in a second mutation. Rename materializes a transient with a manual title. Transient Delete only replaces local runtime state and never rewrites missing, malformed, or future-version bytes. A successful first submission materializes the transient with its ready user; later assistant append cannot recreate a deleted ID. Every successful transient `createSession` immediately clears that exact session ID and removes the per-note cache entry only if it still points to that ID, regardless of request/UI currentness. Visible metadata and rendering remain identity-guarded.
 
 ## Exact-ID queued store API
 
@@ -95,15 +95,15 @@ The existing pending-path registry remains per **note**, not per session. Sessio
 
 Ready messages may include mode, source path, timestamp, main reasoning, provider/estimated usage, ready Review/Auto user badges, sanitized citations and activity, and ordinary Edit result content (header, target, optional model summary, sanitized bullets). Source-less legacy usage loads as provider-reported. Unknown message artifacts are discarded through the same exact-field serializer used for new writes.
 
-Drafts, loading/error/stopped messages, request artifacts, raw operation candidates/envelopes/correction feedback, note or selection snapshots, additional-note selections/snapshots/content, raw tool arguments/results, retrieval content, extractor/verifier/refine payloads/evidence/reasoning/rounds, transient Web activity, activity failure reasons/statuses/attempt counts, credentials, and buffered full edit responses are not persisted. Warnings that are ordinary ready assistant content remain persistable. API keys remain in SecretStorage with empty `apiKey` fields in plugin `data.json`.
+Drafts, loading/error/stopped messages, request artifacts, raw operation candidates/envelopes/correction feedback, note or selection snapshots, additional-note selections/snapshots/content, raw tool arguments/results, retrieval content, extractor/verifier/refine payloads/evidence/reasoning/rounds, transient Web activity, activity failure reasons, failure HTTP statuses, attempt counts, credentials, and buffered full edit responses are not persisted. Ordinary completed/failed/skipped activity outcome status and warnings that are ordinary ready assistant content remain persistable. API keys remain in SecretStorage with empty `apiKey` fields in plugin `data.json`.
 
 AI session summaries and AI naming are not implemented. There is no hidden management or summarization provider operation. Note-rename history migration, cross-note session movement, and session search remain deferred.
 
 ## Automated verification and RED→GREEN fix
 
-The product-fix gate passed `npm test` with **46 Vitest files and 1,523 tests**, `npm run lint`, strict TypeScript plus production esbuild through `npm run build`, and `git diff --check`. This increased the pre-verification baseline from 1,522 to 1,523 tests.
+The product-fix gate passed `npm test` with **46 Vitest files and 1,526 tests**, `npm run lint`, strict TypeScript plus production esbuild through `npm run build`, and `git diff --check`. This increased the pre-verification baseline from 1,522 to 1,526 tests.
 
-The final documentation gate then passed the complete required sequence `npm ci && npm test && npm run lint && npm run build && git diff --check`: clean installation of 354 packages, **46 files and 1,523 tests**, clean ESLint, strict TypeScript plus production esbuild, and a clean diff check. `npm ci` reported **13 moderate-severity dependency advisories**; no unrelated audit fix was applied.
+The final documentation gate then passed the complete required sequence `npm ci && npm test && npm run lint && npm run build && git diff --check`: clean installation of 354 packages, **46 files and 1,526 tests**, clean ESLint, strict TypeScript plus production esbuild, and a clean diff check. `npm ci` reported **13 moderate-severity dependency advisories**; no unrelated audit fix was applied.
 
 Real-Obsidian scenario 5 confirmed that unknown fields on an already persisted schema-3 message survived the next valid mutation. A focused test was added first to `tests/conversation-session-mutations.test.ts`: it seeded `rawReaderArtifact` and `snapshot.selectedText`, called `setActiveSession`, and required exact sanitized messages.
 
@@ -111,15 +111,17 @@ Real-Obsidian scenario 5 confirmed that unknown fields on an already persisted s
 - **GREEN:** `normalizeLoadedMessage` now delegates to the existing exact-field `toPersistedMessage` serializer before usage-source normalization. The focused command passed, the three conversation/session suites passed **114 tests**, and the full gate passed **1,523 tests**, lint, build, and diff check.
 - The fix was committed separately as `1780799` before the passing loopback run. No assertion was weakened to hide the defect.
 
+The final transient-materialization review added delayed-create Stop and A→B→A regressions. **RED:** four tests failed with 11 assertion failures, including duplicate submit/New/Rename and local-only Delete. **GREEN:** one shared successful-create path now clears the exact transient ID and same-ID cache immediately, independent of UI currentness; the focused chat-view suite passed **188 tests**, and the full gate passed **1,526 tests**, lint, build, and diff check.
+
 ## Real-Obsidian loopback evidence
 
-- Date: 2026-11-12, Asia/Shanghai; final passing evidence summary generated `2026-11-12T06:09:15.495Z` after the clean-gate build.
-- Tested tree: `1780799507dc5a639bba729f6024b6f676294950`; the ignored `test_vault/emend-selection-chat-verify/verify.mjs --sessions` harness is not committed.
+- Date: 2026-11-12, Asia/Shanghai; final passing evidence summary generated `2026-11-12T06:38:15.241Z` after the clean-gate build.
+- Tested tree: `779befbedfd87384edeffe8bcc1a5dcf077d5420` plus the final transient-state fix in this branch; the ignored `test_vault/emend-selection-chat-verify/verify.mjs --sessions` harness is not committed.
 - Runtime: official Obsidian **1.15.0** AppImage under isolated Xvfb `:101`, CDP `19224`, synthetic notes only.
 - Provider: loopback OpenAI-compatible SSE mock at `127.0.0.1:18766` and loopback Fetch endpoint, with a dummy SecretStorage credential. No real account, external network, or paid call.
 - Commands: `npm run build`; `node test_vault/emend-selection-chat-verify/verify.mjs --sessions`; `sha256sum main.js`.
 - Result: **9/9 scenarios and 156/156 assertions passed**. Passing wall time about 25 seconds.
-- Root and loaded bundle SHA-256: `896ed391ce6dd223a735625e28d383022599ff14606d807add85174d1dbfeaf4`. The harness asserts byte equality before startup.
+- Root and runtime-vault loaded bundle SHA-256: `78a9d37c9e0cc82fd011e196506420d4b27f6632c41b8823168678f60a87ce9f`. The harness asserts byte equality before startup, and the paths were checked again after completion.
 
 | Scenario | Assertions | Verified behavior |
 | --- | ---: | --- |

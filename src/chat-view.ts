@@ -414,10 +414,6 @@ export class EmendChatView extends ItemView {
 				if (!this.isCurrent(identity)) {
 					return;
 				}
-				this.transientSessionIds.delete(current.id);
-				if (this.transientSessions.get(notePath)?.id === current.id) {
-					this.transientSessions.delete(notePath);
-				}
 				this.sessions = [recovered];
 				this.activeSessionId = recovered.id;
 				this.messages = recovered.messages;
@@ -474,10 +470,6 @@ export class EmendChatView extends ItemView {
 				);
 				if (!this.isCurrent(identity)) {
 					return;
-				}
-				this.transientSessionIds.delete(current.id);
-				if (this.transientSessions.get(notePath)?.id === current.id) {
-					this.transientSessions.delete(notePath);
 				}
 				const index = this.sessions.findIndex((session) => session.id === current.id);
 				this.sessions[index] = persisted;
@@ -632,7 +624,7 @@ export class EmendChatView extends ItemView {
 		session: ChatSession,
 		manualTitle?: string,
 	): Promise<ChatSession> {
-		return this.plugin.conversationStore.createSession(
+		return this.createPersistedSession(
 			notePath,
 			createChatSession({
 				id: session.id,
@@ -642,6 +634,18 @@ export class EmendChatView extends ItemView {
 				messages: session.messages,
 			}),
 		);
+	}
+
+	private async createPersistedSession(
+		notePath: string,
+		session: ChatSession,
+	): Promise<ChatSession> {
+		const persisted = await this.plugin.conversationStore.createSession(notePath, session);
+		this.transientSessionIds.delete(session.id);
+		if (this.transientSessions.get(notePath)?.id === session.id) {
+			this.transientSessions.delete(notePath);
+		}
+		return persisted;
 	}
 
 	private failSessionMutation(
@@ -1713,17 +1717,10 @@ export class EmendChatView extends ItemView {
 	): Promise<ChatSession | undefined> {
 		try {
 			if (this.transientSessionIds.has(persistence.session.id)) {
-				const persisted = await this.plugin.conversationStore.createSession(
+				return await this.createPersistedSession(
 					notePath,
 					{ ...persistence.session, messages },
 				);
-				if (this.isActiveRequest(persistence.request)) {
-					this.transientSessionIds.delete(persistence.session.id);
-					if (this.transientSessions.get(notePath)?.id === persistence.session.id) {
-						this.transientSessions.delete(notePath);
-					}
-				}
-				return persisted;
 			}
 			return await this.plugin.conversationStore.appendReadyMessage(
 				notePath,
