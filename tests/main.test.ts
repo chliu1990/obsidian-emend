@@ -1,5 +1,6 @@
 import { MarkdownView, TFile } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { resolveActiveSession } from '../src/chat-sessions';
 import { EmendChatView } from '../src/chat-view';
 import type { ConversationDataAdapter } from '../src/conversation-store';
 import { formatVaultQualifiedPath } from '../src/context';
@@ -148,7 +149,13 @@ describe('EmendPlugin workspace conversation events', () => {
 		Object.assign(view, {
 			plugin,
 			notePath: null,
-			noteLoadGeneration: 0,
+			conversationGeneration: 0,
+			sessions: [],
+			activeSessionId: null,
+			activeRequest: null,
+			isSessionMutating: false,
+			transientSessionIds: new Set<string>(),
+			transientSessions: new Map(),
 			messages: [] as ChatMessage[],
 			selectedMode: 'ask',
 			isThreadLoading: false,
@@ -156,14 +163,20 @@ describe('EmendPlugin workspace conversation events', () => {
 			activeController: null,
 			closed: false,
 			inputEl: { value: '' },
-			drafts: new Map<string, string>(),
+			drafts: new Map<string, Map<string, string>>(),
 			render: vi.fn(),
 			scheduleMessageRender: vi.fn(),
 		});
 		leaf.view = view;
 		await plugin.onload();
-		await plugin.conversationStore.save('A.md', [message('A saved', 'A.md')]);
-		await plugin.conversationStore.save('B.md', [message('B saved', 'B.md')]);
+		await plugin.conversationStore.createSession('A.md', {
+			id: 'a', title: 'A chat', titleSource: 'auto', createdAt: 1, updatedAt: 1,
+			messages: [message('A saved', 'A.md')],
+		});
+		await plugin.conversationStore.createSession('B.md', {
+			id: 'b', title: 'B chat', titleSource: 'auto', createdAt: 1, updatedAt: 1,
+			messages: [message('B saved', 'B.md')],
+		});
 		const aPath = Array.from(adapter.files.keys()).find((path) =>
 			path.includes('/A-'),
 		);
@@ -186,7 +199,7 @@ describe('EmendPlugin workspace conversation events', () => {
 			notePath: string | null;
 			isThreadLoading: boolean;
 			messages: ChatMessage[];
-			noteLoadGeneration: number;
+			conversationGeneration: number;
 			inputEl: { value: string } | null;
 		};
 
@@ -207,10 +220,10 @@ describe('EmendPlugin workspace conversation events', () => {
 		await Promise.resolve();
 		expect(state.messages.map((item) => item.id)).toEqual(['B saved']);
 
-		const generation = state.noteLoadGeneration;
+		const generation = state.conversationGeneration;
 		fileOpen?.();
 		activeLeafChange?.();
-		expect(state.noteLoadGeneration).toBe(generation);
+		expect(state.conversationGeneration).toBe(generation);
 
 		if (!state.inputEl) {
 			throw new Error('Composer missing.');
@@ -224,16 +237,19 @@ describe('EmendPlugin workspace conversation events', () => {
 			{ role: 'assistant', content: 'B saved content', mode: 'ask', origin: 'model' },
 		]);
 		expect(submission?.context.file.path).toBe('B.md');
-		const bStored = await plugin.conversationStore.load('B.md');
+		const bStored = resolveActiveSession(
+			(await plugin.conversationStore.loadConversation('B.md')).conversation,
+		)?.messages ?? [];
 		expect(bStored.map((item) => item.content)).toEqual([
 			'B saved content',
 			'B prompt',
 			'B streamed answer',
 		]);
 		expect(bStored.some((item) => item.sourcePath === 'A.md')).toBe(false);
-		expect(
-			(await plugin.conversationStore.load('A.md')).map((item) => item.id),
-		).toEqual(['A saved']);
+		const aStored = resolveActiveSession(
+			(await plugin.conversationStore.loadConversation('A.md')).conversation,
+		)?.messages ?? [];
+		expect(aStored.map((item) => item.id)).toEqual(['A saved']);
 	});
 });
 

@@ -9,6 +9,12 @@ import {
 	type EventRef,
 } from 'obsidian';
 import { AdditionalNotesControl } from './additional-notes-ui';
+import {
+	createChatSession,
+	createChatSessionId,
+	resolveActiveSession,
+	type ChatSession,
+} from './chat-sessions';
 import { EMEND_BUILD_ID } from './build-info';
 import type EmendPlugin from './main';
 import { getComposerShortcut, getDefaultShortcutLabels } from './chat-shortcuts';
@@ -87,8 +93,33 @@ type CapturedDraftTarget =
 	| { type: 'selection'; mode: 'edit'; target: SelectionEditTarget }
 	| { type: 'read-only'; mode: Exclude<Mode, 'edit'>; context: RequestContext };
 
+export interface ChatIdentity {
+	notePath: string;
+	sessionId: string;
+	generation: number;
+}
+
+export interface ActiveRequest {
+	identity: ChatIdentity;
+	controller: AbortController;
+	loadingMessage: ChatMessage;
+}
+
+interface MessagePersistence {
+	session: ChatSession;
+	message: ChatMessage;
+	titlePrompt?: string;
+}
+
 export class EmendChatView extends ItemView {
 	private messages: ChatMessage[] = [];
+	private sessions: ChatSession[] = [];
+	private activeSessionId: string | null = null;
+	private conversationGeneration = 0;
+	private activeRequest: ActiveRequest | null = null;
+	private isSessionMutating = false;
+	private readonly transientSessionIds = new Set<string>();
+	private readonly transientSessions = new Map<string, ChatSession>();
 	private messagesEl: HTMLElement | null = null;
 	private followLatestMessages = true;
 	private responseStartMessageId: string | null = null;
@@ -111,7 +142,6 @@ export class EmendChatView extends ItemView {
 	private messageBodyEls = new Map<string, HTMLElement>();
 	private closed = false;
 	private notePath: string | null = null;
-	private noteLoadGeneration = 0;
 	private additionalNotesControl: AdditionalNotesControl | null = null;
 	private capacityDisplay: ContextCapacityDisplay | null = null;
 	private capacityRefreshTimer: number | null = null;
@@ -122,7 +152,7 @@ export class EmendChatView extends ItemView {
 		button: HTMLButtonElement;
 	}> = [];
 	private draftCapacityBlocked = false;
-	private readonly drafts = new Map<string, string>();
+	private readonly drafts = new Map<string, Map<string, string>>();
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -154,15 +184,15 @@ export class EmendChatView extends ItemView {
 
 	protected async onClose() {
 		this.closed = true;
+		this.conversationGeneration++;
 		this.clearCapacityRefreshTimer();
 		this.unsubscribeAdditionalNotes?.();
 		this.unsubscribeAdditionalNotes = null;
 		this.isThreadLoading = false;
-		this.noteLoadGeneration++;
+		this.isSessionMutating = false;
 		this.notePath = null;
-		this.activeController?.abort();
-		this.webReviewModal?.close();
-		this.webReviewModal = null;
+		this.activeSessionId = null;
+		this.abortActiveRequest();
 		this.renderGeneration++;
 		this.pendingMarkdownRenders = 0;
 		this.pendingScrollRestore = null;
@@ -264,17 +294,17 @@ export class EmendChatView extends ItemView {
 			return;
 		}
 
-		if (this.notePath && this.inputEl) {
-			this.drafts.set(this.notePath, this.inputEl.value);
-		}
+		this.saveCurrentDraft();
+		const generation = ++this.conversationGeneration;
 		this.notePath = notePath;
+		this.activeSessionId = null;
+		this.sessions = [];
+		this.messages = [];
+		this.isSessionMutating = false;
+		this.abortActiveRequest();
 		this.editTargetChoice = 'auto';
 		this.followLatestMessages = true;
-		const generation = ++this.noteLoadGeneration;
-		if (this.isSending) {
-			this.activeController?.abort();
-		}
-		this.messages = [];
+		this.responseStartMessageId = null;
 		this.isThreadLoading = notePath !== null;
 		this.render();
 		if (!notePath) {
@@ -282,25 +312,144 @@ export class EmendChatView extends ItemView {
 		}
 
 		try {
-			const messages = await this.plugin.conversationStore.load(notePath);
-			if (
-				this.closed ||
-				generation !== this.noteLoadGeneration ||
-				this.plugin.getActiveNotePath() !== notePath
-			) {
+			const loaded = await this.plugin.conversationStore.loadConversation(notePath);
+			if (!this.isCurrentNoteLoad(notePath, generation)) {
 				return;
 			}
-			this.messages = messages;
+			const active = resolveActiveSession(loaded.conversation);
+			if (active) {
+				this.sessions = loaded.conversation.sessions;
+				this.activeSessionId = active.id;
+				this.messages = active.messages;
+			} else {
+				const transient = this.getTransientSession(notePath);
+				this.sessions = [transient];
+				this.activeSessionId = transient.id;
+				this.messages = transient.messages;
+			}
 		} catch (error) {
-			if (generation === this.noteLoadGeneration && !this.closed) {
+			if (this.isCurrentNoteLoad(notePath, generation)) {
 				new Notice(`Emend: Could not load this chat. ${getErrorMessage(error)}`);
 			}
 		} finally {
-			if (generation === this.noteLoadGeneration && !this.closed) {
+			if (this.isCurrentNoteLoad(notePath, generation)) {
 				this.isThreadLoading = false;
 				this.render();
 			}
 		}
+	}
+
+	async switchActiveSession(sessionId: string): Promise<void> {
+		const notePath = this.notePath;
+		const currentSessionId = this.activeSessionId;
+		if (
+			!notePath ||
+			!currentSessionId ||
+			sessionId === currentSessionId ||
+			this.isThreadLoading ||
+			this.isSessionMutating
+		) {
+			return;
+		}
+		const target = this.sessions.find((session) => session.id === sessionId);
+		if (!target) {
+			return;
+		}
+		const identity: ChatIdentity = {
+			notePath,
+			sessionId: currentSessionId,
+			generation: this.conversationGeneration,
+		};
+		this.saveCurrentDraft();
+		this.isSessionMutating = true;
+		this.render();
+		try {
+			await this.plugin.conversationStore.setActiveSession(notePath, sessionId);
+			if (!this.isCurrent(identity)) {
+				return;
+			}
+			this.conversationGeneration++;
+			this.abortActiveRequest();
+			this.activeSessionId = target.id;
+			this.messages = target.messages;
+			this.followLatestMessages = true;
+			this.responseStartMessageId = null;
+			this.isSessionMutating = false;
+			this.render();
+		} catch (error) {
+			if (!this.isCurrent(identity)) {
+				return;
+			}
+			this.isSessionMutating = false;
+			new Notice(`Emend: Could not switch chat session. ${getErrorMessage(error)}`);
+			this.render();
+		}
+	}
+
+	private isCurrentNoteLoad(notePath: string, generation: number) {
+		return !this.closed &&
+			this.notePath === notePath &&
+			this.conversationGeneration === generation &&
+			this.plugin.getActiveNotePath() === notePath;
+	}
+
+	private isCurrent(identity: ChatIdentity) {
+		return !this.closed &&
+			this.notePath === identity.notePath &&
+			this.activeSessionId === identity.sessionId &&
+			this.conversationGeneration === identity.generation;
+	}
+
+	private isActiveRequest(request: ActiveRequest) {
+		return this.activeRequest === request && this.isCurrent(request.identity);
+	}
+
+	private scheduleRequestRender(request: ActiveRequest) {
+		if (this.isActiveRequest(request)) {
+			this.scheduleMessageRender(request.loadingMessage);
+		}
+	}
+
+	private abortActiveRequest() {
+		const controller = this.activeRequest?.controller ?? this.activeController;
+		this.activeRequest = null;
+		this.activeController = null;
+		this.isSending = false;
+		controller?.abort();
+		this.webReviewModal?.close();
+		this.webReviewModal = null;
+	}
+
+	private getTransientSession(notePath: string) {
+		const cached = this.transientSessions.get(notePath);
+		if (cached) {
+			this.transientSessionIds.add(cached.id);
+			return cached;
+		}
+		const session = createChatSession({
+			id: createChatSessionId(),
+			now: Date.now(),
+		});
+		this.transientSessions.set(notePath, session);
+		this.transientSessionIds.add(session.id);
+		return session;
+	}
+
+	private saveCurrentDraft() {
+		if (this.notePath && this.activeSessionId && this.inputEl) {
+			let noteDrafts = this.drafts.get(this.notePath);
+			if (!noteDrafts) {
+				noteDrafts = new Map<string, string>();
+				this.drafts.set(this.notePath, noteDrafts);
+			}
+			noteDrafts.set(this.activeSessionId, this.inputEl.value);
+		}
+	}
+
+	private currentDraft() {
+		return this.notePath && this.activeSessionId
+			? this.drafts.get(this.notePath)?.get(this.activeSessionId) ?? ''
+			: '';
 	}
 
 	private refreshEditTargetControl() {
@@ -313,7 +462,7 @@ export class EmendChatView extends ItemView {
 		);
 		this.displayedEditTarget = editTarget;
 		this.editTargetSelectEl.value = editTarget;
-		this.editTargetSelectEl.disabled = this.isSending || this.isThreadLoading;
+		this.editTargetSelectEl.disabled = this.isSending || this.isThreadLoading || this.isSessionMutating;
 	}
 
 	private refreshDraftEstimate(prompt = this.inputEl?.value ?? '') {
@@ -402,9 +551,10 @@ export class EmendChatView extends ItemView {
 	) {
 		if (this.sendButtonEl && !this.isSending) {
 			this.sendButtonEl.disabled = this.isThreadLoading ||
+				this.isSessionMutating ||
 				this.draftCapacityBlocked;
 		}
-		const quickActionsDisabled = areQuickActionsDisabled({
+		const quickActionsDisabled = this.isSessionMutating || areQuickActionsDisabled({
 			notePath: this.notePath,
 			isSending: this.isSending,
 			isThreadLoading: this.isThreadLoading,
@@ -509,7 +659,7 @@ export class EmendChatView extends ItemView {
 			});
 			setIcon(button, mode.icon);
 			button.createSpan({ text: mode.label });
-			button.disabled = this.isSending;
+			button.disabled = this.isSending || this.isSessionMutating;
 			button.addEventListener('click', () => {
 				this.setMode(mode.id);
 			});
@@ -532,7 +682,7 @@ export class EmendChatView extends ItemView {
 		}
 
 		const quickActionsEl = contentEl.createDiv('emend-chat-quick-actions');
-		const quickActionsDisabled = areQuickActionsDisabled({
+		const quickActionsDisabled = this.isSessionMutating || areQuickActionsDisabled({
 			notePath: this.notePath,
 			isSending: this.isSending,
 			isThreadLoading: this.isThreadLoading,
@@ -557,7 +707,7 @@ export class EmendChatView extends ItemView {
 		);
 		this.additionalNotesControl.render(
 			contentEl,
-			this.isSending || this.isThreadLoading,
+			this.isSending || this.isThreadLoading || this.isSessionMutating,
 		);
 
 		const composerEl = contentEl.createDiv('emend-chat-composer');
@@ -568,10 +718,8 @@ export class EmendChatView extends ItemView {
 				rows: '4',
 			},
 		});
-		this.inputEl.value = this.notePath
-			? this.drafts.get(this.notePath) ?? ''
-			: '';
-		this.inputEl.disabled = this.isSending || this.isThreadLoading;
+		this.inputEl.value = this.currentDraft();
+		this.inputEl.disabled = this.isSending || this.isThreadLoading || this.isSessionMutating;
 		this.inputEl.addEventListener('keydown', (event) => {
 			this.handleComposerKeydown(event);
 		});
@@ -594,7 +742,7 @@ export class EmendChatView extends ItemView {
 			webSelectEl.createEl('option', { text: label, attr: { value } });
 		}
 		webSelectEl.value = this.webSearchMode ?? 'off';
-		webSelectEl.disabled = this.isSending || this.isThreadLoading || this.selectedMode === 'edit';
+		webSelectEl.disabled = this.isSending || this.isThreadLoading || this.isSessionMutating || this.selectedMode === 'edit';
 		webSelectEl.addEventListener('change', () => {
 			const value = webSelectEl.value;
 			if (value !== 'off' && value !== 'review' && value !== 'auto') {
@@ -901,7 +1049,7 @@ export class EmendChatView extends ItemView {
 
 	private handleComposerKeydown(event: KeyboardEvent) {
 		const shortcut = getComposerShortcut(event, {
-			isSending: this.isSending,
+			isSending: this.isSending || this.isSessionMutating,
 			isThreadLoading: this.isThreadLoading,
 		});
 		if (shortcut === 'send') {
@@ -911,7 +1059,7 @@ export class EmendChatView extends ItemView {
 	}
 
 	private async submitQuickAction(action: QuickAction) {
-		if (areQuickActionsDisabled({
+		if (this.isSessionMutating || areQuickActionsDisabled({
 			notePath: this.notePath,
 			isSending: this.isSending,
 			isThreadLoading: this.isThreadLoading,
@@ -932,7 +1080,13 @@ export class EmendChatView extends ItemView {
 		prompt = this.inputEl?.value.trim() ?? '',
 		options?: { fromQuickAction?: boolean },
 	) {
-		if (!prompt || this.isSending || this.isThreadLoading) {
+		if (!prompt || this.isSending || this.isThreadLoading || this.isSessionMutating) {
+			return;
+		}
+		const notePath = this.notePath;
+		const sessionId = this.activeSessionId;
+		const session = this.sessions.find((item) => item.id === sessionId);
+		if (!notePath || !sessionId || !session || this.messages !== session.messages) {
 			return;
 		}
 
@@ -976,8 +1130,12 @@ export class EmendChatView extends ItemView {
 		const sourcePath = capturedTarget.type === 'selection'
 			? capturedTarget.target.snapshot.file.path
 			: capturedTarget.context.file.path;
+		if (sourcePath !== notePath) {
+			new Notice('Emend: The active note changed before the request started. Try again.');
+			return;
+		}
 		const additionalNotePaths =
-			this.plugin.additionalNotesStore?.list(sourcePath) ?? [];
+			this.plugin.additionalNotesStore?.list(notePath) ?? [];
 		const capacityBlockMessage = formatDraftCapacityBlockMessage(
 			buildCapacityForTarget(
 				this.plugin.settings,
@@ -1002,7 +1160,22 @@ export class EmendChatView extends ItemView {
 			}
 			return;
 		}
-		const noteMessages = this.messages;
+		const identity: ChatIdentity = {
+			notePath,
+			sessionId,
+			generation: this.conversationGeneration,
+		};
+		const userMessage: ChatMessage = {
+			id: createMessageId(),
+			role: 'user',
+			content: prompt,
+			reasoning: '',
+			mode,
+			sourcePath,
+			status: 'ready',
+			timestamp: Date.now(),
+			...(webSearchMode !== 'off' ? { webSearchMode } : {}),
+		};
 		const loadingMessage: ChatMessage = {
 			id: createMessageId(),
 			role: 'assistant',
@@ -1014,20 +1187,12 @@ export class EmendChatView extends ItemView {
 			timestamp: Date.now(),
 		};
 		const controller = new AbortController();
+		const request: ActiveRequest = { identity, controller, loadingMessage };
+		let finalSaveAttempted = false;
 
-		this.drafts?.delete(sourcePath);
-		this.messages.push({
-			id: createMessageId(),
-			role: 'user',
-			content: prompt,
-			reasoning: '',
-			mode,
-			sourcePath,
-			status: 'ready',
-			timestamp: Date.now(),
-			...(webSearchMode !== 'off' ? { webSearchMode } : {}),
-		});
-		this.messages.push(loadingMessage);
+		this.drafts.get(notePath)?.delete(sessionId);
+		session.messages.push(userMessage, loadingMessage);
+		this.activeRequest = request;
 		this.activeController = controller;
 		this.isSending = true;
 		this.responseStartMessageId = null;
@@ -1035,20 +1200,22 @@ export class EmendChatView extends ItemView {
 		this.render();
 
 		try {
-			await this.persistMessages(
-				sourcePath,
-				noteMessages.filter((message) => message.status === 'ready'),
+			const persistedUser = await this.persistMessages(
+				notePath,
+				session.messages.filter((message) => message.status === 'ready'),
+				{ session, message: userMessage },
 			);
+			this.applyPersistedMetadata(session, persistedUser);
 			controller.signal.throwIfAborted();
 			if (capturedTarget.type !== 'read-only') {
 				const callbacks = {
 					onReasoning: (text: string) => {
 						loadingMessage.reasoning += text;
-						this.scheduleMessageRender(loadingMessage);
+						this.scheduleRequestRender(request);
 					},
 					onRetry: () => {
 						loadingMessage.reasoning = '';
-						this.scheduleMessageRender(loadingMessage);
+						this.scheduleRequestRender(request);
 					},
 				};
 				const result = capturedTarget.type === 'selection'
@@ -1099,11 +1266,11 @@ export class EmendChatView extends ItemView {
 					callbacks: {
 						onContent: (text) => {
 							loadingMessage.content += text;
-							this.scheduleMessageRender(loadingMessage);
+							this.scheduleRequestRender(request);
 						},
 						onReasoning: (text) => {
 							loadingMessage.reasoning += text;
-							this.scheduleMessageRender(loadingMessage);
+							this.scheduleRequestRender(request);
 						},
 					},
 					signal: controller.signal,
@@ -1117,7 +1284,7 @@ export class EmendChatView extends ItemView {
 									this.reviewWebCalls(calls, controller.signal),
 								onActivity: (activity: WebSearchActivity) => {
 									loadingMessage.webActivity = activity.label;
-									this.scheduleMessageRender(loadingMessage);
+									this.scheduleRequestRender(request);
 								},
 							},
 						}
@@ -1145,11 +1312,22 @@ export class EmendChatView extends ItemView {
 				}
 			}
 			controller.signal.throwIfAborted();
-			loadingMessage.status = 'ready';
-			await this.persistMessages(
-				sourcePath,
-				noteMessages.filter((message) => message.status === 'ready'),
+			const readyAssistant: ChatMessage = { ...loadingMessage, status: 'ready' };
+			finalSaveAttempted = true;
+			const persistedAssistant = await this.persistMessages(
+				notePath,
+				[
+					...session.messages.filter((message) => message.status === 'ready'),
+					readyAssistant,
+				],
+				{
+					session,
+					message: readyAssistant,
+					titlePrompt: userMessage.content,
+				},
 			);
+			loadingMessage.status = 'ready';
+			this.applyPersistedMetadata(session, persistedAssistant);
 		} catch (error) {
 			if (controller.signal.aborted || isAbortError(error)) {
 				loadingMessage.status = 'stopped';
@@ -1157,19 +1335,28 @@ export class EmendChatView extends ItemView {
 					loadingMessage.content = 'Response stopped.';
 				}
 			} else {
-				loadingMessage.content = getErrorMessage(error);
+				if (!finalSaveAttempted) {
+					loadingMessage.content = getErrorMessage(error);
+				}
 				loadingMessage.status = 'error';
-				new Notice(`Emend: ${loadingMessage.content}`);
+				if (this.isActiveRequest(request)) {
+					new Notice(`Emend: ${finalSaveAttempted ? getErrorMessage(error) : loadingMessage.content}`);
+				}
 			}
 		} finally {
-			this.activeController = null;
-			this.isSending = false;
-			if (!this.closed) {
-				if (loadingMessage.status === 'ready') {
-					this.responseStartMessageId = loadingMessage.id;
-					this.followLatestMessages = false;
+			if (this.activeRequest === request) {
+				this.activeRequest = null;
+				if (this.activeController === controller) {
+					this.activeController = null;
 				}
-				this.render();
+				this.isSending = false;
+				if (this.isCurrent(identity)) {
+					if (loadingMessage.status === 'ready') {
+						this.responseStartMessageId = loadingMessage.id;
+						this.followLatestMessages = false;
+					}
+					this.render();
+				}
 			}
 		}
 	}
@@ -1179,18 +1366,30 @@ export class EmendChatView extends ItemView {
 		signal: AbortSignal,
 	): Promise<readonly WebToolCall[]> {
 		return new Promise((resolve, reject) => {
+			if (signal.aborted || this.activeRequest?.controller.signal !== signal) {
+				reject(new Error('Response stopped.'));
+				return;
+			}
 			const modal = new WebSearchModal(
 				this.app,
 				calls,
 				(value) => {
-					this.webReviewModal = null;
+					if (this.webReviewModal === modal) {
+						this.webReviewModal = null;
+					}
 					resolve(value);
 				},
 				(error: unknown) => {
-					this.webReviewModal = null;
+					if (this.webReviewModal === modal) {
+						this.webReviewModal = null;
+					}
 					reject(error instanceof Error ? error : new Error(String(error)));
 				},
-				() => this.activeController?.abort(),
+				() => {
+					if (this.activeRequest?.controller.signal === signal) {
+						this.activeRequest.controller.abort();
+					}
+				},
 			);
 			this.webReviewModal = modal;
 			signal.addEventListener('abort', () => {
@@ -1200,12 +1399,47 @@ export class EmendChatView extends ItemView {
 		});
 	}
 
-	private async persistMessages(notePath: string, messages: ChatMessage[]) {
+	private async persistMessages(
+		notePath: string,
+		messages: ChatMessage[],
+		persistence: MessagePersistence,
+	): Promise<ChatSession | undefined> {
 		try {
-			await this.plugin.conversationStore.save(notePath, messages);
+			if (this.transientSessionIds.has(persistence.session.id)) {
+				const persisted = await this.plugin.conversationStore.createSession(
+					notePath,
+					{ ...persistence.session, messages },
+				);
+				this.transientSessionIds.delete(persistence.session.id);
+				if (this.transientSessions.get(notePath)?.id === persistence.session.id) {
+					this.transientSessions.delete(notePath);
+				}
+				return persisted;
+			}
+			return await this.plugin.conversationStore.appendReadyMessage(
+				notePath,
+				persistence.session.id,
+				persistence.message,
+				persistence.titlePrompt === undefined
+					? undefined
+					: { titlePrompt: persistence.titlePrompt },
+			);
 		} catch (error) {
-			new Notice(`Emend: Could not save this chat. ${getErrorMessage(error)}`);
+			throw new Error(`Could not save this chat. ${getErrorMessage(error)}`);
 		}
+	}
+
+	private applyPersistedMetadata(
+		session: ChatSession,
+		persisted: ChatSession | undefined,
+	) {
+		if (!persisted) {
+			return;
+		}
+		session.title = persisted.title;
+		session.titleSource = persisted.titleSource;
+		session.createdAt = persisted.createdAt;
+		session.updatedAt = persisted.updatedAt;
 	}
 
 	private toProviderHistory(): ProviderHistoryMessage[] {

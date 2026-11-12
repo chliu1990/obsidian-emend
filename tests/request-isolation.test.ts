@@ -285,14 +285,28 @@ describe('sequential full-note edits', () => {
 			},
 		);
 		const savedSnapshots: ChatMessage[][] = [];
+		const messages: ChatMessage[] = [];
+		const session = {
+			id: 'session', title: 'New chat', titleSource: 'auto' as const,
+			createdAt: 1, updatedAt: 1, messages,
+		};
 		const view = Object.create(EmendChatView.prototype) as EmendChatView;
 		Object.assign(view, {
 			plugin: fixture.plugin,
 			inputEl: { value: '' },
 			isSending: false,
 			isThreadLoading: false,
+			isSessionMutating: false,
 			selectedMode: 'edit',
-			messages: [] as ChatMessage[],
+			notePath: 'Note.md',
+			conversationGeneration: 0,
+			sessions: [session],
+			activeSessionId: session.id,
+			activeRequest: null,
+			transientSessionIds: new Set<string>(),
+			transientSessions: new Map(),
+			drafts: new Map<string, Map<string, string>>(),
+			messages,
 			activeController: null,
 			closed: false,
 			render: vi.fn(),
@@ -493,15 +507,29 @@ describe('shared per-note request isolation', () => {
 		const pendingResponse = holdResponse(JSON.stringify([
 			{ type: 'replace', target: 'beta', replacement: 'delta' },
 		]));
+		const messages: ChatMessage[] = [];
+		const session = {
+			id: 'session', title: 'New chat', titleSource: 'auto' as const,
+			createdAt: 1, updatedAt: 1, messages,
+		};
 		const view = Object.create(EmendChatView.prototype) as EmendChatView;
 		Object.assign(view, {
 			plugin: fixture.plugin,
 			inputEl: { value: 'Change beta.' },
 			isSending: false,
 			isThreadLoading: false,
+			isSessionMutating: false,
 			selectedMode: 'edit',
 			displayedEditTarget: 'selection',
-			messages: [] as ChatMessage[],
+			notePath: 'Note.md',
+			conversationGeneration: 0,
+			sessions: [session],
+			activeSessionId: session.id,
+			activeRequest: null,
+			transientSessionIds: new Set<string>(),
+			transientSessions: new Map(),
+			drafts: new Map<string, Map<string, string>>(),
+			messages,
 			activeController: null,
 			closed: false,
 			render: vi.fn(),
@@ -529,6 +557,71 @@ describe('shared per-note request isolation', () => {
 		expect(fixture.getText('Note.md')).toBe('Alpha {~~beta~>delta~~}.');
 		expect(selection.editor.replaceRange).toHaveBeenCalledOnce();
 		expect(fixture.writes).toEqual([]);
+	});
+
+	it('keeps the same-note pending lock across a session switch until the aborted request settles', async () => {
+		const fixture = makePluginFixture({ 'Note.md': 'Alpha beta.' });
+		const first = {
+			id: 'first', title: 'First', titleSource: 'auto' as const,
+			createdAt: 1, updatedAt: 1, messages: [] as ChatMessage[],
+		};
+		const second = { ...first, id: 'second', title: 'Second', messages: [] as ChatMessage[] };
+		Object.assign(fixture.plugin, {
+			conversationStore: {
+				appendReadyMessage: vi.fn(async (_notePath, sessionId, appended) => {
+					const session = sessionId === 'first' ? first : second;
+					return { ...session, messages: [...session.messages, appended] };
+				}),
+				setActiveSession: vi.fn(async () => undefined),
+			},
+		});
+		const pendingResponse = holdResponse(JSON.stringify([
+			{ type: 'replace', target: 'beta', replacement: 'delta' },
+		]));
+		const view = Object.create(EmendChatView.prototype) as EmendChatView;
+		Object.assign(view, {
+			plugin: fixture.plugin,
+			inputEl: { value: 'Edit note' },
+			isSending: false,
+			isThreadLoading: false,
+			isSessionMutating: false,
+			selectedMode: 'edit',
+			displayedEditTarget: 'full-note',
+			notePath: 'Note.md',
+			conversationGeneration: 0,
+			sessions: [first, second],
+			activeSessionId: 'first',
+			activeRequest: null,
+			transientSessionIds: new Set<string>(),
+			transientSessions: new Map(),
+			drafts: new Map<string, Map<string, string>>(),
+			messages: first.messages,
+			activeController: null,
+			closed: false,
+			webReviewModal: null,
+			render: vi.fn(),
+			scheduleMessageRender: vi.fn(),
+		});
+		const state = view as unknown as {
+			submitPrompt(): Promise<void>;
+			switchActiveSession(sessionId: string): Promise<void>;
+		};
+		const pending = state.submitPrompt();
+		await pendingResponse.started;
+
+		await state.switchActiveSession('second');
+		await expect(
+			fixture.plugin.requestChatCompletion(makeReadOnlySubmission(fixture, 'Note.md')),
+		).rejects.toEqual(new Error(PENDING_ERROR));
+		expect(requestMock).toHaveBeenCalledOnce();
+
+		pendingResponse.finish();
+		await pending;
+		expect(view as unknown as { activeSessionId: string }).toHaveProperty('activeSessionId', 'second');
+		respondWith('Retry answer');
+		await expect(
+			fixture.plugin.requestChatCompletion(makeReadOnlySubmission(fixture, 'Note.md')),
+		).resolves.toMatchObject({ content: 'Retry answer' });
 	});
 
 	it('allows independent notes and never applies an old result after a target switch', async () => {

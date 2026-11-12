@@ -2,10 +2,17 @@ import { readFileSync } from 'node:fs';
 import { MarkdownRenderer, Notice, Scope, TFile } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AdditionalNotesStore } from '../src/additional-notes-store';
+import { deriveAutomaticTitle, type ChatSession } from '../src/chat-sessions';
 import type { ShortcutEvent } from '../src/chat-shortcuts';
-import { EmendChatView, formatChatMessageForCopy, getUnreadPageCount } from '../src/chat-view';
+import {
+	EmendChatView,
+	formatChatMessageForCopy,
+	getUnreadPageCount,
+	type ActiveRequest,
+} from '../src/chat-view';
 import { buildDraftCapacityEstimate } from '../src/context-capacity-ui';
 import { formatVaultQualifiedPath } from '../src/context';
+import type { LoadedChatConversation } from '../src/conversation-store';
 import { normalizeContextLimit } from '../src/settings';
 import { getEditStrategy } from '../src/edit-strategy';
 import type { EditSummaryItem } from '../src/edit-strategy';
@@ -21,6 +28,7 @@ import type {
 } from '../src/provider-stream';
 import {
 	EditRequestCoordinator,
+	type ChatStreamResult,
 	type EditSubmission,
 	type ReadOnlySubmission,
 } from '../src/request-coordinator';
@@ -91,9 +99,23 @@ describe('EmendChatView header styles', () => {
 	});
 });
 
+// eslint-disable-next-line @typescript-eslint/unbound-method -- The test wrapper supplies an explicit receiver.
+const productionSubmitPrompt = (EmendChatView.prototype as unknown as {
+	submitPrompt(
+		this: unknown,
+		prompt?: string,
+		options?: { fromQuickAction?: boolean },
+	): Promise<void>;
+}).submitPrompt;
+// eslint-disable-next-line @typescript-eslint/unbound-method -- The test wrapper supplies an explicit receiver.
+const productionRefreshTargetNote = (EmendChatView.prototype as unknown as {
+	refreshTargetNote(this: unknown): Promise<void>;
+}).refreshTargetNote;
+
 const viewPrototype = EmendChatView.prototype as unknown as {
 	onOpen(this: unknown): Promise<void>;
 	refreshTargetNote(this: unknown): Promise<void>;
+	switchActiveSession(this: unknown, sessionId: string): Promise<void>;
 	submitPrompt(this: unknown): Promise<void>;
 	handleComposerKeydown(
 		this: unknown,
@@ -131,11 +153,98 @@ function message(id: string, sourcePath: string): ChatMessage {
 
 function deferred<T>() {
 	let resolve!: (value: T) => void;
-	const promise = new Promise<T>((resolvePromise) => {
+	let reject!: (reason: unknown) => void;
+	const promise = new Promise<T>((resolvePromise, rejectPromise) => {
 		resolve = resolvePromise;
+		reject = rejectPromise;
 	});
-	return { promise, resolve };
+	return { promise, resolve, reject };
 }
+
+type SessionChatResult = Pick<ChatStreamResult, 'content' | 'reasoning'> &
+	Partial<ChatStreamResult>;
+
+function makeSession(id: string, messages: ChatMessage[] = []): ChatSession {
+	return {
+		id,
+		title: 'New chat',
+		titleSource: 'auto',
+		createdAt: 1,
+		updatedAt: 1,
+		messages,
+	};
+}
+
+function loadedConversation(
+	sessions: ChatSession[],
+	activeSessionId: string | null = sessions[0]?.id ?? null,
+	kind: LoadedChatConversation['kind'] = 'schema3',
+): LoadedChatConversation {
+	return {
+		kind,
+		conversation: { version: 3, lastActiveSessionId: activeSessionId, sessions },
+	};
+}
+
+function prepareSubmissionFixture(target: unknown) {
+	Object.setPrototypeOf(target, EmendChatView.prototype);
+	const context = target as {
+		notePath?: string | null;
+		sessions?: ChatSession[];
+		activeSessionId?: string | null;
+		conversationGeneration?: number;
+		activeRequest?: null;
+		isSessionMutating?: boolean;
+		transientSessionIds?: Set<string>;
+		transientSessions?: Map<string, ChatSession>;
+		messages: ChatMessage[];
+		drafts?: Map<string, Map<string, string>>;
+	};
+	context.notePath ??= 'Note.md';
+	context.conversationGeneration ??= 0;
+	context.activeRequest ??= null;
+	context.isSessionMutating ??= false;
+	if (!context.sessions) {
+		const session = makeSession(context.activeSessionId ?? 'session-1', context.messages);
+		context.sessions = [session];
+		context.activeSessionId = session.id;
+		context.transientSessionIds = new Set([session.id]);
+		context.transientSessions = new Map([[context.notePath, session]]);
+	}
+	context.drafts ??= new Map();
+	return target;
+}
+
+viewPrototype.submitPrompt = function (
+	this: unknown,
+	prompt?: string,
+	options?: { fromQuickAction?: boolean },
+) {
+	return productionSubmitPrompt.call(prepareSubmissionFixture(this), prompt, options);
+};
+
+viewPrototype.refreshTargetNote = function (this: unknown) {
+	Object.setPrototypeOf(this, EmendChatView.prototype);
+	const context = this as {
+		conversationGeneration?: number;
+		sessions?: ChatSession[];
+		activeSessionId?: string | null;
+		activeRequest?: null;
+		isSessionMutating?: boolean;
+		transientSessionIds?: Set<string>;
+		transientSessions?: Map<string, ChatSession>;
+		drafts?: Map<string, Map<string, string>>;
+	};
+	context.conversationGeneration ??= 0;
+	context.sessions ??= [];
+	context.activeSessionId ??= null;
+	context.activeRequest ??= null;
+	context.isSessionMutating ??= false;
+	context.transientSessionIds ??= new Set();
+	context.transientSessions ??= new Map();
+	context.drafts ??= new Map();
+	return productionRefreshTargetNote.call(this);
+};
 
 function createEditTargetView(options: {
 	activePath?: string;
@@ -146,8 +255,29 @@ function createEditTargetView(options: {
 	const contentEl = new FakeElement();
 	const additionalNotesStore = new AdditionalNotesStore();
 	const read = vi.fn();
-	const requestChatCompletion = vi.fn();
-	const captureChatContext = vi.fn();
+	const requestChatCompletion = vi.fn<
+		(submission: ReadOnlySubmission) => Promise<SessionChatResult>
+	>();
+	const captureChatContext = vi.fn(() => ({
+		file: { path: activePath },
+		sourceText: '',
+		selection: { from: 0, to: 0 },
+		noteLabel: activePath,
+		markdown: '',
+	}));
+	const conversationStore = {
+		loadConversation: vi.fn<(notePath: string) => Promise<LoadedChatConversation>>(
+			async () => loadedConversation([]),
+		),
+		createSession: vi.fn(async (_notePath: string, session: ChatSession) => session),
+		appendReadyMessage: vi.fn<(
+			notePath: string,
+			sessionId: string,
+			message: ChatMessage,
+			options?: { titlePrompt?: string; now?: number },
+		) => Promise<ChatSession>>(),
+		setActiveSession: vi.fn(async () => undefined),
+	};
 	const context = {
 		app: { vault: { adapter: { read } } },
 		contentEl,
@@ -156,11 +286,12 @@ function createEditTargetView(options: {
 			getActiveNoteLabel: () => activePath,
 			hasUsableSelection: () => Boolean(selectedText.trim()),
 			captureChatContext,
-			conversationStore: { load: vi.fn(async () => []) },
+			conversationStore,
 			additionalNotesStore,
 			requestChatCompletion,
 			settings: {
 				activeProvider: 'custom',
+				historyMessageLimit: 8,
 				providers: {
 					custom: {
 						name: 'Local',
@@ -173,20 +304,27 @@ function createEditTargetView(options: {
 			},
 		},
 		notePath: null as string | null,
-		noteLoadGeneration: 0,
+		conversationGeneration: 0,
+		sessions: [] as ChatSession[],
+		activeSessionId: null as string | null,
+		activeRequest: null,
+		isSessionMutating: false,
+		transientSessionIds: new Set<string>(),
+		transientSessions: new Map<string, ChatSession>(),
 		messages: [] as ChatMessage[],
 		selectedMode: 'ask' as Mode,
 		webSearchMode: 'off' as const,
 		isThreadLoading: false,
 		isSending: false,
-		activeController: null,
+		activeController: null as AbortController | null,
 		closed: false,
 		inputEl: null as FakeElement | null,
-		drafts: new Map<string, string>(),
+		drafts: new Map<string, Map<string, string>>(),
 		additionalNotesControl: null,
 		capacityRefreshTimer: null as number | null,
 		pendingMessages: new Set<ChatMessage>(),
 		messageBodyEls: new Map<string, HTMLElement>(),
+		scheduleMessageRender: vi.fn(),
 		activeModelEl: null,
 		editTargetChoice: 'auto' as 'auto' | 'full-note' | 'selection',
 		displayedEditTarget: 'full-note' as 'full-note' | 'selection',
@@ -210,6 +348,7 @@ function createEditTargetView(options: {
 		read,
 		requestChatCompletion,
 		captureChatContext,
+		conversationStore,
 		setActivePath: (path: string) => {
 			activePath = path;
 		},
@@ -274,7 +413,10 @@ describe('EmendChatView edit target control', () => {
 			const select = findEditTargetSelect(contentEl);
 			if (context.inputEl) {
 				context.inputEl.value = 'Keep this draft';
-				context.drafts.set('A.md', context.inputEl.value);
+				context.drafts.set('A.md', new Map([[
+					context.activeSessionId ?? '',
+					context.inputEl.value,
+				]]));
 			}
 
 			if (select) {
@@ -355,7 +497,7 @@ describe('EmendChatView edit target control', () => {
 		expect(context.inputEl).toBe(composer);
 		expect(context.inputEl?.value).toBe('Unsubmitted draft');
 		expect(render).not.toHaveBeenCalled();
-		expect(context.plugin.conversationStore.load).toHaveBeenCalledOnce();
+		expect(context.plugin.conversationStore.loadConversation).toHaveBeenCalledOnce();
 	});
 
 	it('keeps the control and quick actions available outside Edit before submission', async () => {
@@ -645,19 +787,19 @@ describe('EmendChatView provider history', () => {
 describe('EmendChatView conversation loading', () => {
 	it('applies only the latest note load during rapid note switches', async () => {
 		let activePath = 'First.md';
-		const first = deferred<ChatMessage[]>();
-		const second = deferred<ChatMessage[]>();
+		const first = deferred<LoadedChatConversation>();
+		const second = deferred<LoadedChatConversation>();
 		const context = {
 			plugin: {
 				getActiveNotePath: () => activePath,
 				conversationStore: {
-					load: vi.fn((path: string) =>
+					loadConversation: vi.fn((path: string) =>
 						path === 'First.md' ? first.promise : second.promise,
 					),
 				},
 			},
 			notePath: null,
-			noteLoadGeneration: 0,
+			conversationGeneration: 0,
 			messages: [] as ChatMessage[],
 			selectedMode: 'brainstorm',
 			isThreadLoading: false,
@@ -670,9 +812,13 @@ describe('EmendChatView conversation loading', () => {
 		const firstLoad = viewPrototype.refreshTargetNote.call(context);
 		activePath = 'Second.md';
 		const secondLoad = viewPrototype.refreshTargetNote.call(context);
-		second.resolve([message('second', 'Second.md')]);
+		second.resolve(loadedConversation([
+			makeSession('second-session', [message('second', 'Second.md')]),
+		]));
 		await secondLoad;
-		first.resolve([message('first', 'First.md')]);
+		first.resolve(loadedConversation([
+			makeSession('first-session', [message('first', 'First.md')]),
+		]));
 		await firstLoad;
 
 		expect(context.messages.map((item) => item.id)).toEqual(['second']);
@@ -682,14 +828,14 @@ describe('EmendChatView conversation loading', () => {
 	});
 
 	it('does not apply a pending load after the view closes', async () => {
-		const pending = deferred<ChatMessage[]>();
+		const pending = deferred<LoadedChatConversation>();
 		const context = {
 			plugin: {
 				getActiveNotePath: () => 'Note.md',
-				conversationStore: { load: vi.fn(() => pending.promise) },
+				conversationStore: { loadConversation: vi.fn(() => pending.promise) },
 			},
 			notePath: null,
-			noteLoadGeneration: 0,
+			conversationGeneration: 0,
 			messages: [] as ChatMessage[],
 			isThreadLoading: false,
 			isSending: false,
@@ -700,8 +846,10 @@ describe('EmendChatView conversation loading', () => {
 
 		const loading = viewPrototype.refreshTargetNote.call(context);
 		context.closed = true;
-		context.noteLoadGeneration++;
-		pending.resolve([message('stale', 'Note.md')]);
+		context.conversationGeneration++;
+		pending.resolve(loadedConversation([
+			makeSession('stale-session', [message('stale', 'Note.md')]),
+		]));
 		await loading;
 
 		expect(context.messages).toEqual([]);
@@ -711,7 +859,7 @@ describe('EmendChatView conversation loading', () => {
 		const context = {
 			closed: false,
 			isThreadLoading: true,
-			noteLoadGeneration: 0,
+			conversationGeneration: 0,
 			notePath: 'Note.md',
 			activeController: null,
 			cancelPendingRender: vi.fn(),
@@ -723,6 +871,7 @@ describe('EmendChatView conversation loading', () => {
 			clearCapacityRefreshTimer: vi.fn(),
 			unsubscribeAdditionalNotes: null,
 		};
+		Object.setPrototypeOf(context, EmendChatView.prototype);
 
 		await viewPrototype.onClose.call(context);
 
@@ -974,6 +1123,396 @@ describe('EmendChatView conversation saving', () => {
 	});
 });
 
+describe('EmendChatView session runtime', () => {
+	it('restores the active session and keeps drafts, controls, history, and capacity session-scoped', async () => {
+		const fixture = createEditTargetView({ selectedText: 'selected text' });
+		const first = makeSession('a1', [message('first-answer', 'A.md')]);
+		const second = makeSession('a2', [message('second-answer', 'A.md')]);
+		fixture.conversationStore.loadConversation.mockResolvedValue(
+			loadedConversation([first, second], 'a2'),
+		);
+		fixture.conversationStore.appendReadyMessage.mockImplementation(
+			async (_notePath: string, sessionId: string, appended: ChatMessage) => {
+				const session = sessionId === 'a1' ? first : second;
+				return { ...session, messages: [...session.messages, appended] };
+			},
+		);
+		fixture.requestChatCompletion.mockImplementation(async ({ callbacks }) => {
+			callbacks.onContent('Follow-up answer');
+			return { content: 'Follow-up answer', reasoning: '' };
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+
+		expect(fixture.context.activeSessionId).toBe('a2');
+		expect(fixture.context.messages).toBe(second.messages);
+		viewPrototype.setMode.call(fixture.context, 'discuss');
+		Object.assign(fixture.context, { webSearchMode: 'auto', editTargetChoice: 'full-note' });
+		fixture.context.plugin.additionalNotesStore.add('A.md', 'Reference.md');
+		const refreshDraftEstimate = vi.fn();
+		Object.assign(fixture.context, { refreshDraftEstimate });
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Second draft';
+		}
+
+		await viewPrototype.switchActiveSession.call(fixture.context, 'a1');
+
+		expect(fixture.context.activeSessionId).toBe('a1');
+		expect(fixture.context.messages).toBe(first.messages);
+		expect(fixture.context.inputEl?.value).toBe('');
+		expect(fixture.context.selectedMode).toBe('discuss');
+		expect(fixture.context.webSearchMode).toBe('auto');
+		expect(fixture.context.editTargetChoice).toBe('full-note');
+		expect(fixture.context.plugin.additionalNotesStore.list('A.md')).toEqual(['Reference.md']);
+		expect(refreshDraftEstimate).toHaveBeenCalled();
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'First draft';
+		}
+
+		await viewPrototype.switchActiveSession.call(fixture.context, 'a2');
+		expect(fixture.context.inputEl?.value).toBe('Second draft');
+		await viewPrototype.switchActiveSession.call(fixture.context, 'a1');
+		expect(fixture.context.inputEl?.value).toBe('First draft');
+		await viewPrototype.switchActiveSession.call(fixture.context, 'a2');
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Follow-up question';
+		}
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		const submission = fixture.requestChatCompletion.mock.calls[0]?.[0];
+		if (!submission) {
+			throw new Error('Session request was not submitted.');
+		}
+		expect(submission.history).toEqual([
+			{ role: 'assistant', content: 'second-answer', mode: 'ask', origin: 'model' },
+		]);
+		expect(submission.history).not.toContainEqual(
+			expect.objectContaining({ content: 'first-answer' }),
+		);
+	});
+
+	it('reuses an empty transient session and its messages and draft across A → B → A without writes', async () => {
+		const fixture = createEditTargetView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const transientId = fixture.context.activeSessionId;
+		if (!transientId || !fixture.context.inputEl) {
+			throw new Error('Transient session was not created.');
+		}
+		fixture.context.inputEl.value = 'Transient A draft';
+		fixture.context.messages.push({
+			...message('transient-error', 'A.md'),
+			status: 'error',
+			content: 'Unsaved answer',
+		});
+
+		fixture.setActivePath('B.md');
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Transient B draft';
+		}
+		fixture.setActivePath('A.md');
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+
+		expect(fixture.context.activeSessionId).toBe(transientId);
+		expect(fixture.context.messages.map((item) => item.id)).toEqual(['transient-error']);
+		expect(fixture.context.inputEl?.value).toBe('Transient A draft');
+		expect(fixture.conversationStore.createSession).not.toHaveBeenCalled();
+		expect(fixture.conversationStore.appendReadyMessage).not.toHaveBeenCalled();
+	});
+
+	it('creates a transient with the ready user before networking and atomically appends assistant and title', async () => {
+		const fixture = createEditTargetView();
+		const order: string[] = [];
+		fixture.conversationStore.createSession.mockImplementation(async (_notePath, session) => {
+			order.push('create');
+			return session;
+		});
+		fixture.conversationStore.appendReadyMessage.mockImplementation(
+			async (_notePath, sessionId, appended, options) => {
+				order.push('append');
+				const session = fixture.context.sessions.find((item) => item.id === sessionId);
+				if (!session) {
+					throw new Error('Missing session.');
+				}
+				return {
+					...session,
+					title: deriveAutomaticTitle(options?.titlePrompt ?? ''),
+					messages: [...session.messages, appended],
+				};
+			},
+		);
+		fixture.requestChatCompletion.mockImplementation(async ({ callbacks }) => {
+			order.push('provider');
+			callbacks.onContent('Answer');
+			return { content: 'Answer', reasoning: '' };
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const transientId = fixture.context.activeSessionId;
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Title from this prompt';
+		}
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(order).toEqual(['create', 'provider', 'append']);
+		const created = fixture.conversationStore.createSession.mock.calls[0]?.[1];
+		expect(created?.messages).toHaveLength(1);
+		expect(created?.messages[0]).toMatchObject({ role: 'user', content: 'Title from this prompt' });
+		expect(fixture.conversationStore.appendReadyMessage).toHaveBeenCalledWith(
+			'A.md',
+			transientId,
+			expect.objectContaining({ role: 'assistant', status: 'ready', content: 'Answer' }),
+			expect.objectContaining({ titlePrompt: 'Title from this prompt' }),
+		);
+		expect(fixture.context.sessions[0]?.title).toBe('Title from this prompt');
+		expect(fixture.context.transientSessionIds.has(transientId ?? '')).toBe(false);
+		expect(fixture.context.transientSessions.has('A.md')).toBe(false);
+	});
+
+	it('appends to a legacy session without creating a replacement', async () => {
+		const fixture = createEditTargetView();
+		const legacy = makeSession('legacy', [message('legacy-answer', 'A.md')]);
+		fixture.conversationStore.loadConversation.mockResolvedValue(
+			loadedConversation([legacy], 'legacy', 'legacy'),
+		);
+		fixture.conversationStore.appendReadyMessage.mockImplementation(
+			async (_notePath, sessionId, appended) => ({
+				...legacy,
+				messages: [...legacy.messages, appended],
+			}),
+		);
+		fixture.requestChatCompletion.mockImplementation(async ({ callbacks }) => {
+			callbacks.onContent('New answer');
+			return { content: 'New answer', reasoning: '' };
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Continue legacy';
+		}
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.conversationStore.createSession).not.toHaveBeenCalled();
+		expect(fixture.conversationStore.appendReadyMessage).toHaveBeenCalledTimes(2);
+		expect(fixture.conversationStore.appendReadyMessage.mock.calls.map((call) => call[1]))
+			.toEqual(['legacy', 'legacy']);
+	});
+
+	it('makes zero provider calls when the initial user save fails', async () => {
+		const fixture = createEditTargetView();
+		fixture.conversationStore.createSession.mockRejectedValue(new Error('Disk full'));
+		const noticeStart = noticeMessages().length;
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Unsaved question';
+		}
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(fixture.conversationStore.appendReadyMessage).not.toHaveBeenCalled();
+		expect(fixture.context.messages[0]).toMatchObject({ role: 'user', status: 'ready' });
+		expect(fixture.context.messages[1]?.status).toBe('error');
+		expect(noticeMessages().slice(noticeStart).join('\n')).toContain('Could not save this chat');
+	});
+
+	it('keeps a completed answer as transient error content when the final save fails', async () => {
+		const fixture = createEditTargetView();
+		fixture.conversationStore.appendReadyMessage.mockRejectedValue(new Error('Disk full'));
+		fixture.requestChatCompletion.mockImplementation(async ({ callbacks }) => {
+			callbacks.onContent('Completed but unsaved');
+			return { content: 'Completed but unsaved', reasoning: '' };
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Question';
+		}
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.requestChatCompletion).toHaveBeenCalledOnce();
+		expect(fixture.context.messages[1]).toMatchObject({
+			status: 'error',
+			content: 'Completed but unsaved',
+		});
+		expect(fixture.context.sessions[0]?.title).toBe('New chat');
+		expect(viewPrototype.toProviderHistory.call(fixture.context)).toEqual([
+			{ role: 'user', content: 'Question', mode: 'ask', origin: 'user' },
+		]);
+	});
+
+	it('does not append an assistant or change the title for stopped and failed responses', async () => {
+		for (const outcome of ['stopped', 'failed'] as const) {
+			const fixture = createEditTargetView();
+			const persisted = makeSession('persisted');
+			fixture.conversationStore.loadConversation.mockResolvedValue(
+				loadedConversation([persisted]),
+			);
+			fixture.conversationStore.appendReadyMessage.mockImplementation(
+				async (_notePath, _sessionId, appended) => ({
+					...persisted,
+					messages: [...persisted.messages, appended],
+				}),
+			);
+			const response = deferred<{ content: string; reasoning: string }>();
+			fixture.requestChatCompletion.mockImplementation(() => response.promise);
+			await viewPrototype.refreshTargetNote.call(fixture.context);
+			if (fixture.context.inputEl) {
+				fixture.context.inputEl.value = 'Question';
+			}
+			const submission = viewPrototype.submitPrompt.call(fixture.context);
+			await vi.waitFor(() => expect(fixture.requestChatCompletion).toHaveBeenCalledOnce());
+
+			if (outcome === 'stopped') {
+				fixture.context.activeController?.abort();
+				response.resolve({ content: 'Ignored', reasoning: '' });
+			} else {
+				response.reject(new Error('Provider failed'));
+			}
+			await submission;
+
+			expect(fixture.context.messages[1]?.status).toBe(outcome === 'stopped' ? 'stopped' : 'error');
+			expect(fixture.conversationStore.appendReadyMessage).toHaveBeenCalledOnce();
+			expect(fixture.conversationStore.appendReadyMessage.mock.calls[0]?.[3]?.titlePrompt).toBeUndefined();
+			expect(fixture.context.sessions[0]?.title).toBe('New chat');
+		}
+	});
+
+	it('isolates stale stream callbacks and finally cleanup from a newer request after A1 → A2 → B → A1', async () => {
+		const fixture = createEditTargetView();
+		const first = makeSession('a1');
+		const second = makeSession('a2');
+		fixture.conversationStore.loadConversation.mockImplementation(async (notePath: string) =>
+			notePath === 'A.md'
+				? loadedConversation([first, second], 'a1')
+				: loadedConversation([makeSession('b1')]),
+		);
+		fixture.conversationStore.appendReadyMessage.mockImplementation(
+			async (_notePath, sessionId, appended) => {
+				const session = sessionId === 'a1' ? first : second;
+				return { ...session, messages: [...session.messages, appended] };
+			},
+		);
+		const oldResponse = deferred<{ content: string; reasoning: string }>();
+		const newResponse = deferred<{ content: string; reasoning: string }>();
+		let oldCallbacks: { onContent(text: string): void } | undefined;
+		fixture.requestChatCompletion
+			.mockImplementationOnce(async ({ callbacks }) => {
+				oldCallbacks = callbacks;
+				return oldResponse.promise;
+			})
+			.mockImplementationOnce(async () => newResponse.promise);
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Old question';
+		}
+		const oldSubmission = viewPrototype.submitPrompt.call(fixture.context);
+		await vi.waitFor(() => expect(fixture.requestChatCompletion).toHaveBeenCalledOnce());
+		const oldRequest = fixture.context.activeRequest as ActiveRequest | null;
+
+		await viewPrototype.switchActiveSession.call(fixture.context, 'a2');
+		fixture.setActivePath('B.md');
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		fixture.setActivePath('A.md');
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'New question';
+		}
+		const newSubmission = viewPrototype.submitPrompt.call(fixture.context);
+		await vi.waitFor(() => expect(fixture.requestChatCompletion).toHaveBeenCalledTimes(2));
+		const newRequest = fixture.context.activeRequest as ActiveRequest | null;
+		const noticeStart = noticeMessages().length;
+		fixture.context.scheduleMessageRender.mockClear();
+
+		oldCallbacks?.onContent('STALE_STREAM_CONTENT');
+		oldResponse.resolve({ content: 'STALE_STREAM_CONTENT', reasoning: '' });
+		await oldSubmission;
+
+		expect(fixture.context.activeRequest).toBe(newRequest);
+		expect(fixture.context.isSending).toBe(true);
+		expect(oldRequest?.loadingMessage.content).toBe('STALE_STREAM_CONTENT');
+		expect(newRequest?.loadingMessage.content).toBe('');
+		expect(fixture.context.scheduleMessageRender).not.toHaveBeenCalledWith(
+			oldRequest?.loadingMessage,
+		);
+		expect(noticeMessages().slice(noticeStart)).toEqual([]);
+		fixture.context.activeController?.abort();
+		newResponse.resolve({ content: 'New answer', reasoning: '' });
+		await newSubmission;
+	});
+
+	it('suppresses a stale final-save Notice after a session transition', async () => {
+		const fixture = createEditTargetView();
+		const first = makeSession('a1');
+		const second = makeSession('a2');
+		fixture.conversationStore.loadConversation.mockResolvedValue(
+			loadedConversation([first, second], 'a1'),
+		);
+		const finalSave = deferred<void>();
+		fixture.conversationStore.appendReadyMessage.mockImplementation(
+			async (_notePath, sessionId, appended) => {
+				if (appended.role === 'assistant') {
+					await finalSave.promise;
+				}
+				const session = sessionId === 'a1' ? first : second;
+				return { ...session, messages: [...session.messages, appended] };
+			},
+		);
+		fixture.requestChatCompletion.mockImplementation(async ({ callbacks }) => {
+			callbacks.onContent('Old answer');
+			return { content: 'Old answer', reasoning: '' };
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Old question';
+		}
+		const submission = viewPrototype.submitPrompt.call(fixture.context);
+		await vi.waitFor(() => expect(fixture.conversationStore.appendReadyMessage).toHaveBeenCalledTimes(2));
+
+		await viewPrototype.switchActiveSession.call(fixture.context, 'a2');
+		const noticeStart = noticeMessages().length;
+		finalSave.reject(new Error('Disk full'));
+		await submission;
+
+		expect(fixture.context.activeSessionId).toBe('a2');
+		expect(fixture.context.messages).toEqual([]);
+		expect(noticeMessages().slice(noticeStart)).toEqual([]);
+	});
+
+	it('aborts on close and ignores late stream content, errors, rendering, and cleanup', async () => {
+		const fixture = createEditTargetView();
+		const response = deferred<{ content: string; reasoning: string }>();
+		let callbacks: { onContent(text: string): void } | undefined;
+		fixture.requestChatCompletion.mockImplementation(async ({ callbacks: requestCallbacks }) => {
+			callbacks = requestCallbacks;
+			return response.promise;
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Close during stream';
+		}
+		const submission = viewPrototype.submitPrompt.call(fixture.context);
+		await vi.waitFor(() => expect(fixture.requestChatCompletion).toHaveBeenCalledOnce());
+		const request = fixture.context.activeRequest as ActiveRequest | null;
+		const noticeStart = noticeMessages().length;
+		fixture.context.scheduleMessageRender.mockClear();
+
+		await viewPrototype.onClose.call(fixture.context);
+		callbacks?.onContent('LATE_CLOSE_CONTENT');
+		response.reject(new Error('Late provider failure'));
+		await submission;
+
+		expect(request?.controller.signal.aborted).toBe(true);
+		expect(fixture.context.closed).toBe(true);
+		expect(fixture.context.activeRequest).toBeNull();
+		expect(fixture.context.isSending).toBe(false);
+		expect(fixture.context.scheduleMessageRender).not.toHaveBeenCalledWith(
+			request?.loadingMessage,
+		);
+		expect(fixture.conversationStore.appendReadyMessage).not.toHaveBeenCalled();
+		expect(noticeMessages().slice(noticeStart)).toEqual([]);
+	});
+});
+
 interface SelectionSubmissionOptions {
 	fullText?: string;
 	selectedText?: string;
@@ -1074,12 +1613,14 @@ function createSelectionEditSubmission(options: SelectionSubmissionOptions = {})
 		displayedEditTarget: 'selection' as 'full-note' | 'selection',
 		webSearchMode: 'off' as const,
 		notePath: file.path as string | null,
-		noteLoadGeneration: 0,
+		conversationGeneration: 0,
 		messages: [] as ChatMessage[],
-		drafts: new Map<string, string>(),
+		drafts: new Map<string, Map<string, string>>(),
 		plugin: {
 			getActiveNotePath: () => activePath,
-			conversationStore: { load: vi.fn(async () => []) },
+			conversationStore: {
+				loadConversation: vi.fn(async () => loadedConversation([])),
+			},
 			captureChatContext,
 			captureSelectionEditTarget,
 			additionalNotesStore,
@@ -1612,7 +2153,9 @@ describe('EmendChatView additional notes', () => {
 				getActiveNotePath: () => activePath,
 				getActiveNoteLabel: () => activePath,
 				hasUsableSelection: () => false,
-				conversationStore: { load: vi.fn(async () => []) },
+				conversationStore: {
+					loadConversation: vi.fn(async () => loadedConversation([])),
+				},
 				additionalNotesStore,
 				settings: {
 					activeProvider: 'custom',
@@ -1628,7 +2171,7 @@ describe('EmendChatView additional notes', () => {
 				},
 			},
 			notePath: null as string | null,
-			noteLoadGeneration: 0,
+			conversationGeneration: 0,
 			messages: [] as ChatMessage[],
 			selectedMode: 'ask' as Mode,
 			isThreadLoading: false,
@@ -1636,7 +2179,7 @@ describe('EmendChatView additional notes', () => {
 			activeController: null,
 			closed: false,
 			inputEl: null as FakeElement | null,
-			drafts: new Map<string, string>(),
+			drafts: new Map<string, Map<string, string>>(),
 			additionalNotesControl: null,
 			pendingMessages: new Set<ChatMessage>(),
 			messageBodyEls: new Map<string, HTMLElement>(),
@@ -1712,7 +2255,9 @@ describe('EmendChatView additional notes', () => {
 				getActiveNoteLabel: () => activePath,
 				hasUsableSelection: () => false,
 				captureChatContext: () => ({ file: { path: activePath } }),
-				conversationStore: { load: vi.fn(async () => []) },
+				conversationStore: {
+					loadConversation: vi.fn(async () => loadedConversation([])),
+				},
 				additionalNotesStore,
 				requestChatCompletion,
 				settings: {
@@ -1729,7 +2274,7 @@ describe('EmendChatView additional notes', () => {
 				},
 			},
 			notePath: null as string | null,
-			noteLoadGeneration: 0,
+			conversationGeneration: 0,
 			messages: [] as ChatMessage[],
 			selectedMode: 'ask' as Mode,
 			isThreadLoading: false,
@@ -1737,7 +2282,7 @@ describe('EmendChatView additional notes', () => {
 			activeController: null,
 			closed: false,
 			inputEl: null as FakeElement | null,
-			drafts: new Map<string, string>(),
+			drafts: new Map<string, Map<string, string>>(),
 			additionalNotesControl: null,
 			pendingMessages: new Set<ChatMessage>(),
 			messageBodyEls: new Map<string, HTMLElement>(),
@@ -1772,13 +2317,13 @@ describe('EmendChatView additional notes', () => {
 		expect(context.isSending).toBe(true);
 		expect(context.inputEl?.disabled).toBe(true);
 		expect(context.inputEl?.value).toBe('');
-		expect(context.drafts.get('B.md')).toBe('Keep B draft');
+		expect(Array.from(context.drafts.get('B.md')?.values() ?? [])).toEqual(['Keep B draft']);
 		response.resolve({ content: 'Answer', reasoning: '' });
 		await submission;
 		expect(context.isSending).toBe(false);
 		expect(context.inputEl?.disabled).toBe(false);
 		expect(context.inputEl?.value).toBe('');
-		expect(context.drafts.get('B.md')).toBe('Keep B draft');
+		expect(Array.from(context.drafts.get('B.md')?.values() ?? [])).toEqual(['Keep B draft']);
 	});
 });
 
@@ -3218,7 +3763,9 @@ describe('EmendChatView compact Web disclosure', () => {
 				getActiveNotePath: () => 'Note.md',
 				getActiveNoteLabel: () => 'Note.md',
 				hasUsableSelection: () => false,
-				conversationStore: { load: vi.fn(async () => []) },
+				conversationStore: {
+					loadConversation: vi.fn(async () => loadedConversation([])),
+				},
 				additionalNotesStore: new AdditionalNotesStore(),
 				requestChatCompletion,
 				settings: {
@@ -3227,7 +3774,7 @@ describe('EmendChatView compact Web disclosure', () => {
 				},
 			},
 			notePath: null as string | null,
-			noteLoadGeneration: 0,
+			conversationGeneration: 0,
 			messages: [] as ChatMessage[],
 			selectedMode: 'ask' as Mode,
 			webSearchMode: 'auto' as const,
@@ -3236,7 +3783,7 @@ describe('EmendChatView compact Web disclosure', () => {
 			activeController: null,
 			closed: false,
 			inputEl: null as FakeElement | null,
-			drafts: new Map<string, string>(),
+			drafts: new Map<string, Map<string, string>>(),
 			additionalNotesControl: null,
 			pendingMessages: new Set<ChatMessage>(),
 			messageBodyEls: new Map<string, HTMLElement>(),
@@ -3292,10 +3839,12 @@ describe('EmendChatView render-end response alignment', () => {
 				getActiveNoteLabel: () => 'Note.md',
 				hasUsableSelection: () => false,
 				conversationStore: {
-					load: vi.fn(async () => {
+					loadConversation: vi.fn(async () => {
 						context.responseStartMessageId = 'answer';
 						context.followLatestMessages = false;
-						return [message('answer', 'Note.md')];
+						return loadedConversation([
+							makeSession('answer-session', [message('answer', 'Note.md')]),
+						]);
 					}),
 				},
 				additionalNotesStore: new AdditionalNotesStore(),
@@ -3305,7 +3854,7 @@ describe('EmendChatView render-end response alignment', () => {
 				},
 			},
 			notePath: null as string | null,
-			noteLoadGeneration: 0,
+			conversationGeneration: 0,
 			messages: [] as ChatMessage[],
 			selectedMode: 'ask' as Mode,
 			webSearchMode: 'off' as const,
@@ -3318,7 +3867,7 @@ describe('EmendChatView render-end response alignment', () => {
 			activeController: null,
 			closed: false,
 			inputEl: null as FakeElement | null,
-			drafts: new Map<string, string>(),
+			drafts: new Map<string, Map<string, string>>(),
 			additionalNotesControl: null,
 			pendingMessages: new Set<ChatMessage>(),
 			messageBodyEls: new Map<string, HTMLElement>(),
@@ -3467,7 +4016,9 @@ function createCapacityView(options: CapacityViewOptions = {}) {
 			hasUsableSelection: () => Boolean(selectedText.trim()),
 			captureChatContext,
 			captureSelectionEditTarget,
-			conversationStore: { load: vi.fn(async () => []) },
+			conversationStore: {
+				loadConversation: vi.fn(async () => loadedConversation([])),
+			},
 			additionalNotesStore,
 			requestChatCompletion,
 			requestSelectionEdit,
@@ -3484,7 +4035,7 @@ function createCapacityView(options: CapacityViewOptions = {}) {
 			},
 		},
 		notePath: null as string | null,
-		noteLoadGeneration: 0,
+		conversationGeneration: 0,
 		messages: [] as ChatMessage[],
 		selectedMode: options.mode ?? 'ask',
 		webSearchMode: 'off' as const,
@@ -3493,7 +4044,7 @@ function createCapacityView(options: CapacityViewOptions = {}) {
 		activeController: null as AbortController | null,
 		closed: false,
 		inputEl: null as FakeElement | null,
-		drafts: new Map<string, string>(),
+		drafts: new Map<string, Map<string, string>>(),
 		additionalNotesControl: null,
 		pendingMessages: new Set<ChatMessage>(),
 		messageBodyEls: new Map<string, HTMLElement>(),

@@ -154,7 +154,7 @@ async function seedConversation(
 	adapter: MemoryAdapter,
 	value: ChatConversation,
 ) {
-	await store.save('Note.md', []);
+	await store.createSession('Note.md', session('seed', { messages: [] }));
 	adapter.files.set(threadPath(adapter), JSON.stringify(value));
 	adapter.operations.length = 0;
 }
@@ -590,101 +590,5 @@ describe('ConversationStore queued session mutation composition', () => {
 				],
 			}),
 		]));
-	});
-});
-
-
-describe('ConversationStore fail-closed compatibility save races', () => {
-	it('rejects a late whole-thread save after activating another session', async () => {
-		const adapter = new MemoryAdapter();
-		const { store } = makeStore(adapter);
-		const one = session('one', { messages: [userMessage({ id: 'one-user' })] });
-		const two = session('two', { messages: [userMessage({ id: 'two-user' })] });
-		await seedConversation(store, adapter, conversation('one', [one, two]));
-		const activationWriteStarted = deferred();
-		const releaseActivationWrite = deferred();
-		adapter.beforeWrite = async () => {
-			activationWriteStarted.resolve();
-			await releaseActivationWrite.promise;
-		};
-
-		const settingActive = store.setActiveSession('Note.md', 'two');
-		await activationWriteStarted.promise;
-		const lateSave = store.save('Note.md', [
-			userMessage({ id: 'late-one-user', content: 'Late one messages' }),
-		]);
-		const rejectedSave = expect(lateSave).rejects.toThrow(/exact session ID/i);
-		releaseActivationWrite.resolve();
-		await settingActive;
-		await rejectedSave;
-
-		expect(persistedConversation(adapter)).toEqual(conversation('two', [one, two]));
-		expect(adapter.operations.filter((operation) => operation.startsWith('write:'))).toHaveLength(1);
-	});
-
-	it('rejects a late whole-thread save after deleting the final session', async () => {
-		const adapter = new MemoryAdapter();
-		const { store } = makeStore(adapter);
-		await seedConversation(store, adapter, conversation('one', [session('one')]));
-		const deleteWriteStarted = deferred();
-		const releaseDeleteWrite = deferred();
-		adapter.beforeWrite = async () => {
-			deleteWriteStarted.resolve();
-			await releaseDeleteWrite.promise;
-		};
-
-		const deleting = store.deleteSession('Note.md', 'one');
-		await deleteWriteStarted.promise;
-		const lateSave = store.save('Note.md', [userMessage({ id: 'late-user' })]);
-		const rejectedSave = expect(lateSave).rejects.toThrow(/exact session ID/i);
-		releaseDeleteWrite.resolve();
-		await deleting;
-		await rejectedSave;
-
-		expect(persistedConversation(adapter)).toEqual(conversation(null, []));
-		expect(adapter.operations.filter((operation) => operation.startsWith('write:'))).toHaveLength(1);
-	});
-
-	it('continues later exact-ID mutations after an ambiguous compatibility save rejects', async () => {
-		const adapter = new MemoryAdapter();
-		const { store } = makeStore(adapter);
-		const one = session('one', { messages: [userMessage({ id: 'one-user' })] });
-		const two = session('two', { messages: [userMessage({ id: 'two-user' })] });
-		await seedConversation(store, adapter, conversation('one', [one, two]));
-		const activationWriteStarted = deferred();
-		const releaseActivationWrite = deferred();
-		adapter.beforeWrite = async () => {
-			activationWriteStarted.resolve();
-			await releaseActivationWrite.promise;
-		};
-
-		const settingActive = store.setActiveSession('Note.md', 'two');
-		await activationWriteStarted.promise;
-		const ambiguousSave = store.save('Note.md', [
-			userMessage({ id: 'late-one-user', content: 'Late one messages' }),
-		]);
-		const rejectedSave = expect(ambiguousSave).rejects.toThrow(/exact session ID/i);
-		const appendingTwo = store.appendReadyMessage(
-			'Note.md',
-			'two',
-			readyMessage({ id: 'two-answer' }),
-			{ now: 500 },
-		);
-		releaseActivationWrite.resolve();
-		await settingActive;
-		await rejectedSave;
-		await appendingTwo;
-
-		expect(persistedConversation(adapter)).toEqual(conversation('two', [
-			one,
-			session('two', {
-				updatedAt: 500,
-				messages: [
-					userMessage({ id: 'two-user' }),
-					readyMessage({ id: 'two-answer' }),
-				],
-			}),
-		]));
-		expect(adapter.operations.filter((operation) => operation.startsWith('write:'))).toHaveLength(2);
 	});
 });

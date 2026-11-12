@@ -6,7 +6,6 @@ import {
 	legacyConversation,
 	normalizeManualTitle,
 	reorderChatSessions,
-	resolveActiveSession,
 	toPersistedMessage,
 	validateChatConversation,
 	type ChatConversation,
@@ -66,11 +65,6 @@ export class ConversationStore {
 		this.chatDirectory = `${root}${root ? '/' : ''}emend/chats`;
 	}
 
-	async load(notePath: string): Promise<ChatMessage[]> {
-		const loaded = await this.loadConversation(notePath);
-		return resolveActiveSession(loaded.conversation)?.messages ?? [];
-	}
-
 	async loadConversation(notePath: string): Promise<LoadedChatConversation> {
 		const pendingWrite = this.writeQueues.get(notePath);
 		if (pendingWrite) {
@@ -91,30 +85,6 @@ export class ConversationStore {
 				: MALFORMED_WARNING,
 		);
 		return { kind: inspection.kind, conversation: emptyConversation() };
-	}
-
-	save(notePath: string, messages: ChatMessage[]): Promise<void> {
-		const persistedMessages = messages
-			.filter((message) => message.status === 'ready')
-			.map((message) => toPersistedMessage(message));
-		return this.queueMutation(notePath, (inspection) => {
-			if (inspection.kind !== 'schema3') {
-				return { conversation: legacyConversation(persistedMessages), result: undefined };
-			}
-			const [onlySession] = inspection.conversation.sessions;
-			if (!onlySession || inspection.conversation.sessions.length !== 1) {
-				throw new Error(
-					'Cannot save this chat without exactly one existing session. Use an exact session ID.',
-				);
-			}
-			return {
-				conversation: {
-					...inspection.conversation,
-					sessions: [{ ...onlySession, messages: persistedMessages }],
-				},
-				result: undefined,
-			};
-		});
 	}
 
 	async createSession(
