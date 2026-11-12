@@ -2,6 +2,34 @@
 
 All notable changes to Emend are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.0] - 2026-11-12
+
+### Added
+
+- Multiple persisted chat sessions per note with New, Switch, Rename, and Delete controls directly between the context capacity bar and chat messages, deterministic local titles, independent drafts and provider history, and last-active restoration after reload.
+- Conversation schema 3 with ordered session aggregates and lazy, lossless schema 1/2 migration while preserving malformed-file backup and unsupported-version refusal.
+- Optional model-written explanations after Edit, plus a `Target: Full note.` or `Target: Selection.` disclosure and bounded deterministic line-level change summaries.
+- Configurable chat history from 0–50 ready messages, applied to read-only, full-note Edit, and composer Selection requests while the Command Palette selection modal remains history-free.
+- Optional per-provider context-window and output-reserve settings with explicit documented defaults for supported DeepSeek and Kimi preset models.
+- Compact chat-header and selection-modal capacity bars with per-category floating details, remaining input/output estimates, and known over-capacity submission blocking.
+
+### Changed
+
+- Session persistence now uses exact-ID queued atomic mutations, with deleted-session resurrection protection, invocation-time snapshots, and stale-generation request guards.
+- Composer Selection now includes the configured recent ready history from its originating session instead of always sending empty history.
+- Session reordering controls are deferred to a future session management page; current chat keeps a compact New/Rename/Delete control set.
+
+### Fixed
+
+- Capacity preflight now covers freshly assembled instructions and additional notes, and every later Web, extraction, verifier, refine, and Edit-correction provider call is guarded before fetch.
+- Unknown, transient, and raw fields can no longer survive later valid conversation mutations.
+- Successful atomic assistant saves now reconcile the originating runtime session to the same ready response and title after reload, even when Stop, note switch, or close races the commit; pre-commit aborts still prevent persistence.
+
+### Security
+
+- Session management and local title derivation make no provider calls, and drafts, stopped/error/loading content, request bodies, snapshots, raw retrieval/reader artifacts, and unknown message fields remain transient.
+- Full-note and Selection writers, native undo, Track Changes, per-note request exclusion, additional-note read-only boundaries, and credential handling remain guarded and unchanged.
+
 ## [2.8.0] - 2026-11-11
 
 ### Added
