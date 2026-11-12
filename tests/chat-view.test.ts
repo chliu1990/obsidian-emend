@@ -1581,7 +1581,7 @@ describe('EmendChatView session runtime', () => {
 	});
 
 	it.each(['note-switch', 'close', 'stop'] as const)(
-		'does not mark an assistant ready or apply returned metadata when %s aborts a final save that later succeeds',
+		'keeps runtime and committed disk state consistent when %s follows the final commit',
 		async (abortKind) => {
 			const fixture = createEditTargetView();
 			const first = makeSession('a1');
@@ -1610,12 +1610,14 @@ describe('EmendChatView session runtime', () => {
 							title: appended.role === 'assistant'
 								? deriveAutomaticTitle(options?.titlePrompt ?? '')
 								: persistedFirst.title,
+							updatedAt: appended.role === 'assistant' ? 999 : persistedFirst.updatedAt,
 							messages: [...persistedFirst.messages, appended],
 						};
 					}
 					return {
 						...session,
 						title: sessionId === 'a1' ? persistedFirst.title : session.title,
+						updatedAt: sessionId === 'a1' ? persistedFirst.updatedAt : session.updatedAt,
 						messages: [...session.messages, appended],
 					};
 				},
@@ -1645,21 +1647,31 @@ describe('EmendChatView session runtime', () => {
 			finalSave.resolve();
 			await submission;
 
-			expect(request?.loadingMessage.status).toBe('stopped');
-			expect(first.title).toBe('New chat');
-			expect(first.updatedAt).toBe(1);
-			expect(persistedFirst.title).toBe('Aborted answer title');
+			expect(request?.controller.signal.aborted).toBe(true);
+			expect(request?.loadingMessage.status).toBe('ready');
+			expect(first.title).toBe('Aborted answer title');
+			expect(first.updatedAt).toBe(999);
+			expect(persistedFirst).toMatchObject({
+				title: 'Aborted answer title',
+				updatedAt: 999,
+			});
 			expect(persistedFirst.messages.map((item) => item.role)).toEqual(['user', 'assistant']);
 			expect(first.messages.filter((item) => item.status === 'ready').map((item) => item.role))
-				.toEqual(['user']);
-			expect(fixture.context.responseStartMessageId).toBeNull();
+				.toEqual(['user', 'assistant']);
 			if (abortKind === 'note-switch') {
 				expect(fixture.context.activeSessionId).toBe('b1');
 				expect(fixture.context.messages).toEqual([]);
+				expect(fixture.context.responseStartMessageId).toBeNull();
 				expect(fixture.render).not.toHaveBeenCalled();
 			} else if (abortKind === 'close') {
+				expect(fixture.context.responseStartMessageId).toBeNull();
 				expect(fixture.render).not.toHaveBeenCalled();
 			} else {
+				expect(fixture.render).toHaveBeenCalledOnce();
+				expect(viewPrototype.toProviderHistory.call(fixture.context)).toEqual([
+					{ role: 'user', content: 'Aborted answer title', mode: 'ask', origin: 'user' },
+					{ role: 'assistant', content: 'Answer that must stop', mode: 'ask', origin: 'model' },
+				]);
 				expect(fixture.context.activeRequest).toBeNull();
 				expect(fixture.context.activeController).toBeNull();
 				expect(fixture.context.isSending).toBe(false);
@@ -1667,7 +1679,7 @@ describe('EmendChatView session runtime', () => {
 		},
 	);
 
-	it('clears an aborted final-save request and permits a successful retry', async () => {
+	it('clears Stop after a committed response and includes that exchange in retry history', async () => {
 		const fixture = createEditTargetView();
 		const session = makeSession('a1');
 		fixture.conversationStore.loadConversation.mockResolvedValue(
@@ -1710,7 +1722,12 @@ describe('EmendChatView session runtime', () => {
 		expect(fixture.context.activeRequest).toBeNull();
 		expect(fixture.context.activeController).toBeNull();
 		expect(fixture.context.isSending).toBe(false);
-		expect(fixture.context.messages[1]?.status).toBe('stopped');
+		expect(fixture.context.messages[1]).toMatchObject({
+			role: 'assistant',
+			status: 'ready',
+			content: 'Stopped answer',
+		});
+		expect(session.title).toBe('Stopped question');
 
 		if (fixture.context.inputEl) {
 			fixture.context.inputEl.value = 'Retry question';
@@ -1718,6 +1735,14 @@ describe('EmendChatView session runtime', () => {
 		await viewPrototype.submitPrompt.call(fixture.context);
 
 		expect(fixture.requestChatCompletion).toHaveBeenCalledTimes(2);
+		const retrySubmission = fixture.requestChatCompletion.mock.calls[1]?.[0];
+		if (!retrySubmission) {
+			throw new Error('Retry submission missing.');
+		}
+		expect(retrySubmission.history).toEqual([
+			{ role: 'user', content: 'Stopped question', mode: 'ask', origin: 'user' },
+			{ role: 'assistant', content: 'Stopped answer', mode: 'ask', origin: 'model' },
+		]);
 		expect(fixture.context.messages[3]).toMatchObject({
 			role: 'assistant',
 			status: 'ready',

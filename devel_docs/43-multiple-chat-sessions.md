@@ -41,7 +41,7 @@ The JSON field names are exactly `version`, `lastActiveSessionId`, `sessions`, `
 
 Titles are trimmed, single-line, whitespace-collapsed, nonempty strings of at most 80 Unicode code points. Automatic derivation uses the first 79 code points plus `…` when over the limit. Empty automatic input produces `New chat`. Manual input follows the same normalization but rejects over-length input rather than truncating it.
 
-A new session starts as `{title: 'New chat', titleSource: 'auto'}`. A legacy session derives its automatic title from its first ready user message, or uses `New chat` when none exists. Only a successfully persisted assistant completion supplies `titlePrompt`; the assistant append and automatic title update share one `updatedAt` and one atomic write. Manual titles never change automatically. Initial user persistence, stopped/error responses, capacity failures, stale/abort failures, and management actions do not derive titles.
+A new session starts as `{title: 'New chat', titleSource: 'auto'}`. A legacy session derives its automatic title from its first ready user message, or uses `New chat` when none exists. Only a successfully persisted assistant completion supplies `titlePrompt`; the assistant append and automatic title update share one `updatedAt` and one atomic write. Manual titles never change automatically. Initial user persistence, provider errors, capacity failures, pre-commit Stop/abort/stale failures, and management actions do not derive titles.
 
 ## Loading and lazy migration
 
@@ -89,7 +89,7 @@ Drafts use nested maps keyed by exact note path and session ID, never concatenat
 
 Provider history comes only from the originating session's ready messages before the new user/loading pair, using the configured `historyMessageLimit`. Full-note and Selection results, usage, reasoning, Web warnings/badges/citations/activity, and automatic title updates append only to that originating session. Management operations serialize through `isSessionMutating` as well as the store queue, and failures leave the current visible persisted state intact.
 
-The existing pending-path registry remains per **note**, not per session. Session A therefore excludes session B and Modify Selection for the same note with exactly `Wait for the current Emend request to finish.`; different notes remain independent. Note/session transitions abort the active request and close Web review. Initial user-save failure prevents the provider request. Final assistant-save failure retains transient error content without a ready-history or title update. Stop/error/abort states never persist.
+The existing pending-path registry remains per **note**, not per session. Session A therefore excludes session B and Modify Selection for the same note with exactly `Wait for the current Emend request to finish.`; different notes remain independent. Note/session transitions abort the active request and close Web review. Initial user-save failure prevents the provider request. Final assistant-save failure retains transient error content without a ready-history or title update. Pre-commit abort guards prevent assistant/title persistence, and uncommitted Stop/error/abort states never persist. Once the final atomic append commits, its ready assistant and exact title/timestamps are authoritative in the originating runtime session even if Stop/note-switch/close raced the save. Stop on the same current session may render that durable answer; note-switch/close suppress rendering into another note or closed view. No compensating rollback or overwrite is performed.
 
 ## Persistence and privacy
 
@@ -113,15 +113,17 @@ Real-Obsidian scenario 5 confirmed that unknown fields on an already persisted s
 
 The final transient-materialization review added delayed-create Stop and A→B→A regressions. **RED:** four tests failed with 11 assertion failures, including duplicate submit/New/Rename and local-only Delete. **GREEN:** one shared successful-create path now clears the exact transient ID and same-ID cache immediately, independent of UI currentness; the focused chat-view suite passed **188 tests**, and the full gate passed **1,526 tests**, lint, build, and diff check.
 
+The combined-release consistency review changed final-save regressions to require runtime/disk agreement after a successful post-abort commit. **RED:** four tests returned stopped runtime instead of the durable ready exchange. **GREEN:** only the post-commit identity throw was removed; pre-commit and initial-save guards remain, the focused suite passed **188 tests**, and the full gate passed **1,526 tests**, lint, build, and diff check.
+
 ## Real-Obsidian loopback evidence
 
-- Date: 2026-11-12, Asia/Shanghai; PR #53 UI-feedback evidence summary generated `2026-11-12T07:28:18.287Z` after the clean-gate build.
-- Tested tree: `3e31e695570766dd20dd02a33322e6789c7f36a6` plus the PR #53 UI-feedback changes in this commit; the ignored `test_vault/emend-selection-chat-verify/verify.mjs --sessions` harness is not committed.
+- Date: 2026-11-12, Asia/Shanghai; final consistency evidence summary generated `2026-11-12T09:19:10.055Z` after the clean-gate build.
+- Tested tree: `6269636d2e63298faab426ae0d29568940552abc` plus the final-save consistency fix in this branch; the ignored `test_vault/emend-selection-chat-verify/verify.mjs --sessions` harness is not committed.
 - Runtime: official Obsidian **1.15.0** AppImage under isolated Xvfb `:101`, CDP `19224`, synthetic notes only.
 - Provider: loopback OpenAI-compatible SSE mock at `127.0.0.1:18766` and loopback Fetch endpoint, with a dummy SecretStorage credential. No real account, external network, or paid call.
-- Commands: `npm run build`; `node test_vault/emend-selection-chat-verify/verify.mjs --sessions`; `sha256sum main.js`.
-- Result: **9/9 scenarios and 156/156 assertions passed**. Passing wall time about 24 seconds.
-- Root and runtime-vault loaded bundle SHA-256: `7c3dcbb74d0a0b6641b5601979be3b49c23458df34ea015310f64f779e3ff74f`. The harness asserts byte equality before startup, and the paths were checked again after completion.
+- Commands: `npm run build`; `node test_vault/emend-selection-chat-verify/verify.mjs`; `node test_vault/emend-selection-chat-verify/verify.mjs --sessions`; `sha256sum main.js`.
+- Results: the full matrix passed **27/27 scenarios and 547/547 assertions**, and the sessions matrix passed **9/9 scenarios and 156/156 assertions**. Combined wall time about 105 seconds.
+- Root and runtime-vault loaded bundle SHA-256: `8ff390bb38357617a7bcf91c9a3a610d77d31e45fdfbb5c4827f2cf117b4d69a`. The harness asserts byte equality before startup, and the paths were checked again after completion.
 
 | Scenario | Assertions | Verified behavior |
 | --- | ---: | --- |
