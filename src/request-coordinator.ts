@@ -3,6 +3,11 @@ import {
 	type AdditionalNoteSnapshot,
 } from './additional-notes-context';
 import type { RequestContext } from './context';
+import {
+	assertRequestWithinCapacity,
+	requireValidContextCapacity,
+	resolveContextCapacity,
+} from './context-accounting';
 import type { DeepSeekWebSearchCoordinator } from './deepseek-web';
 import { prepareEditResponse } from './edit-response';
 import type { EditStrategy } from './edit-strategy';
@@ -99,6 +104,7 @@ export class ReadOnlyRequestCoordinator {
 	) {}
 
 	async submit(submission: ReadOnlySubmission): Promise<ChatStreamResult> {
+		requireValidContextCapacity(this.dependencies.provider);
 		const additionalNotes = await this.dependencies.loadAdditionalNotes(
 			submission.additionalNotePaths,
 			submission.context.file.path,
@@ -115,6 +121,12 @@ export class ReadOnlyRequestCoordinator {
 			),
 			history: submission.history,
 		};
+		submission.signal.throwIfAborted();
+		assertRequestWithinCapacity(
+			request,
+			resolveContextCapacity(this.dependencies.provider),
+			'read-only',
+		);
 		const callbacks = {
 			onEvent: (event: Parameters<Parameters<typeof requestAiResponse>[1]['onEvent']>[0]) => {
 				if (event.type === 'content') {
@@ -169,6 +181,7 @@ export class EditRequestCoordinator {
 	) {}
 
 	async submit(submission: EditSubmission): Promise<EditRequestResult> {
+		requireValidContextCapacity(this.dependencies.provider);
 		const additionalNotes = await this.dependencies.loadAdditionalNotes(
 			submission.additionalNotePaths,
 			submission.context.file.path,
@@ -186,6 +199,12 @@ export class EditRequestCoordinator {
 			),
 			history: submission.history,
 		};
+		submission.signal.throwIfAborted();
+		assertRequestWithinCapacity(
+			request,
+			resolveContextCapacity(this.dependencies.provider),
+			'full-note',
+		);
 		const { prepared, usage } = await prepareEditResponse({
 			original: submission.context.sourceText,
 			request,
@@ -206,7 +225,7 @@ export class EditRequestCoordinator {
 	}
 }
 
-function buildUserPrompt(
+export function buildUserPrompt(
 	context: RequestContext,
 	prompt: string,
 	additionalNotes: readonly AdditionalNoteSnapshot[],

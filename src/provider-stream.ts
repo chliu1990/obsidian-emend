@@ -1,3 +1,4 @@
+import { assertRequestWithinCapacity, resolveContextCapacity } from './context-accounting';
 import { formatProviderHistory } from './provider-history';
 import type { ProviderConfig, ProviderHistoryMessage } from './types';
 
@@ -85,6 +86,13 @@ export async function requestAiResponse(
 	if (parsedBaseUrl.protocol !== 'http:' && parsedBaseUrl.protocol !== 'https:') {
 		throw new Error(`${provider.name} base URL must use HTTP or HTTPS.`);
 	}
+
+	signal.throwIfAborted();
+	assertRequestWithinCapacity(
+		request,
+		resolveContextCapacity(provider),
+		'transport',
+	);
 
 	try {
 		// eslint-disable-next-line no-restricted-globals -- requestUrl does not expose streaming response bodies.

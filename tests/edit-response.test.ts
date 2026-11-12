@@ -21,6 +21,9 @@ const provider: ProviderConfig = {
 	reasoningEffort: 'medium',
 	requestUsage: true,
 	discoveredModels: [],
+	contextWindowTokens: null,
+	outputReserveTokens: null,
+	contextCapacityInvalid: false,
 };
 
 const prepared: EditPreparation = {

@@ -2,14 +2,24 @@ import { MarkdownView, TFile } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EmendChatView } from '../src/chat-view';
 import type { ConversationDataAdapter } from '../src/conversation-store';
+import { formatVaultQualifiedPath } from '../src/context';
+import {
+	buildSelectionDraftEstimate,
+	type DraftCapacityEstimate,
+} from '../src/context-capacity-ui';
 import EmendPlugin from '../src/main';
 import type { ReadOnlySubmission } from '../src/request-coordinator';
-import type { SelectionEditorAdapter } from '../src/selection-editor';
-import { DEFAULT_SETTINGS } from '../src/settings';
+import { SelectionModal } from '../src/selection-modal';
+import {
+	SelectionEditRequestCoordinator,
+	type SelectionEditorAdapter,
+} from '../src/selection-editor';
+import { DEFAULT_SETTINGS, normalizeContextLimit } from '../src/settings';
 import type {
 	ChatMessage,
 	EmendSettings,
 	ProviderHistoryMessage,
+	SelectionSnapshot,
 } from '../src/types';
 
 class MemoryAdapter implements ConversationDataAdapter {
@@ -646,5 +656,298 @@ describe('EmendPlugin Selection history', () => {
 		const current = body.messages.at(-1);
 		expect(current?.role).toBe('user');
 		expect(current?.content).toContain('User message:');
+	});
+});
+
+describe('EmendPlugin settings capacity refresh', () => {
+	it('refreshes every open chat view after saving settings', async () => {
+		const refreshActiveModelLabel = vi.fn();
+		const refreshCapacityEstimate = vi.fn();
+		const view = Object.create(EmendChatView.prototype) as EmendChatView;
+		Object.assign(view, { refreshActiveModelLabel, refreshCapacityEstimate });
+		const otherView = Object.create(EmendChatView.prototype) as EmendChatView;
+		const otherRefresh = vi.fn();
+		Object.assign(otherView, {
+			refreshActiveModelLabel: vi.fn(),
+			refreshCapacityEstimate: otherRefresh,
+		});
+		const saveData = vi.fn(async (_data: unknown) => undefined);
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, {
+			settings: structuredClone(DEFAULT_SETTINGS),
+			saveData,
+			app: {
+				workspace: {
+					getLeavesOfType: () => [
+						{ view },
+						{ view: otherView },
+						{ view: {} },
+					],
+				},
+			},
+		});
+
+		await plugin.saveSettings();
+
+		expect(saveData).toHaveBeenCalledOnce();
+		expect(refreshActiveModelLabel).toHaveBeenCalledOnce();
+		expect(refreshCapacityEstimate).toHaveBeenCalledOnce();
+		expect(otherRefresh).toHaveBeenCalledOnce();
+	});
+});
+
+describe('EmendPlugin Selection modal capacity estimate', () => {
+	function makeSelectionView(selectedText: string) {
+		const file = new TFile();
+		file.path = 'Selection.md';
+		const fullText = `Before${selectedText}After`;
+		const from = 6;
+		const to = from + selectedText.length;
+		const editor = {
+			getSelection: () => selectedText,
+			getValue: () => fullText,
+			getCursor: (which: 'from' | 'to') => ({
+				offset: which === 'from' ? from : to,
+			}),
+			posToOffset: (position: { offset: number }) => position.offset,
+			offsetToPos: (offset: number) => ({ offset }),
+			replaceRange: vi.fn(),
+		};
+		const view = Object.assign(
+			Object.create(MarkdownView.prototype) as MarkdownView,
+			{ file, editor },
+		);
+		return { file, fullText, from, to, view, editor };
+	}
+
+	function selectionSettings() {
+		const settings = structuredClone(DEFAULT_SETTINGS);
+		settings.activeProvider = 'custom';
+		settings.providers.custom.contextWindowTokens = 1000;
+		settings.providers.custom.outputReserveTokens = 100;
+		settings.maxContextCharacters = 0;
+		settings.smartSelectionContext = false;
+		settings.includeNotePathInContext = true;
+		return settings;
+	}
+
+	it('uses the captured snapshot, normalized settings, privacy path, and empty history', () => {
+		const settings = selectionSettings();
+		const file = new TFile();
+		file.path = 'Selection.md';
+		const fullText = `Alpha ${'word '.repeat(600)}beta ${'tail '.repeat(200)}`;
+		const from = fullText.indexOf('beta');
+		const to = from + 'beta'.length;
+		const snapshot: SelectionSnapshot = {
+			file,
+			fullText,
+			selectedText: 'beta',
+			from,
+			to,
+		};
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, {
+			settings,
+			app: { vault: { getName: () => 'Vault' } },
+		});
+
+		const estimate = plugin.estimateSelectionDraft(snapshot, 'Tighten this.');
+
+		expect(estimate).toEqual(buildSelectionDraftEstimate({
+			provider: settings.providers.custom,
+			snapshot,
+			prompt: 'Tighten this.',
+			maxContextCharacters: normalizeContextLimit(0),
+			smartSelectionContext: false,
+			notePath: formatVaultQualifiedPath('Vault', file.path),
+			history: [],
+		}));
+		expect(estimate.categories.history).toBe(0);
+		expect(normalizeContextLimit(0)).toBe(1000);
+		expect(
+			buildSelectionDraftEstimate({
+				provider: settings.providers.custom,
+				snapshot,
+				prompt: 'Tighten this.',
+				maxContextCharacters: 12000,
+				smartSelectionContext: false,
+				notePath: formatVaultQualifiedPath('Vault', file.path),
+				history: [],
+			}).categories.user,
+		).not.toBe(estimate.categories.user);
+
+		settings.providers.custom.contextWindowTokens = 100;
+		settings.providers.custom.outputReserveTokens = 100;
+
+		expect(plugin.estimateSelectionDraft(snapshot, 'Tighten this.').capacity.kind).toBe(
+			'invalid',
+		);
+	});
+
+	it('uses the same Selection request options for submission and the draft estimate', async () => {
+		const settings = selectionSettings();
+		const file = new TFile();
+		file.path = 'Selection.md';
+		const fullText = 'BeforebetaAfter';
+		const snapshot: SelectionSnapshot = {
+			file,
+			fullText,
+			selectedText: 'beta',
+			from: 6,
+			to: 10,
+		};
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, {
+			settings,
+			app: { vault: { getName: () => 'Vault' } },
+			getApiKey: () => 'dummy-key',
+		});
+		let captured:
+			| {
+				maxContextCharacters: number;
+				smartSelectionContext: boolean;
+				notePath?: string;
+			}
+			| undefined;
+		const submitSpy = vi
+			.spyOn(SelectionEditRequestCoordinator.prototype, 'submit')
+			.mockImplementation(async (submission) => {
+				captured = submission;
+				return {
+					applied: false,
+					changeCount: 0,
+					summaryItems: [],
+					usage: {
+						promptTokens: 1,
+						completionTokens: 1,
+						totalTokens: 2,
+						source: 'provider' as const,
+					},
+				};
+			});
+		try {
+			const editor: SelectionEditorAdapter = {
+				readCurrentText: () => fullText,
+				isTargetCurrent: () => true,
+				replaceRange: vi.fn(),
+			};
+
+			await plugin.requestSelectionEdit(
+				snapshot,
+				'Tighten this.',
+				new AbortController().signal,
+				editor,
+				[],
+				[],
+			);
+
+			expect(captured).toBeDefined();
+			expect(captured).toMatchObject({
+				maxContextCharacters: 1000,
+				smartSelectionContext: false,
+				notePath: 'Vault/Selection.md',
+			});
+			const estimate = plugin.estimateSelectionDraft(snapshot, 'Tighten this.');
+			expect(estimate).toEqual(buildSelectionDraftEstimate({
+				provider: settings.providers[settings.activeProvider],
+				snapshot,
+				prompt: 'Tighten this.',
+				maxContextCharacters: captured?.maxContextCharacters ?? 0,
+				smartSelectionContext: captured?.smartSelectionContext ?? true,
+				notePath: captured?.notePath,
+				history: [],
+			}));
+			expect(estimate.categories.history).toBe(0);
+		} finally {
+			submitSpy.mockRestore();
+		}
+	});
+
+	it('passes the plugin estimate callback to the command selection modal', async () => {
+		interface RegisteredCommand {
+			id: string;
+			editorCheckCallback?: (
+				checking: boolean,
+				editor: unknown,
+				view: unknown,
+			) => boolean;
+		}
+
+		const commands: RegisteredCommand[] = [];
+		const settings = selectionSettings();
+		const { view, editor } = makeSelectionView('beta');
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, {
+			app: {
+				vault: {
+					adapter: new MemoryAdapter(),
+					configDir: '.test-config',
+					on: () => ({}),
+					getAbstractFileByPath: () => null,
+					getName: () => 'Vault',
+				},
+				workspace: {
+					on: () => ({}),
+					getLeavesOfType: () => [],
+				},
+				secretStorage: { setSecret: vi.fn(), getSecret: vi.fn(() => null) },
+			},
+			settings,
+			loadSettings: vi.fn().mockResolvedValue(undefined),
+			registerView: vi.fn(),
+			registerEvent: vi.fn(),
+			rememberActiveMarkdownView: vi.fn(),
+			addRibbonIcon: vi.fn(),
+			addCommand: vi.fn((command: RegisteredCommand) => commands.push(command)),
+			addSettingTab: vi.fn(),
+			register: vi.fn(),
+			getTargetMarkdownView: () => view,
+		});
+		await plugin.onload();
+
+		const opened: SelectionModal[] = [];
+		const prototype = SelectionModal.prototype as unknown as {
+			open?: () => void;
+		};
+		const originalOpen = prototype.open;
+		prototype.open = function (this: SelectionModal) {
+			opened.push(this);
+		};
+		try {
+			const modifyCommand = commands.find(
+				(command) => command.id === 'emend:modify-selected-text',
+			);
+			expect(modifyCommand).toBeDefined();
+			expect(modifyCommand?.editorCheckCallback?.(false, editor, view)).toBe(true);
+			const modal = opened[0];
+			if (!modal) {
+				throw new Error('Selection modal was not opened.');
+			}
+			const estimateDraft = (
+				modal as unknown as {
+					estimateDraft: (prompt: string) => DraftCapacityEstimate;
+				}
+			).estimateDraft;
+			const snapshot: SelectionSnapshot = {
+				file: view.file,
+				fullText: editor.getValue(),
+				selectedText: 'beta',
+				from: 6,
+				to: 10,
+			};
+
+			const estimate = estimateDraft('Tighten this.');
+
+			expect(estimate).toEqual(
+				plugin.estimateSelectionDraft(snapshot, 'Tighten this.'),
+			);
+			expect(estimate.categories.history).toBe(0);
+		} finally {
+			if (originalOpen) {
+				prototype.open = originalOpen;
+			} else {
+				delete prototype.open;
+			}
+		}
 	});
 });

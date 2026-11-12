@@ -52,6 +52,7 @@ function makePlugin(
 			saved.push(structuredClone(data));
 		}),
 		refreshChatModelLabels: vi.fn(),
+		refreshChatCapacityDisplays: vi.fn(),
 	});
 	return {
 		plugin,

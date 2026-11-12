@@ -4,8 +4,13 @@ import { AdditionalNotesStore } from './additional-notes-store';
 import { EMEND_CHAT_VIEW_TYPE, EmendChatView } from './chat-view';
 import {
 	captureRequestContext,
+	formatVaultQualifiedPath,
 	type RequestContext,
 } from './context';
+import {
+	buildSelectionDraftEstimate,
+	type DraftCapacityEstimate,
+} from './context-capacity-ui';
 import { ConversationStore } from './conversation-store';
 import { DeepSeekWebSearchCoordinator } from './deepseek-web';
 import { getEditStrategy } from './edit-strategy';
@@ -31,8 +36,8 @@ import {
 import { SelectionModal } from './selection-modal';
 import { ApiKeyStorage } from './secret-storage';
 import {
-	DEFAULT_SETTINGS,
 	EmendSettingTab,
+	normalizeContextLimit,
 	normalizeSettings,
 	sanitizeSettings,
 } from './settings';
@@ -173,6 +178,7 @@ export default class EmendPlugin extends Plugin {
 						),
 						this.additionalNotesStore,
 						snapshot.file.path,
+						(prompt) => this.estimateSelectionDraft(snapshot, prompt),
 					);
 					this.register(() => modal.close());
 					modal.open();
@@ -224,6 +230,7 @@ export default class EmendPlugin extends Plugin {
 	async saveSettings() {
 		await this.saveData(sanitizeSettings(this.settings));
 		this.refreshChatModelLabels();
+		this.refreshChatCapacityDisplays();
 	}
 
 	private refreshChatModelLabels() {
@@ -234,6 +241,29 @@ export default class EmendPlugin extends Plugin {
 				leaf.view.refreshActiveModelLabel();
 			}
 		}
+	}
+
+	private refreshChatCapacityDisplays() {
+		for (const leaf of this.app.workspace.getLeavesOfType(
+			EMEND_CHAT_VIEW_TYPE,
+		)) {
+			if (leaf.view instanceof EmendChatView) {
+				leaf.view.refreshCapacityEstimate();
+			}
+		}
+	}
+
+	estimateSelectionDraft(
+		snapshot: SelectionSnapshot,
+		prompt: string,
+	): DraftCapacityEstimate {
+		return buildSelectionDraftEstimate({
+			provider: this.settings.providers[this.settings.activeProvider],
+			snapshot,
+			prompt,
+			...this.getSelectionRequestOptions(snapshot),
+			history: [],
+		});
 	}
 
 	async activateChatView() {
@@ -303,11 +333,7 @@ export default class EmendPlugin extends Plugin {
 		}
 
 		return captureRequestContext(markdownView, {
-			maxCharacters: Math.max(
-				1000,
-				this.settings.maxContextCharacters ||
-					DEFAULT_SETTINGS.maxContextCharacters,
-			),
+			maxCharacters: normalizeContextLimit(this.settings.maxContextCharacters),
 			includeNotePath: this.settings.includeNotePathInContext,
 		});
 	}
@@ -409,21 +435,28 @@ export default class EmendPlugin extends Plugin {
 			return coordinator.submit({
 				snapshot,
 				prompt,
-				maxContextCharacters: Math.max(
-					1000,
-					this.settings.maxContextCharacters ||
-						DEFAULT_SETTINGS.maxContextCharacters,
-				),
-				smartSelectionContext: this.settings.smartSelectionContext,
+				...this.getSelectionRequestOptions(snapshot),
 				additionalNotePaths,
 				history,
-				notePath: this.settings.includeNotePathInContext
-					? `${this.app.vault.getName()}/${snapshot.file.path}`
-					: undefined,
 				signal,
 				callbacks,
 			});
 		});
+	}
+
+	private getSelectionRequestOptions(snapshot: SelectionSnapshot) {
+		return {
+			maxContextCharacters: normalizeContextLimit(
+				this.settings.maxContextCharacters,
+			),
+			smartSelectionContext: this.settings.smartSelectionContext,
+			notePath: this.settings.includeNotePathInContext
+				? formatVaultQualifiedPath(
+					this.app.vault.getName(),
+					snapshot.file.path,
+				)
+				: undefined,
+		};
 	}
 
 	private loadAdditionalNotes(
@@ -436,11 +469,7 @@ export default class EmendPlugin extends Plugin {
 			activeNotePath,
 			signal,
 			includeNotePath: this.settings.includeNotePathInContext,
-			maxCharacters: Math.max(
-				1000,
-				this.settings.maxContextCharacters ||
-					DEFAULT_SETTINGS.maxContextCharacters,
-			),
+			maxCharacters: normalizeContextLimit(this.settings.maxContextCharacters),
 		});
 	}
 

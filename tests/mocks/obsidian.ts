@@ -71,8 +71,17 @@ export class PluginSettingTab {
 }
 
 interface TextComponent {
-	inputEl: { type: string; min: string; max: string; step: string };
+	inputEl: {
+		type: string;
+		min: string;
+		max: string;
+		step: string;
+		value: string;
+		addEventListener(type: string, listener: () => void): void;
+		dispatchEvent(event: { type: string }): boolean;
+	};
 	value: string;
+	placeholder: string;
 	onChangeHandler: (value: string) => unknown;
 	setPlaceholder(value: string): TextComponent;
 	setValue(value: string): TextComponent;
@@ -116,6 +125,7 @@ export class Setting {
 	readonly buttons: ButtonComponent[] = [];
 	readonly dropdowns: DropdownComponent[] = [];
 	readonly nameEl = { createSpan: () => ({}) };
+	readonly settingEl = { style: { display: '' } };
 	name = '';
 	description = '';
 
@@ -134,15 +144,37 @@ export class Setting {
 	}
 
 	addText(callback: (text: TextComponent) => unknown) {
-		const text: TextComponent = {
-			inputEl: { type: '', min: '', max: '', step: '' },
+		const listeners = new Map<string, Array<() => void>>();
+		const inputEl: TextComponent['inputEl'] = {
+			type: '',
+			min: '',
+			max: '',
+			step: '',
 			value: '',
+			addEventListener(type, listener) {
+				const entries = listeners.get(type) ?? [];
+				entries.push(listener);
+				listeners.set(type, entries);
+			},
+			dispatchEvent(event) {
+				for (const listener of listeners.get(event.type) ?? []) {
+					listener();
+				}
+				return true;
+			},
+		};
+		const text: TextComponent = {
+			inputEl,
+			value: '',
+			placeholder: '',
 			onChangeHandler: () => undefined,
-			setPlaceholder(_value) {
+			setPlaceholder(value) {
+				this.placeholder = value;
 				return this;
 			},
 			setValue(value) {
 				this.value = value;
+				inputEl.value = value;
 				return this;
 			},
 			onChange(handler) {

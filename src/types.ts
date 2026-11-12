@@ -76,6 +76,9 @@ export interface ProviderConfig {
 	reasoningEffort: ReasoningEffort;
 	requestUsage: boolean;
 	discoveredModels: DiscoveredModel[];
+	contextWindowTokens: number | null;
+	outputReserveTokens: number | null;
+	contextCapacityInvalid: boolean;
 }
 
 export interface EmendSettings {

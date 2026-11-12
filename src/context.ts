@@ -17,6 +17,13 @@ export interface ContextCaptureOptions {
 	includeNotePath: boolean;
 }
 
+export function formatVaultQualifiedPath(
+	vaultName: string,
+	notePath: string,
+): string {
+	return `${vaultName}/${notePath}`;
+}
+
 export function captureRequestContext(
 	markdownView: MarkdownView,
 	options: ContextCaptureOptions,
@@ -38,7 +45,7 @@ export function captureRequestContext(
 		selection: { from, to },
 		noteLabel: notePath,
 		notePath: options.includeNotePath
-			? `${markdownView.app.vault.getName()}/${notePath}`
+			? formatVaultQualifiedPath(markdownView.app.vault.getName(), notePath)
 			: undefined,
 		markdown: getBoundedContext(
 			sourceText,

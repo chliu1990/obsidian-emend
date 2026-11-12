@@ -1,17 +1,27 @@
 import { App, Modal, Notice, TFile } from 'obsidian';
 import type { AdditionalNotesStore } from './additional-notes-store';
 import { AdditionalNotesControl } from './additional-notes-ui';
+import {
+	ContextCapacityDisplay,
+	formatDraftCapacityBlockMessage,
+	type DraftCapacityEstimate,
+} from './context-capacity-ui';
 import type { EditResult } from './note-writer';
-import { QUICK_ACTIONS } from './quick-actions';
+import { QUICK_ACTIONS, type QuickAction } from './quick-actions';
 
 export class SelectionModal extends Modal {
 	private inputEl: HTMLTextAreaElement | null = null;
 	private submitButton: HTMLButtonElement | null = null;
 	private cancelButton: HTMLButtonElement | null = null;
-	private quickActionButtons: HTMLButtonElement[] = [];
+	private quickActionButtons: Array<{
+		action: QuickAction;
+		button: HTMLButtonElement;
+	}> = [];
 	private activeController: AbortController | null = null;
 	private additionalNotesControl: AdditionalNotesControl | null = null;
 	private targetFile: TFile | null = null;
+	private capacityDisplay: ContextCapacityDisplay | null = null;
+	private draftCapacityBlocked = false;
 
 	constructor(
 		app: App,
@@ -22,6 +32,7 @@ export class SelectionModal extends Modal {
 		) => Promise<EditResult>,
 		private readonly additionalNotesStore: AdditionalNotesStore,
 		private readonly targetPath: string,
+		private readonly estimateDraft: (prompt: string) => DraftCapacityEstimate,
 	) {
 		super(app);
 	}
@@ -32,6 +43,7 @@ export class SelectionModal extends Modal {
 		this.contentEl.addClass('emend-selection-modal');
 		const targetFile = this.app.vault.getAbstractFileByPath(this.targetPath);
 		this.targetFile = targetFile instanceof TFile ? targetFile : null;
+		this.capacityDisplay = new ContextCapacityDisplay(this.contentEl);
 		const quickActionsEl = this.contentEl.createDiv('emend-chat-quick-actions');
 		for (const action of QUICK_ACTIONS) {
 			const button = quickActionsEl.createEl('button', {
@@ -39,7 +51,7 @@ export class SelectionModal extends Modal {
 				text: action.label,
 				attr: { 'data-action-id': action.id },
 			});
-			this.quickActionButtons.push(button);
+			this.quickActionButtons.push({ action, button });
 			button.addEventListener('click', () => {
 				void this.submit(action.prompt);
 			});
@@ -68,6 +80,9 @@ export class SelectionModal extends Modal {
 				void this.submit();
 			}
 		});
+		this.inputEl.addEventListener('input', () => {
+			this.refreshCapacityEstimate();
+		});
 
 		const actionsEl = this.contentEl.createDiv('emend-chat-composer-actions');
 		this.cancelButton = actionsEl.createEl('button', {
@@ -91,6 +106,7 @@ export class SelectionModal extends Modal {
 		this.submitButton.addEventListener('click', () => {
 			void this.submit();
 		});
+		this.refreshCapacityEstimate();
 		this.inputEl.focus();
 	}
 
@@ -103,6 +119,9 @@ export class SelectionModal extends Modal {
 		this.quickActionButtons = [];
 		this.additionalNotesControl?.destroy();
 		this.additionalNotesControl = null;
+		this.capacityDisplay?.destroy();
+		this.capacityDisplay = null;
+		this.draftCapacityBlocked = false;
 		this.targetFile = null;
 		this.contentEl.empty();
 	}
@@ -111,17 +130,50 @@ export class SelectionModal extends Modal {
 		return this.targetFile?.path ?? this.targetPath;
 	}
 
+	private refreshCapacityEstimate(prompt = this.inputEl?.value ?? '') {
+		const estimate = this.safeEstimateDraft(prompt);
+		this.draftCapacityBlocked = estimate?.blocked ?? false;
+		this.capacityDisplay?.render(estimate);
+		if (this.activeController) {
+			return;
+		}
+		this.applyCapacityControls();
+	}
+
+	private applyCapacityControls() {
+		if (this.submitButton) {
+			this.submitButton.disabled = this.draftCapacityBlocked;
+		}
+		for (const { action, button } of this.quickActionButtons) {
+			button.disabled = this.safeEstimateDraft(action.prompt)?.blocked ?? false;
+		}
+	}
+
+	private safeEstimateDraft(
+		prompt: string,
+	): DraftCapacityEstimate | undefined {
+		try {
+			return this.estimateDraft(prompt);
+		} catch {
+			return undefined;
+		}
+	}
+
 	private setPending(pending: boolean) {
 		if (this.inputEl) {
 			this.inputEl.disabled = pending;
 		}
-		if (this.submitButton) {
-			this.submitButton.disabled = pending;
-		}
-		for (const button of this.quickActionButtons) {
-			button.disabled = pending;
-		}
 		this.additionalNotesControl?.setDisabled(pending);
+		if (pending) {
+			if (this.submitButton) {
+				this.submitButton.disabled = true;
+			}
+			for (const { button } of this.quickActionButtons) {
+				button.disabled = true;
+			}
+			return;
+		}
+		this.refreshCapacityEstimate();
 	}
 
 	private async submit(prompt?: string) {
@@ -129,6 +181,18 @@ export class SelectionModal extends Modal {
 			? this.inputEl?.value.trim() ?? ''
 			: prompt.trim();
 		if (!submittedPrompt || this.activeController) {
+			return;
+		}
+
+		const estimate = this.safeEstimateDraft(submittedPrompt);
+		const capacityBlockMessage = formatDraftCapacityBlockMessage(estimate);
+		if (capacityBlockMessage) {
+			if (prompt === undefined) {
+				this.refreshCapacityEstimate(submittedPrompt);
+			} else {
+				this.refreshCapacityEstimate();
+			}
+			new Notice(`Emend: ${capacityBlockMessage}`);
 			return;
 		}
 

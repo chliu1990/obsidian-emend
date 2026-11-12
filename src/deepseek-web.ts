@@ -18,6 +18,7 @@ import {
 import {
 	WebExtractionReader,
 	WebExtractionReaderError,
+	findContextCapacityError,
 	type WebExtractionReaderRound,
 } from './web-extraction-reader';
 import {
@@ -413,6 +414,10 @@ export class DeepSeekWebSearchCoordinator {
 			}
 			if (error instanceof Error && error.name === 'AbortError') {
 				throw error;
+			}
+			const capacityError = findContextCapacityError(error);
+			if (capacityError) {
+				throw capacityError;
 			}
 			options.onActivity({ status: 'complete', label: `Extraction failed: ${target}` });
 			return {

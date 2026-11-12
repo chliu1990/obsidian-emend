@@ -14,6 +14,7 @@ Features have no fixed deadlines. Each independently reviewable behavior gets it
 - Structural Markdown safeguards preserve reviewable inline code and single-cell table edits, reject unreviewable fenced-code/review-shadow and table-structure changes, and validate actual composed candidates before either writer runs. See [Stage 38](devel_docs/38-markdown-edit-safeguards.md).
 - Easier selected-text editing is current behavior: the composer **Edit target** control defaults to **Selection** for usable selected text, retains an explicit **Full note** override, and routes typed and quick-action edits through the existing native selection writer with concise usage-bearing chat results. See [Stage 39](devel_docs/39-easier-selection-editing.md) and issue [#24](https://github.com/chliu1990/obsidian-emend/issues/24).
 - Post-edit change summaries ([#35](https://github.com/chliu1990/obsidian-emend/issues/35)) are current behavior: after a guarded write, composer chat shows the unchanged concise Edit header, a `Target: Full note.` or `Target: Selection.` line, an optional model-written explanation of what changed and why, and bounded, sanitized bullets naming the original note lines touched by the applied Operations, with an eight-bullet cap, deterministic type aggregation, exact no-op text and no-op explanation, and no anchors, source text, comments, or JSON in bullets. See [Stage 41](devel_docs/41-post-edit-change-summaries.md).
+- Context accounting and hard capacity safeguards are current behavior: each provider can set a nullable context window and output reserve with a persisted invalid marker, a compact accessible **Draft estimate** bar below the chat mode controls and Modify Selection modal title shows floating per-category details against effective input capacity with no composer meter, and both the submission preflight and every provider fetch reject over-capacity requests terminally with no partial answer and no write. Automatic compression is not included. See [Stage 42](devel_docs/42-context-accounting-capacity.md).
 
 ## Next
 
@@ -25,8 +26,7 @@ The public-launch path is two independent content PRs plus the normal separate r
 ## Later
 
 - **Vision inputs:** embedded vault images with strict provider, file-type, size, and capability checks, starting with one provider/model family.
-- **Context accounting:** per-provider capacity/output reserve and labelled category estimates, without compression.
-- **Automatic context compression:** separate, default-off behavior using the accounting work, with explicit privacy/cost disclosure and safe edit fallbacks.
+- **Automatic context compression:** separate, default-off behavior built on the Stage 42 accounting, with an explicit configurable threshold (proposed 75%), privacy/cost disclosure for the extra provider request, and safe full-note/selection fallbacks. Not included in Stage 42, which adds accounting, visibility, and hard safeguards only.
 - **File structures and automatic TOCs:** an explicit mode or action for bounded, read-only file-structure/title discovery and TOC generation, without background vault scans or writes to discovered files.
 - **Linked-document context toggle:** default-off inclusion of outgoing and/or reverse-linked documents with visible paths, deduplication, bounded read-only snapshots, and consistent path privacy.
 - **Folder-based document selection:** explicit folder scopes for opening/including documents, with clear recursion rules, bounded results, and no new write path.

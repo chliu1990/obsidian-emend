@@ -1,4 +1,7 @@
-import { formatProviderHistory } from './provider-history';
+import {
+	countRequestCharacters,
+	estimateTokensForCharacters,
+} from './context-accounting';
 import type {
 	AiProviderRequest,
 	ProviderTokenUsage,
@@ -48,8 +51,14 @@ export function resolveRoundTokenUsage(
 }
 
 function estimateRequestUsage(request: RequestText, result: StreamResult): TokenUsage {
-	const promptTokens = estimateTokens(countRequestCharacters(request));
-	const completionTokens = estimateTokens(result.content.length + result.reasoning.length);
+	const promptTokens = Math.max(
+		1,
+		estimateTokensForCharacters(countRequestCharacters(request)),
+	);
+	const completionTokens = Math.max(
+		1,
+		estimateTokensForCharacters(result.content.length + result.reasoning.length),
+	);
 	return {
 		promptTokens,
 		completionTokens,
@@ -61,29 +70,4 @@ function estimateRequestUsage(request: RequestText, result: StreamResult): Token
 export function formatTokenUsage(usage: TokenUsage) {
 	const source = usage.source === 'estimated' ? 'Estimated' : 'Provider';
 	return `${source} usage · ${usage.totalTokens} total · ${usage.promptTokens} prompt · ${usage.completionTokens} completion`;
-}
-
-function countRequestCharacters(request: RequestText) {
-	const historyCharacters = formatProviderHistory(request.history).reduce(
-		(sum, message) => sum + message.content.length,
-		0,
-	);
-	const continuationCharacters = (request.continuation ?? []).reduce((sum, message) => {
-		if (message.role !== 'assistant' || !('toolCalls' in message)) {
-			return sum + message.content.length;
-		}
-		return sum + message.content.length + message.toolCalls.reduce(
-			(callSum, call) => callSum + call.name.length + call.arguments.length,
-			0,
-		);
-	}, 0);
-	const toolCharacters = request.tools?.length
-		? JSON.stringify(request.tools).length
-		: 0;
-	return request.systemPrompt.length + request.userPrompt.length +
-		historyCharacters + continuationCharacters + toolCharacters;
-}
-
-function estimateTokens(characterCount: number) {
-	return Math.max(1, Math.ceil(characterCount / 4));
 }

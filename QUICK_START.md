@@ -45,7 +45,19 @@ Emend appends `/chat/completions` to the base URL. The provider must support str
 
 API keys are stored in Obsidian SecretStorage, not as plaintext in Emend's `data.json`. Existing plaintext keys migrate automatically on load. Clearing a key in settings removes that provider's stored credential; removing the plugin folder alone does not. Do not use a real key in screenshots or shared test files.
 
-The editable presets above are DeepSeek `deepseek-flash` and Kimi `k3.1-pro`. Operations is the only editing protocol; there is no CriticMarkup strategy selector. DeepSeek `deepseek-flash` and `deepseek-v4-pro` support default-off **Web: Review / Auto** research in read-only chat; other providers and editing paths do not. Context-cost bars/automatic compression and other-provider search adapters remain deferred; see the [context-management roadmap](devel_docs/future-context-management.md) and [remaining web-search work](devel_docs/future-web-search.md).
+The editable presets above are DeepSeek `deepseek-flash` and Kimi `k3.1-pro`. Operations is the only editing protocol; there is no CriticMarkup strategy selector. DeepSeek `deepseek-flash` and `deepseek-v4-pro` support default-off **Web: Review / Auto** research in read-only chat; other providers and editing paths do not. Automatic context compression and other-provider search adapters remain deferred; see the [context-management roadmap](devel_docs/future-context-management.md) and [remaining web-search work](devel_docs/future-web-search.md).
+
+### Context capacity (optional)
+
+Set **Context window (tokens)** and **Output reserve (tokens)** manually, or explicitly click **Use documented defaults** when that action is available. Both are required together, must be positive integers, and the window must be larger than the reserve; effective input capacity is `window − reserve`. Leave both empty, or use **Clear capacity settings**, to turn capacity checks off. An invalid pair shows a warning in settings and blocks requests until you fix it. The reserve is local accounting only — it is never sent as `max_tokens`.
+
+Emend does not infer or fetch limits. The documented-defaults catalog contains only DeepSeek `deepseek-flash` and `deepseek-v4-pro` at window `1048576` / reserve `393216` (1M context, 384K maximum output), and Kimi `k3.1-pro` at window `1048576` / reserve `131072` (up to 1M context on eligible plans and 131,072 default output; lower-tier plans may need a smaller window). These are model documentation values, not a response from your account. The button overwrites existing values only when clicked; model selection and settings loading apply nothing automatically, custom and unknown models remain manual, and no provider metadata call is added.
+
+A slim capacity bar then appears below the chat mode controls; the selection modal uses the same bar below its title. Its known-input and free-input segments share the window with a right-hand output allowance. For window `W`, reserve `R`, and estimated known input `I`, remaining input is `max(0, W − R − I)` and remaining output is `max(0, min(R, W − I))`, so the output partition shrinks when input grows past effective capacity. Hover or keyboard-focus the bar for estimated input, remaining input/output, window/reserve, and per-category tokens. Category text matches its segment color, and the meter's accessible name comes from its summary without a separate native **Context capacity** hover tag. Click to pin the details, and use outside click or **Escape** to dismiss them. The bar updates as you type, move the caret, change mode or **Edit target**, select additional notes, or change settings. There is no composer meter, gray unknown segment, or compact-context button.
+
+Draft estimates leave out loaded instructions/skills, additional-note contents, the first Web round's system prompt and tool declarations, and later Web or correction rounds. The floating details call remaining input a lower-bound estimate and list those exclusions; Emend does not read additional-note contents or estimate instructions to fill the bar. Unconfigured and invalid settings show text without a fabricated proportional partition, and the exact check at submission still decides.
+
+When a draft is at or above capacity, Send and the affected quick actions are disabled and **Enter**/**Mod+Enter** show a notice instead of submitting; nothing is sent and nothing is written. A request rejected by the exact check shows a capacity error with guidance (reduce context, history, additional notes, or Web output, use a smaller selection, or select a smaller target), adds no answer, writes nothing, and can be retried after you reduce the request or raise the limit. Emend never compresses, summarizes, or truncates context to make a request fit.
 
 ## 3. Test read-only chat
 
@@ -72,6 +84,14 @@ Useful controls:
 - **Shift+Enter** inserts a newline.
 - **Cmd+Shift+A/E** on macOS or **Ctrl+Shift+A/E** on Windows/Linux selects Ask/Edit without sending.
 - **Stop** aborts an in-flight request. **Copy** copies a completed answer.
+
+### Capacity bar and blocked requests
+
+When capacity is configured, the compact bar below the chat mode controls carries the accessible summary `Estimated input: N tokens of M effective capacity.` and updates on typing, caret or selection moves, mode and **Edit target** changes, additional-note changes, and settings changes. Hover or focus the bar for estimated and remaining input/output, window, reserve, and per-category tokens. Click to pin the floating details; pointer exit or focus loss hides an unpinned panel, while outside click or **Escape** dismisses it. No capacity meter appears below the composer.
+
+The estimate leaves out loaded instructions and skills, additional-note contents, the first Web round's system prompt and tool declarations, and later Web or correction rounds. The details identify remaining input as a lower-bound estimate and list these exclusions; there is no unknown-input segment or compact-context button. A passing draft can therefore still be rejected by the exact submission check. With no configured window, or with invalid settings, Emend shows text and details without inventing a proportional bar or output partition.
+
+At or above capacity, or with an invalid window/reserve pair, Send and the affected quick actions are disabled and **Enter**/**Mod+Enter** show a notice instead of sending. A rejected request shows a capacity error naming the required input and the effective capacity, adds no answer, and writes nothing; reduce the draft, chat history, target, or additional notes, or raise the limit, then retry. The Command Palette selection modal shows the same compact bar and floating details for its captured selection.
 
 ## 4. Test a full-note edit
 
@@ -142,6 +162,7 @@ Send another request. Emend rereads these files on every request and places skil
 - Additional-note paths are always shown locally in the picker controls so you can review what is selected. With **Include note path** off, provider prompts use only generic labels such as `Additional note 1`; with it on, each section includes `Path: <vault>/<note path>`. Selected content is sent with either setting when you explicitly submit.
 - Enable **Include note path** only if you want the vault/note path sent to the provider for both active and additional notes.
 - Full-note Edit always sends the complete active note. Read-only modes send bounded active-note context. Composer Selection sends the complete selection plus surrounding context and the recent ready history; Modify Selection sends the same selection context without history. All can include separate bounded, read-only additional-note snapshots, but Operations can target only the captured active note or selection. **Chat history messages** defaults to 8 and accepts 0–50; 0 disables history.
+- Capacity window and reserve values, and the invalid marker, are ordinary non-secret provider settings that persist across restarts. Draft estimates are never stored, and they are approximations rather than provider billing data.
 - Deleting a note does not delete its saved conversation automatically.
 
 ## Verification checklist
@@ -153,6 +174,7 @@ You have completed the quick start when:
 - Track Changes can accept or reject the edit.
 - Composer Selection and Modify Selection change only the captured selection, native undo works, and Selection capture failures never fall back to Full note.
 - Explicitly selected additional notes appear with their paths, remain read-only, respect context/path limits, and never leak between target notes.
+- If you configured capacity, the header bar updates live, hover/focus reveals its lower-bound estimate and exclusions, and an over-capacity or invalid configuration blocks submission with no provider request and no note write.
 - Conversations return after switching notes and reloading Obsidian, while additional-note selections clear on Emend plugin or Obsidian reload.
 
 If a scenario fails, see the troubleshooting section in [INSTALLATION.md](INSTALLATION.md) and check the provider error shown in chat before retrying.

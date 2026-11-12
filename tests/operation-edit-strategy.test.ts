@@ -1476,6 +1476,9 @@ const provider: ProviderConfig = {
 	reasoningEffort: 'low',
 	requestUsage: false,
 	discoveredModels: [],
+	contextWindowTokens: null,
+	outputReserveTokens: null,
+	contextCapacityInvalid: false,
 };
 
 function operationRequest(response: string) {

@@ -1,5 +1,10 @@
-import { App, Notice, PluginSettingTab, setIcon, Setting } from 'obsidian';
+import { App, Notice, PluginSettingTab, setIcon, Setting, type ButtonComponent, type TextComponent } from 'obsidian';
+import {
+	INVALID_CONTEXT_CAPACITY_MESSAGE,
+	resolveContextCapacity,
+} from './context-accounting';
 import { discoverProviderModels } from './model-discovery';
+import { getDocumentedCapacityDefaults } from './provider-capacity-defaults';
 import type EmendPlugin from './main';
 import type {
 	DiscoveredModel,
@@ -45,6 +50,9 @@ export const DEFAULT_SETTINGS: EmendSettings = {
 			reasoningEffort: 'high',
 			requestUsage: true,
 			discoveredModels: [],
+			contextWindowTokens: null,
+			outputReserveTokens: null,
+			contextCapacityInvalid: false,
 		},
 		kimi: {
 			name: 'Kimi',
@@ -54,6 +62,9 @@ export const DEFAULT_SETTINGS: EmendSettings = {
 			reasoningEffort: 'high',
 			requestUsage: true,
 			discoveredModels: [],
+			contextWindowTokens: null,
+			outputReserveTokens: null,
+			contextCapacityInvalid: false,
 		},
 		custom: {
 			name: 'Custom',
@@ -63,6 +74,9 @@ export const DEFAULT_SETTINGS: EmendSettings = {
 			reasoningEffort: 'high',
 			requestUsage: false,
 			discoveredModels: [],
+			contextWindowTokens: null,
+			outputReserveTokens: null,
+			contextCapacityInvalid: false,
 		},
 	},
 	defaultMode: 'ask',
@@ -247,6 +261,7 @@ export class EmendSettingTab extends PluginSettingTab {
 					.setValue(config.model)
 					.onChange(async (value) => {
 						config.model = value.trim();
+						refreshDocumentedDefaults();
 						await this.plugin.saveSettings();
 					}),
 			)
@@ -296,6 +311,159 @@ export class EmendSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}),
 			);
+
+		let windowText: TextComponent | null = null;
+		let reserveText: TextComponent | null = null;
+		let windowDraft =
+			config.contextWindowTokens === null ? '' : String(config.contextWindowTokens);
+		let reserveDraft =
+			config.outputReserveTokens === null ? '' : String(config.outputReserveTokens);
+
+		const previewCapacity = () => resolveContextCapacity(
+			resolveProviderCapacityFields(
+				parseCapacityInput(windowDraft),
+				parseCapacityInput(reserveDraft),
+				windowDraft.trim() === '' && reserveDraft.trim() === ''
+					? config.contextCapacityInvalid
+					: false,
+			),
+		);
+
+		let capacityStatus: Setting | null = null;
+		const refreshCapacityStatus = () => {
+			if (!capacityStatus) {
+				return;
+			}
+			const invalid = previewCapacity().kind === 'invalid';
+			const configured = config.contextWindowTokens !== null ||
+				config.outputReserveTokens !== null ||
+				windowDraft.trim() !== '' ||
+				reserveDraft.trim() !== '';
+			capacityStatus.setDesc(
+				invalid ? INVALID_CONTEXT_CAPACITY_MESSAGE : '',
+			);
+			capacityStatus.settingEl.style.display =
+				invalid || configured ? '' : 'none';
+		};
+
+		const commitCapacity = async () => {
+			applyProviderCapacityPair(
+				config,
+				parseCapacityInput(windowDraft),
+				parseCapacityInput(reserveDraft),
+			);
+			const canonicalWindow = config.contextWindowTokens === null
+				? ''
+				: String(config.contextWindowTokens);
+			if (windowDraft !== canonicalWindow) {
+				windowDraft = canonicalWindow;
+				windowText?.setValue(canonicalWindow);
+			}
+			const canonicalReserve = config.outputReserveTokens === null
+				? ''
+				: String(config.outputReserveTokens);
+			if (reserveDraft !== canonicalReserve) {
+				reserveDraft = canonicalReserve;
+				reserveText?.setValue(canonicalReserve);
+			}
+			refreshCapacityStatus();
+			await this.plugin.saveSettings();
+		};
+
+		new Setting(containerEl)
+			.setName('Context window (tokens)')
+			.setDesc('Both token values are required. Leave both empty to disable capacity checks.')
+			.addText((text) => {
+				windowText = text;
+				text.inputEl.type = 'number';
+				text.inputEl.min = '1';
+				text.inputEl.step = '1';
+				text
+					// eslint-disable-next-line obsidianmd/ui/sentence-case -- Numeric example placeholder.
+					.setPlaceholder('e.g. 128000')
+					.setValue(windowDraft)
+					.onChange((value) => {
+						windowDraft = value;
+						refreshCapacityStatus();
+					});
+				text.inputEl.addEventListener('change', () => {
+					void commitCapacity();
+				});
+			});
+
+		new Setting(containerEl)
+			.setName('Output reserve (tokens)')
+			.setDesc('Both token values are required. Leave both empty to disable capacity checks.')
+			.addText((text) => {
+				reserveText = text;
+				text.inputEl.type = 'number';
+				text.inputEl.min = '1';
+				text.inputEl.step = '1';
+				text
+					// eslint-disable-next-line obsidianmd/ui/sentence-case -- Numeric example placeholder.
+					.setPlaceholder('e.g. 8000')
+					.setValue(reserveDraft)
+					.onChange((value) => {
+						reserveDraft = value;
+						refreshCapacityStatus();
+					});
+				text.inputEl.addEventListener('change', () => {
+					void commitCapacity();
+				});
+			});
+
+		const providerId = provider.id;
+		let documentedDefaultsButton: ButtonComponent | null = null;
+		const defaultsSetting = new Setting(containerEl)
+			.setName('Capacity defaults');
+		function refreshDocumentedDefaults() {
+			const defaults = getDocumentedCapacityDefaults(providerId, config.model);
+			defaultsSetting.setDesc(
+				defaults?.description ?? 'No documented defaults for this model.',
+			);
+			documentedDefaultsButton?.setDisabled(!defaults);
+		}
+		defaultsSetting.addButton((button) => {
+			documentedDefaultsButton = button;
+			button
+				.setButtonText('Use documented defaults')
+				.onClick(async () => {
+					const defaults = getDocumentedCapacityDefaults(providerId, config.model);
+					if (!defaults) {
+						return;
+					}
+					windowDraft = String(defaults.contextWindowTokens);
+					reserveDraft = String(defaults.outputReserveTokens);
+					windowText?.setValue(windowDraft);
+					reserveText?.setValue(reserveDraft);
+					applyProviderCapacityPair(
+						config,
+						defaults.contextWindowTokens,
+						defaults.outputReserveTokens,
+					);
+					refreshCapacityStatus();
+					await this.plugin.saveSettings();
+				});
+		});
+		refreshDocumentedDefaults();
+
+		capacityStatus = new Setting(containerEl)
+			.setName('Context capacity')
+			.setDesc('')
+			.addButton((button) => {
+				button
+					.setButtonText('Clear capacity settings')
+					.onClick(async () => {
+						windowDraft = '';
+						reserveDraft = '';
+						windowText?.setValue('');
+						reserveText?.setValue('');
+						applyProviderCapacityPair(config, null, null);
+						refreshCapacityStatus();
+						await this.plugin.saveSettings();
+					});
+			});
+		refreshCapacityStatus();
 
 		new Setting(containerEl)
 			.setName('Default mode')
@@ -457,6 +625,11 @@ function normalizeProviderConfig(
 	data: unknown,
 ): ProviderConfig {
 	const config = isRecord(data) ? data : {};
+	const capacity = resolveProviderCapacityFields(
+		config.contextWindowTokens,
+		config.outputReserveTokens,
+		config.contextCapacityInvalid === true,
+	);
 	return {
 		name: stringOrDefault(config.name, defaults.name),
 		baseUrl: stringOrDefault(config.baseUrl, defaults.baseUrl),
@@ -470,7 +643,79 @@ function normalizeProviderConfig(
 				? config.requestUsage
 				: defaults.requestUsage,
 		discoveredModels: normalizeDiscoveredModels(config.discoveredModels),
+		...capacity,
 	};
+}
+
+interface OptionalPositiveInteger {
+	value: number | null;
+	malformed: boolean;
+}
+
+function parseOptionalPositiveInteger(value: unknown): OptionalPositiveInteger {
+	if (value === undefined || value === null) {
+		return { value: null, malformed: false };
+	}
+	if (
+		typeof value === 'number' &&
+		Number.isInteger(value) &&
+		value > 0
+	) {
+		return { value, malformed: false };
+	}
+	return { value: null, malformed: true };
+}
+
+function resolveProviderCapacityFields(
+	rawWindow: unknown,
+	rawReserve: unknown,
+	persistedInvalid: boolean,
+): Pick<
+	ProviderConfig,
+	'contextWindowTokens' | 'outputReserveTokens' | 'contextCapacityInvalid'
+> {
+	const window = parseOptionalPositiveInteger(rawWindow);
+	const reserve = parseOptionalPositiveInteger(rawReserve);
+	const cleared = window.value === null && reserve.value === null;
+	if (cleared && !window.malformed && !reserve.malformed) {
+		return {
+			contextWindowTokens: null,
+			outputReserveTokens: null,
+			contextCapacityInvalid: persistedInvalid,
+		};
+	}
+
+	const validPair = !window.malformed &&
+		!reserve.malformed &&
+		window.value !== null &&
+		reserve.value !== null &&
+		window.value - reserve.value > 0;
+	return {
+		contextWindowTokens: window.value,
+		outputReserveTokens: reserve.value,
+		contextCapacityInvalid: !validPair,
+	};
+}
+
+function parseCapacityInput(value: string): unknown {
+	const trimmed = value.trim();
+	if (!trimmed) {
+		return null;
+	}
+	const parsed = Number(trimmed);
+	return Number.isNaN(parsed) ? trimmed : parsed;
+}
+
+function applyProviderCapacityPair(
+	config: ProviderConfig,
+	rawWindow: unknown,
+	rawReserve: unknown,
+) {
+	// A user edit states the full pair, so it resolves any persisted malformed marker.
+	const capacity = resolveProviderCapacityFields(rawWindow, rawReserve, false);
+	config.contextWindowTokens = capacity.contextWindowTokens;
+	config.outputReserveTokens = capacity.outputReserveTokens;
+	config.contextCapacityInvalid = capacity.contextCapacityInvalid;
 }
 
 function normalizeDiscoveredModels(value: unknown): DiscoveredModel[] {
@@ -492,7 +737,7 @@ function normalizeDiscoveredModels(value: unknown): DiscoveredModel[] {
 	return models;
 }
 
-function normalizeContextLimit(value: unknown) {
+export function normalizeContextLimit(value: unknown) {
 	return typeof value === 'number' && Number.isFinite(value)
 		? Math.max(1000, Math.floor(value))
 		: DEFAULT_SETTINGS.maxContextCharacters;

@@ -5,6 +5,10 @@ import {
 	type AiProviderRequest,
 	type StreamEvent,
 } from '../src/provider-stream';
+import {
+	ContextCapacityError,
+	accountRequestCharacters,
+} from '../src/context-accounting';
 import type { ProviderConfig } from '../src/types';
 
 const encoder = new TextEncoder();
@@ -182,6 +186,9 @@ const provider: ProviderConfig = {
 	reasoningEffort: 'medium',
 	requestUsage: true,
 	discoveredModels: [],
+	contextWindowTokens: null,
+	outputReserveTokens: null,
+	contextCapacityInvalid: false,
 };
 
 function makeRequest(overrides: Partial<AiProviderRequest> = {}): AiProviderRequest {
@@ -191,6 +198,17 @@ function makeRequest(overrides: Partial<AiProviderRequest> = {}): AiProviderRequ
 		userPrompt: 'Current prompt',
 		history: [],
 		...overrides,
+	};
+}
+
+function capacityProviderForTokens(tokens: number, slack = 1): ProviderConfig {
+	const outputReserveTokens = 1000;
+	const effectiveInputTokens = Math.max(1, tokens - slack);
+	return {
+		...provider,
+		contextWindowTokens: effectiveInputTokens + outputReserveTokens,
+		outputReserveTokens,
+		contextCapacityInvalid: false,
 	};
 }
 
@@ -450,7 +468,7 @@ describe('requestAiResponse', () => {
 		const fetchMock = vi.fn().mockRejectedValue(abortError);
 		vi.stubGlobal('fetch', fetchMock);
 		const controller = new AbortController();
-		controller.abort();
+		controller.abort(abortError);
 
 		await expect(
 			requestAiResponse(
@@ -459,7 +477,22 @@ describe('requestAiResponse', () => {
 				controller.signal,
 			),
 		).rejects.toBe(abortError);
-		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it('rethrows a fetch abort rejection without retrying', async () => {
+		const abortError = new DOMException('Aborted during fetch', 'AbortError');
+		const fetchMock = vi.fn().mockRejectedValue(abortError);
+		vi.stubGlobal('fetch', fetchMock);
+
+		await expect(
+			requestAiResponse(
+				makeRequest(),
+				{ onEvent: vi.fn() },
+				new AbortController().signal,
+			),
+		).rejects.toBe(abortError);
+		expect(fetchMock).toHaveBeenCalledOnce();
 	});
 
 	it('reports HTTP provider details without exposing credentials', async () => {
@@ -746,5 +779,169 @@ describe('requestAiResponse', () => {
 			{ role: 'tool', tool_call_id: 'call-1', content: '{"results":[]}' },
 		]);
 		expect(result.finishReason).toBe('stop');
+	});
+});
+
+describe('requestAiResponse context capacity at the transport boundary', () => {
+	const tools: NonNullable<AiProviderRequest['tools']> = [{
+		type: 'function',
+		function: {
+			name: 'web_search',
+			description: 'Search the web',
+			parameters: { type: 'object' },
+		},
+	}];
+
+	function baseRequest(): AiProviderRequest {
+		return makeRequest({ tools });
+	}
+
+	function grownRequest(): AiProviderRequest {
+		return makeRequest({
+			tools,
+			continuation: [
+				{
+					role: 'assistant',
+					content: 'search '.repeat(2000),
+					toolCalls: [{ id: 'call-1', name: 'web_search', arguments: '{}' }],
+				},
+				{ role: 'tool', toolCallId: 'call-1', content: 'evidence '.repeat(2000) },
+			],
+		});
+	}
+
+	it('rejects a grown request before fetch without exposing prompt content', async () => {
+		const fetchMock = mockStream([
+			'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
+			'data: [DONE]\n\n',
+		]);
+		const baseTokens = accountRequestCharacters(baseRequest())
+			.estimatedInputTokens;
+		const grownTokens = accountRequestCharacters(grownRequest())
+			.estimatedInputTokens;
+		const providerWithCapacity = capacityProviderForTokens(grownTokens);
+		expect(baseTokens).toBeLessThan(grownTokens - 1);
+		const onEvent = vi.fn();
+
+		const error = await getError(requestAiResponse(
+			{ ...grownRequest(), provider: providerWithCapacity },
+			{ onEvent },
+			new AbortController().signal,
+		));
+
+		expect(error).toBeInstanceOf(ContextCapacityError);
+		expect(error).toMatchObject({
+			code: 'context-capacity-exceeded',
+			details: {
+				kind: 'transport',
+				inputTokens: grownTokens,
+				effectiveInputTokens: grownTokens - 1,
+			},
+		});
+		expect(error.message).toContain(`${grownTokens} input tokens`);
+		expect(error.message).not.toContain('search search');
+		expect(error.message).not.toContain('evidence evidence');
+		expect(fetchMock).not.toHaveBeenCalled();
+		expect(onEvent).not.toHaveBeenCalled();
+	});
+
+	it('checks every round: a fitting first round fetches once and a growing continuation fails terminally', async () => {
+		const fetchMock = mockStream([
+			'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"web_search","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}\n\n',
+			'data: [DONE]\n\n',
+		]);
+		const grownTokens = accountRequestCharacters(grownRequest())
+			.estimatedInputTokens;
+		const providerWithCapacity = capacityProviderForTokens(grownTokens);
+		const signal = new AbortController().signal;
+
+		const first = await requestAiResponse(
+			{ ...baseRequest(), provider: providerWithCapacity },
+			{ onEvent: vi.fn() },
+			signal,
+		);
+
+		expect(first.toolCalls).toEqual([
+			{ id: 'call-1', name: 'web_search', arguments: '{}' },
+		]);
+
+		const secondOnEvent = vi.fn();
+		const error = await getError(requestAiResponse(
+			{ ...grownRequest(), provider: providerWithCapacity },
+			{ onEvent: secondOnEvent },
+			signal,
+		));
+
+		expect(error).toBeInstanceOf(ContextCapacityError);
+		expect((error as ContextCapacityError).details.kind).toBe('transport');
+		expect(fetchMock).toHaveBeenCalledOnce();
+		expect(secondOnEvent).not.toHaveBeenCalled();
+	});
+
+	it('lets an already-aborted signal win over capacity without fetching', async () => {
+		const fetchMock = mockStream([
+			'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
+			'data: [DONE]\n\n',
+		]);
+		const providerWithCapacity = capacityProviderForTokens(1);
+		const request = makeRequest({ provider: providerWithCapacity });
+		expect(accountRequestCharacters(request).estimatedInputTokens)
+			.toBeGreaterThanOrEqual(1);
+		const controller = new AbortController();
+		controller.abort();
+
+		const error = await getError(requestAiResponse(
+			request,
+			{ onEvent: vi.fn() },
+			controller.signal,
+		));
+
+		expect(error).not.toBeInstanceOf(ContextCapacityError);
+		expect(error.name).toBe('AbortError');
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it('rejects at exactly the effective capacity and passes one token below', async () => {
+		const request = makeRequest();
+		const tokens = accountRequestCharacters(request).estimatedInputTokens;
+		const atCapacityFetch = mockStream([
+			'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
+			'data: [DONE]\n\n',
+		]);
+
+		const atCapacityError = await getError(requestAiResponse(
+			{
+				...request,
+				provider: capacityProviderForTokens(tokens, 0),
+			},
+			{ onEvent: vi.fn() },
+			new AbortController().signal,
+		));
+
+		expect(atCapacityError).toBeInstanceOf(ContextCapacityError);
+		expect((atCapacityError as ContextCapacityError).details).toEqual({
+			kind: 'transport',
+			inputTokens: tokens,
+			effectiveInputTokens: tokens,
+		});
+		expect(atCapacityFetch).not.toHaveBeenCalled();
+
+		vi.unstubAllGlobals();
+		const belowCapacityFetch = mockStream([
+			'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
+			'data: [DONE]\n\n',
+		]);
+
+		const result = await requestAiResponse(
+			{
+				...request,
+				provider: capacityProviderForTokens(tokens, -1),
+			},
+			{ onEvent: vi.fn() },
+			new AbortController().signal,
+		);
+
+		expect(result.content).toBe('ok');
+		expect(belowCapacityFetch).toHaveBeenCalledOnce();
 	});
 });
