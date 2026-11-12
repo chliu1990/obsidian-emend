@@ -85,6 +85,17 @@ Useful controls:
 - **Cmd+Shift+A/E** on macOS or **Ctrl+Shift+A/E** on Windows/Linux selects Ask/Edit without sending.
 - **Stop** aborts an in-flight request. **Copy** copies a completed answer.
 
+### Multiple chat sessions
+
+Use the **Chat session** selector and its icon actions below the Emend title to manage independent conversations for the active note:
+
+1. Send a question, then use **New chat session** to start another conversation. Switch among at least three sessions and confirm that each restores its own messages and unsent draft. Provider history comes only from the active session; another session's messages are not sent.
+2. Use **Rename chat session** to pin a manual title. Automatic titles derive locally from the prompt only after a successful assistant response; stopped, failed, aborted, and management-only actions do not set them. No AI naming or summarization request is made.
+3. Use **Move chat session up/down** to change manual order. **Delete chat session** asks for confirmation; deleting the active session selects its next sibling, otherwise its previous sibling. Deleting the last session leaves an empty saved aggregate and a runtime-only New chat.
+4. Switch sessions and confirm that mode, Web, Edit target, and additional-note selections remain unchanged, while the capacity estimate uses the newly active session's draft and history. A pending request still locks the whole note, including its other sessions and Modify Selection.
+5. Reload Obsidian and confirm that the last active session, manual order, ready messages, usage, and sanitized Web/Edit results restore. Unsent drafts and loading, stopped, or error content do not persist.
+6. Existing schema 1/2 threads open as one legacy session without an eager rewrite and become schema 3 on the first valid mutation. Malformed files stay unchanged until a valid mutation creates the `.corrupt` backup; unsupported future versions reject every mutation without overwriting bytes.
+
 ### Capacity bar and blocked requests
 
 When capacity is configured, the compact bar below the chat mode controls carries the accessible summary `Estimated input: N tokens of M effective capacity.` and updates on typing, caret or selection moves, mode and **Edit target** changes, additional-note changes, and settings changes. Hover or focus the bar for estimated and remaining input/output, window, reserve, and per-category tokens. Click to pin the floating details; pointer exit or focus loss hides an unpinned panel, while outside click or **Escape** dismisses it. No capacity meter appears below the composer.
@@ -111,7 +122,7 @@ An invalid candidate causes exactly one automatic correction request to the same
 
 ## 5. Test selection-only editing
 
-1. Select only `This sentence have a small grammar problem.` and focus Emend chat. **Edit target** automatically displays **Selection**; with no usable selection it displays **Full note**. The automatic choice resets when the actual target note changes, while an explicit choice survives same-note renders and mode switches.
+1. Select only `This sentence have a small grammar problem.` and focus Emend chat. **Edit target** automatically displays **Selection**; with no usable selection it displays **Full note**. The automatic choice resets when the actual target note changes, while an explicit choice survives same-note renders, session switches, and mode switches.
 2. Select **Edit** and enter:
 
    ```text
@@ -119,7 +130,7 @@ An invalid candidate causes exactly one automatic correction request to the same
    ```
 
    Alternatively, use **Fix grammar**, **Make concise**, or **Add examples** above the composer. Each quick action enters Edit and submits once through the same target selection. Choose **Full note** explicitly whenever you want the ordinary whole-note path instead.
-3. Confirm that only the selected sentence receives CriticMarkup. The heading and idea list must remain unchanged. Selection replacements use the same word-aware multi-hunk minimization and single validation-correction round as full-note Edit, with the configured recent ready history, the complete selection, and only surrounding context beyond it.
+3. Confirm that only the selected sentence receives CriticMarkup. The heading and idea list must remain unchanged. Selection replacements use the same word-aware multi-hunk minimization and single validation-correction round as full-note Edit, with the originating session's configured recent ready history, the complete selection, and only surrounding context beyond it. Other sessions' ready messages are not included.
 4. Confirm that chat shows the concise tracked-change result, its `Target: Selection.` line, any model-written summary, reasoning, and token usage rather than the annotated selection. Review it in Track Changes, or press **Cmd+Z** on macOS (**Ctrl+Z** on Windows/Linux) to undo the native editor replacement.
 5. Try submitting with **Selection** explicitly chosen but no selection, a whitespace-only selection, or a selection that vanished before submission. Emend shows `Select non-whitespace text first.` and adds no chat message, saves no message, makes no provider request, and performs neither a selection nor full-note write.
 
@@ -135,7 +146,7 @@ Structural guards reject partial inline-code targets (`inline-code-range`), fenc
 
 Raw markup shown while the cursor is inside a table cell is upstream Obsidian/Track Changes presentation behavior. Use exact accept/reject results—not that live presentation—to verify correctness.
 
-The minimizer shares a bounded work budget across each response and falls back to one substitution for the changed middle when a detailed diff would be too expensive. Correction requests are transient implementation details: raw operations, rejected candidates, and diagnostic feedback do not appear in ready chats or stored threads. After a retry, composer Edit chat—including Selection—keeps only the successful attempt's reasoning and shows all-round usage. The separate selection modal still has no usage footer or retry-status UI.
+The minimizer shares a bounded work budget across each response and falls back to one substitution for the changed middle when a detailed diff would be too expensive. Correction requests are transient implementation details: raw operations, rejected candidates, and diagnostic feedback do not appear in ready chats or stored sessions. After a retry, composer Edit chat—including Selection—keeps only the successful attempt's reasoning and shows all-round usage in the originating session. The separate selection modal still has no usage footer or retry-status UI.
 
 ## 7. Test instructions and skills
 
@@ -157,13 +168,13 @@ Send another request. Emend rereads these files on every request and places skil
 
 ## 8. Verify persistence and privacy behavior
 
-- Ask different questions in two notes, switch between them, and reload the Emend plugin or Obsidian. Each note should restore its own conversation, while its additional-note selections are empty after either reload.
-- Saved chats are under `<Vault>/.obsidian/emend/chats/`. They contain ready chat messages, not API keys, active/additional-note snapshots, captured selection text or offsets, additional-note selections/snapshots, or buffered edit responses.
+- Ask different questions in two notes and in multiple sessions of one note, switch among them, and reload the Emend plugin or Obsidian. Each note should restore its own ordered sessions and last active session, while its additional-note selections and unsent drafts are empty after either reload.
+- Saved chats are under `<Vault>/.obsidian/emend/chats/` as schema-3 per-note session aggregates. They contain ready chat messages with their session metadata, not API keys, unsent drafts, unknown message artifacts, active/additional-note snapshots, captured selection text or offsets, additional-note selections/snapshots, or buffered edit responses. Schema 1/2 threads migrate lazily; malformed and unsupported files are not overwritten during loading.
 - Additional-note paths are always shown locally in the picker controls so you can review what is selected. With **Include note path** off, provider prompts use only generic labels such as `Additional note 1`; with it on, each section includes `Path: <vault>/<note path>`. Selected content is sent with either setting when you explicitly submit.
 - Enable **Include note path** only if you want the vault/note path sent to the provider for both active and additional notes.
-- Full-note Edit always sends the complete active note. Read-only modes send bounded active-note context. Composer Selection sends the complete selection plus surrounding context and the recent ready history; Modify Selection sends the same selection context without history. All can include separate bounded, read-only additional-note snapshots, but Operations can target only the captured active note or selection. **Chat history messages** defaults to 8 and accepts 0–50; 0 disables history.
+- Full-note Edit always sends the complete active note. Read-only modes send bounded active-note context. Composer Selection sends the complete selection plus surrounding context and the active session's recent ready history; Modify Selection sends the same selection context without history. All can include separate bounded, read-only additional-note snapshots, but Operations can target only the captured active note or selection. **Chat history messages** defaults to 8 and accepts 0–50; 0 disables history. Other sessions' messages are never included.
 - Capacity window and reserve values, and the invalid marker, are ordinary non-secret provider settings that persist across restarts. Draft estimates are never stored, and they are approximations rather than provider billing data.
-- Deleting a note does not delete its saved conversation automatically.
+- Deleting a note does not delete its saved session aggregate automatically. Note-rename history migration is not implemented.
 
 ## Verification checklist
 
@@ -174,7 +185,8 @@ You have completed the quick start when:
 - Track Changes can accept or reject the edit.
 - Composer Selection and Modify Selection change only the captured selection, native undo works, and Selection capture failures never fall back to Full note.
 - Explicitly selected additional notes appear with their paths, remain read-only, respect context/path limits, and never leak between target notes.
-- If you configured capacity, the header bar updates live, hover/focus reveals its lower-bound estimate and exclusions, and an over-capacity or invalid configuration blocks submission with no provider request and no note write.
-- Conversations return after switching notes and reloading Obsidian, while additional-note selections clear on Emend plugin or Obsidian reload.
+- Multiple sessions preserve independent drafts, messages, and provider history; management actions make no provider calls; and the last active session and manual order return after reload.
+- If you configured capacity, the header bar updates live for the active session, hover/focus reveals its lower-bound estimate and exclusions, and an over-capacity or invalid configuration blocks submission with no provider request and no note write.
+- Conversations return after switching notes and reloading Obsidian, while additional-note selections and runtime drafts clear on Emend plugin or Obsidian reload.
 
 If a scenario fails, see the troubleshooting section in [INSTALLATION.md](INSTALLATION.md) and check the provider error shown in chat before retrying.
