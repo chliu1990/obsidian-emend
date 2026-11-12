@@ -1,6 +1,6 @@
 # Multiple chat sessions per note — technical design
 
-Status: proposed for review, 2026-11-12
+Status: approved, 2026-11-12
 
 ## Intent
 
