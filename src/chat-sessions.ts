@@ -275,30 +275,7 @@ function isTokenUsage(value: unknown) {
 }
 
 export function normalizeLoadedMessage(message: ChatMessage): ChatMessage {
-	const normalized = normalizeUsageSource(message);
-	delete normalized.webActivity;
-	if (normalized.role !== 'user' ||
-		(normalized.webSearchMode !== 'review' && normalized.webSearchMode !== 'auto')) {
-		delete normalized.webSearchMode;
-	}
-	if (normalized.role !== 'assistant') {
-		delete normalized.webSources;
-		delete normalized.webActivities;
-	} else {
-		const sources = sanitizeWebSources(normalized.webSources);
-		if (sources.length) {
-			normalized.webSources = sources;
-		} else {
-			delete normalized.webSources;
-		}
-		const activities = sanitizeWebActivities(normalized.webActivities);
-		if (activities.length) {
-			normalized.webActivities = activities;
-		} else {
-			delete normalized.webActivities;
-		}
-	}
-	return normalized;
+	return normalizeUsageSource(toPersistedMessage(message));
 }
 
 function sanitizeWebSources(value: unknown): WebSource[] {

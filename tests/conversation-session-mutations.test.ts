@@ -396,6 +396,29 @@ describe('ConversationStore exact-ID session mutations', () => {
 		]));
 	});
 
+	it('removes unknown message artifacts when a schema 3 aggregate is next mutated', async () => {
+		const adapter = new MemoryAdapter();
+		const { store } = makeStore(adapter);
+		await seedConversation(store, adapter, conversation('one', [
+			session('one', { messages: [readyMessage()] }),
+		]));
+		const path = threadPath(adapter);
+		const seeded = JSON.parse(adapter.files.get(path) ?? '') as {
+			sessions: Array<{ messages: Array<Record<string, unknown>> }>;
+		};
+		seeded.sessions[0]!.messages[0]!.rawReaderArtifact = 'DO_NOT_PERSIST';
+		seeded.sessions[0]!.messages[0]!.snapshot = { selectedText: 'private' };
+		adapter.files.set(path, JSON.stringify(seeded));
+
+		await store.setActiveSession('Note.md', 'one');
+
+		expect(persistedConversation(adapter)).toEqual(conversation('one', [
+			session('one', { messages: [readyMessage()] }),
+		]));
+		expect(adapter.files.get(path)).not.toContain('DO_NOT_PERSIST');
+		expect(adapter.files.get(path)).not.toContain('selectedText');
+	});
+
 	it('renames exactly one session as manual and updates only its timestamp', async () => {
 		const adapter = new MemoryAdapter();
 		const { store } = makeStore(adapter);
