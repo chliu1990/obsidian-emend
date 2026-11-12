@@ -111,6 +111,144 @@ function makeStore(adapter: MemoryAdapter) {
 	return { store, warning };
 }
 
+function schema3Conversation() {
+	const firstMessage = readyMessage({ id: 'first-message', content: 'First answer' });
+	const secondMessage = readyMessage({
+		id: 'second-message',
+		role: 'user',
+		content: 'Second question',
+		reasoning: '',
+		mode: 'ask',
+		usage: undefined,
+		timestamp: 1735689601000,
+	});
+	return {
+		version: 3 as const,
+		lastActiveSessionId: 'second',
+		sessions: [
+			{
+				id: 'first',
+				title: 'First chat',
+				titleSource: 'manual' as const,
+				createdAt: 100,
+				updatedAt: 200,
+				messages: [firstMessage],
+			},
+			{
+				id: 'second',
+				title: 'Second chat',
+				titleSource: 'auto' as const,
+				createdAt: 300,
+				updatedAt: 400,
+				messages: [secondMessage],
+			},
+		],
+	};
+}
+
+describe('ConversationStore schema 3 loading and lazy migration', () => {
+	it('returns an empty missing aggregate without writing', async () => {
+		const adapter = new MemoryAdapter();
+		const { store, warning } = makeStore(adapter);
+
+		await expect(store.loadConversation('Note.md')).resolves.toEqual({
+			kind: 'missing',
+			conversation: { version: 3, lastActiveSessionId: null, sessions: [] },
+		});
+		expect(adapter.operations).toEqual([]);
+		expect(warning).not.toHaveBeenCalled();
+	});
+
+	it.each([1, 2])('loads schema %i as one stable legacy session and migrates only on save', async (version) => {
+		const adapter = new MemoryAdapter();
+		const { store, warning } = makeStore(adapter);
+		await store.save('Note.md', []);
+		const path = threadPath(adapter);
+		const messages = [
+			readyMessage({ id: 'latest', timestamp: 3000 }),
+			readyMessage({
+				id: 'question',
+				role: 'user',
+				content: '  First   question\nnext  ',
+				reasoning: '',
+				mode: 'ask',
+				usage: undefined,
+				timestamp: 1000,
+			}),
+			readyMessage({ id: 'middle', timestamp: 2000 }),
+		];
+		const original = JSON.stringify({ version, messages });
+		adapter.files.set(path, original);
+		adapter.operations.length = 0;
+
+		const expected = {
+			kind: 'legacy',
+			conversation: {
+				version: 3 as const,
+				lastActiveSessionId: 'legacy',
+				sessions: [{
+					id: 'legacy',
+					title: 'First question next',
+					titleSource: 'auto' as const,
+					createdAt: 1000,
+					updatedAt: 3000,
+					messages,
+				}],
+			},
+		};
+		await expect(store.loadConversation('Note.md')).resolves.toEqual(expected);
+		await expect(store.loadConversation('Note.md')).resolves.toEqual(expected);
+		await expect(store.load('Note.md')).resolves.toEqual(messages);
+		expect(adapter.files.get(path)).toBe(original);
+		expect(adapter.operations).toEqual([]);
+		expect(warning).not.toHaveBeenCalled();
+
+		await store.save('Note.md', messages);
+
+		expect(JSON.parse(adapter.files.get(path) ?? '')).toEqual(expected.conversation);
+	});
+
+	it('restores schema 3 order, active ID, and messages without writing', async () => {
+		const adapter = new MemoryAdapter();
+		const { store, warning } = makeStore(adapter);
+		await store.save('Note.md', []);
+		const path = threadPath(adapter);
+		const conversation = schema3Conversation();
+		const original = JSON.stringify(conversation);
+		adapter.files.set(path, original);
+		adapter.operations.length = 0;
+
+		await expect(store.loadConversation('Note.md')).resolves.toEqual({
+			kind: 'schema3',
+			conversation,
+		});
+		await expect(store.load('Note.md')).resolves.toEqual(conversation.sessions[1]!.messages);
+		expect(adapter.files.get(path)).toBe(original);
+		expect(adapter.operations).toEqual([]);
+		expect(warning).not.toHaveBeenCalled();
+	});
+
+	it('compatibility save updates only the active schema 3 session', async () => {
+		const adapter = new MemoryAdapter();
+		const { store } = makeStore(adapter);
+		await store.save('Note.md', []);
+		const path = threadPath(adapter);
+		const conversation = schema3Conversation();
+		adapter.files.set(path, JSON.stringify(conversation));
+		const replacement = readyMessage({ id: 'replacement', content: 'Replacement' });
+
+		await store.save('Note.md', [replacement]);
+
+		expect(JSON.parse(adapter.files.get(path) ?? '')).toEqual({
+			...conversation,
+			sessions: [
+				conversation.sessions[0],
+				{ ...conversation.sessions[1], messages: [replacement] },
+			],
+		});
+	});
+});
+
 describe('ConversationStore schema', () => {
 	it('round trips ready messages with mode, reasoning, usage, and timestamps', async () => {
 		const adapter = new MemoryAdapter();
@@ -131,7 +269,7 @@ describe('ConversationStore schema', () => {
 		await store.save('folder/Note.md', messages);
 
 		expect(await store.load('folder/Note.md')).toEqual(messages);
-		expect(adapter.files.get(threadPath(adapter))).toContain('"version": 2');
+		expect(adapter.files.get(threadPath(adapter))).toContain('"version": 3');
 	});
 
 	it('serializes only ready messages and omits runtime-only fields', async () => {
@@ -152,10 +290,11 @@ describe('ConversationStore schema', () => {
 
 		const raw = adapter.files.get(threadPath(adapter)) ?? '';
 		const persisted = JSON.parse(raw) as {
-			messages: Array<Record<string, unknown>>;
+			sessions: Array<{ messages: Array<Record<string, unknown>> }>;
 		};
-		expect(persisted.messages).toHaveLength(1);
-		expect(persisted.messages[0]).toEqual({
+		const messages = persisted.sessions[0]?.messages ?? [];
+		expect(messages).toHaveLength(1);
+		expect(messages[0]).toEqual({
 			id: 'message-1',
 			role: 'assistant',
 			content: 'Answer',
@@ -244,17 +383,28 @@ describe('ConversationStore schema', () => {
 		expect(await store.load('Note.md')).toEqual([readyMessage()]);
 	});
 
-	it('treats a missing version or message list as malformed', async () => {
-		for (const value of [{ messages: [] }, { version: 1 }, [1, 2, 3]]) {
+	it('treats missing legacy fields and invalid schema 3 as malformed without writing', async () => {
+		const values = [
+			{ messages: [] },
+			{ version: 1 },
+			[1, 2, 3],
+			{ version: 3, lastActiveSessionId: 'missing', sessions: [] },
+		];
+		for (const value of values) {
 			const adapter = new MemoryAdapter();
 			const { store, warning } = makeStore(adapter);
 			await store.save('Note.md', [readyMessage()]);
+			const path = threadPath(adapter);
 			const original = JSON.stringify(value);
-			adapter.files.set(threadPath(adapter), original);
+			adapter.files.set(path, original);
+			adapter.operations.length = 0;
 
-			const loaded = await store.load('Note.md');
-
-			expect(loaded).toEqual([]);
+			await expect(store.loadConversation('Note.md')).resolves.toEqual({
+				kind: 'malformed',
+				conversation: { version: 3, lastActiveSessionId: null, sessions: [] },
+			});
+			expect(adapter.files.get(path)).toBe(original);
+			expect(adapter.operations).toEqual([]);
 			expect(warning).toHaveBeenCalledOnce();
 		}
 	});
@@ -385,7 +535,10 @@ describe('ConversationStore corruption recovery', () => {
 		adapter.files.set(path, malformed);
 		adapter.operations.length = 0;
 
-		expect(await store.load('Note.md')).toEqual([]);
+		await expect(store.loadConversation('Note.md')).resolves.toEqual({
+			kind: 'malformed',
+			conversation: { version: 3, lastActiveSessionId: null, sessions: [] },
+		});
 
 		expect(adapter.files.get(path)).toBe(malformed);
 		expect(adapter.operations).toEqual([]);
@@ -405,7 +558,7 @@ describe('ConversationStore corruption recovery', () => {
 		await store.save('Note.md', [readyMessage({ content: 'Recovered' })]);
 
 		expect(adapter.files.get(`${path}.corrupt`)).toBe(malformed);
-		expect(JSON.parse(adapter.files.get(path) ?? '')).toMatchObject({ version: 2 });
+		expect(JSON.parse(adapter.files.get(path) ?? '')).toMatchObject({ version: 3 });
 		expect(adapter.files.get(path)).toContain('Recovered');
 		expect(adapter.operations.filter((operation) => operation.includes('.corrupt'))).toHaveLength(1);
 	});
@@ -434,11 +587,14 @@ describe('ConversationStore corruption recovery', () => {
 		const { store, warning } = makeStore(adapter);
 		await store.save('Note.md', [readyMessage()]);
 		const path = threadPath(adapter);
-		const future = JSON.stringify({ version: 3, messages: [readyMessage()] });
+		const future = JSON.stringify({ version: 4, messages: [readyMessage()] });
 		adapter.files.set(path, future);
 		adapter.operations.length = 0;
 
-		expect(await store.load('Note.md')).toEqual([]);
+		await expect(store.loadConversation('Note.md')).resolves.toEqual({
+			kind: 'unsupported',
+			conversation: { version: 3, lastActiveSessionId: null, sessions: [] },
+		});
 		expect(warning).toHaveBeenCalledOnce();
 		await expect(store.save('Note.md', [readyMessage()])).rejects.toThrow(
 			/unsupported/i,
@@ -452,7 +608,7 @@ describe('ConversationStore corruption recovery', () => {
 
 
 describe('ConversationStore web citation migration', () => {
-	it('round trips Review/Auto badges and actual sources in schema 2', async () => {
+	it('round trips Review/Auto badges and actual sources in schema 3', async () => {
 		const adapter = new MemoryAdapter();
 		const { store } = makeStore(adapter);
 		const messages = [
@@ -482,10 +638,10 @@ describe('ConversationStore web citation migration', () => {
 		await store.save('Note.md', messages);
 
 		expect(await store.load('Note.md')).toEqual(messages);
-		expect(JSON.parse(adapter.files.get(threadPath(adapter)) ?? '')).toMatchObject({ version: 2 });
+		expect(JSON.parse(adapter.files.get(threadPath(adapter)) ?? '')).toMatchObject({ version: 3 });
 	});
 
-	it('loads v1 without web metadata and writes v2 on the next save', async () => {
+	it('loads v1 without web metadata and writes v3 on the next save', async () => {
 		const adapter = new MemoryAdapter();
 		const { store } = makeStore(adapter);
 		await store.save('Note.md', [readyMessage()]);
@@ -495,7 +651,7 @@ describe('ConversationStore web citation migration', () => {
 		expect(await store.load('Note.md')).toEqual([readyMessage()]);
 		await store.save('Note.md', await store.load('Note.md'));
 
-		expect(JSON.parse(adapter.files.get(path) ?? '')).toMatchObject({ version: 2 });
+		expect(JSON.parse(adapter.files.get(path) ?? '')).toMatchObject({ version: 3 });
 	});
 
 	it('sanitizes malformed and duplicate persisted web metadata', async () => {

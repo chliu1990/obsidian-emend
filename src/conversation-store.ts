@@ -1,25 +1,35 @@
 import type { DataAdapter } from 'obsidian';
 import {
 	isReadyMessage,
-	normalizeLoadedMessage,
+	legacyConversation,
+	resolveActiveSession,
 	toPersistedMessage,
+	validateChatConversation,
+	type ChatConversation,
 } from './chat-sessions';
 import type { ChatMessage } from './types';
 
-export const CONVERSATION_SCHEMA_VERSION = 2;
+export const CONVERSATION_SCHEMA_VERSION = 3;
+
+export type ConversationLoadKind =
+	| 'schema3'
+	| 'legacy'
+	| 'missing'
+	| 'malformed'
+	| 'unsupported';
+
+export interface LoadedChatConversation {
+	kind: ConversationLoadKind;
+	conversation: ChatConversation;
+}
 
 export type ConversationDataAdapter = Pick<
 	DataAdapter,
 	'exists' | 'read' | 'write' | 'mkdir' | 'remove' | 'rename' | 'copy' | 'process'
 >;
 
-interface PersistedThread {
-	version: typeof CONVERSATION_SCHEMA_VERSION;
-	messages: ChatMessage[];
-}
-
 type ThreadInspection =
-	| { kind: 'valid'; messages: ChatMessage[] }
+	| { kind: 'schema3' | 'legacy'; conversation: ChatConversation }
 	| { kind: 'malformed' }
 	| { kind: 'unsupported' };
 
@@ -44,38 +54,40 @@ export class ConversationStore {
 	}
 
 	async load(notePath: string): Promise<ChatMessage[]> {
+		const loaded = await this.loadConversation(notePath);
+		return resolveActiveSession(loaded.conversation)?.messages ?? [];
+	}
+
+	async loadConversation(notePath: string): Promise<LoadedChatConversation> {
 		const pendingWrite = this.writeQueues.get(notePath);
 		if (pendingWrite) {
 			await pendingWrite.catch(() => undefined);
 		}
 		const path = await this.getThreadPath(notePath);
 		if (!(await this.adapter.exists(path))) {
-			return [];
+			return { kind: 'missing', conversation: emptyConversation() };
 		}
 
 		const inspection = inspectThread(await this.adapter.read(path));
-		if (inspection.kind === 'valid') {
-			return inspection.messages;
+		if (inspection.kind === 'schema3' || inspection.kind === 'legacy') {
+			return inspection;
 		}
 		this.warn(
 			inspection.kind === 'unsupported'
 				? UNSUPPORTED_WARNING
 				: MALFORMED_WARNING,
 		);
-		return [];
+		return { kind: inspection.kind, conversation: emptyConversation() };
 	}
 
 	save(notePath: string, messages: ChatMessage[]): Promise<void> {
-		const thread: PersistedThread = {
-			version: CONVERSATION_SCHEMA_VERSION,
-			messages: messages
-				.filter((message) => message.status === 'ready')
-				.map((message) => toPersistedMessage(message)),
-		};
+		const persistedMessages = messages
+			.filter((message) => message.status === 'ready')
+			.map((message) => toPersistedMessage(message));
 		const previous = this.writeQueues.get(notePath) ?? Promise.resolve();
 		const queued = previous
 			.catch(() => undefined)
-			.then(() => this.writeThread(notePath, thread));
+			.then(() => this.writeThread(notePath, persistedMessages));
 		this.writeQueues.set(notePath, queued);
 		return queued.finally(() => {
 			if (this.writeQueues.get(notePath) === queued) {
@@ -84,9 +96,10 @@ export class ConversationStore {
 		});
 	}
 
-	private async writeThread(notePath: string, thread: PersistedThread) {
+	private async writeThread(notePath: string, messages: ChatMessage[]) {
 		const path = await this.getThreadPath(notePath);
 		let malformedContents: string | undefined;
+		let conversation: ChatConversation | undefined;
 		if (await this.adapter.exists(path)) {
 			const contents = await this.adapter.read(path);
 			const inspection = inspectThread(contents);
@@ -95,8 +108,19 @@ export class ConversationStore {
 			}
 			if (inspection.kind === 'malformed') {
 				malformedContents = contents;
+			} else if (inspection.kind === 'schema3') {
+				const activeSession = resolveActiveSession(inspection.conversation);
+				conversation = activeSession
+					? {
+						...inspection.conversation,
+						sessions: inspection.conversation.sessions.map((session) =>
+							session.id === activeSession.id ? { ...session, messages } : session
+						),
+					}
+					: legacyConversation(messages);
 			}
 		}
+		conversation ??= legacyConversation(messages);
 
 		await this.ensureDirectory(this.chatDirectory);
 		if (malformedContents !== undefined) {
@@ -106,7 +130,7 @@ export class ConversationStore {
 		const tempPath = `${path}.${Date.now()}-${Math.random()
 			.toString(36)
 			.slice(2)}.tmp`;
-		const serialized = `${JSON.stringify(thread, null, 2)}\n`;
+		const serialized = `${JSON.stringify(conversation, null, 2)}\n`;
 		try {
 			await this.adapter.write(tempPath, serialized);
 			try {
@@ -174,15 +198,30 @@ function inspectThread(contents: string): ThreadInspection {
 	if (!isRecord(value) || typeof value.version !== 'number') {
 		return { kind: 'malformed' };
 	}
-	if (value.version !== 1 && value.version !== CONVERSATION_SCHEMA_VERSION) {
-		return { kind: 'unsupported' };
+	if (value.version === CONVERSATION_SCHEMA_VERSION) {
+		try {
+			return { kind: 'schema3', conversation: validateChatConversation(value) };
+		} catch {
+			return { kind: 'malformed' };
+		}
 	}
-	if (!Array.isArray(value.messages)) {
-		return { kind: 'malformed' };
+	if (value.version === 1 || value.version === 2) {
+		if (!Array.isArray(value.messages)) {
+			return { kind: 'malformed' };
+		}
+		return {
+			kind: 'legacy',
+			conversation: legacyConversation(value.messages.filter(isReadyMessage)),
+		};
 	}
+	return { kind: 'unsupported' };
+}
+
+function emptyConversation(): ChatConversation {
 	return {
-		kind: 'valid',
-		messages: value.messages.filter(isReadyMessage).map(normalizeLoadedMessage),
+		version: CONVERSATION_SCHEMA_VERSION,
+		lastActiveSessionId: null,
+		sessions: [],
 	};
 }
 
