@@ -112,7 +112,7 @@ Track: https://github.com/chliu1990/obsidian-emend/issues/31
 
 Track: https://github.com/chliu1990/obsidian-emend/issues/41
 
-- [ ] Add explicit new, switch, rename, delete, and reorder controls for per-note chat sessions; no hidden session creation beyond an initial session for a note without history.
+- [ ] Add a deferred session management page with reorder controls for per-note chat sessions. Current chat already provides New/Switch/Rename/Delete directly after capacity and before messages, with no Move controls; no hidden session creation occurs beyond an initial session for a note without history.
 - [ ] Restore the latest session by default when a note with history is opened, while keeping explicit switching available.
 - [ ] Migrate conversation persistence to a versioned multi-session schema that preserves existing single-thread data and refuses unsupported versions.
 - [ ] Guard pending requests, aborts, stale loads, and target-note switches deterministically so no stale session is loaded or written.

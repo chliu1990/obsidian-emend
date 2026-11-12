@@ -59,13 +59,26 @@ describe('quick action submission', () => {
 	it('displays and persists the prompt and concise Edit result through normal submission', async () => {
 		const action = QUICK_ACTIONS[0];
 		const savedSnapshots: ChatMessage[][] = [];
+		const messages: ChatMessage[] = [];
+		const session = {
+			id: 'session', title: 'New chat', titleSource: 'auto' as const,
+			createdAt: 1, updatedAt: 1, messages,
+		};
 		const context = {
 			inputEl: { value: 'Unrelated composer text' },
 			selectedMode: 'ask' as Mode,
 			notePath: 'Note.md',
+			conversationGeneration: 0,
+			sessions: [session],
+			activeSessionId: session.id,
+			activeRequest: null,
+			isSessionMutating: false,
+			transientSessionIds: new Set<string>(),
+			transientSessions: new Map(),
+			drafts: new Map<string, Map<string, string>>(),
 			isSending: false,
 			isThreadLoading: false,
-			messages: [] as ChatMessage[],
+			messages,
 			plugin: {
 				captureChatContext: () => ({
 					file: { path: 'Note.md' },
@@ -91,6 +104,7 @@ describe('quick action submission', () => {
 			activeController: null,
 			submitPrompt: vi.fn(),
 		};
+		Object.setPrototypeOf(context, EmendChatView.prototype);
 		context.submitPrompt = vi.fn((prompt?: string) =>
 			viewPrototype.submitPrompt.call(context, prompt),
 		);
@@ -144,15 +158,28 @@ describe('quick action submission', () => {
 		}));
 		const requestChatCompletion = vi.fn(async () => ({ applied: false, changeCount: 0 }));
 		const captureChatContext = vi.fn(() => ({ file: { path: 'Note.md' } }));
+		const messages: ChatMessage[] = [];
+		const session = {
+			id: 'session', title: 'New chat', titleSource: 'auto' as const,
+			createdAt: 1, updatedAt: 1, messages,
+		};
 		const context = {
 			inputEl: { value: 'Unrelated composer text' },
 			selectedMode: 'ask' as Mode,
 			webSearchMode: 'auto' as const,
 			displayedEditTarget: 'selection' as const,
 			notePath: 'Note.md',
+			conversationGeneration: 0,
+			sessions: [session],
+			activeSessionId: session.id,
+			activeRequest: null,
+			isSessionMutating: false,
+			transientSessionIds: new Set<string>(),
+			transientSessions: new Map(),
+			drafts: new Map<string, Map<string, string>>(),
 			isSending: false,
 			isThreadLoading: false,
-			messages: [] as ChatMessage[],
+			messages,
 			plugin: {
 				captureChatContext,
 				captureSelectionEditTarget: vi.fn(() => ({ snapshot, editor })),
@@ -171,6 +198,7 @@ describe('quick action submission', () => {
 			activeController: null,
 			submitPrompt: vi.fn(),
 		};
+		Object.setPrototypeOf(context, EmendChatView.prototype);
 		context.submitPrompt = vi.fn((prompt?: string) =>
 			viewPrototype.submitPrompt.call(context, prompt),
 		);
