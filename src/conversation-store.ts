@@ -1,11 +1,16 @@
 import type { DataAdapter } from 'obsidian';
 import {
+	deleteChatSession,
+	deriveAutomaticTitle,
 	isReadyMessage,
 	legacyConversation,
+	normalizeManualTitle,
+	reorderChatSessions,
 	resolveActiveSession,
 	toPersistedMessage,
 	validateChatConversation,
 	type ChatConversation,
+	type ChatSession,
 } from './chat-sessions';
 import type { ChatMessage } from './types';
 
@@ -33,15 +38,23 @@ type ThreadInspection =
 	| { kind: 'malformed' }
 	| { kind: 'unsupported' };
 
+type MutationInspection = {
+	path: string;
+	conversation: ChatConversation;
+	kind: 'schema3' | 'legacy' | 'missing' | 'malformed';
+	malformedContents?: string;
+};
+
 const MALFORMED_WARNING =
 	'Emend could not read a saved chat. The original file was preserved.';
 const UNSUPPORTED_WARNING =
 	'Emend found a chat with an unsupported schema version. It will not be overwritten.';
 const UNSUPPORTED_ERROR =
 	'Cannot save this chat because its stored schema version is unsupported.';
+const MISSING_SESSION_ERROR = 'Chat session does not exist.';
 
 export class ConversationStore {
-	private readonly writeQueues = new Map<string, Promise<void>>();
+	private readonly writeQueues = new Map<string, Promise<unknown>>();
 	private readonly chatDirectory: string;
 
 	constructor(
@@ -84,10 +97,181 @@ export class ConversationStore {
 		const persistedMessages = messages
 			.filter((message) => message.status === 'ready')
 			.map((message) => toPersistedMessage(message));
+		return this.queueMutation(notePath, (inspection) => {
+			if (inspection.kind !== 'schema3') {
+				return { conversation: legacyConversation(persistedMessages), result: undefined };
+			}
+			const activeSession = resolveActiveSession(inspection.conversation);
+			if (!activeSession) {
+				return { conversation: legacyConversation(persistedMessages), result: undefined };
+			}
+			return {
+				conversation: {
+					...inspection.conversation,
+					sessions: inspection.conversation.sessions.map((session) =>
+						session.id === activeSession.id
+							? { ...session, messages: persistedMessages }
+							: session
+					),
+				},
+				result: undefined,
+			};
+		});
+	}
+
+	async createSession(
+		notePath: string,
+		session: ChatSession,
+		options?: { activate?: boolean },
+	): Promise<ChatSession> {
+		const persistedSession = snapshotSession(session);
+		const activate = options?.activate ?? true;
+		return this.queueMutation(notePath, (inspection) => {
+			if (inspection.conversation.sessions.some((item) => item.id === persistedSession.id)) {
+				throw new Error('Chat session already exists.');
+			}
+			const lastActiveSessionId = activate || !inspection.conversation.lastActiveSessionId
+				? persistedSession.id
+				: inspection.conversation.lastActiveSessionId;
+			return {
+				conversation: {
+					...inspection.conversation,
+					lastActiveSessionId,
+					sessions: [...inspection.conversation.sessions, persistedSession],
+				},
+				result: persistedSession,
+			};
+		});
+	}
+
+	async appendReadyMessage(
+		notePath: string,
+		sessionId: string,
+		message: ChatMessage,
+		options?: { titlePrompt?: string; now?: number },
+	): Promise<ChatSession> {
+		if (!isReadyMessage(message)) {
+			throw new Error('Only ready chat messages can be appended.');
+		}
+		const persistedMessage = toPersistedMessage(message);
+		const titlePrompt = options?.titlePrompt;
+		const now = mutationTimestamp(options?.now);
+		return this.queueMutation(notePath, (inspection) => {
+			const index = exactSessionIndex(inspection.conversation, sessionId);
+			const current = inspection.conversation.sessions[index];
+			if (!current) {
+				throw new Error(MISSING_SESSION_ERROR);
+			}
+			const deriveTitle = persistedMessage.role === 'assistant' &&
+				current.titleSource === 'auto' &&
+				titlePrompt !== undefined;
+			const updated: ChatSession = {
+				...current,
+				title: deriveTitle ? deriveAutomaticTitle(titlePrompt) : current.title,
+				updatedAt: now,
+				messages: [...current.messages, persistedMessage],
+			};
+			return {
+				conversation: {
+					...inspection.conversation,
+					sessions: inspection.conversation.sessions.map((session, itemIndex) =>
+						itemIndex === index ? updated : session
+					),
+				},
+				result: updated,
+			};
+		});
+	}
+
+	async setActiveSession(notePath: string, sessionId: string): Promise<void> {
+		return this.queueMutation(notePath, (inspection) => {
+			exactSessionIndex(inspection.conversation, sessionId);
+			return {
+				conversation: {
+					...inspection.conversation,
+					lastActiveSessionId: sessionId,
+				},
+				result: undefined,
+			};
+		});
+	}
+
+	async renameSession(
+		notePath: string,
+		sessionId: string,
+		title: string,
+		options?: { now?: number },
+	): Promise<ChatSession> {
+		const persistedTitle = normalizeManualTitle(title);
+		const now = mutationTimestamp(options?.now);
+		return this.queueMutation(notePath, (inspection) => {
+			const index = exactSessionIndex(inspection.conversation, sessionId);
+			const current = inspection.conversation.sessions[index];
+			if (!current) {
+				throw new Error(MISSING_SESSION_ERROR);
+			}
+			const renamed: ChatSession = {
+				...current,
+				title: persistedTitle,
+				titleSource: 'manual',
+				updatedAt: now,
+			};
+			return {
+				conversation: {
+					...inspection.conversation,
+					sessions: inspection.conversation.sessions.map((session, itemIndex) =>
+						itemIndex === index ? renamed : session
+					),
+				},
+				result: renamed,
+			};
+		});
+	}
+
+	async deleteSession(
+		notePath: string,
+		sessionId: string,
+	): Promise<{ activeSessionId: string | null }> {
+		return this.queueMutation(notePath, (inspection) => {
+			const deleted = deleteChatSession(inspection.conversation, sessionId);
+			return {
+				conversation: deleted.conversation,
+				result: { activeSessionId: deleted.activeSessionId },
+			};
+		});
+	}
+
+	async reorderSessions(
+		notePath: string,
+		orderedIds: readonly string[],
+	): Promise<void> {
+		const persistedOrder = [...orderedIds];
+		return this.queueMutation(notePath, (inspection) => ({
+			conversation: reorderChatSessions(inspection.conversation, persistedOrder),
+			result: undefined,
+		}));
+	}
+
+	private queueMutation<T>(
+		notePath: string,
+		mutate: (inspection: MutationInspection) => {
+			conversation: ChatConversation;
+			result: T;
+		},
+	): Promise<T> {
 		const previous = this.writeQueues.get(notePath) ?? Promise.resolve();
 		const queued = previous
 			.catch(() => undefined)
-			.then(() => this.writeThread(notePath, persistedMessages));
+			.then(async () => {
+				const inspection = await this.inspectForMutation(notePath);
+				const mutation = mutate(inspection);
+				await this.writeConversation(
+					inspection.path,
+					mutation.conversation,
+					inspection.malformedContents,
+				);
+				return mutation.result;
+			});
 		this.writeQueues.set(notePath, queued);
 		return queued.finally(() => {
 			if (this.writeQueues.get(notePath) === queued) {
@@ -96,32 +280,32 @@ export class ConversationStore {
 		});
 	}
 
-	private async writeThread(notePath: string, messages: ChatMessage[]) {
+	private async inspectForMutation(notePath: string): Promise<MutationInspection> {
 		const path = await this.getThreadPath(notePath);
-		let malformedContents: string | undefined;
-		let conversation: ChatConversation | undefined;
-		if (await this.adapter.exists(path)) {
-			const contents = await this.adapter.read(path);
-			const inspection = inspectThread(contents);
-			if (inspection.kind === 'unsupported') {
-				throw new Error(UNSUPPORTED_ERROR);
-			}
-			if (inspection.kind === 'malformed') {
-				malformedContents = contents;
-			} else if (inspection.kind === 'schema3') {
-				const activeSession = resolveActiveSession(inspection.conversation);
-				conversation = activeSession
-					? {
-						...inspection.conversation,
-						sessions: inspection.conversation.sessions.map((session) =>
-							session.id === activeSession.id ? { ...session, messages } : session
-						),
-					}
-					: legacyConversation(messages);
-			}
+		if (!(await this.adapter.exists(path))) {
+			return { path, kind: 'missing', conversation: emptyConversation() };
 		}
-		conversation ??= legacyConversation(messages);
+		const contents = await this.adapter.read(path);
+		const inspection = inspectThread(contents);
+		if (inspection.kind === 'unsupported') {
+			throw new Error(UNSUPPORTED_ERROR);
+		}
+		if (inspection.kind === 'malformed') {
+			return {
+				path,
+				kind: 'malformed',
+				conversation: emptyConversation(),
+				malformedContents: contents,
+			};
+		}
+		return { path, kind: inspection.kind, conversation: inspection.conversation };
+	}
 
+	private async writeConversation(
+		path: string,
+		conversation: ChatConversation,
+		malformedContents?: string,
+	) {
 		await this.ensureDirectory(this.chatDirectory);
 		if (malformedContents !== undefined) {
 			await this.adapter.write(`${path}.corrupt`, malformedContents);
@@ -186,6 +370,42 @@ export class ConversationStore {
 			.slice(0, 40) || 'note';
 		return `${this.chatDirectory}/${readable}-${hash}.json`;
 	}
+}
+
+function snapshotSession(session: ChatSession): ChatSession {
+	const snapshot: ChatSession = {
+		id: session.id,
+		title: session.title,
+		titleSource: session.titleSource,
+		createdAt: session.createdAt,
+		updatedAt: session.updatedAt,
+		messages: session.messages.filter(isReadyMessage).map(toPersistedMessage),
+	};
+	const [persisted] = validateChatConversation({
+		version: 3,
+		lastActiveSessionId: snapshot.id,
+		sessions: [snapshot],
+	}).sessions;
+	if (!persisted) {
+		throw new Error('Invalid chat session.');
+	}
+	return persisted;
+}
+
+function mutationTimestamp(now: number | undefined): number {
+	const timestamp = now ?? Date.now();
+	if (!Number.isFinite(timestamp)) {
+		throw new Error('Chat session timestamp must be finite.');
+	}
+	return timestamp;
+}
+
+function exactSessionIndex(conversation: ChatConversation, sessionId: string): number {
+	const index = conversation.sessions.findIndex((session) => session.id === sessionId);
+	if (index < 0) {
+		throw new Error(MISSING_SESSION_ERROR);
+	}
+	return index;
 }
 
 function inspectThread(contents: string): ThreadInspection {

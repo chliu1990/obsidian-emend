@@ -851,3 +851,104 @@ describe('ConversationStore web citation migration', () => {
 		]);
 	});
 });
+
+
+describe('ConversationStore exact-ID mutation migration safeguards', () => {
+	const newSession = {
+		id: 'new',
+		title: 'New chat',
+		titleSource: 'auto' as const,
+		createdAt: 10,
+		updatedAt: 10,
+		messages: [],
+	};
+	const legacyMutations: Array<[
+		string,
+		(store: ConversationStore) => Promise<unknown>,
+	]> = [
+		['create', (store) => store.createSession('Note.md', newSession)],
+		['append', (store) => store.appendReadyMessage('Note.md', 'legacy', readyMessage())],
+		['set-active', (store) => store.setActiveSession('Note.md', 'legacy')],
+		['rename', (store) => store.renameSession('Note.md', 'legacy', 'Renamed legacy')],
+		['delete', (store) => store.deleteSession('Note.md', 'legacy')],
+		['reorder', (store) => store.reorderSessions('Note.md', ['legacy'])],
+	];
+
+	it.each(legacyMutations)('migrates a legacy thread on a valid %s mutation', async (_name, mutate) => {
+		const adapter = new MemoryAdapter();
+		const { store } = makeStore(adapter);
+		await store.save('Note.md', []);
+		const path = threadPath(adapter);
+		adapter.files.set(path, JSON.stringify({ version: 2, messages: [readyMessage()] }));
+		adapter.operations.length = 0;
+
+		await mutate(store);
+
+		expect(JSON.parse(adapter.files.get(path) ?? '')).toMatchObject({ version: 3 });
+		await expect(store.loadConversation('Note.md')).resolves.toMatchObject({ kind: 'schema3' });
+	});
+
+	const unsupportedMutations: Array<[
+		string,
+		(store: ConversationStore) => Promise<unknown>,
+	]> = [
+		['create', (store) => store.createSession('Note.md', newSession)],
+		['append', (store) => store.appendReadyMessage('Note.md', 'legacy', readyMessage())],
+		['set-active', (store) => store.setActiveSession('Note.md', 'legacy')],
+		['rename', (store) => store.renameSession('Note.md', 'legacy', 'Renamed legacy')],
+		['delete', (store) => store.deleteSession('Note.md', 'legacy')],
+		['reorder', (store) => store.reorderSessions('Note.md', ['legacy'])],
+	];
+
+	it.each(unsupportedMutations)('rejects %s without touching an unsupported thread', async (_name, mutate) => {
+		const adapter = new MemoryAdapter();
+		const { store } = makeStore(adapter);
+		await store.save('Note.md', []);
+		const path = threadPath(adapter);
+		const future = JSON.stringify({ version: 4, sessions: [] });
+		adapter.files.set(path, future);
+		adapter.operations.length = 0;
+
+		await expect(mutate(store)).rejects.toThrow(/unsupported/i);
+
+		expect(adapter.files.get(path)).toBe(future);
+		expect(adapter.files.has(`${path}.corrupt`)).toBe(false);
+		expect(adapter.operations).toEqual([]);
+	});
+
+	it('backs up malformed bytes for a valid create replacement', async () => {
+		const adapter = new MemoryAdapter();
+		const { store } = makeStore(adapter);
+		await store.save('Note.md', []);
+		const path = threadPath(adapter);
+		const malformed = '{broken session original}';
+		adapter.files.set(path, malformed);
+		adapter.operations.length = 0;
+
+		await store.createSession('Note.md', newSession);
+
+		expect(adapter.files.get(`${path}.corrupt`)).toBe(malformed);
+		expect(JSON.parse(adapter.files.get(path) ?? '')).toMatchObject({
+			version: 3,
+			lastActiveSessionId: 'new',
+		});
+		expect(adapter.operations.filter((operation) => operation.includes('.corrupt'))).toHaveLength(1);
+	});
+
+	it('does not back up or replace malformed bytes for a missing exact ID', async () => {
+		const adapter = new MemoryAdapter();
+		const { store } = makeStore(adapter);
+		await store.save('Note.md', []);
+		const path = threadPath(adapter);
+		const malformed = '{broken session original}';
+		adapter.files.set(path, malformed);
+		adapter.operations.length = 0;
+
+		await expect(store.appendReadyMessage('Note.md', 'missing', readyMessage()))
+			.rejects.toThrow(/does not exist/i);
+
+		expect(adapter.files.get(path)).toBe(malformed);
+		expect(adapter.files.has(`${path}.corrupt`)).toBe(false);
+		expect(adapter.operations).toEqual([]);
+	});
+});
