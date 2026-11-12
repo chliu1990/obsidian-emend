@@ -228,12 +228,13 @@ describe('ConversationStore schema 3 loading and lazy migration', () => {
 		expect(warning).not.toHaveBeenCalled();
 	});
 
-	it('compatibility save updates only the active schema 3 session', async () => {
+	it('compatibility save updates a sole existing schema 3 session unambiguously', async () => {
 		const adapter = new MemoryAdapter();
 		const { store } = makeStore(adapter);
 		await store.save('Note.md', []);
 		const path = threadPath(adapter);
 		const conversation = schema3Conversation();
+		conversation.sessions = [conversation.sessions[1]!];
 		adapter.files.set(path, JSON.stringify(conversation));
 		const replacement = readyMessage({ id: 'replacement', content: 'Replacement' });
 
@@ -241,10 +242,7 @@ describe('ConversationStore schema 3 loading and lazy migration', () => {
 
 		expect(JSON.parse(adapter.files.get(path) ?? '')).toEqual({
 			...conversation,
-			sessions: [
-				conversation.sessions[0],
-				{ ...conversation.sessions[1], messages: [replacement] },
-			],
+			sessions: [{ ...conversation.sessions[0], messages: [replacement] }],
 		});
 	});
 });

@@ -101,18 +101,16 @@ export class ConversationStore {
 			if (inspection.kind !== 'schema3') {
 				return { conversation: legacyConversation(persistedMessages), result: undefined };
 			}
-			const activeSession = resolveActiveSession(inspection.conversation);
-			if (!activeSession) {
-				return { conversation: legacyConversation(persistedMessages), result: undefined };
+			const [onlySession] = inspection.conversation.sessions;
+			if (!onlySession || inspection.conversation.sessions.length !== 1) {
+				throw new Error(
+					'Cannot save this chat without exactly one existing session. Use an exact session ID.',
+				);
 			}
 			return {
 				conversation: {
 					...inspection.conversation,
-					sessions: inspection.conversation.sessions.map((session) =>
-						session.id === activeSession.id
-							? { ...session, messages: persistedMessages }
-							: session
-					),
+					sessions: [{ ...onlySession, messages: persistedMessages }],
 				},
 				result: undefined,
 			};
