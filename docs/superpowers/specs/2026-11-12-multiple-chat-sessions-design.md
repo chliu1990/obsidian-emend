@@ -1,6 +1,8 @@
 # Multiple chat sessions per note — technical design
 
-Status: approved, 2026-11-12
+Status: approved, 2026-11-12; PR #53 UI revision annotated below, 2026-11-12
+
+> **PR #53 UI revision:** Current chat exposes only New/Switch/Rename/Delete. Move up/down and the view callback/method path are removed; reordering is deferred to a future session management page, with pure/store reorder helpers preserved. The session row is directly after the context capacity display and directly before messages, outside the header. The revised sections below supersede the original title-region/Move UI text.
 
 ## Intent
 
@@ -13,7 +15,7 @@ This design implements the core of issue #41 while preserving the existing per-n
 - Persist multiple ordered chat sessions for each note in one schema-3 aggregate.
 - Restore the last explicitly active session, with deterministic runtime fallback.
 - Load schema 1/2 threads losslessly and migrate lazily on the first valid mutation.
-- Provide New, Switch, Rename, Delete, Move up, and Move down controls in the chat title region.
+- Provide New, Switch, Rename, and Delete controls directly after the context capacity display and before messages; defer reorder to a future session management page.
 - Keep drafts and provider history scoped to `{notePath, sessionId}`.
 - Update an `auto` title only after a successful assistant completion, in the same atomic mutation as that assistant message.
 - Make every persisted mutation operate on an exact session ID inside the existing per-note queue.
@@ -72,7 +74,7 @@ Owns hashed paths, DataAdapter reads/writes, warnings, per-note queues, corrupti
 
 ### `src/chat-session-controls.ts`
 
-An Obsidian UI component owning the native session `<select>`, New/Rename/Delete/Move up/Move down buttons, rename modal, and delete-confirmation modal. It emits callbacks and does not call the store or provider itself. The chat view owns state transitions and persistence.
+An Obsidian UI component owning the native session `<select>`, New/Rename/Delete buttons, rename modal, and delete-confirmation modal. It emits callbacks and does not call the store or provider itself. The chat view owns state transitions and persistence. Reorder controls and callbacks are not part of the current component.
 
 ### `src/chat-view.ts`
 
@@ -285,12 +287,12 @@ Note/session transitions abort the active request and close Web review. UI sessi
 
 ## Session controls and management flows
 
-The title region gains a compact row below the existing Emend title/build row:
+A compact row sits directly after the context capacity display and directly before messages, outside the header; mode controls remain before capacity:
 
 - Native `<select aria-label="Chat session">` showing session titles in manual order and the active session as its value.
-- New, Rename, Delete, Move up, and Move down icon buttons using Obsidian `setIcon`, accessible labels/tooltips, and normal button keyboard behavior.
-- Move up/down are the keyboard-accessible reorder mechanism; no drag-only behavior is required.
-- Controls disable during sending, thread loading, or a session mutation. Stop remains available. Move controls also disable at their respective boundaries and with fewer than two sessions.
+- New, Rename, and Delete icon buttons using Obsidian `setIcon`, accessible labels/tooltips, and normal button keyboard behavior.
+- No Move up/down controls or view reorder callback/method are present. Reordering is deferred to a future session management page; pure/store reorder helpers remain for that surface.
+- Controls disable during sending, thread loading, or a session mutation. Stop remains available.
 
 Flows:
 
@@ -298,7 +300,7 @@ Flows:
 - **Switch:** save the current runtime draft, await `setActiveSession`, then update active state, increment generation, restore the target draft/messages, and refresh capacity. A failed mutation leaves the current session visible. A sole transient has no switch action.
 - **Rename:** open a modal with the current title, trim/collapse whitespace, require 1–80 code points, and set `titleSource: 'manual'`. Persist an existing session through `renameSession`; materialize a transient through `createSession` with its ready messages. Later automatic cadence cannot change the manual title.
 - **Delete:** open a confirmation modal naming the current target as plain text. Cancel performs no mutation. For a persisted session, confirm calls `deleteSession`, applies the returned next/previous/null active fallback only after success, removes the deleted draft, and creates/caches a transient `New chat` if no sessions remain. For a transient, confirm only replaces the local cached session with a fresh empty session and clears its draft/messages; no adapter operation occurs.
-- **Move up/down:** call `reorderSessions` with the proposed exact ID array, apply the returned successful order locally, and keep the active ID unchanged.
+- **Deferred reorder:** the future session management page may call `reorderSessions` with an exact ID array. Current chat exposes no Move flow and does not call that helper.
 
 Management operations use a serialized `isSessionMutating` flag in the view in addition to the store's per-note queue. Management failures produce a short non-secret Notice and do not change visible persisted session state. Local transient deletion is not a persisted mutation and therefore does not overwrite or attempt to repair malformed/future-version bytes.
 
@@ -340,7 +342,7 @@ Management operations use a serialized `isSessionMutating` flag in the view in a
 
 ### View and controls tests
 
-- New/Switch/Rename/Delete/Reorder, confirmation cancel/confirm, disabled states, boundary buttons, keyboard activation, and narrow-layout markers.
+- New/Switch/Rename/Delete with no Move controls/callback, confirmation cancel/confirm, disabled states, keyboard activation, narrow-layout markers, and mode selector → capacity → session controls → messages placement.
 - Per-session drafts and configured provider history; no cross-session history.
 - Most-recently-active reload and manual-order persistence.
 - Successful/stopped/failed automatic titles and manual pinning under queued saves.
@@ -356,7 +358,7 @@ Extend the ignored selection/chat verification harness with a `--sessions` suite
 1. Open a missing-history note: transient New chat creates no file; first Ask persists schema 3 and an automatic title after success.
 2. Create/switch three sessions, preserve drafts and same-note controls, and verify actual wire history belongs only to the active session.
 3. Rename manually and verify later successful responses do not change it; verify stopped/error responses leave automatic titles unchanged and management actions add zero provider requests.
-4. Reorder with buttons, delete inactive/active sessions with next/previous fallback, cancel confirmation, delete the last session, and reload to verify persisted order/active state.
+4. Assert no Move controls and the revised capacity/session/messages placement, delete inactive/active sessions with next/previous fallback, cancel confirmation, delete the last session, and reload to verify persisted order/active state.
 5. Reload actual Obsidian and restore the last active session, messages, usage, edit summary content, Web badges/citations/activity, and sanitized schema-3 bytes.
 6. Load schema 1/2 fixtures without writes, then mutate to schema 3; verify malformed backup and future-version refusal for every mutation.
 7. Exercise streaming Stop/retry, note-switch abort, same-note session/Modify Selection pending exclusion, and different-note independence.

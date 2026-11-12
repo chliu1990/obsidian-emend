@@ -558,48 +558,6 @@ export class EmendChatView extends ItemView {
 		}
 	}
 
-	async moveActiveSession(direction: -1 | 1): Promise<void> {
-		const identity = this.beginSessionMutation();
-		if (!identity) {
-			return;
-		}
-		const { notePath } = identity;
-		const index = this.sessions.findIndex((session) => session.id === identity.sessionId);
-		const targetIndex = index + direction;
-		if (index < 0 || targetIndex < 0 || targetIndex >= this.sessions.length) {
-			return;
-		}
-		const orderedIds = this.sessions.map((session) => session.id);
-		const [movedId] = orderedIds.splice(index, 1);
-		if (!movedId) {
-			return;
-		}
-		orderedIds.splice(targetIndex, 0, movedId);
-		this.isSessionMutating = true;
-		this.render();
-		try {
-			await this.plugin.conversationStore.reorderSessions(notePath, orderedIds);
-			if (!this.isCurrent(identity)) {
-				return;
-			}
-			const sessionsById = new Map(
-				this.sessions.map((session) => [session.id, session]),
-			);
-			const reordered = orderedIds.flatMap((id) => {
-				const session = sessionsById.get(id);
-				return session ? [session] : [];
-			});
-			if (reordered.length !== this.sessions.length) {
-				throw new Error('Chat session order does not match the current sessions.');
-			}
-			this.sessions = reordered;
-			this.isSessionMutating = false;
-			this.render();
-		} catch (error) {
-			this.failSessionMutation(identity, 'move', error);
-		}
-	}
-
 	private beginSessionMutation(): ChatIdentity | null {
 		const notePath = this.notePath;
 		const sessionId = this.activeSessionId;
@@ -650,7 +608,7 @@ export class EmendChatView extends ItemView {
 
 	private failSessionMutation(
 		identity: ChatIdentity,
-		action: 'create' | 'rename' | 'delete' | 'move',
+		action: 'create' | 'rename' | 'delete',
 		error: unknown,
 	): void {
 		if (!this.isCurrent(identity)) {
@@ -916,28 +874,6 @@ export class EmendChatView extends ItemView {
 		const titleRowEl = headerEl.createDiv('emend-chat-title-row');
 		titleRowEl.createDiv({ cls: 'emend-chat-title', text: 'Emend' });
 		titleRowEl.createSpan({ cls: 'emend-chat-build', text: EMEND_BUILD_ID });
-		this.sessionControls = new ChatSessionControls(headerEl, {
-			onNew: () => {
-				void this.createNewSession();
-			},
-			onSwitch: (sessionId) => {
-				void this.switchActiveSession(sessionId);
-			},
-			onRename: (title) => {
-				void this.renameActiveSession(title);
-			},
-			onDelete: () => {
-				void this.deleteActiveSession();
-			},
-			onMove: (direction) => {
-				void this.moveActiveSession(direction);
-			},
-		}, this.app);
-		this.sessionControls.render({
-			sessions: this.sessions,
-			activeSessionId: this.activeSessionId,
-			disabled: this.isSending || this.isThreadLoading || this.isSessionMutating,
-		});
 		const shortcutsEl = headerEl.createDiv('emend-chat-shortcuts');
 		const modeGroupEl = shortcutsEl.createDiv('emend-chat-shortcut-group');
 		modeGroupEl.createSpan({
@@ -974,6 +910,25 @@ export class EmendChatView extends ItemView {
 		}
 
 		this.capacityDisplay = new ContextCapacityDisplay(contentEl);
+		this.sessionControls = new ChatSessionControls(contentEl, {
+			onNew: () => {
+				void this.createNewSession();
+			},
+			onSwitch: (sessionId) => {
+				void this.switchActiveSession(sessionId);
+			},
+			onRename: (title) => {
+				void this.renameActiveSession(title);
+			},
+			onDelete: () => {
+				void this.deleteActiveSession();
+			},
+		}, this.app);
+		this.sessionControls.render({
+			sessions: this.sessions,
+			activeSessionId: this.activeSessionId,
+			disabled: this.isSending || this.isThreadLoading || this.isSessionMutating,
+		});
 
 		const messagesEl = contentEl.createDiv('emend-chat-messages');
 		this.messagesEl = messagesEl;

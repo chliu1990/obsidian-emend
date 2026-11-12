@@ -119,7 +119,6 @@ const viewPrototype = EmendChatView.prototype as unknown as {
 	createNewSession(this: unknown): Promise<void>;
 	renameActiveSession(this: unknown, title: string): Promise<void>;
 	deleteActiveSession(this: unknown): Promise<void>;
-	moveActiveSession(this: unknown, direction: -1 | 1): Promise<void>;
 	submitPrompt(this: unknown): Promise<void>;
 	handleComposerKeydown(
 		this: unknown,
@@ -2127,26 +2126,6 @@ describe('EmendChatView session management', () => {
 		},
 	);
 
-	it('persists exact move order and keeps the active session unchanged', async () => {
-		const fixture = createEditTargetView();
-		const sessions = [makeSession('a'), makeSession('b'), makeSession('c')];
-		fixture.conversationStore.loadConversation.mockResolvedValue(
-			loadedConversation(sessions, 'b'),
-		);
-		await viewPrototype.refreshTargetNote.call(fixture.context);
-
-		await viewPrototype.moveActiveSession.call(fixture.context, -1);
-
-		expect(fixture.conversationStore.reorderSessions).toHaveBeenCalledExactlyOnceWith(
-			'A.md',
-			['b', 'a', 'c'],
-		);
-		expect(fixture.context.sessions.map((session) => session.id)).toEqual(['b', 'a', 'c']);
-		expect(fixture.context.activeSessionId).toBe('b');
-		expect(findSessionSelect(fixture.contentEl)?.children.map((option) => option.value))
-			.toEqual(['b', 'a', 'c']);
-	});
-
 	it('preserves visible titles, membership, and order when management mutations fail', async () => {
 		const fixture = createEditTargetView();
 		const sessions = [makeSession('a'), makeSession('b')];
@@ -2157,12 +2136,10 @@ describe('EmendChatView session management', () => {
 		);
 		fixture.conversationStore.renameSession.mockRejectedValue(new Error('Rename failed'));
 		fixture.conversationStore.deleteSession.mockRejectedValue(new Error('Delete failed'));
-		fixture.conversationStore.reorderSessions.mockRejectedValue(new Error('Move failed'));
 		await viewPrototype.refreshTargetNote.call(fixture.context);
 
 		await viewPrototype.renameActiveSession.call(fixture.context, 'Changed');
 		await viewPrototype.deleteActiveSession.call(fixture.context);
-		await viewPrototype.moveActiveSession.call(fixture.context, -1);
 
 		expect(fixture.context.sessions.map((session) => [session.id, session.title])).toEqual([
 			['a', 'First'],
@@ -2188,8 +2165,6 @@ describe('EmendChatView session management', () => {
 				'New chat session',
 				'Rename chat session',
 				'Delete chat session',
-				'Move chat session up',
-				'Move chat session down',
 			]) {
 				expect(findSessionButton(fixture.contentEl, label)?.disabled).toBe(true);
 			}
@@ -2216,7 +2191,6 @@ describe('EmendChatView session management', () => {
 			await viewPrototype.createNewSession.call(fixture.context);
 			await viewPrototype.renameActiveSession.call(fixture.context, 'Changed');
 			await viewPrototype.deleteActiveSession.call(fixture.context);
-			await viewPrototype.moveActiveSession.call(fixture.context, 1);
 		}
 
 		expect(fixture.conversationStore.createSession).not.toHaveBeenCalled();
@@ -2226,7 +2200,30 @@ describe('EmendChatView session management', () => {
 		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
 	});
 
-	it('places wrapping session controls below the title with a narrow full-width selector', () => {
+	it('places session controls directly between capacity and messages, outside the header', async () => {
+		const fixture = createEditTargetView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const orderedClasses = [
+			'emend-chat-mode-selector',
+			'emend-context-capacity',
+			'emend-chat-session-controls',
+			'emend-chat-messages',
+		];
+		const actual = fixture.contentEl.children
+			.map((element) => element.className.split(' ')[0])
+			.filter((className) => className && orderedClasses.includes(className));
+		const header = fixture.contentEl.children.find(
+			(element) => element.className.split(' ').includes('emend-chat-header'),
+		);
+
+		expect(actual).toEqual(orderedClasses);
+		expect(header && findElements(
+			header,
+			(element) => element.className.split(' ').includes('emend-chat-session-controls'),
+		)).toEqual([]);
+	});
+
+	it('keeps wrapping session controls and a narrow full-width selector', () => {
 		expect(getCssRule('.emend-chat-session-controls')).toContain('flex-wrap: wrap;');
 		expect(getCssRule('.emend-chat-session-controls')).toContain('min-width: 0;');
 		expect(getCssRule('.emend-chat-session-select')).toContain('min-width: 0;');
@@ -4963,7 +4960,7 @@ describe('EmendChatView draft capacity estimate', () => {
 		vi.restoreAllMocks();
 	});
 
-	it('places the compact bar after mode controls and before messages, never in the composer', async () => {
+	it('places the compact bar between mode and session controls, never in the composer', async () => {
 		const fixture = createCapacityView({
 			capacity: { contextWindowTokens: 1000, outputReserveTokens: 100 },
 		});
@@ -4975,6 +4972,9 @@ describe('EmendChatView draft capacity estimate', () => {
 		const modeIndex = fixture.contentEl.children.findIndex((element) =>
 			element.className.split(' ').includes('emend-chat-mode-selector'),
 		);
+		const sessionIndex = fixture.contentEl.children.findIndex((element) =>
+			element.className.split(' ').includes('emend-chat-session-controls'),
+		);
 		const messagesIndex = fixture.contentEl.children.findIndex((element) =>
 			element.className.split(' ').includes('emend-chat-messages'),
 		);
@@ -4983,7 +4983,8 @@ describe('EmendChatView draft capacity estimate', () => {
 		);
 		expect(root).toBeDefined();
 		expect(rootIndex).toBe(modeIndex + 1);
-		expect(messagesIndex).toBe(rootIndex + 1);
+		expect(sessionIndex).toBe(rootIndex + 1);
+		expect(messagesIndex).toBe(sessionIndex + 1);
 		expect(rootIndex).toBeGreaterThan(0);
 		expect(findElements(root as FakeElement, (element) =>
 			element.attributes.role === 'meter',

@@ -12,7 +12,6 @@ export interface ChatSessionControlsCallbacks {
 	onSwitch(sessionId: string): void;
 	onRename(title: string): void;
 	onDelete(): void;
-	onMove(direction: -1 | 1): void;
 }
 
 export class ChatSessionControls {
@@ -21,8 +20,6 @@ export class ChatSessionControls {
 	private readonly newButton: HTMLButtonElement;
 	private readonly renameButton: HTMLButtonElement;
 	private readonly deleteButton: HTMLButtonElement;
-	private readonly moveUpButton: HTMLButtonElement;
-	private readonly moveDownButton: HTMLButtonElement;
 	private readonly app: App;
 	private state: ChatSessionControlsState = {
 		sessions: [],
@@ -56,12 +53,6 @@ export class ChatSessionControls {
 		this.deleteButton = this.createAction('Delete chat session', 'trash', () => {
 			this.openDeleteModal();
 		});
-		this.moveUpButton = this.createAction('Move chat session up', 'arrow-up', () => {
-			this.callbacks.onMove(-1);
-		});
-		this.moveDownButton = this.createAction('Move chat session down', 'arrow-down', () => {
-			this.callbacks.onMove(1);
-		});
 	}
 
 	render(state: ChatSessionControlsState): void {
@@ -78,13 +69,6 @@ export class ChatSessionControls {
 		this.newButton.disabled = state.disabled;
 		this.renameButton.disabled = state.disabled || !state.activeSessionId;
 		this.deleteButton.disabled = state.disabled || !state.activeSessionId;
-		const activeIndex = state.sessions.findIndex(
-			(session) => session.id === state.activeSessionId,
-		);
-		this.moveUpButton.disabled = state.disabled || activeIndex <= 0;
-		this.moveDownButton.disabled = state.disabled ||
-			activeIndex < 0 ||
-			activeIndex >= state.sessions.length - 1;
 	}
 
 	destroy(): void {

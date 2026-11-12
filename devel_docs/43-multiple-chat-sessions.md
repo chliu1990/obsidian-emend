@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Multiple chat sessions are implemented on `feat/multiple-chat-sessions`. Each note keeps an ordered set of independent conversations in its existing hashed local chat file. The chat header provides New, Switch, Rename, Delete, Move up, and Move down controls; drafts and provider history are scoped to the exact `{notePath, sessionId}` identity. Product implementation is based at `f66d80b`; the verification sanitizer fix is `1780799` (`fix: strip unknown persisted message artifacts`).
+Multiple chat sessions are implemented on `feat/multiple-chat-sessions`. Each note keeps an ordered set of independent conversations in its existing hashed local chat file. The session row directly after capacity and before messages provides New, Switch, Rename, and Delete controls; drafts and provider history are scoped to the exact `{notePath, sessionId}` identity. PR #53 feedback removed Move controls and the view reorder path, deferring reorder to a future management page while preserving pure/store helpers. Original product implementation was based at `f66d80b`; the verification sanitizer fix was `1780799` (`fix: strip unknown persisted message artifacts`).
 
 This stage adds no AI-generated titles, AI session summaries, management tab, note-rename history migration, cross-note moves, session search, cross-vault sharing, background request, new writer, or change to provider transports, capacity formulas, edit protocols, or permission paths. Automatic titles are derived locally from the successful exchange's prompt.
 
@@ -81,7 +81,7 @@ Each operation snapshots its arguments at invocation and enters the existing per
 
 ## Controls and runtime identity
 
-The compact row below the Emend title/build row contains a native `select[aria-label="Chat session"]` and icon buttons labelled **New chat session**, **Rename chat session**, **Delete chat session**, **Move chat session up**, and **Move chat session down**. Rename validates its modal input; Delete names the target as plain text and requires confirmation. Move buttons are the keyboard-accessible reorder mechanism and disable at boundaries or with fewer than two sessions. All session controls disable while sending, thread-loading, or mutating; Stop remains available. Management actions call no provider.
+The compact row directly after the context capacity display and directly before messages contains a native `select[aria-label="Chat session"]` and icon buttons labelled **New chat session**, **Rename chat session**, and **Delete chat session**. It is outside the header; mode controls remain before capacity. Rename validates its modal input; Delete names the target as plain text and requires confirmation. All session controls disable while sending, thread-loading, or mutating; Stop remains available. Management actions call no provider. Move up/down controls and the view callback/method path were removed by PR #53 feedback; reordering is deferred to a future session management page, while the pure/store reorder operations remain available to that deferred surface.
 
 The view tracks `{notePath, sessionId, generation}` for each active request. Generation increments on actual note/session transitions and close. Currentness requires an open view plus exact path, session ID, and generation; request cleanup also compares the active request object identity. Stale loads, stream callbacks, completions, save Notices, and cleanup cannot replace or release newer view/request state.
 
@@ -115,20 +115,20 @@ The final transient-materialization review added delayed-create Stop and A→B�
 
 ## Real-Obsidian loopback evidence
 
-- Date: 2026-11-12, Asia/Shanghai; final passing evidence summary generated `2026-11-12T06:38:15.241Z` after the clean-gate build.
-- Tested tree: `779befbedfd87384edeffe8bcc1a5dcf077d5420` plus the final transient-state fix in this branch; the ignored `test_vault/emend-selection-chat-verify/verify.mjs --sessions` harness is not committed.
+- Date: 2026-11-12, Asia/Shanghai; PR #53 UI-feedback evidence summary generated `2026-11-12T07:28:18.287Z` after the clean-gate build.
+- Tested tree: `3e31e695570766dd20dd02a33322e6789c7f36a6` plus the PR #53 UI-feedback changes in this commit; the ignored `test_vault/emend-selection-chat-verify/verify.mjs --sessions` harness is not committed.
 - Runtime: official Obsidian **1.15.0** AppImage under isolated Xvfb `:101`, CDP `19224`, synthetic notes only.
 - Provider: loopback OpenAI-compatible SSE mock at `127.0.0.1:18766` and loopback Fetch endpoint, with a dummy SecretStorage credential. No real account, external network, or paid call.
 - Commands: `npm run build`; `node test_vault/emend-selection-chat-verify/verify.mjs --sessions`; `sha256sum main.js`.
-- Result: **9/9 scenarios and 156/156 assertions passed**. Passing wall time about 25 seconds.
-- Root and runtime-vault loaded bundle SHA-256: `78a9d37c9e0cc82fd011e196506420d4b27f6632c41b8823168678f60a87ce9f`. The harness asserts byte equality before startup, and the paths were checked again after completion.
+- Result: **9/9 scenarios and 156/156 assertions passed**. Passing wall time about 24 seconds.
+- Root and runtime-vault loaded bundle SHA-256: `7c3dcbb74d0a0b6641b5601979be3b49c23458df34ea015310f64f779e3ff74f`. The harness asserts byte equality before startup, and the paths were checked again after completion.
 
 | Scenario | Assertions | Verified behavior |
 | --- | ---: | --- |
 | 01 Missing/transient first Ask | 12 | Missing history created no file; transient identity/draft survived note switches; first Ask wrote schema 3, an automatic title, two ready messages, and usage; no note write. |
 | 02 Three-session drafts/history | 16 | Three IDs, exact per-session drafts, retained mode/Web/Edit-target/additional notes, actual wire histories isolated to the active session, and zero management provider calls. |
 | 03 Manual/auto/stopped/error titles | 11 | Manual pinning across later success, stopped/error title nonupdates and transient exclusion, successful retry cadence, and no writes. |
-| 04 Reorder/delete/reload | 12 | Button reorder and boundaries, confirmation Cancel, zero management requests, actual reload order/active restore, inactive delete, next/previous fallback, and empty aggregate/runtime New chat. |
+| 04 Delete/reload | 12 | Move-control absence, mode → capacity → session controls → messages placement outside the header, confirmation Cancel, zero management requests, actual reload order/active restore, inactive delete, next/previous fallback, and empty aggregate/runtime New chat. |
 | 05 Actual reload and sanitized restore | 12 | Ready Edit and Web content, usage, reasoning, Auto badge, safe citation/activity restore, and removal of non-ready/unknown/credentialed/transient fields. |
 | 06 Schema 1/2/malformed/future matrix | 19 | Lossless lazy schema 1/2 migration, exact malformed backup, transient-delete nonwrite, and all six future-version mutations rejected with unchanged bytes/no temp or backup. |
 | 07 Stop/retry/abort/pending locks | 15 | Sole-transient New semantics, same-note and Modify Selection exclusion, different-note independence, modal retry state, Stop retry history, note-switch abort without late ready response/title. |

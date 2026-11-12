@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-12-multiple-chat-sessions-design.md`
 
+> **PR #53 UI revision:** Task 5's current UI is New/Switch/Rename/Delete only, directly after capacity and before messages. Move controls, `onMove`, and `moveActiveSession` are removed; reorder persists only as unused pure/store capability for a deferred management page. Task 6's session loopback asserts that absence/placement and retains delete/fallback/reload coverage.
+
 ## Global Constraints
 
 - Work in `/home/chang/Projects/obsidian-emend` on `feat/multiple-chat-sessions`; no worktrees. Use sequential fresh implementers and fresh reviewers; do not dispatch implementation agents in parallel.
@@ -254,7 +256,7 @@ Expected: PASS. Commit as `feat: scope chat runtime to sessions`.
 
 ---
 
-### Task 5: Title-region session controls and management flows
+### Task 5: Session controls and management flows
 
 **Files:**
 - Create: `src/chat-session-controls.ts`
@@ -265,12 +267,12 @@ Expected: PASS. Commit as `feat: scope chat runtime to sessions`.
 - Modify: `tests/mocks/obsidian.ts` only if the existing Modal/button shim lacks required behavior
 
 **Interfaces:**
-- Consumes: Task 3 management mutations and Task 4 `switchActiveSession(sessionId)`/runtime identity/drafts/transient cache.
+- Consumes: Task 3 management mutations and Task 4 `switchActiveSession(sessionId)`/runtime identity/drafts/transient cache. `reorderSessions` remains unused by current UI for a deferred management page.
 - Produces:
 
 ```ts
 interface ChatSessionControlsState { sessions: readonly ChatSession[]; activeSessionId: string | null; disabled: boolean }
-interface ChatSessionControlsCallbacks { onNew(): void; onSwitch(sessionId: string): void; onRename(title: string): void; onDelete(): void; onMove(direction: -1 | 1): void }
+interface ChatSessionControlsCallbacks { onNew(): void; onSwitch(sessionId: string): void; onRename(title: string): void; onDelete(): void }
 class ChatSessionControls {
 	constructor(container: HTMLElement, callbacks: ChatSessionControlsCallbacks);
 	render(state: ChatSessionControlsState): void;
@@ -279,18 +281,17 @@ class ChatSessionControls {
 createNewSession(): Promise<void>;
 renameActiveSession(title: string): Promise<void>;
 deleteActiveSession(): Promise<void>;
-moveActiveSession(direction: -1 | 1): Promise<void>;
 ```
 
 The component owns rename validation and delete confirmation, emitting `onRename` only with valid normalized text and `onDelete` only after confirmation. It does not access the store/provider directly.
 
 - [ ] **Step 1: Write failing component tests**
 
-Assert native `<select aria-label="Chat session">`, manual option order/active value, New/Rename/Delete/Move up/Move down accessible buttons, boundary/disabled states, callback IDs/directions, keyboard activation, rename validation, delete confirmation cancel/confirm, and cleanup. No callback performs a provider request.
+Assert native `<select aria-label="Chat session">`, manual option order/active value, only New/Rename/Delete accessible buttons with no Move controls/callback, disabled states, callback IDs, keyboard activation, rename validation, delete confirmation cancel/confirm, and cleanup. No callback performs a provider request.
 
 - [ ] **Step 2: Write failing view-management tests**
 
-Cover New persisted empty session; Switch set-active then generation/draft/history/capacity refresh; Rename manual pinning; Delete next/previous/last fallback and draft removal; Move order persistence; disabled mutations while sending/loading/mutating; failed mutation leaves visible state unchanged. Cover transient New with and without failed-save ready users, transient Rename materialization, transient Delete with zero adapter writes, and unsupported/malformed transient deletion preserving bytes.
+Cover New persisted empty session; Switch set-active then generation/draft/history/capacity refresh; Rename manual pinning; Delete next/previous/last fallback and draft removal; disabled mutations while sending/loading/mutating; failed mutation leaves visible state unchanged. Cover transient New with and without failed-save ready users, transient Rename materialization, transient Delete with zero adapter writes, and unsupported/malformed transient deletion preserving bytes. Assert mode selector → capacity meter → session controls → messages.
 
 - [ ] **Step 3: Verify controls RED**
 
@@ -303,7 +304,7 @@ Use `setIcon`, native buttons/select, plain text for titles, and Obsidian `Modal
 
 - [ ] **Step 5: Implement view flows and narrow-layout CSS**
 
-Serialize management through `isSessionMutating`; apply visible state only after successful store results. Implement the transient rules exactly as specified. Place the row below the existing title/build row and add `emend-` classes with wrapping/no horizontal overflow at the existing 400px breakpoint.
+Serialize management through `isSessionMutating`; apply visible state only after successful store results. Implement the transient rules exactly as specified. Place the entire session-controls construction/render block directly after `ContextCapacityDisplay` and directly before messages, outside the header, and add `emend-` classes with wrapping/no horizontal overflow at the existing 400px breakpoint.
 
 - [ ] **Step 6: Verify controls GREEN and related UI suites**
 
@@ -334,7 +335,7 @@ Expected: PASS. Commit as `feat: add chat session controls`.
 
 - [ ] **Step 1: Add the ignored `--sessions` loopback suite**
 
-Reuse the existing Obsidian launcher/CDP/local mock infrastructure. Implement the nine scenarios in the approved spec: missing/transient first Ask; three-session drafts/history; manual/auto/stopped/error titles; reorder/delete/reload; actual reload and sanitized restore; schema 1/2/malformed/future matrix; Stop/retry/abort/pending locks; full-note/Selection edit summaries/native undo; capacity/Web/transient/privacy/narrow/keyboard behavior. Assert zero management provider calls and zero unintended note writes.
+Reuse the existing Obsidian launcher/CDP/local mock infrastructure. Implement the nine scenarios in the approved spec: missing/transient first Ask; three-session drafts/history; manual/auto/stopped/error titles; Move-absence/placement plus delete/fallback/reload; actual reload and sanitized restore; schema 1/2/malformed/future matrix; Stop/retry/abort/pending locks; full-note/Selection edit summaries/native undo; capacity/Web/transient/privacy/narrow/keyboard behavior. Assert zero management provider calls and zero unintended note writes.
 
 - [ ] **Step 2: Build and run real-Obsidian verification**
 

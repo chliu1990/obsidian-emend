@@ -155,7 +155,6 @@ function callbacks() {
 		onSwitch: vi.fn<(sessionId: string) => void>(),
 		onRename: vi.fn<(title: string) => void>(),
 		onDelete: vi.fn<() => void>(),
-		onMove: vi.fn<(direction: -1 | 1) => void>(),
 	};
 }
 
@@ -211,7 +210,7 @@ afterEach(() => {
 });
 
 describe('ChatSessionControls', () => {
-	it('shows manual session order and the active title in a native accessible select', () => {
+	it('shows manual order and only New, Rename, and Delete actions in the native controls', () => {
 		const { container } = renderControls();
 		const select = findElements(
 			container,
@@ -224,18 +223,26 @@ describe('ChatSessionControls', () => {
 			['c', 'Gamma'],
 		]);
 		expect(select?.value).toBe('b');
-		for (const label of [
+		const actionLabels = findElements(
+			container,
+			(element) => element.tagName === 'button',
+		).map((button) => button.attributes['aria-label']);
+		expect(actionLabels).toEqual([
 			'New chat session',
 			'Rename chat session',
 			'Delete chat session',
-			'Move chat session up',
-			'Move chat session down',
-		]) {
+		]);
+		for (const label of actionLabels) {
+			if (!label) {
+				throw new Error('Session action has no accessible label.');
+			}
 			expect(findButton(container, label).attributes.type).toBe('button');
 		}
+		expect(actionLabels).not.toContain('Move chat session up');
+		expect(actionLabels).not.toContain('Move chat session down');
 	});
 
-	it('emits exact switch IDs, New, and move directions', () => {
+	it('emits exact switch IDs and New', () => {
 		const { container, spies } = renderControls();
 		const select = findElements(container, (element) => element.tagName === 'select')[0];
 		if (!select) {
@@ -244,37 +251,22 @@ describe('ChatSessionControls', () => {
 		select.value = 'c';
 		select.dispatch('change');
 		findButton(container, 'New chat session').click();
-		findButton(container, 'Move chat session up').click();
-		findButton(container, 'Move chat session down').click();
 
 		expect(spies.onSwitch).toHaveBeenCalledExactlyOnceWith('c');
 		expect(spies.onNew).toHaveBeenCalledOnce();
-		expect(spies.onMove.mock.calls).toEqual([[-1], [1]]);
 	});
 
-	it('supports native keyboard activation for New and reorder buttons', () => {
+	it('supports native keyboard activation for New', () => {
 		const { container, spies } = renderControls();
 
 		findButton(container, 'New chat session').press('Enter');
-		findButton(container, 'Move chat session up').press(' ');
 
 		expect(spies.onNew).toHaveBeenCalledOnce();
-		expect(spies.onMove).toHaveBeenCalledExactlyOnceWith(-1);
 	});
 
-	it('disables all controls globally and move controls at their boundaries', () => {
+	it('disables every remaining control globally', () => {
 		const { container, controls } = renderControls();
-		const up = findButton(container, 'Move chat session up');
-		const down = findButton(container, 'Move chat session down');
-		expect(up.disabled).toBe(false);
-		expect(down.disabled).toBe(false);
 
-		controls.render({ sessions: [session('a'), session('b')], activeSessionId: 'a', disabled: false });
-		expect(up.disabled).toBe(true);
-		expect(down.disabled).toBe(false);
-		controls.render({ sessions: [session('a'), session('b')], activeSessionId: 'b', disabled: false });
-		expect(up.disabled).toBe(false);
-		expect(down.disabled).toBe(true);
 		controls.render({ sessions: [session('a')], activeSessionId: 'a', disabled: true });
 		for (const element of findElements(
 			container,

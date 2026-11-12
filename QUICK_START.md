@@ -87,11 +87,11 @@ Useful controls:
 
 ### Multiple chat sessions
 
-Use the **Chat session** selector and its icon actions below the Emend title to manage independent conversations for the active note:
+Use the **Chat session** selector and its icon actions directly below the capacity bar and above messages to manage independent conversations for the active note:
 
 1. Send a question, then use **New chat session** to start another conversation. Switch among at least three sessions and confirm that each restores its own messages and unsent draft. Provider history comes only from the active session; another session's messages are not sent.
 2. Use **Rename chat session** to pin a manual title. Automatic titles derive locally from the prompt only after a successful assistant response; stopped, failed, aborted, and management-only actions do not set them. No AI naming or summarization request is made.
-3. Use **Move chat session up/down** to change manual order. **Delete chat session** asks for confirmation; deleting the active session selects its next sibling, otherwise its previous sibling. Deleting the last session leaves an empty saved aggregate and a runtime-only New chat.
+3. **Delete chat session** asks for confirmation; deleting the active session selects its next sibling, otherwise its previous sibling. Deleting the last session leaves an empty saved aggregate and a runtime-only New chat. Reordering is deferred to a future session management page; the current chat has no Move controls.
 4. Switch sessions and confirm that mode, Web, Edit target, and additional-note selections remain unchanged, while the capacity estimate uses the newly active session's draft and history. A pending request still locks the whole note, including its other sessions and Modify Selection.
 5. Reload Obsidian and confirm that the last active session, manual order, ready messages, usage, and sanitized Web/Edit results restore. Unsent drafts and loading, stopped, or error content do not persist.
 6. Existing schema 1/2 threads open as one legacy session without an eager rewrite and become schema 3 on the first valid mutation. Malformed files stay unchanged until a valid mutation creates the `.corrupt` backup; unsupported future versions reject every mutation without overwriting bytes.
