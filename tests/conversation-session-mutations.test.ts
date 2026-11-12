@@ -13,6 +13,7 @@ class MemoryAdapter implements ConversationDataAdapter {
 	readonly files = new Map<string, string>();
 	readonly directories = new Set<string>();
 	readonly operations: string[] = [];
+	beforeRead: ((path: string) => Promise<void>) | undefined;
 	beforeWrite: ((path: string) => Promise<void>) | undefined;
 	rejectOverwrite = false;
 
@@ -21,6 +22,7 @@ class MemoryAdapter implements ConversationDataAdapter {
 	}
 
 	async read(path: string) {
+		await this.beforeRead?.(path);
 		const contents = this.files.get(path);
 		if (contents === undefined) {
 			throw new Error(`Missing file: ${path}`);
@@ -268,6 +270,33 @@ describe('ConversationStore exact-ID session mutations', () => {
 		expect(adapter.operations.filter((operation) => operation.startsWith('rename:'))).toHaveLength(1);
 		expect(provider).not.toHaveBeenCalled();
 		vi.unstubAllGlobals();
+	});
+
+	it('rejects an aborted assistant append after validation without writing or deriving its title', async () => {
+		const adapter = new MemoryAdapter();
+		const { store } = makeStore(adapter);
+		const original = conversation('one', [
+			session('one', { title: 'New chat', messages: [userMessage()] }),
+		]);
+		await seedConversation(store, adapter, original);
+		const readStarted = deferred();
+		const releaseRead = deferred();
+		adapter.beforeRead = async () => {
+			readStarted.resolve();
+			await releaseRead.promise;
+		};
+		const controller = new AbortController();
+		const options = { titlePrompt: 'Aborted title', signal: controller.signal };
+
+		const appending = store.appendReadyMessage('Note.md', 'one', readyMessage(), options);
+		await readStarted.promise;
+		const rejected = expect(appending).rejects.toThrow(/abort/i);
+		controller.abort();
+		releaseRead.resolve();
+		await rejected;
+
+		expect(persistedConversation(adapter)).toEqual(original);
+		expect(adapter.operations).toEqual([]);
 	});
 
 	it('keeps a manual title unchanged on assistant completion', async () => {

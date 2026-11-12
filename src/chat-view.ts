@@ -108,6 +108,7 @@ export interface ActiveRequest {
 interface MessagePersistence {
 	session: ChatSession;
 	message: ChatMessage;
+	request: ActiveRequest;
 	titlePrompt?: string;
 }
 
@@ -401,7 +402,16 @@ export class EmendChatView extends ItemView {
 	}
 
 	private isActiveRequest(request: ActiveRequest) {
-		return this.activeRequest === request && this.isCurrent(request.identity);
+		return this.activeRequest === request &&
+			!request.controller.signal.aborted &&
+			this.isCurrent(request.identity);
+	}
+
+	private requireActiveRequest(request: ActiveRequest) {
+		request.controller.signal.throwIfAborted();
+		if (!this.isActiveRequest(request)) {
+			throw new DOMException('Response stopped.', 'AbortError');
+		}
 	}
 
 	private scheduleRequestRender(request: ActiveRequest) {
@@ -1203,10 +1213,10 @@ export class EmendChatView extends ItemView {
 			const persistedUser = await this.persistMessages(
 				notePath,
 				session.messages.filter((message) => message.status === 'ready'),
-				{ session, message: userMessage },
+				{ session, message: userMessage, request },
 			);
+			this.requireActiveRequest(request);
 			this.applyPersistedMetadata(session, persistedUser);
-			controller.signal.throwIfAborted();
 			if (capturedTarget.type !== 'read-only') {
 				const callbacks = {
 					onReasoning: (text: string) => {
@@ -1323,9 +1333,11 @@ export class EmendChatView extends ItemView {
 				{
 					session,
 					message: readyAssistant,
+					request,
 					titlePrompt: userMessage.content,
 				},
 			);
+			this.requireActiveRequest(request);
 			loadingMessage.status = 'ready';
 			this.applyPersistedMetadata(session, persistedAssistant);
 		} catch (error) {
@@ -1410,9 +1422,11 @@ export class EmendChatView extends ItemView {
 					notePath,
 					{ ...persistence.session, messages },
 				);
-				this.transientSessionIds.delete(persistence.session.id);
-				if (this.transientSessions.get(notePath)?.id === persistence.session.id) {
-					this.transientSessions.delete(notePath);
+				if (this.isActiveRequest(persistence.request)) {
+					this.transientSessionIds.delete(persistence.session.id);
+					if (this.transientSessions.get(notePath)?.id === persistence.session.id) {
+						this.transientSessions.delete(notePath);
+					}
 				}
 				return persisted;
 			}
@@ -1422,7 +1436,10 @@ export class EmendChatView extends ItemView {
 				persistence.message,
 				persistence.titlePrompt === undefined
 					? undefined
-					: { titlePrompt: persistence.titlePrompt },
+					: {
+						titlePrompt: persistence.titlePrompt,
+						signal: persistence.request.controller.signal,
+					},
 			);
 		} catch (error) {
 			throw new Error(`Could not save this chat. ${getErrorMessage(error)}`);

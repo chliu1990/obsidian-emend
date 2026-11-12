@@ -274,7 +274,7 @@ function createEditTargetView(options: {
 			notePath: string,
 			sessionId: string,
 			message: ChatMessage,
-			options?: { titlePrompt?: string; now?: number },
+			options?: { titlePrompt?: string; now?: number; signal?: AbortSignal },
 		) => Promise<ChatSession>>(),
 		setActiveSession: vi.fn(async () => undefined),
 	};
@@ -1476,6 +1476,150 @@ describe('EmendChatView session runtime', () => {
 		expect(fixture.context.activeSessionId).toBe('a2');
 		expect(fixture.context.messages).toEqual([]);
 		expect(noticeMessages().slice(noticeStart)).toEqual([]);
+	});
+
+	it.each(['note-switch', 'close', 'stop'] as const)(
+		'does not persist or mark an assistant ready when %s aborts the final save',
+		async (abortKind) => {
+			const fixture = createEditTargetView();
+			const first = makeSession('a1');
+			const second = makeSession('a2');
+			let persistedFirst = makeSession('a1');
+			let usePersistedFirst = false;
+			const finalSave = deferred<void>();
+			fixture.conversationStore.loadConversation.mockImplementation(async (notePath: string) => {
+				if (notePath === 'B.md') {
+					return loadedConversation([makeSession('b1')]);
+				}
+				return loadedConversation([
+					usePersistedFirst ? persistedFirst : first,
+					second,
+				], 'a1');
+			});
+			fixture.conversationStore.appendReadyMessage.mockImplementation(
+				async (_notePath, sessionId, appended, options) => {
+					const session = sessionId === 'a1' ? first : second;
+					if (sessionId === 'a1') {
+						if (appended.role === 'assistant') {
+							await finalSave.promise;
+							if (options?.signal?.aborted) {
+								throw new DOMException('Response stopped.', 'AbortError');
+							}
+						}
+						persistedFirst = {
+							...persistedFirst,
+							title: appended.role === 'assistant'
+								? deriveAutomaticTitle(options?.titlePrompt ?? '')
+								: persistedFirst.title,
+							messages: [...persistedFirst.messages, appended],
+						};
+					}
+					return {
+						...session,
+						title: sessionId === 'a1' ? persistedFirst.title : session.title,
+						messages: [...session.messages, appended],
+					};
+				},
+			);
+			fixture.requestChatCompletion.mockImplementation(async ({ callbacks }) => {
+				callbacks.onContent('Answer that must stop');
+				return { content: 'Answer that must stop', reasoning: '' };
+			});
+			await viewPrototype.refreshTargetNote.call(fixture.context);
+			if (fixture.context.inputEl) {
+				fixture.context.inputEl.value = 'Aborted answer title';
+			}
+			const submission = viewPrototype.submitPrompt.call(fixture.context);
+			await vi.waitFor(() => expect(fixture.conversationStore.appendReadyMessage).toHaveBeenCalledTimes(2));
+			const request = fixture.context.activeRequest as ActiveRequest | null;
+
+			if (abortKind === 'note-switch') {
+				usePersistedFirst = true;
+				fixture.setActivePath('B.md');
+				await viewPrototype.refreshTargetNote.call(fixture.context);
+			} else if (abortKind === 'close') {
+				await viewPrototype.onClose.call(fixture.context);
+			} else {
+				fixture.context.activeController?.abort();
+			}
+			finalSave.resolve();
+			await submission;
+
+			expect(request?.loadingMessage.status).toBe('stopped');
+			expect(first.title).toBe('New chat');
+			expect(persistedFirst.title).toBe('New chat');
+			expect(persistedFirst.messages.map((item) => item.role)).toEqual(['user']);
+			expect(first.messages.filter((item) => item.status === 'ready').map((item) => item.role))
+				.toEqual(['user']);
+			if (abortKind === 'note-switch') {
+				fixture.setActivePath('A.md');
+				await viewPrototype.refreshTargetNote.call(fixture.context);
+				expect(fixture.context.sessions[0]?.title).toBe('New chat');
+				expect(viewPrototype.toProviderHistory.call(fixture.context)).toEqual([
+					{ role: 'user', content: 'Aborted answer title', mode: 'ask', origin: 'user' },
+				]);
+			}
+		},
+	);
+
+	it('does not apply stale initial-save metadata after a session transition', async () => {
+		const fixture = createEditTargetView();
+		const first = makeSession('a1');
+		const second = makeSession('a2');
+		fixture.conversationStore.loadConversation.mockResolvedValue(
+			loadedConversation([first, second], 'a1'),
+		);
+		const initialSave = deferred<void>();
+		fixture.conversationStore.appendReadyMessage.mockImplementation(async () => {
+			await initialSave.promise;
+			return { ...first, title: 'Stale initial metadata', updatedAt: 999 };
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Question';
+		}
+		const submission = viewPrototype.submitPrompt.call(fixture.context);
+		await vi.waitFor(() => expect(fixture.conversationStore.appendReadyMessage).toHaveBeenCalledOnce());
+
+		await viewPrototype.switchActiveSession.call(fixture.context, 'a2');
+		initialSave.resolve();
+		await submission;
+
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(first.title).toBe('New chat');
+		expect(first.updatedAt).toBe(1);
+		expect(first.messages[1]?.status).toBe('stopped');
+	});
+
+	it('keeps stale transient cache and metadata untouched after the user create succeeds', async () => {
+		const fixture = createEditTargetView();
+		const initialCreate = deferred<void>();
+		fixture.conversationStore.createSession.mockImplementation(async (_notePath, session) => {
+			await initialCreate.promise;
+			return { ...session, updatedAt: 999 };
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const transientId = fixture.context.activeSessionId;
+		if (!transientId) {
+			throw new Error('Transient session missing.');
+		}
+		const transient = fixture.context.sessions[0];
+		const originalUpdatedAt = transient?.updatedAt;
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Question';
+		}
+		const submission = viewPrototype.submitPrompt.call(fixture.context);
+		await vi.waitFor(() => expect(fixture.conversationStore.createSession).toHaveBeenCalledOnce());
+
+		fixture.setActivePath('B.md');
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		initialCreate.resolve();
+		await submission;
+
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(fixture.context.transientSessionIds.has(transientId)).toBe(true);
+		expect(fixture.context.transientSessions.get('A.md')).toBe(transient);
+		expect(transient?.updatedAt).toBe(originalUpdatedAt);
 	});
 
 	it('aborts on close and ignores late stream content, errors, rendering, and cleanup', async () => {

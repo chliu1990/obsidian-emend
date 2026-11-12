@@ -116,7 +116,7 @@ export class ConversationStore {
 		notePath: string,
 		sessionId: string,
 		message: ChatMessage,
-		options?: { titlePrompt?: string; now?: number },
+		options?: { titlePrompt?: string; now?: number; signal?: AbortSignal },
 	): Promise<ChatSession> {
 		if (!isReadyMessage(message)) {
 			throw new Error('Only ready chat messages can be appended.');
@@ -148,7 +148,7 @@ export class ConversationStore {
 				},
 				result: updated,
 			};
-		});
+		}, options?.signal);
 	}
 
 	async setActiveSession(notePath: string, sessionId: string): Promise<void> {
@@ -226,6 +226,7 @@ export class ConversationStore {
 			conversation: ChatConversation;
 			result: T;
 		},
+		signal?: AbortSignal,
 	): Promise<T> {
 		const previous = this.writeQueues.get(notePath) ?? Promise.resolve();
 		const queued = previous
@@ -233,6 +234,7 @@ export class ConversationStore {
 			.then(async () => {
 				const inspection = await this.inspectForMutation(notePath);
 				const mutation = mutate(inspection);
+				signal?.throwIfAborted();
 				await this.writeConversation(
 					inspection.path,
 					mutation.conversation,
