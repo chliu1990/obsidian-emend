@@ -6,7 +6,7 @@ Features have no fixed deadlines. Each independently reviewable behavior gets it
 
 ## Now
 
-- Maintain Emend 2.8.0 with bug fixes, security updates, documentation, and provider compatibility.
+- Maintain Emend 2.9.0 with bug fixes, security updates, documentation, and provider compatibility.
 - **Per-query Web extraction ([#45](https://github.com/chliu1990/obsidian-emend/issues/45)):** current behavior distinguishes the 1–20 model-requested call limit from an independent serialized-output cap per Search/Fetch call (default 20,000 characters). Every readable result uses one bounded, goal-directed AI extractor, a same-provider claim verifier, and up to two refine rounds; raw retrieval never continues to the answering model, and claims that cannot be verified degrade to exact quotes or `no_relevant_evidence`. Search and Fetch each retry once for transient failures, an exhausted Search degrades to a persistent search-failure warning instead of failing the answer, and only extractor failures add the separate aggregate extraction warning. All extractor/verifier/refine rounds contribute to usage without persisting their artifacts. See [Stage 40](devel_docs/40-web-content-budget-diagnostics.md).
 - Additional-note context is current behavior: explicit per-target selections, visible paths, session-only lifetime, bounded read-only snapshots, and consistent path privacy. See [Stage 35](devel_docs/35-additional-notes-context.md).
 - DeepSeek online search is current behavior for read-only Ask, Discuss, and Brainstorm with `deepseek-flash` and `deepseek-v4-pro`: default-off Off/Review/Auto controls, model-directed multi-round Search/Fetch, reviewable extraction goals, per-call bounded grounded evidence, and result-backed citations. Kimi/custom adapters remain unsupported. See [Stage 36](devel_docs/36-deepseek-online-search.md).
@@ -19,13 +19,15 @@ Features have no fixed deadlines. Each independently reviewable behavior gets it
 
 ## Next
 
-The public-launch path is two independent content PRs plus the normal separate release PR, which contains only CHANGELOG and version updates:
+The public-launch path remains independent content PRs plus the normal separate release PR, which contains only CHANGELOG and version updates:
 
 1. **Public documentation and promotional launch materials:** refresh the current README, quick start, and installation guides; add a user-facing privacy/write-safety explainer, a supported platform/provider matrix, current screenshots with a short demo, and concise evidence-backed announcement/showcase copy. Keep Community Directory submission a separate explicit decision. Follow [publication and distribution](devel_docs/publication.md).
 2. **Compact composer controls:** move quick actions and additional-note controls into smaller icon buttons and dropdown menus beside the composer, preserving the existing safeguards: accessible labels, selected-note paths and remove/clear behavior, shared submission paths, pending/disabled states, target-note isolation, and point-of-action privacy details. Keep this as a separate UI PR.
+3. **Selection-focused read-only chat ([#51](https://github.com/chliu1990/obsidian-emend/issues/51)):** explicitly identify complete selected text as the conversational focus for Ask/Discuss/Brainstorm while preserving bounded surrounding context, per-session history, capacity guards, and writer-free behavior. See [future edit and chat workflows](devel_docs/future-edit-and-chat-workflows.md).
 
 ## Later
 
+- **Edit-failure feedback and bounded retry ([#48](https://github.com/chliu1990/obsidian-emend/issues/48)):** design a user-visible, conservative retry policy for candidate-validation failures with bounded diagnostics, explicit cost/latency implications, and no silent retries. Partial application is not assumed compatible with atomic fail-closed editing and needs a separate safety design. See [future edit and chat workflows](devel_docs/future-edit-and-chat-workflows.md).
 - **Vision inputs:** embedded vault images with strict provider, file-type, size, and capability checks, starting with one provider/model family.
 - **Automatic context compression:** separate, default-off behavior built on the Stage 42 accounting, with an explicit configurable threshold (proposed 75%), privacy/cost disclosure for the extra provider request, and safe full-note/selection fallbacks. Not included in Stage 42, which adds accounting, visibility, and hard safeguards only.
 - **File structures and automatic TOCs:** an explicit mode or action for bounded, read-only file-structure/title discovery and TOC generation, without background vault scans or writes to discovered files.
@@ -60,6 +62,7 @@ The public-launch path is two independent content PRs plus the normal separate r
 - [Remaining web-search work](devel_docs/future-web-search.md)
 - [Provider and context improvements](devel_docs/future-provider-and-context-features.md)
 - [Discovery and workflow improvements](devel_docs/future-discovery-and-workflows.md)
+- [Edit and chat workflow improvements](devel_docs/future-edit-and-chat-workflows.md)
 - [Publication and distribution](devel_docs/publication.md)
 
 These designs guide future work but do not commit the project to every feature. See [CHANGELOG.md](CHANGELOG.md) for shipped behavior and [CONTRIBUTING.md](CONTRIBUTING.md) for the PR process.
