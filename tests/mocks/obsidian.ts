@@ -5,7 +5,19 @@ export class Plugin {}
 export class MarkdownView {}
 
 export class Modal {
+	contentEl = {} as HTMLElement;
+
 	constructor(readonly app: App) {}
+
+	open(): void {}
+
+	close(): void {}
+
+	setTitle(_title: string): void {}
+
+	onOpen(): void {}
+
+	onClose(): void {}
 }
 
 export class WorkspaceLeaf {}

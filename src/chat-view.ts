@@ -12,9 +12,11 @@ import { AdditionalNotesControl } from './additional-notes-ui';
 import {
 	createChatSession,
 	createChatSessionId,
+	normalizeManualTitle,
 	resolveActiveSession,
 	type ChatSession,
 } from './chat-sessions';
+import { ChatSessionControls } from './chat-session-controls';
 import { EMEND_BUILD_ID } from './build-info';
 import type EmendPlugin from './main';
 import { getComposerShortcut, getDefaultShortcutLabels } from './chat-shortcuts';
@@ -144,6 +146,7 @@ export class EmendChatView extends ItemView {
 	private closed = false;
 	private notePath: string | null = null;
 	private additionalNotesControl: AdditionalNotesControl | null = null;
+	private sessionControls: ChatSessionControls | null = null;
 	private capacityDisplay: ContextCapacityDisplay | null = null;
 	private capacityRefreshTimer: number | null = null;
 	private unsubscribeAdditionalNotes: (() => void) | null = null;
@@ -204,6 +207,8 @@ export class EmendChatView extends ItemView {
 		this.messagesEl = null;
 		this.additionalNotesControl?.destroy();
 		this.additionalNotesControl = null;
+		this.sessionControls?.destroy();
+		this.sessionControls = null;
 		this.capacityDisplay?.destroy();
 		this.capacityDisplay = null;
 		this.sendButtonEl = null;
@@ -385,6 +390,271 @@ export class EmendChatView extends ItemView {
 			new Notice(`Emend: Could not switch chat session. ${getErrorMessage(error)}`);
 			this.render();
 		}
+	}
+
+	async createNewSession(): Promise<void> {
+		const identity = this.beginSessionMutation();
+		if (!identity) {
+			return;
+		}
+		const { notePath } = identity;
+		const current = this.sessions.find((session) => session.id === identity.sessionId);
+		if (!current) {
+			return;
+		}
+		this.saveCurrentDraft();
+		this.isSessionMutating = true;
+		this.render();
+		try {
+			if (this.sessions.length === 1 && this.transientSessionIds.has(current.id)) {
+				const hasReadyUser = current.messages.some(
+					(message) => message.role === 'user' && message.status === 'ready',
+				);
+				const recovered = await this.materializeTransientSession(notePath, current);
+				if (!this.isCurrent(identity)) {
+					return;
+				}
+				this.transientSessionIds.delete(current.id);
+				if (this.transientSessions.get(notePath)?.id === current.id) {
+					this.transientSessions.delete(notePath);
+				}
+				this.sessions = [recovered];
+				this.activeSessionId = recovered.id;
+				this.messages = recovered.messages;
+				if (!hasReadyUser) {
+					this.isSessionMutating = false;
+					this.render();
+					return;
+				}
+				this.render();
+			}
+
+			const created = await this.plugin.conversationStore.createSession(
+				notePath,
+				createChatSession({ id: createChatSessionId(), now: Date.now() }),
+			);
+			if (!this.isCurrent(identity)) {
+				return;
+			}
+			this.sessions = [...this.sessions, created];
+			this.drafts.get(notePath)?.delete(created.id);
+			this.conversationGeneration++;
+			this.abortActiveRequest();
+			this.activeSessionId = created.id;
+			this.messages = created.messages;
+			this.followLatestMessages = true;
+			this.responseStartMessageId = null;
+			this.isSessionMutating = false;
+			this.render();
+		} catch (error) {
+			this.failSessionMutation(identity, 'create', error);
+		}
+	}
+
+	async renameActiveSession(title: string): Promise<void> {
+		const identity = this.beginSessionMutation();
+		if (!identity) {
+			return;
+		}
+		const { notePath } = identity;
+		const current = this.sessions.find((session) => session.id === identity.sessionId);
+		if (!current) {
+			return;
+		}
+		this.saveCurrentDraft();
+		this.isSessionMutating = true;
+		this.render();
+		try {
+			const normalizedTitle = normalizeManualTitle(title);
+			if (this.transientSessionIds.has(current.id)) {
+				const persisted = await this.materializeTransientSession(
+					notePath,
+					current,
+					normalizedTitle,
+				);
+				if (!this.isCurrent(identity)) {
+					return;
+				}
+				this.transientSessionIds.delete(current.id);
+				if (this.transientSessions.get(notePath)?.id === current.id) {
+					this.transientSessions.delete(notePath);
+				}
+				const index = this.sessions.findIndex((session) => session.id === current.id);
+				this.sessions[index] = persisted;
+				this.messages = persisted.messages;
+			} else {
+				const persisted = await this.plugin.conversationStore.renameSession(
+					notePath,
+					current.id,
+					normalizedTitle,
+				);
+				if (!this.isCurrent(identity)) {
+					return;
+				}
+				this.applyPersistedMetadata(current, persisted);
+			}
+			this.isSessionMutating = false;
+			this.render();
+		} catch (error) {
+			this.failSessionMutation(identity, 'rename', error);
+		}
+	}
+
+	async deleteActiveSession(): Promise<void> {
+		const identity = this.beginSessionMutation();
+		if (!identity) {
+			return;
+		}
+		const { notePath } = identity;
+		const current = this.sessions.find((session) => session.id === identity.sessionId);
+		if (!current) {
+			return;
+		}
+		if (this.transientSessionIds.has(current.id)) {
+			const fresh = createChatSession({
+				id: createChatSessionId(),
+				now: Date.now(),
+			});
+			this.transientSessionIds.delete(current.id);
+			this.transientSessionIds.add(fresh.id);
+			this.transientSessions.set(notePath, fresh);
+			this.drafts.get(notePath)?.delete(current.id);
+			this.conversationGeneration++;
+			this.abortActiveRequest();
+			this.sessions = [fresh];
+			this.activeSessionId = fresh.id;
+			this.messages = fresh.messages;
+			this.followLatestMessages = true;
+			this.responseStartMessageId = null;
+			this.render();
+			return;
+		}
+
+		this.isSessionMutating = true;
+		this.render();
+		try {
+			const result = await this.plugin.conversationStore.deleteSession(notePath, current.id);
+			if (!this.isCurrent(identity)) {
+				return;
+			}
+			const remaining = this.sessions.filter((session) => session.id !== current.id);
+			this.drafts.get(notePath)?.delete(current.id);
+			this.conversationGeneration++;
+			this.abortActiveRequest();
+			if (remaining.length === 0) {
+				const transient = this.getTransientSession(notePath);
+				this.sessions = [transient];
+				this.activeSessionId = transient.id;
+				this.messages = transient.messages;
+			} else {
+				const next = remaining.find(
+					(session) => session.id === result.activeSessionId,
+				) ?? remaining[0];
+				if (!next) {
+					throw new Error('Chat session fallback does not exist.');
+				}
+				this.sessions = remaining;
+				this.activeSessionId = next.id;
+				this.messages = next.messages;
+			}
+			this.followLatestMessages = true;
+			this.responseStartMessageId = null;
+			this.isSessionMutating = false;
+			this.render();
+		} catch (error) {
+			this.failSessionMutation(identity, 'delete', error);
+		}
+	}
+
+	async moveActiveSession(direction: -1 | 1): Promise<void> {
+		const identity = this.beginSessionMutation();
+		if (!identity) {
+			return;
+		}
+		const { notePath } = identity;
+		const index = this.sessions.findIndex((session) => session.id === identity.sessionId);
+		const targetIndex = index + direction;
+		if (index < 0 || targetIndex < 0 || targetIndex >= this.sessions.length) {
+			return;
+		}
+		const orderedIds = this.sessions.map((session) => session.id);
+		const [movedId] = orderedIds.splice(index, 1);
+		if (!movedId) {
+			return;
+		}
+		orderedIds.splice(targetIndex, 0, movedId);
+		this.isSessionMutating = true;
+		this.render();
+		try {
+			await this.plugin.conversationStore.reorderSessions(notePath, orderedIds);
+			if (!this.isCurrent(identity)) {
+				return;
+			}
+			const sessionsById = new Map(
+				this.sessions.map((session) => [session.id, session]),
+			);
+			const reordered = orderedIds.flatMap((id) => {
+				const session = sessionsById.get(id);
+				return session ? [session] : [];
+			});
+			if (reordered.length !== this.sessions.length) {
+				throw new Error('Chat session order does not match the current sessions.');
+			}
+			this.sessions = reordered;
+			this.isSessionMutating = false;
+			this.render();
+		} catch (error) {
+			this.failSessionMutation(identity, 'move', error);
+		}
+	}
+
+	private beginSessionMutation(): ChatIdentity | null {
+		const notePath = this.notePath;
+		const sessionId = this.activeSessionId;
+		if (
+			!notePath ||
+			!sessionId ||
+			this.isSending ||
+			this.isThreadLoading ||
+			this.isSessionMutating
+		) {
+			return null;
+		}
+		const session = this.sessions.find((item) => item.id === sessionId);
+		if (!session || this.messages !== session.messages) {
+			return null;
+		}
+		return { notePath, sessionId, generation: this.conversationGeneration };
+	}
+
+	private async materializeTransientSession(
+		notePath: string,
+		session: ChatSession,
+		manualTitle?: string,
+	): Promise<ChatSession> {
+		return this.plugin.conversationStore.createSession(
+			notePath,
+			createChatSession({
+				id: session.id,
+				now: Date.now(),
+				title: manualTitle ?? session.title,
+				titleSource: manualTitle === undefined ? session.titleSource : 'manual',
+				messages: session.messages,
+			}),
+		);
+	}
+
+	private failSessionMutation(
+		identity: ChatIdentity,
+		action: 'create' | 'rename' | 'delete' | 'move',
+		error: unknown,
+	): void {
+		if (!this.isCurrent(identity)) {
+			return;
+		}
+		this.isSessionMutating = false;
+		new Notice(`Emend: Could not ${action} chat session. ${getErrorMessage(error)}`);
+		this.render();
 	}
 
 	private isCurrentNoteLoad(notePath: string, generation: number) {
@@ -628,6 +898,8 @@ export class EmendChatView extends ItemView {
 		this.pendingMessages.clear();
 		this.messageBodyEls.clear();
 		this.additionalNotesControl?.destroy();
+		this.sessionControls?.destroy();
+		this.sessionControls = null;
 		this.capacityDisplay?.destroy();
 		this.capacityDisplay = null;
 		this.sendButtonEl = null;
@@ -640,6 +912,28 @@ export class EmendChatView extends ItemView {
 		const titleRowEl = headerEl.createDiv('emend-chat-title-row');
 		titleRowEl.createDiv({ cls: 'emend-chat-title', text: 'Emend' });
 		titleRowEl.createSpan({ cls: 'emend-chat-build', text: EMEND_BUILD_ID });
+		this.sessionControls = new ChatSessionControls(headerEl, {
+			onNew: () => {
+				void this.createNewSession();
+			},
+			onSwitch: (sessionId) => {
+				void this.switchActiveSession(sessionId);
+			},
+			onRename: (title) => {
+				void this.renameActiveSession(title);
+			},
+			onDelete: () => {
+				void this.deleteActiveSession();
+			},
+			onMove: (direction) => {
+				void this.moveActiveSession(direction);
+			},
+		}, this.app);
+		this.sessionControls.render({
+			sessions: this.sessions,
+			activeSessionId: this.activeSessionId,
+			disabled: this.isSending || this.isThreadLoading || this.isSessionMutating,
+		});
 		const shortcutsEl = headerEl.createDiv('emend-chat-shortcuts');
 		const modeGroupEl = shortcutsEl.createDiv('emend-chat-shortcut-group');
 		modeGroupEl.createSpan({

@@ -116,6 +116,10 @@ const viewPrototype = EmendChatView.prototype as unknown as {
 	onOpen(this: unknown): Promise<void>;
 	refreshTargetNote(this: unknown): Promise<void>;
 	switchActiveSession(this: unknown, sessionId: string): Promise<void>;
+	createNewSession(this: unknown): Promise<void>;
+	renameActiveSession(this: unknown, title: string): Promise<void>;
+	deleteActiveSession(this: unknown): Promise<void>;
+	moveActiveSession(this: unknown, direction: -1 | 1): Promise<void>;
 	submitPrompt(this: unknown): Promise<void>;
 	handleComposerKeydown(
 		this: unknown,
@@ -277,6 +281,19 @@ function createEditTargetView(options: {
 			options?: { titlePrompt?: string; now?: number; signal?: AbortSignal },
 		) => Promise<ChatSession>>(),
 		setActiveSession: vi.fn(async () => undefined),
+		renameSession: vi.fn(async (
+			_notePath: string,
+			_sessionId: string,
+			title: string,
+		): Promise<ChatSession> => ({
+			...makeSession('unused'),
+			title,
+			titleSource: 'manual',
+		})),
+		deleteSession: vi.fn(async (): Promise<{ activeSessionId: string | null }> => ({
+			activeSessionId: null,
+		})),
+		reorderSessions: vi.fn(async () => undefined),
 	};
 	const context = {
 		app: { vault: { adapter: { read } } },
@@ -1719,6 +1736,379 @@ describe('EmendChatView session runtime', () => {
 		);
 		expect(fixture.conversationStore.appendReadyMessage).not.toHaveBeenCalled();
 		expect(noticeMessages().slice(noticeStart)).toEqual([]);
+	});
+});
+
+function findSessionSelect(contentEl: FakeElement): FakeElement | undefined {
+	return findElements(
+		contentEl,
+		(element) => element.tagName === 'select' && element.attributes['aria-label'] === 'Chat session',
+	)[0];
+}
+
+function findSessionButton(contentEl: FakeElement, label: string): FakeElement | undefined {
+	return findElements(
+		contentEl,
+		(element) => element.tagName === 'button' && element.attributes['aria-label'] === label,
+	)[0];
+}
+
+describe('EmendChatView session management', () => {
+	it('persists and activates an empty New session without a provider call', async () => {
+		const fixture = createEditTargetView();
+		const first = makeSession('a1');
+		fixture.conversationStore.loadConversation.mockResolvedValue(loadedConversation([first]));
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'First draft';
+		}
+
+		await viewPrototype.createNewSession.call(fixture.context);
+
+		const created = fixture.conversationStore.createSession.mock.calls[0]?.[1];
+		expect(created).toMatchObject({ title: 'New chat', titleSource: 'auto', messages: [] });
+		expect(fixture.context.sessions.map((session) => session.id)).toEqual(['a1', created?.id]);
+		expect(fixture.context.activeSessionId).toBe(created?.id);
+		expect(fixture.context.messages).toBe(created?.messages);
+		expect(fixture.context.inputEl?.value).toBe('');
+		expect(fixture.context.drafts.get('A.md')?.get('a1')).toBe('First draft');
+		expect(findSessionSelect(fixture.contentEl)?.value).toBe(created?.id);
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+	});
+
+	it('persists a sole empty transient in place and transfers its draft', async () => {
+		const fixture = createEditTargetView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const transientId = fixture.context.activeSessionId;
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Keep this draft';
+		}
+
+		await viewPrototype.createNewSession.call(fixture.context);
+
+		expect(fixture.conversationStore.createSession).toHaveBeenCalledOnce();
+		expect(fixture.conversationStore.createSession.mock.calls[0]?.[1].id).toBe(transientId);
+		expect(fixture.context.sessions).toHaveLength(1);
+		expect(fixture.context.activeSessionId).toBe(transientId);
+		expect(fixture.context.inputEl?.value).toBe('Keep this draft');
+		expect(fixture.context.transientSessionIds.has(transientId ?? '')).toBe(false);
+		expect(fixture.context.transientSessions.has('A.md')).toBe(false);
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+	});
+
+	it('recovers failed-save ready users before creating and activating the requested New session', async () => {
+		const fixture = createEditTargetView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const transientId = fixture.context.activeSessionId;
+		const readyUser: ChatMessage = {
+			...message('unsaved-user', 'A.md'),
+			role: 'user',
+			content: 'Recover me',
+		};
+		fixture.context.messages.push(
+			readyUser,
+			{ ...message('save-error', 'A.md'), status: 'error' },
+		);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Recovered draft';
+		}
+
+		await viewPrototype.createNewSession.call(fixture.context);
+
+		expect(fixture.conversationStore.createSession).toHaveBeenCalledTimes(2);
+		const recovered = fixture.conversationStore.createSession.mock.calls[0]?.[1];
+		const created = fixture.conversationStore.createSession.mock.calls[1]?.[1];
+		expect(recovered?.id).toBe(transientId);
+		expect(recovered?.messages.map((item) => item.id)).toEqual(['unsaved-user']);
+		expect(created?.messages).toEqual([]);
+		expect(fixture.context.sessions.map((session) => session.id)).toEqual([transientId, created?.id]);
+		expect(fixture.context.activeSessionId).toBe(created?.id);
+		expect(fixture.context.drafts.get('A.md')?.get(transientId ?? '')).toBe('Recovered draft');
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+	});
+
+	it('keeps the recovered session visible if the second New mutation fails', async () => {
+		const fixture = createEditTargetView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const transientId = fixture.context.activeSessionId;
+		fixture.context.messages.push({
+			...message('unsaved-user', 'A.md'),
+			role: 'user',
+			content: 'Recover me',
+		});
+		fixture.conversationStore.createSession
+			.mockImplementationOnce(async (_notePath, session) => session)
+			.mockRejectedValueOnce(new Error('Disk full'));
+		const noticeStart = noticeMessages().length;
+
+		await viewPrototype.createNewSession.call(fixture.context);
+
+		expect(fixture.context.sessions.map((session) => session.id)).toEqual([transientId]);
+		expect(fixture.context.activeSessionId).toBe(transientId);
+		expect(fixture.context.messages.map((item) => item.id)).toEqual(['unsaved-user']);
+		expect(fixture.context.transientSessionIds.has(transientId ?? '')).toBe(false);
+		expect(fixture.context.isSessionMutating).toBe(false);
+		expect(noticeMessages().slice(noticeStart).join('\n')).toContain('Could not create chat session');
+	});
+
+	it('leaves the current session, messages, and draft visible when set-active fails', async () => {
+		const fixture = createEditTargetView();
+		const first = makeSession('a1', [message('first', 'A.md')]);
+		const second = makeSession('a2', [message('second', 'A.md')]);
+		fixture.conversationStore.loadConversation.mockResolvedValue(
+			loadedConversation([first, second], 'a1'),
+		);
+		fixture.conversationStore.setActiveSession.mockRejectedValue(new Error('Disk full'));
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Unchanged draft';
+		}
+
+		await viewPrototype.switchActiveSession.call(fixture.context, 'a2');
+
+		expect(fixture.context.activeSessionId).toBe('a1');
+		expect(fixture.context.messages).toBe(first.messages);
+		expect(fixture.context.inputEl?.value).toBe('Unchanged draft');
+		expect(findSessionSelect(fixture.contentEl)?.value).toBe('a1');
+	});
+
+	it('renames an existing exact session ID and pins its manual title', async () => {
+		const fixture = createEditTargetView();
+		const first = makeSession('a1');
+		fixture.conversationStore.loadConversation.mockResolvedValue(loadedConversation([first]));
+		fixture.conversationStore.renameSession.mockResolvedValue({
+			...first,
+			title: 'Manual title',
+			titleSource: 'manual',
+			updatedAt: 99,
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+
+		await viewPrototype.renameActiveSession.call(fixture.context, 'Manual title');
+
+		expect(fixture.conversationStore.renameSession).toHaveBeenCalledExactlyOnceWith(
+			'A.md',
+			'a1',
+			'Manual title',
+		);
+		expect(first).toMatchObject({
+			title: 'Manual title',
+			titleSource: 'manual',
+			updatedAt: 99,
+		});
+		expect(fixture.context.messages).toBe(first.messages);
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+	});
+
+	it('materializes a transient rename with its ready messages and manual title', async () => {
+		const fixture = createEditTargetView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const transientId = fixture.context.activeSessionId;
+		fixture.context.messages.push(
+			{ ...message('ready-user', 'A.md'), role: 'user' },
+			{ ...message('transient-error', 'A.md'), status: 'error' },
+		);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Rename draft';
+		}
+
+		await viewPrototype.renameActiveSession.call(fixture.context, 'Pinned title');
+
+		const created = fixture.conversationStore.createSession.mock.calls[0]?.[1];
+		expect(created).toMatchObject({
+			id: transientId,
+			title: 'Pinned title',
+			titleSource: 'manual',
+		});
+		expect(created?.messages.map((item) => item.id)).toEqual(['ready-user']);
+		expect(fixture.context.sessions[0]).toMatchObject({
+			id: transientId,
+			title: 'Pinned title',
+			titleSource: 'manual',
+		});
+		expect(fixture.context.messages.map((item) => item.id)).toEqual(['ready-user']);
+		expect(fixture.context.inputEl?.value).toBe('Rename draft');
+		expect(fixture.context.transientSessions.has('A.md')).toBe(false);
+		expect(fixture.conversationStore.renameSession).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		{ active: 'b', fallback: 'c', expectedOrder: ['a', 'c'], description: 'next sibling' },
+		{ active: 'c', fallback: 'b', expectedOrder: ['a', 'b'], description: 'previous sibling' },
+	])('deletes the active session and applies the $description fallback only after success', async ({ active, fallback, expectedOrder }) => {
+		const fixture = createEditTargetView();
+		const sessions = [makeSession('a'), makeSession('b'), makeSession('c')];
+		fixture.conversationStore.loadConversation.mockResolvedValue(
+			loadedConversation(sessions, active),
+		);
+		fixture.conversationStore.deleteSession.mockResolvedValue({ activeSessionId: fallback });
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		fixture.context.drafts.set('A.md', new Map([[active, 'Delete me']]));
+
+		await viewPrototype.deleteActiveSession.call(fixture.context);
+
+		expect(fixture.conversationStore.deleteSession).toHaveBeenCalledExactlyOnceWith('A.md', active);
+		expect(fixture.context.sessions.map((session) => session.id)).toEqual(expectedOrder);
+		expect(fixture.context.activeSessionId).toBe(fallback);
+		expect(fixture.context.drafts.get('A.md')?.has(active)).toBe(false);
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+	});
+
+	it('creates a fresh transient New chat after deleting the last persisted session', async () => {
+		const fixture = createEditTargetView();
+		const only = makeSession('only', [message('old', 'A.md')]);
+		fixture.conversationStore.loadConversation.mockResolvedValue(loadedConversation([only]));
+		fixture.conversationStore.deleteSession.mockResolvedValue({ activeSessionId: null });
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		fixture.context.drafts.set('A.md', new Map([['only', 'Old draft']]));
+
+		await viewPrototype.deleteActiveSession.call(fixture.context);
+
+		expect(fixture.context.sessions).toHaveLength(1);
+		expect(fixture.context.activeSessionId).not.toBe('only');
+		expect(fixture.context.activeSessionId).not.toBeNull();
+		expect(fixture.context.messages).toEqual([]);
+		expect(fixture.context.transientSessions.get('A.md')?.id).toBe(fixture.context.activeSessionId);
+		expect(fixture.context.drafts.get('A.md')?.has('only')).toBe(false);
+	});
+
+	it.each(['missing', 'malformed', 'unsupported'] as const)(
+		'deletes a %s-backed transient locally with zero store or adapter operations',
+		async (kind) => {
+			const fixture = createEditTargetView();
+			fixture.conversationStore.loadConversation.mockResolvedValue(loadedConversation([], null, kind));
+			await viewPrototype.refreshTargetNote.call(fixture.context);
+			const oldId = fixture.context.activeSessionId;
+			fixture.context.messages.push({ ...message('old-error', 'A.md'), status: 'error' });
+			fixture.context.drafts.set('A.md', new Map([[oldId ?? '', 'Old draft']]));
+			fixture.conversationStore.createSession.mockClear();
+			fixture.conversationStore.appendReadyMessage.mockClear();
+			fixture.conversationStore.setActiveSession.mockClear();
+			fixture.conversationStore.renameSession.mockClear();
+			fixture.conversationStore.deleteSession.mockClear();
+			fixture.conversationStore.reorderSessions.mockClear();
+			fixture.read.mockClear();
+
+			await viewPrototype.deleteActiveSession.call(fixture.context);
+
+			expect(fixture.context.activeSessionId).not.toBe(oldId);
+			expect(fixture.context.messages).toEqual([]);
+			expect(fixture.context.drafts.get('A.md')?.has(oldId ?? '')).toBe(false);
+			expect(fixture.conversationStore.createSession).not.toHaveBeenCalled();
+			expect(fixture.conversationStore.appendReadyMessage).not.toHaveBeenCalled();
+			expect(fixture.conversationStore.setActiveSession).not.toHaveBeenCalled();
+			expect(fixture.conversationStore.renameSession).not.toHaveBeenCalled();
+			expect(fixture.conversationStore.deleteSession).not.toHaveBeenCalled();
+			expect(fixture.conversationStore.reorderSessions).not.toHaveBeenCalled();
+			expect(fixture.read).not.toHaveBeenCalled();
+			expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		},
+	);
+
+	it('persists exact move order and keeps the active session unchanged', async () => {
+		const fixture = createEditTargetView();
+		const sessions = [makeSession('a'), makeSession('b'), makeSession('c')];
+		fixture.conversationStore.loadConversation.mockResolvedValue(
+			loadedConversation(sessions, 'b'),
+		);
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+
+		await viewPrototype.moveActiveSession.call(fixture.context, -1);
+
+		expect(fixture.conversationStore.reorderSessions).toHaveBeenCalledExactlyOnceWith(
+			'A.md',
+			['b', 'a', 'c'],
+		);
+		expect(fixture.context.sessions.map((session) => session.id)).toEqual(['b', 'a', 'c']);
+		expect(fixture.context.activeSessionId).toBe('b');
+		expect(findSessionSelect(fixture.contentEl)?.children.map((option) => option.value))
+			.toEqual(['b', 'a', 'c']);
+	});
+
+	it('preserves visible titles, membership, and order when management mutations fail', async () => {
+		const fixture = createEditTargetView();
+		const sessions = [makeSession('a'), makeSession('b')];
+		sessions[0]!.title = 'First';
+		sessions[1]!.title = 'Second';
+		fixture.conversationStore.loadConversation.mockResolvedValue(
+			loadedConversation(sessions, 'b'),
+		);
+		fixture.conversationStore.renameSession.mockRejectedValue(new Error('Rename failed'));
+		fixture.conversationStore.deleteSession.mockRejectedValue(new Error('Delete failed'));
+		fixture.conversationStore.reorderSessions.mockRejectedValue(new Error('Move failed'));
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+
+		await viewPrototype.renameActiveSession.call(fixture.context, 'Changed');
+		await viewPrototype.deleteActiveSession.call(fixture.context);
+		await viewPrototype.moveActiveSession.call(fixture.context, -1);
+
+		expect(fixture.context.sessions.map((session) => [session.id, session.title])).toEqual([
+			['a', 'First'],
+			['b', 'Second'],
+		]);
+		expect(fixture.context.activeSessionId).toBe('b');
+		expect(fixture.context.isSessionMutating).toBe(false);
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+	});
+
+	it('disables session controls while sending, loading, or mutating but leaves Stop available', async () => {
+		const fixture = createEditTargetView();
+		fixture.conversationStore.loadConversation.mockResolvedValue(
+			loadedConversation([makeSession('a'), makeSession('b')]),
+		);
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		for (const state of ['isSending', 'isThreadLoading', 'isSessionMutating'] as const) {
+			fixture.context.isSending = state === 'isSending';
+			fixture.context.isThreadLoading = state === 'isThreadLoading';
+			fixture.context.isSessionMutating = state === 'isSessionMutating';
+			fixture.render();
+			for (const label of [
+				'New chat session',
+				'Rename chat session',
+				'Delete chat session',
+				'Move chat session up',
+				'Move chat session down',
+			]) {
+				expect(findSessionButton(fixture.contentEl, label)?.disabled).toBe(true);
+			}
+			expect(findSessionSelect(fixture.contentEl)?.disabled).toBe(true);
+			if (state === 'isSending') {
+				const stop = findElements(
+					fixture.contentEl,
+					(element) => element.tagName === 'button' && element.textContent === 'Stop',
+				)[0];
+				expect(stop?.disabled).toBe(false);
+			}
+		}
+	});
+
+	it('rejects direct management actions while sending, loading, or another mutation is pending', async () => {
+		const fixture = createEditTargetView();
+		fixture.conversationStore.loadConversation.mockResolvedValue(loadedConversation([makeSession('a')]));
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		for (const state of ['isSending', 'isThreadLoading', 'isSessionMutating'] as const) {
+			fixture.context.isSending = state === 'isSending';
+			fixture.context.isThreadLoading = state === 'isThreadLoading';
+			fixture.context.isSessionMutating = state === 'isSessionMutating';
+
+			await viewPrototype.createNewSession.call(fixture.context);
+			await viewPrototype.renameActiveSession.call(fixture.context, 'Changed');
+			await viewPrototype.deleteActiveSession.call(fixture.context);
+			await viewPrototype.moveActiveSession.call(fixture.context, 1);
+		}
+
+		expect(fixture.conversationStore.createSession).not.toHaveBeenCalled();
+		expect(fixture.conversationStore.renameSession).not.toHaveBeenCalled();
+		expect(fixture.conversationStore.deleteSession).not.toHaveBeenCalled();
+		expect(fixture.conversationStore.reorderSessions).not.toHaveBeenCalled();
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+	});
+
+	it('places wrapping session controls below the title with a narrow full-width selector', () => {
+		expect(getCssRule('.emend-chat-session-controls')).toContain('flex-wrap: wrap;');
+		expect(getCssRule('.emend-chat-session-controls')).toContain('min-width: 0;');
+		expect(getCssRule('.emend-chat-session-select')).toContain('min-width: 0;');
+		expect(getCssRule('.emend-chat-session-select')).toContain('width: 100%;');
 	});
 });
 
@@ -4245,6 +4635,12 @@ function createCapacityView(options: CapacityViewOptions = {}) {
 		},
 		notePath: null as string | null,
 		conversationGeneration: 0,
+		sessions: [] as ChatSession[],
+		activeSessionId: null as string | null,
+		activeRequest: null,
+		isSessionMutating: false,
+		transientSessionIds: new Set<string>(),
+		transientSessions: new Map<string, ChatSession>(),
 		messages: [] as ChatMessage[],
 		selectedMode: options.mode ?? 'ask',
 		webSearchMode: 'off' as const,
