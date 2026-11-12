@@ -1590,7 +1590,6 @@ export class EmendChatView extends ItemView {
 					titlePrompt: userMessage.content,
 				},
 			);
-			this.requireActiveRequest(request);
 			loadingMessage.status = 'ready';
 			this.applyPersistedMetadata(session, persistedAssistant);
 		} catch (error) {
