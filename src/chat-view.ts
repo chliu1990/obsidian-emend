@@ -7,7 +7,7 @@ import {
 	WorkspaceLeaf,
 	type EventRef,
 } from 'obsidian';
-import { AdditionalNotesControl } from './additional-notes-ui';
+import { RelatedNotesControl } from './related-notes-control';
 import {
 	createChatSession,
 	createChatSessionId,
@@ -164,7 +164,7 @@ export class EmendChatView extends ItemView {
 	private messageBodyEls = new Map<string, HTMLElement>();
 	private closed = false;
 	private notePath: string | null = null;
-	private additionalNotesControl: AdditionalNotesControl | null = null;
+	private relatedNotesControl: RelatedNotesControl | null = null;
 	private sessionControls: ChatSessionControls | null = null;
 	private capacityDisplay: ContextCapacityDisplay | null = null;
 	private capacityRefreshTimer: number | null = null;
@@ -225,8 +225,8 @@ export class EmendChatView extends ItemView {
 		this.messageBodyEls.clear();
 		this.activeModelEl = null;
 		this.messagesEl = null;
-		this.additionalNotesControl?.destroy();
-		this.additionalNotesControl = null;
+		this.relatedNotesControl?.destroy();
+		this.relatedNotesControl = null;
 		this.sessionControls?.destroy();
 		this.sessionControls = null;
 		this.capacityDisplay?.destroy();
@@ -936,7 +936,7 @@ export class EmendChatView extends ItemView {
 		this.cancelPendingRender();
 		this.pendingMessages.clear();
 		this.messageBodyEls.clear();
-		this.additionalNotesControl?.destroy();
+		this.relatedNotesControl?.destroy();
 		this.sessionControls?.destroy();
 		this.sessionControls = null;
 		this.capacityDisplay?.destroy();
@@ -992,34 +992,36 @@ export class EmendChatView extends ItemView {
 			}
 		}
 
-		const quickActionsEl = contentEl.createDiv('emend-chat-quick-actions');
-		const quickActionsDisabled = this.isSessionMutating || areQuickActionsDisabled({
-			notePath: this.notePath,
-			isSending: this.isSending,
-			isThreadLoading: this.isThreadLoading,
-		});
-		for (const action of QUICK_ACTIONS) {
-			const button = quickActionsEl.createEl('button', {
-				cls: 'emend-chat-quick-action',
-				text: action.label,
-				attr: { 'data-action-id': action.id },
-			});
-			button.disabled = quickActionsDisabled;
-			button.addEventListener('click', () => {
-				void this.submitQuickAction(action);
-			});
-			this.quickActionButtons.push({ action, button });
-		}
-
-		this.additionalNotesControl = new AdditionalNotesControl(
+		const contextRowEl = contentEl.createDiv('emend-chat-context-row');
+		this.relatedNotesControl = new RelatedNotesControl(
 			this.app,
 			this.plugin.additionalNotesStore,
 			() => this.notePath,
 		);
-		this.additionalNotesControl.render(
-			contentEl,
+		this.relatedNotesControl.render(
+			contextRowEl,
 			this.isSending || this.isThreadLoading || this.isSessionMutating,
 		);
+		if (this.selectedMode === 'edit') {
+			const quickActionsEl = contextRowEl.createDiv('emend-chat-quick-actions');
+			const quickActionsDisabled = this.isSessionMutating || areQuickActionsDisabled({
+				notePath: this.notePath,
+				isSending: this.isSending,
+				isThreadLoading: this.isThreadLoading,
+			});
+			for (const action of QUICK_ACTIONS) {
+				const button = quickActionsEl.createEl('button', {
+					cls: 'emend-chat-quick-action',
+					text: action.label,
+					attr: { 'data-action-id': action.id },
+				});
+				button.disabled = quickActionsDisabled;
+				button.addEventListener('click', () => {
+					void this.submitQuickAction(action);
+				});
+				this.quickActionButtons.push({ action, button });
+			}
+		}
 
 		const composerEl = contentEl.createDiv('emend-chat-composer');
 		const draft = composerRestore?.draft ?? this.currentDraft();

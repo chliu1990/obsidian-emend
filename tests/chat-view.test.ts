@@ -67,6 +67,18 @@ describe('EmendChatView compact composer styles', () => {
 		expect(getCssRule('.emend-chat-active-model')).toContain('min-width: 0;');
 		expect(getCssRule('.emend-chat-send-button')).toContain('flex: 0 0 auto;');
 	});
+
+	it('wraps Related notes and right-aligned quick actions without narrow-sidebar overflow', () => {
+		const row = getCssRule('.emend-chat-context-row');
+		expect(row).toContain('flex-wrap: wrap;');
+		expect(row).toContain('min-width: 0;');
+		const quickActions = getCssRule('.emend-chat-quick-actions');
+		expect(quickActions).toContain('flex: 0 0 auto;');
+		expect(quickActions).toContain('margin-inline-start: auto;');
+		expect(quickActions).toContain('justify-content: flex-end;');
+		expect(getCssRule('.emend-chat-related-notes')).toContain('min-width: 0;');
+		expect(getCssRule('.emend-chat-related-notes-path')).toContain('overflow-wrap: anywhere;');
+	});
 });
 
 // eslint-disable-next-line @typescript-eslint/unbound-method -- The test wrapper supplies an explicit receiver.
@@ -96,7 +108,11 @@ const viewPrototype = EmendChatView.prototype as unknown as {
 	createNewSession(this: unknown): Promise<void>;
 	renameActiveSession(this: unknown, title: string): Promise<void>;
 	deleteActiveSession(this: unknown): Promise<void>;
-	submitPrompt(this: unknown): Promise<void>;
+	submitPrompt(
+		this: unknown,
+		prompt?: string,
+		options?: { fromQuickAction?: boolean },
+	): Promise<void>;
 	handleComposerKeydown(
 		this: unknown,
 		event: ShortcutEvent & { preventDefault(): void },
@@ -567,7 +583,7 @@ describe('EmendChatView compact composer', () => {
 		chatViewMenus.instances.length = 0;
 	});
 
-	it('orders the compact composer after the legacy blocks and exposes accessible submission controls', async () => {
+	it('orders Related notes above the compact composer and hides quick actions in Chat', async () => {
 		const { context, contentEl } = createEditTargetView();
 		await viewPrototype.refreshTargetNote.call(context);
 
@@ -576,10 +592,19 @@ describe('EmendChatView compact composer', () => {
 			'emend-context-capacity',
 			'emend-chat-session-controls',
 			'emend-chat-messages',
-			'emend-chat-quick-actions',
-			'emend-additional-notes',
+			'emend-chat-context-row',
 			'emend-chat-composer',
 		]);
+		const contextRow = contentEl.children.find((element) =>
+			element.className.split(' ').includes('emend-chat-context-row'),
+		);
+		expect(contextRow?.children[0]?.className.split(' ')).toContain(
+			'emend-chat-related-notes',
+		);
+		expect(findElements(contentEl, (element) =>
+			element.className.split(' ').includes('emend-chat-quick-action') ||
+			element.className.split(' ').includes('emend-additional-notes')
+		)).toEqual([]);
 		expect(context.inputEl?.attributes['aria-label']).toBe('Chat prompt');
 		expect(context.inputEl?.attributes['aria-keyshortcuts']).toBe(
 			'Enter Meta+Enter Shift+Enter',
@@ -614,6 +639,21 @@ describe('EmendChatView compact composer', () => {
 		viewPrototype.setMode.call(context, 'edit');
 		expect(context.inputEl?.attributes['aria-label']).toBe('Edit prompt');
 		expect(context.inputEl?.attributes.placeholder).toBe('Edit the note or selection...');
+		const editRow = contentEl.children.find((element) =>
+			element.className.split(' ').includes('emend-chat-context-row'),
+		);
+		expect(editRow?.children.map((element) => element.className.split(' ')[0])).toEqual([
+			'emend-chat-related-notes',
+			'emend-chat-quick-actions',
+		]);
+		const quickActions = findElements(contentEl, (element) =>
+			element.className.split(' ').includes('emend-chat-quick-action'),
+		);
+		expect(quickActions.map((element) => element.attributes['data-action-id'])).toEqual([
+			'fix-grammar',
+			'make-concise',
+			'add-examples',
+		]);
 	});
 
 	it.each([
@@ -872,7 +912,7 @@ describe('EmendChatView edit target control', () => {
 		expect(context.plugin.conversationStore.loadConversation).toHaveBeenCalledOnce();
 	});
 
-	it('keeps the control and quick actions available outside Edit before submission', async () => {
+	it('keeps Related notes available in Chat and enables every quick action in Edit', async () => {
 		const { context, contentEl } = createEditTargetView({ selectedText: 'beta' });
 
 		await viewPrototype.refreshTargetNote.call(context);
@@ -880,6 +920,14 @@ describe('EmendChatView edit target control', () => {
 		expect(context.selectedMode).toBe('ask');
 		expect(findWritingTrigger(contentEl)?.disabled).toBe(false);
 		expect(context.displayedEditTarget).toBe('selection');
+		expect(findElements(contentEl, (element) =>
+			element.className.split(' ').includes('emend-chat-related-notes-trigger'),
+		)).toHaveLength(1);
+		expect(findElements(contentEl, (element) =>
+			element.className.split(' ').includes('emend-chat-quick-action'),
+		)).toHaveLength(0);
+
+		viewPrototype.setMode.call(context, 'edit');
 		const quickActions = findElements(
 			contentEl,
 			(element) => element.className.split(' ').includes('emend-chat-quick-action'),
@@ -970,8 +1018,10 @@ describe('EmendChatView edit target control', () => {
 			noteLabel: file.path,
 			markdown: snapshot.fullText,
 		});
-		expect(context.selectedMode).toBe('ask');
-		expect(findWritingTrigger(contentEl)?.textContent).toBe('Chat');
+		Object.assign(context, { webSearchMode: 'review' });
+		chooseWritingMenuItem(contentEl, 'Edit · Selection');
+		expect(context.selectedMode).toBe('edit');
+		expect(findWritingTrigger(contentEl)?.textContent).toBe('Edit · Selection');
 		expect(context.displayedEditTarget).toBe('selection');
 		expect(findWritingTrigger(contentEl)?.disabled).toBe(false);
 		if (context.inputEl) {
@@ -3148,7 +3198,7 @@ describe('EmendChatView additional notes', () => {
 			notePath: null as string | null,
 			conversationGeneration: 0,
 			messages: [] as ChatMessage[],
-			selectedMode: 'ask' as Mode,
+			selectedMode: 'edit' as Mode,
 			isThreadLoading: false,
 			isSending: false,
 			activeController: null,
@@ -3196,14 +3246,14 @@ describe('EmendChatView additional notes', () => {
 
 		context.isSending = true;
 		viewPrototype.render.call(context);
-		const additionalButtons = findElements(
+		const relatedButtons = findElements(
 			contentEl,
 			(element) =>
 				element.tagName === 'button' &&
-				element.className.includes('emend-additional-notes-'),
+				element.className.includes('emend-chat-related-notes-'),
 		);
-		expect(additionalButtons.length).toBeGreaterThanOrEqual(3);
-		expect(additionalButtons.every((button) => button.disabled)).toBe(true);
+		expect(relatedButtons.length).toBeGreaterThanOrEqual(3);
+		expect(relatedButtons.every((button) => button.disabled)).toBe(true);
 		expect(context.inputEl?.disabled).toBe(true);
 		const quickActions = findElements(
 			contentEl,
@@ -3211,6 +3261,7 @@ describe('EmendChatView additional notes', () => {
 				element.tagName === 'button' &&
 				element.className.includes('emend-chat-quick-action'),
 		);
+		expect(quickActions).toHaveLength(3);
 		expect(quickActions.every((button) => button.disabled)).toBe(true);
 	});
 
@@ -5025,7 +5076,10 @@ function createCapacityView(options: CapacityViewOptions = {}) {
 			},
 		};
 	});
-	const requestSelectionEdit = vi.fn(async () => ({
+	const requestSelectionEdit = vi.fn(async (
+		_snapshot: SelectionSnapshot,
+		_prompt: string,
+	) => ({
 		applied: false,
 		changeCount: 0,
 		usage: {
@@ -5308,8 +5362,7 @@ describe('EmendChatView draft capacity estimate', () => {
 			fixture.contentEl,
 			(element) => element.className.split(' ').includes('emend-chat-quick-action'),
 		);
-		expect(quickActions).toHaveLength(3);
-		expect(quickActions.every((button) => !button.disabled)).toBe(true);
+		expect(quickActions).toHaveLength(0);
 		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
 		expect(fixture.read).not.toHaveBeenCalled();
 	});
@@ -5361,11 +5414,6 @@ describe('EmendChatView draft capacity estimate', () => {
 		);
 		expect(fixture.context.draftCapacityBlocked).toBe(true);
 		expect(findSendButton(fixture.contentEl)?.disabled).toBe(true);
-		const quickActions = findElements(
-			fixture.contentEl,
-			(element) => element.className.split(' ').includes('emend-chat-quick-action'),
-		);
-		expect(quickActions.every((button) => button.disabled)).toBe(true);
 
 		const enter = keydownEvent();
 		viewPrototype.handleComposerKeydown.call(fixture.context, enter);
@@ -5380,6 +5428,13 @@ describe('EmendChatView draft capacity estimate', () => {
 		viewPrototype.handleComposerKeydown.call(fixture.context, shiftEnter);
 		expect(shiftEnter.preventDefault).not.toHaveBeenCalled();
 
+		viewPrototype.setMode.call(fixture.context, 'edit');
+		const quickActions = findElements(
+			fixture.contentEl,
+			(element) => element.className.split(' ').includes('emend-chat-quick-action'),
+		);
+		expect(quickActions).toHaveLength(3);
+		expect(quickActions.every((button) => button.disabled)).toBe(true);
 		const quickAction = findQuickActionButton(fixture.contentEl, 'fix-grammar');
 		quickAction?.dispatch('click');
 
@@ -5406,10 +5461,12 @@ describe('EmendChatView draft capacity estimate', () => {
 		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(INVALID_CAPACITY_TEXT);
 		expect(fixture.context.draftCapacityBlocked).toBe(true);
 		expect(findSendButton(fixture.contentEl)?.disabled).toBe(true);
+		viewPrototype.setMode.call(fixture.context, 'edit');
 		const quickActions = findElements(
 			fixture.contentEl,
 			(element) => element.className.split(' ').includes('emend-chat-quick-action'),
 		);
+		expect(quickActions).toHaveLength(3);
 		expect(quickActions.every((button) => button.disabled)).toBe(true);
 
 		await viewPrototype.submitPrompt.call(fixture.context);
@@ -5682,6 +5739,67 @@ describe('EmendChatView draft capacity estimate', () => {
 		);
 	});
 
+	for (const action of QUICK_ACTIONS) {
+		it.each([
+			{
+				name: 'explicit Selection',
+				selectedText: 'beta',
+				choice: 'Edit · Selection',
+				target: 'selection',
+			},
+			{
+				name: 'explicit Full note',
+				selectedText: 'beta',
+				choice: 'Edit · Full note',
+				target: 'full-note',
+			},
+			{
+				name: 'automatic Selection-first targeting',
+				selectedText: 'beta',
+				choice: null,
+				target: 'selection',
+			},
+			{
+				name: 'automatic Full-note fallback',
+				selectedText: '',
+				choice: null,
+				target: 'full-note',
+			},
+		] as const)(`${action.label} uses $name with Web Off and exactly one submission`, async (scenario) => {
+			const fixture = createCapacityView({
+				mode: 'edit',
+				selectedText: scenario.selectedText,
+			});
+			await viewPrototype.refreshTargetNote.call(fixture.context);
+			Object.assign(fixture.context, { webSearchMode: 'review' });
+			if (scenario.choice) {
+				chooseWritingMenuItem(fixture.contentEl, scenario.choice);
+			}
+			const submitPrompt = vi.fn((
+				prompt?: string,
+				options?: { fromQuickAction?: boolean },
+			) => viewPrototype.submitPrompt.call(fixture.context, prompt, options));
+			Object.assign(fixture.context, { submitPrompt });
+
+			findQuickActionButton(fixture.contentEl, action.id)?.dispatch('click');
+
+			expect(submitPrompt).toHaveBeenCalledOnce();
+			expect(submitPrompt).toHaveBeenCalledWith(action.prompt, { fromQuickAction: true });
+			await vi.waitFor(() => expect(fixture.context.isSending).toBe(false));
+			if (scenario.target === 'selection') {
+				expect(fixture.requestSelectionEdit).toHaveBeenCalledOnce();
+				expect(fixture.requestSelectionEdit.mock.calls[0]?.[1]).toBe(action.prompt);
+				expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+			} else {
+				expect(fixture.requestChatCompletion).toHaveBeenCalledOnce();
+				const request = fixture.requestChatCompletion.mock.calls[0]?.[0];
+				expect(request).toMatchObject({ mode: 'edit', prompt: action.prompt });
+				expect(request).not.toHaveProperty('webSearch');
+				expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
+			}
+		});
+	}
+
 	it('recomputes after a mode switch without submitting a request', async () => {
 		const fixture = createCapacityView({
 			capacity: { contextWindowTokens: 1000, outputReserveTokens: 100 },
@@ -5754,38 +5872,24 @@ describe('EmendChatView draft capacity estimate', () => {
 		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
 	});
 
-	it('estimates read-only quick actions against their Edit target, not the bounded window', async () => {
+	it('does not render quick actions for a read-only draft', async () => {
 		const sourceText = `Intro.\n${'Long paragraph. '.repeat(400)}`;
 		const fixture = createCapacityView({
 			sourceText,
 			markdown: 'Window only.',
 		});
 		await viewPrototype.refreshTargetNote.call(fixture.context);
-		const readOnlyTokens = fixture.askEstimate('').categories.estimatedInputTokens;
-		const editTokens = fixture.fullNoteEstimate('').categories.estimatedInputTokens;
-		const readOnlyActionTokens = Math.max(
-			...QUICK_ACTIONS.map(
-				(action) => fixture.askEstimate(action.prompt).categories.estimatedInputTokens,
-			),
-		);
-		expect(readOnlyTokens).toBeLessThan(editTokens);
-		expect(readOnlyActionTokens).toBeLessThan(readOnlyTokens + 40);
-		fixture.provider.contextWindowTokens = readOnlyTokens + 41;
-		fixture.provider.outputReserveTokens = 1;
-		viewPrototype.refreshCapacityEstimate.call(fixture.context);
 
-		expect(fixture.askEstimate('').overCapacity).toBe(false);
-		expect(findSendButton(fixture.contentEl)?.disabled).toBe(false);
-		for (const action of QUICK_ACTIONS) {
-			expect(findQuickActionButton(fixture.contentEl, action.id)?.disabled).toBe(true);
-		}
+		expect(findElements(fixture.contentEl, (element) =>
+			element.className.split(' ').includes('emend-chat-quick-action'),
+		)).toEqual([]);
 		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
 	});
 
 	it('keeps small Selection quick actions enabled while the full note is over capacity', async () => {
 		const sourceText = `Intro.\n${'x'.repeat(20000)}\nbeta\n${'y'.repeat(20000)}`;
 		const fixture = createCapacityView({
-			mode: 'ask',
+			mode: 'edit',
 			sourceText,
 			markdown: sourceText,
 			selectedText: 'beta',
@@ -5805,8 +5909,9 @@ describe('EmendChatView draft capacity estimate', () => {
 		fixture.provider.outputReserveTokens = 1;
 		viewPrototype.refreshCapacityEstimate.call(fixture.context);
 
-		expect(fixture.askEstimate('').overCapacity).toBe(true);
-		expect(findSendButton(fixture.contentEl)?.disabled).toBe(true);
+		expect(fixture.fullNoteEstimate('').overCapacity).toBe(true);
+		expect(fixture.selectionEstimate('').overCapacity).toBe(false);
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(false);
 		for (const action of QUICK_ACTIONS) {
 			expect(findQuickActionButton(fixture.contentEl, action.id)?.disabled).toBe(false);
 		}
@@ -5814,53 +5919,39 @@ describe('EmendChatView draft capacity estimate', () => {
 	});
 
 	it('keeps the visible mode and next request mode when a quick action is blocked', async () => {
-		const fixture = createCapacityView();
+		const fixture = createCapacityView({ mode: 'edit' });
 		await viewPrototype.refreshTargetNote.call(fixture.context);
 		const emptyEditTokens = fixture.fullNoteEstimate('').categories.estimatedInputTokens;
 		fixture.provider.contextWindowTokens = emptyEditTokens + 2;
 		fixture.provider.outputReserveTokens = 1;
 		viewPrototype.refreshCapacityEstimate.call(fixture.context);
-		if (!fixture.context.inputEl) {
-			throw new Error('Composer missing.');
-		}
-		fixture.context.inputEl.value = 'Question';
-		fixture.context.inputEl.dispatch('input');
-		expect(fixture.askEstimate('Question').overCapacity).toBe(false);
+		expect(fixture.fullNoteEstimate('').overCapacity).toBe(false);
 		expect(findSendButton(fixture.contentEl)?.disabled).toBe(false);
 		expect(findQuickActionButton(fixture.contentEl, 'fix-grammar')?.disabled).toBe(true);
 		const fixEstimate = fixture.fullNoteEstimate(QUICK_ACTIONS[0].prompt);
 
 		findQuickActionButton(fixture.contentEl, 'fix-grammar')?.dispatch('click');
 
-		expect(fixture.context.selectedMode).toBe('ask');
-		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Chat');
+		expect(fixture.context.selectedMode).toBe('edit');
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Full note');
 		expect(fixture.context.inputEl?.attributes.placeholder).toContain(
-			'Chat about the active note...',
+			'Edit the note or selection...',
 		);
 		expect(findWritingTrigger(fixture.contentEl)?.disabled).toBe(false);
 		expect(noticeMessages()).toContain(expectedBlockedNotice(fixEstimate));
 		expect(fixture.context.messages).toEqual([]);
 		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
-
-		await viewPrototype.submitPrompt.call(fixture.context);
-
-		expect(fixture.requestChatCompletion).toHaveBeenCalledOnce();
-		expect(fixture.requestChatCompletion.mock.calls[0]?.[0].mode).toBe('ask');
 	});
 
 	it('rechecks a quick action on click when capacity changed without a refresh', async () => {
-		const fixture = createCapacityView();
+		const fixture = createCapacityView({ mode: 'edit' });
 		await viewPrototype.refreshTargetNote.call(fixture.context);
 		const emptyEditTokens = fixture.fullNoteEstimate('').categories.estimatedInputTokens;
 		fixture.provider.contextWindowTokens = emptyEditTokens + 100;
 		fixture.provider.outputReserveTokens = 1;
 		viewPrototype.refreshCapacityEstimate.call(fixture.context);
 		expect(findQuickActionButton(fixture.contentEl, 'fix-grammar')?.disabled).toBe(false);
-		expect(fixture.context.selectedMode).toBe('ask');
-		if (!fixture.context.inputEl) {
-			throw new Error('Composer missing.');
-		}
-		fixture.context.inputEl.value = 'Question';
+		expect(fixture.context.selectedMode).toBe('edit');
 		const staleSummary = findCapacitySummary(fixture.contentEl)?.textContent;
 
 		fixture.provider.contextWindowTokens = emptyEditTokens + 2;
@@ -5870,10 +5961,10 @@ describe('EmendChatView draft capacity estimate', () => {
 
 		findQuickActionButton(fixture.contentEl, 'fix-grammar')?.dispatch('click');
 
-		expect(fixture.context.selectedMode).toBe('ask');
+		expect(fixture.context.selectedMode).toBe('edit');
 		expect(fixture.render).not.toHaveBeenCalled();
 		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
-			expectedCapacitySummary(fixture.askEstimate('Question')),
+			expectedCapacitySummary(fixture.fullNoteEstimate('')),
 		);
 		expect(findCapacitySummary(fixture.contentEl)?.textContent).not.toBe(
 			staleSummary,
@@ -5887,7 +5978,7 @@ describe('EmendChatView draft capacity estimate', () => {
 	});
 
 	it('re-renders the active mode when submitPrompt blocks after a quick action', async () => {
-		const fixture = createCapacityView();
+		const fixture = createCapacityView({ mode: 'edit' });
 		await viewPrototype.refreshTargetNote.call(fixture.context);
 		const smallEstimate = fixture.fullNoteEstimate(QUICK_ACTIONS[0].prompt);
 		const largeSource = `Intro.\n${'Long paragraph. '.repeat(500)}`;
@@ -6103,13 +6194,14 @@ describe('EmendChatView capacity refresh sources', () => {
 			capacity: { contextWindowTokens: 1000, outputReserveTokens: 100 },
 		});
 		await viewPrototype.onOpen.call(fixture.context);
+		viewPrototype.setMode.call(fixture.context, 'edit');
 		expect(findSendButton(fixture.contentEl)?.disabled).toBe(false);
 
 		fixture.provider.contextWindowTokens = 100;
 		fixture.provider.outputReserveTokens = 96;
 		viewPrototype.refreshCapacityEstimate.call(fixture.context);
 
-		const estimate = fixture.askEstimate('');
+		const estimate = fixture.fullNoteEstimate('');
 		expect(estimate.overCapacity).toBe(true);
 		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
 			expectedCapacitySummary(estimate),
@@ -6119,6 +6211,7 @@ describe('EmendChatView capacity refresh sources', () => {
 			fixture.contentEl,
 			(element) => element.className.split(' ').includes('emend-chat-quick-action'),
 		);
+		expect(quickActions).toHaveLength(3);
 		expect(quickActions.every((button) => button.disabled)).toBe(true);
 		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
 		expect(fixture.read).not.toHaveBeenCalled();

@@ -194,11 +194,104 @@
 	font-size: var(--font-ui-smaller);
 }
 
+.emend-chat-context-row {
+	display: flex;
+	flex: 0 0 auto;
+	flex-wrap: wrap;
+	align-items: flex-start;
+	gap: var(--size-4-2);
+	min-width: 0;
+}
+
+.emend-chat-related-notes {
+	display: flex;
+	flex: 0 1 auto;
+	flex-direction: column;
+	gap: var(--size-4-1);
+	max-width: 100%;
+	min-width: 0;
+}
+
+.emend-chat-related-notes-trigger-row,
+.emend-chat-related-notes-item {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-2);
+}
+
+.emend-chat-related-notes-trigger,
+.emend-chat-related-notes-remove,
+.emend-chat-related-notes-clear {
+	padding: var(--size-4-1) var(--size-4-2);
+	border-radius: var(--radius-s);
+	font-size: var(--font-ui-smaller);
+}
+
+.emend-chat-related-notes-count {
+	display: inline-block;
+	min-width: 1.5em;
+	margin-inline-start: var(--size-4-1);
+	padding: 0 var(--size-4-1);
+	border-radius: var(--radius-s);
+	background: var(--background-modifier-border);
+	color: var(--text-muted);
+	text-align: center;
+}
+
+.emend-chat-related-notes-details-host:empty {
+	display: none;
+}
+
+.emend-chat-related-notes-details {
+	max-width: 100%;
+	min-width: 0;
+}
+
+.emend-chat-related-notes-summary {
+	cursor: pointer;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+.emend-chat-related-notes-list {
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-4-1);
+	margin-top: var(--size-4-1);
+}
+
+.emend-chat-related-notes-item {
+	max-width: 100%;
+	min-width: 0;
+}
+
+.emend-chat-related-notes-path {
+	min-width: 0;
+	overflow-wrap: anywhere;
+	font-size: var(--font-ui-smaller);
+}
+
+.emend-chat-related-notes-clear {
+	align-self: flex-start;
+	margin-top: var(--size-4-1);
+}
+
+.emend-chat-related-notes-disclosure {
+	margin-top: var(--size-4-1);
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	line-height: 1.4;
+}
+
 .emend-chat-quick-actions {
 	display: flex;
 	flex: 0 0 auto;
 	flex-wrap: wrap;
+	justify-content: flex-end;
 	gap: 6px;
+	max-width: 100%;
+	min-width: 0;
+	margin-inline-start: auto;
 }
 
 .emend-chat-quick-action {
