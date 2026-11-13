@@ -287,8 +287,11 @@
 	display: flex;
 	flex: 0 0 auto;
 	flex-wrap: wrap;
-	justify-content: flex-end;
 	gap: 6px;
+}
+
+.emend-chat-context-row .emend-chat-quick-actions {
+	justify-content: flex-end;
 	max-width: 100%;
 	min-width: 0;
 	margin-inline-start: auto;

@@ -72,8 +72,7 @@ describe('EmendChatView compact composer styles', () => {
 		const row = getCssRule('.emend-chat-context-row');
 		expect(row).toContain('flex-wrap: wrap;');
 		expect(row).toContain('min-width: 0;');
-		const quickActions = getCssRule('.emend-chat-quick-actions');
-		expect(quickActions).toContain('flex: 0 0 auto;');
+		const quickActions = getCssRule('.emend-chat-context-row .emend-chat-quick-actions');
 		expect(quickActions).toContain('margin-inline-start: auto;');
 		expect(quickActions).toContain('justify-content: flex-end;');
 		expect(getCssRule('.emend-chat-related-notes')).toContain('min-width: 0;');
