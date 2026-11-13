@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { MarkdownRenderer, Notice, Scope, TFile, WorkspaceLeaf } from 'obsidian';
+import { MarkdownRenderer, Menu, MenuItem, Notice, Scope, TFile, WorkspaceLeaf } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AdditionalNotesStore } from '../src/additional-notes-store';
 import { deriveAutomaticTitle, type ChatSession } from '../src/chat-sessions';
@@ -52,50 +52,20 @@ function getCssRule(selector: string): string {
 	return css.match(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`))?.[1] ?? '';
 }
 
-describe('EmendChatView mode button hover styles', () => {
-	it('keeps text readable on distinct non-active and active hover backgrounds', () => {
-		const nonActive = getCssRule('.emend-chat-mode-button:hover');
-		const active = getCssRule('.emend-chat-mode-button.is-active:hover');
-
-		expect(nonActive).toContain('background: var(--background-modifier-hover);');
-		expect(nonActive).toContain('color: var(--text-normal);');
-		expect(active).toContain('background: var(--interactive-accent-hover);');
-		expect(active).toContain('color: var(--text-normal);');
-	});
-});
-
-describe('EmendChatView header styles', () => {
-	it('stacks shortcut groups below the wrapping title row', () => {
+describe('EmendChatView compact composer styles', () => {
+	it('keeps the compact header identity and note context readable', () => {
 		expect(getCssRule('.emend-chat-title-row')).toContain('flex-wrap: wrap;');
-		expect(getCssRule('.emend-chat-shortcuts')).toContain('flex-direction: column;');
-	});
-
-	it('wraps shortcut items within each group', () => {
-		const group = getCssRule('.emend-chat-shortcut-group');
-		expect(group).toContain('display: flex;');
-		expect(group).toContain('flex-wrap: wrap;');
-	});
-
-	it('keeps each key badge paired with its action', () => {
-		const shortcut = getCssRule('.emend-chat-shortcut');
-		expect(shortcut).toContain('display: inline-flex;');
-		expect(shortcut).toContain('align-items: center;');
-	});
-
-	it('distinguishes key badges from action text', () => {
-		const badge = getCssRule('.emend-chat-shortcut kbd');
-		expect(badge).toContain('border: 1px solid var(--background-modifier-border);');
-		expect(badge).toContain('background: var(--background-secondary);');
-		expect(badge).toContain('color: var(--text-normal);');
-	});
-
-	it('uses muted text for the build identity and shortcuts', () => {
 		expect(getCssRule('.emend-chat-build')).toContain('color: var(--text-muted);');
-		expect(getCssRule('.emend-chat-shortcuts')).toContain('color: var(--text-muted);');
+		expect(getCssRule('.emend-chat-context')).toContain('text-overflow: ellipsis;');
 	});
 
-	it('retains context ellipsis', () => {
-		expect(getCssRule('.emend-chat-context')).toContain('text-overflow: ellipsis;');
+	it('wraps the bottom row without shrinking controls out of a narrow sidebar', () => {
+		const row = getCssRule('.emend-chat-composer-actions');
+		expect(row).toContain('flex-wrap: wrap;');
+		expect(row).toContain('min-width: 0;');
+		expect(getCssRule('.emend-chat-writing-trigger')).toContain('min-width: 0;');
+		expect(getCssRule('.emend-chat-active-model')).toContain('min-width: 0;');
+		expect(getCssRule('.emend-chat-send-button')).toContain('flex: 0 0 auto;');
 	});
 });
 
@@ -112,6 +82,13 @@ const productionRefreshTargetNote = (EmendChatView.prototype as unknown as {
 	refreshTargetNote(this: unknown): Promise<void>;
 }).refreshTargetNote;
 
+type ComposerRestoreTestState = {
+	draft: string;
+	selectionStart: number;
+	selectionEnd: number;
+	focus: boolean;
+};
+
 const viewPrototype = EmendChatView.prototype as unknown as {
 	onOpen(this: unknown): Promise<void>;
 	refreshTargetNote(this: unknown): Promise<void>;
@@ -126,7 +103,7 @@ const viewPrototype = EmendChatView.prototype as unknown as {
 	): void;
 	setMode(this: unknown, mode: Mode): void;
 	registerComposerScope(this: unknown): void;
-	render(this: unknown): void;
+	render(this: unknown, composerRestore?: ComposerRestoreTestState): void;
 	renderMessage(this: unknown, containerEl: HTMLElement, message: ChatMessage): void;
 	renderMessageBody(this: unknown, message: ChatMessage): void;
 	scrollMessagesToBottom(this: unknown): void;
@@ -430,7 +407,8 @@ function createEditTargetView(options: {
 		activeModelEl: null,
 		editTargetChoice: 'auto' as 'auto' | 'full-note' | 'selection',
 		displayedEditTarget: 'full-note' as 'full-note' | 'selection',
-		editTargetSelectEl: null as FakeElement | null,
+		composerControls: null,
+		isStopping: false,
 		webReviewModal: null,
 		pendingRenderFrame: null,
 		pendingMarkdownRenders: 0,
@@ -441,7 +419,9 @@ function createEditTargetView(options: {
 		cancelPendingRender: vi.fn(),
 	};
 	Object.setPrototypeOf(context, EmendChatView.prototype);
-	const render = vi.fn(() => viewPrototype.render.call(context));
+	const render = vi.fn((composerRestore?: ComposerRestoreTestState) =>
+		viewPrototype.render.call(context, composerRestore)
+	);
 	Object.assign(context, { render });
 	return {
 		context,
@@ -460,12 +440,59 @@ function createEditTargetView(options: {
 	};
 }
 
-function findEditTargetSelect(contentEl: FakeElement): FakeElement | undefined {
+type ChatViewMenu = Menu & {
+	items: Array<ChatViewMenuItem | 'separator'>;
+	hideCalls: number;
+};
+
+type ChatViewMenuItem = MenuItem & {
+	title: string;
+	checked: boolean | null;
+	disabled: boolean;
+	clickHandler: (event: MouseEvent | KeyboardEvent) => unknown;
+};
+
+const chatViewMenus = Menu as unknown as { instances: ChatViewMenu[] };
+
+function findWritingTrigger(contentEl: FakeElement): FakeElement | undefined {
 	return findElements(
 		contentEl,
-		(element) =>
-			element.tagName === 'select' && element.attributes['aria-label'] === 'Edit target',
+		(element) => element.className.split(' ').includes('emend-chat-writing-trigger'),
 	)[0];
+}
+
+function findSubmissionButton(
+	contentEl: FakeElement,
+	label: 'Send' | 'Stop' | 'Stopping',
+): FakeElement | undefined {
+	return findElements(
+		contentEl,
+		(element) => element.tagName === 'button' && element.attributes['aria-label'] === label,
+	)[0];
+}
+
+function openWritingMenu(contentEl: FakeElement): ChatViewMenu {
+	findWritingTrigger(contentEl)?.dispatch('click');
+	const menu = chatViewMenus.instances.at(-1);
+	if (!menu) {
+		throw new Error('The writing trigger did not open a menu.');
+	}
+	return menu;
+}
+
+function writingMenuItem(menu: ChatViewMenu, title: string): ChatViewMenuItem {
+	const item = menu.items.find(
+		(candidate): candidate is ChatViewMenuItem =>
+			candidate instanceof MenuItem && candidate.title === title,
+	);
+	if (!item) {
+		throw new Error(`Missing writing menu item: ${title}`);
+	}
+	return item;
+}
+
+function chooseWritingMenuItem(contentEl: FakeElement, title: string): void {
+	writingMenuItem(openWritingMenu(contentEl), title).clickHandler({} as MouseEvent);
 }
 
 describe('EmendChatView selectable modes', () => {
@@ -495,15 +522,29 @@ describe('EmendChatView selectable modes', () => {
 		expect(requestChatCompletion).not.toHaveBeenCalled();
 	});
 
-	it('offers only Chat and Edit mode buttons for new requests', async () => {
+	it('offers Chat and both Edit targets through the compact writing menu', async () => {
 		const { context, contentEl } = createEditTargetView();
 		await viewPrototype.refreshTargetNote.call(context);
 
-		const labels = findElements(
-			contentEl,
-			(element) => element.className.split(' ').includes('emend-chat-mode-button'),
-		).map((element) => textOf(element).trim());
-		expect(labels).toEqual(['Chat', 'Edit']);
+		const menu = openWritingMenu(contentEl);
+		expect(menu.items.filter((item) => item instanceof MenuItem).map(
+			(item) => item.title,
+		)).toEqual([
+			'Chat',
+			'Edit · Selection',
+			'Edit · Full note',
+			'Web Off',
+			'Web Review',
+			'Web Auto',
+		]);
+		expect(findElements(contentEl, (element) =>
+			element.className.split(' ').includes('emend-chat-mode-selector') ||
+			element.className.split(' ').includes('emend-chat-shortcuts') ||
+			element.className.split(' ').includes('emend-chat-web-mode') ||
+			element.className.split(' ').includes('emend-chat-edit-target') ||
+			element.attributes['aria-label'] === 'Web search mode' ||
+			element.attributes['aria-label'] === 'Edit target'
+		)).toEqual([]);
 	});
 
 	it('describes Chat and Edit without advertising new Discuss or Brainstorm requests', async () => {
@@ -521,13 +562,208 @@ describe('EmendChatView selectable modes', () => {
 	});
 });
 
+describe('EmendChatView compact composer', () => {
+	beforeEach(() => {
+		chatViewMenus.instances.length = 0;
+	});
+
+	it('orders the compact composer after the legacy blocks and exposes accessible submission controls', async () => {
+		const { context, contentEl } = createEditTargetView();
+		await viewPrototype.refreshTargetNote.call(context);
+
+		expect(contentEl.children.map((element) => element.className.split(' ')[0])).toEqual([
+			'emend-chat-header',
+			'emend-context-capacity',
+			'emend-chat-session-controls',
+			'emend-chat-messages',
+			'emend-chat-quick-actions',
+			'emend-additional-notes',
+			'emend-chat-composer',
+		]);
+		expect(context.inputEl?.attributes['aria-label']).toBe('Chat prompt');
+		expect(context.inputEl?.attributes['aria-keyshortcuts']).toBe(
+			'Enter Meta+Enter Shift+Enter',
+		);
+		expect(context.inputEl?.attributes.placeholder).toContain(
+			'Chat about the active note...',
+		);
+		expect(context.inputEl?.attributes.placeholder).toContain('Enter / ⌘ Enter to send');
+		expect(context.inputEl?.attributes.placeholder).toContain('Shift Enter for a newline');
+		const send = findSubmissionButton(contentEl, 'Send');
+		expect(send?.textContent).toBe('');
+		expect(send?.className.split(' ')).toContain('emend-chat-send-button');
+		expect(send?.title).toBe('Send');
+
+		const bottomRow = findElements(contentEl, (element) =>
+			element.className.split(' ').includes('emend-chat-composer-actions')
+		)[0];
+		expect(bottomRow?.children.map((element) => [
+			element.className.split(' ')[0],
+			element.textContent,
+		])).toEqual([
+			['emend-chat-writing-trigger', 'Chat'],
+			['emend-chat-active-model', 'Local · Test model'],
+			['emend-chat-primary-button', ''],
+		]);
+
+		if (context.inputEl) {
+			context.inputEl.value = 'An existing draft';
+			context.inputEl.dispatch('input');
+		}
+		expect(context.inputEl?.attributes.placeholder).toBe('Chat about the active note...');
+		viewPrototype.setMode.call(context, 'edit');
+		expect(context.inputEl?.attributes['aria-label']).toBe('Edit prompt');
+		expect(context.inputEl?.attributes.placeholder).toBe('Edit the note or selection...');
+	});
+
+	it.each([
+		['Edit · Selection', 'selection'],
+		['Edit · Full note', 'full-note'],
+	] as const)('applies %s atomically with one render and capacity calculation', async (title, target) => {
+		const fixture = createEditTargetView({ selectedText: 'beta' });
+		const { context, contentEl } = fixture;
+		await viewPrototype.refreshTargetNote.call(context);
+		const refreshDraftEstimate = vi.fn(() =>
+			viewPrototype.refreshDraftEstimate.call(context)
+		);
+		Object.assign(context, { refreshDraftEstimate });
+		fixture.render.mockClear();
+
+		chooseWritingMenuItem(contentEl, title);
+
+		expect(context.selectedMode).toBe('edit');
+		expect(context.editTargetChoice).toBe(target);
+		expect(context.displayedEditTarget).toBe(target);
+		expect(fixture.render).toHaveBeenCalledOnce();
+		expect(refreshDraftEstimate).toHaveBeenCalledOnce();
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+	});
+
+	it('retains the explicit target and maintained Web choice through Edit and Chat', async () => {
+		const { context, contentEl } = createEditTargetView({ selectedText: 'beta' });
+		await viewPrototype.refreshTargetNote.call(context);
+		chooseWritingMenuItem(contentEl, 'Web Review');
+		chooseWritingMenuItem(contentEl, 'Edit · Full note');
+
+		const editMenu = openWritingMenu(contentEl);
+		expect(context.webSearchMode).toBe('review');
+		expect(writingMenuItem(editMenu, 'Web Off').checked).toBe(true);
+		for (const title of ['Web Off', 'Web Review', 'Web Auto']) {
+			expect(writingMenuItem(editMenu, title).disabled).toBe(true);
+		}
+		editMenu.hide();
+
+		chooseWritingMenuItem(contentEl, 'Chat');
+		expect(context.selectedMode).toBe('ask');
+		expect(context.editTargetChoice).toBe('full-note');
+		expect(context.displayedEditTarget).toBe('full-note');
+		expect(context.webSearchMode).toBe('review');
+		expect(findWritingTrigger(contentEl)?.textContent).toBe('Chat · Review search');
+	});
+
+	it('preserves draft, caret, and textarea focus for writing and Web menu choices', async () => {
+		const { context, contentEl } = createEditTargetView();
+		await viewPrototype.refreshTargetNote.call(context);
+		if (context.inputEl) {
+			context.inputEl.value = 'Keep this draft';
+			context.inputEl.setSelectionRange(5, 9);
+		}
+
+		chooseWritingMenuItem(contentEl, 'Edit · Full note');
+		expect(context.inputEl?.value).toBe('Keep this draft');
+		expect(context.inputEl?.selectionStart).toBe(5);
+		expect(context.inputEl?.selectionEnd).toBe(9);
+		expect(context.inputEl?.focused).toBe(true);
+
+		chooseWritingMenuItem(contentEl, 'Chat');
+		context.inputEl?.setSelectionRange(2, 4);
+		chooseWritingMenuItem(contentEl, 'Web Auto');
+		expect(context.inputEl?.value).toBe('Keep this draft');
+		expect(context.inputEl?.selectionStart).toBe(2);
+		expect(context.inputEl?.selectionEnd).toBe(4);
+		expect(context.inputEl?.focused).toBe(true);
+	});
+
+	it('restores focus for command mode changes only when the old textarea owned it', async () => {
+		const fixture = createEditTargetView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		fixture.context.inputEl?.focus();
+		fixture.context.inputEl?.setSelectionRange(1, 3);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'abc';
+			fixture.context.inputEl.setSelectionRange(1, 3);
+		}
+
+		viewPrototype.setMode.call(fixture.context, 'edit');
+		expect(fixture.context.inputEl?.focused).toBe(true);
+		expect(fixture.context.inputEl?.selectionStart).toBe(1);
+		expect(fixture.context.inputEl?.selectionEnd).toBe(3);
+
+		fixture.context.inputEl?.blur();
+		viewPrototype.setMode.call(fixture.context, 'ask');
+		expect(fixture.context.inputEl?.focused).toBe(false);
+	});
+
+	it('keeps Stop available, then persists Stopping across a rerender until close', async () => {
+		const fixture = createEditTargetView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const controller = new AbortController();
+		const abort = vi.spyOn(controller, 'abort');
+		Object.assign(fixture.context, {
+			isSending: true,
+			activeController: controller,
+		});
+		fixture.render();
+		expect(findWritingTrigger(fixture.contentEl)?.disabled).toBe(true);
+		const stop = findSubmissionButton(fixture.contentEl, 'Stop');
+		expect(stop?.disabled).toBe(false);
+
+		stop?.dispatch('click');
+		expect(abort).toHaveBeenCalledOnce();
+		expect(fixture.context.isStopping).toBe(true);
+		expect(findSubmissionButton(fixture.contentEl, 'Stopping')?.disabled).toBe(true);
+		fixture.render();
+		expect(findSubmissionButton(fixture.contentEl, 'Stopping')?.disabled).toBe(true);
+		stop?.dispatch('click');
+		expect(abort).toHaveBeenCalledOnce();
+
+		await viewPrototype.onClose.call(fixture.context);
+		expect(fixture.context.isStopping).toBe(false);
+		expect(fixture.context.composerControls).toBeNull();
+	});
+
+	it('rejects stale menu and submission callbacks after rerender and close', async () => {
+		const fixture = createEditTargetView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const staleMenu = openWritingMenu(fixture.contentEl);
+		const staleChoice = writingMenuItem(staleMenu, 'Edit · Selection');
+		const staleSend = findSubmissionButton(fixture.contentEl, 'Send');
+		fixture.render();
+		staleChoice.clickHandler({} as MouseEvent);
+		staleSend?.dispatch('click');
+		expect(fixture.context.selectedMode).toBe('ask');
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+
+		const closedMenu = openWritingMenu(fixture.contentEl);
+		const closedChoice = writingMenuItem(closedMenu, 'Edit · Full note');
+		const closedSend = findSubmissionButton(fixture.contentEl, 'Send');
+		await viewPrototype.onClose.call(fixture.context);
+		closedChoice.clickHandler({} as MouseEvent);
+		closedSend?.dispatch('click');
+		expect(fixture.context.selectedMode).toBe('ask');
+		expect(fixture.context.editTargetChoice).toBe('auto');
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+	});
+});
+
 describe('EmendChatView edit target control', () => {
 	it('initially displays Selection when automatic targeting has usable text', async () => {
 		const { context, contentEl } = createEditTargetView({ selectedText: 'beta' });
 
 		await viewPrototype.refreshTargetNote.call(context);
 
-		expect(findEditTargetSelect(contentEl)?.value).toBe('selection');
+		viewPrototype.setMode.call(context, 'edit');
+		expect(findWritingTrigger(contentEl)?.textContent).toBe('Edit · Selection');
 		expect(context.editTargetChoice).toBe('auto');
 		expect(context.displayedEditTarget).toBe('selection');
 	});
@@ -539,23 +775,11 @@ describe('EmendChatView edit target control', () => {
 
 			await viewPrototype.refreshTargetNote.call(context);
 
-			expect(findEditTargetSelect(contentEl)?.value).toBe('full-note');
+			viewPrototype.setMode.call(context, 'edit');
+			expect(findWritingTrigger(contentEl)?.textContent).toBe('Edit · Full note');
 			expect(context.displayedEditTarget).toBe('full-note');
 		},
 	);
-
-	it('exposes the two explicit targets and the quick-action tooltip', async () => {
-		const { context, contentEl } = createEditTargetView();
-
-		await viewPrototype.refreshTargetNote.call(context);
-
-		const select = findEditTargetSelect(contentEl);
-		expect(select?.title).toBe('Applies to Edit and quick actions.');
-		expect(select?.children.map((option) => [option.value, option.textContent])).toEqual([
-			['full-note', 'Full note'],
-			['selection', 'Selection'],
-		]);
-	});
 
 	it.each([
 		{ choice: 'full-note', selectedText: 'usable selection' },
@@ -565,7 +789,6 @@ describe('EmendChatView edit target control', () => {
 		async ({ choice, selectedText }) => {
 			const { context, contentEl } = createEditTargetView({ selectedText });
 			await viewPrototype.refreshTargetNote.call(context);
-			const select = findEditTargetSelect(contentEl);
 			if (context.inputEl) {
 				context.inputEl.value = 'Keep this draft';
 				context.drafts.set('A.md', new Map([[
@@ -574,17 +797,15 @@ describe('EmendChatView edit target control', () => {
 				]]));
 			}
 
-			if (select) {
-				select.value = choice;
-				select.dispatch('change');
-			}
+			chooseWritingMenuItem(
+				contentEl,
+				choice === 'selection' ? 'Edit · Selection' : 'Edit · Full note',
+			);
 			viewPrototype.render.call(context);
-			expect(findEditTargetSelect(contentEl)?.value).toBe(choice);
-			viewPrototype.setMode.call(context, 'edit');
-			expect(findEditTargetSelect(contentEl)?.value).toBe(choice);
-			viewPrototype.setMode.call(context, 'ask');
+			expect(context.displayedEditTarget).toBe(choice);
+			chooseWritingMenuItem(contentEl, 'Chat');
 
-			expect(findEditTargetSelect(contentEl)?.value).toBe(choice);
+			expect(context.selectedMode).toBe('ask');
 			expect(context.editTargetChoice).toBe(choice);
 			expect(context.displayedEditTarget).toBe(choice);
 			expect(context.inputEl?.value).toBe('Keep this draft');
@@ -599,46 +820,41 @@ describe('EmendChatView edit target control', () => {
 		}
 		setSelectedText('A selection');
 		await viewPrototype.refreshTargetNote.call(context);
-		expect(findEditTargetSelect(contentEl)?.value).toBe('selection');
-		const select = findEditTargetSelect(contentEl);
-		if (select) {
-			select.value = 'full-note';
-			select.dispatch('change');
-		}
+		expect(context.displayedEditTarget).toBe('selection');
+		chooseWritingMenuItem(contentEl, 'Edit · Full note');
 
 		setActivePath('B.md');
 		setSelectedText('B selection');
 		await viewPrototype.refreshTargetNote.call(context);
 
 		expect(context.editTargetChoice).toBe('auto');
+		expect(context.selectedMode).toBe('edit');
 		expect(context.displayedEditTarget).toBe('selection');
-		expect(findEditTargetSelect(contentEl)?.value).toBe('selection');
+		expect(findWritingTrigger(contentEl)?.textContent).toBe('Edit · Selection');
 		expect(context.inputEl?.value).toBe('');
 		if (context.inputEl) {
 			context.inputEl.value = 'B draft';
 		}
-		const bSelect = findEditTargetSelect(contentEl);
-		if (bSelect) {
-			bSelect.value = 'full-note';
-			bSelect.dispatch('change');
-		}
+		chooseWritingMenuItem(contentEl, 'Edit · Full note');
 
 		setActivePath('A.md');
 		setSelectedText('');
 		await viewPrototype.refreshTargetNote.call(context);
 
 		expect(context.editTargetChoice).toBe('auto');
-		expect(findEditTargetSelect(contentEl)?.value).toBe('full-note');
+		expect(findWritingTrigger(contentEl)?.textContent).toBe('Edit · Full note');
 		expect(context.inputEl?.value).toBe('A draft');
 		setActivePath('B.md');
 		await viewPrototype.refreshTargetNote.call(context);
 		expect(context.inputEl?.value).toBe('B draft');
 	});
 
-	it('refreshes a same-note selection without recreating the textarea or reloading chat', async () => {
+	it('updates automatic Selection-first targeting without replacing composer DOM or reloading chat', async () => {
 		const { context, contentEl, render, setSelectedText } = createEditTargetView();
 		await viewPrototype.refreshTargetNote.call(context);
+		viewPrototype.setMode.call(context, 'edit');
 		const composer = context.inputEl;
+		const writingTrigger = findWritingTrigger(contentEl);
 		if (composer) {
 			composer.value = 'Unsubmitted draft';
 		}
@@ -647,7 +863,8 @@ describe('EmendChatView edit target control', () => {
 
 		await viewPrototype.refreshTargetNote.call(context);
 
-		expect(findEditTargetSelect(contentEl)?.value).toBe('selection');
+		expect(findWritingTrigger(contentEl)).toBe(writingTrigger);
+		expect(findWritingTrigger(contentEl)?.textContent).toBe('Edit · Selection');
 		expect(context.displayedEditTarget).toBe('selection');
 		expect(context.inputEl).toBe(composer);
 		expect(context.inputEl?.value).toBe('Unsubmitted draft');
@@ -661,8 +878,8 @@ describe('EmendChatView edit target control', () => {
 		await viewPrototype.refreshTargetNote.call(context);
 
 		expect(context.selectedMode).toBe('ask');
-		expect(findEditTargetSelect(contentEl)?.disabled).toBe(false);
-		expect(findEditTargetSelect(contentEl)?.value).toBe('selection');
+		expect(findWritingTrigger(contentEl)?.disabled).toBe(false);
+		expect(context.displayedEditTarget).toBe('selection');
 		const quickActions = findElements(
 			contentEl,
 			(element) => element.className.split(' ').includes('emend-chat-quick-action'),
@@ -682,10 +899,10 @@ describe('EmendChatView edit target control', () => {
 
 		viewPrototype.render.call(context);
 
-		expect(findEditTargetSelect(contentEl)?.disabled).toBe(true);
+		expect(findWritingTrigger(contentEl)?.disabled).toBe(true);
 	});
 
-	it('changes target state without requests, content reads, or composer recreation', async () => {
+	it('changes target state without requests or content reads and preserves the draft', async () => {
 		const {
 			context,
 			contentEl,
@@ -694,20 +911,17 @@ describe('EmendChatView edit target control', () => {
 			setSelectedText,
 		} = createEditTargetView({ selectedText: 'beta' });
 		await viewPrototype.refreshTargetNote.call(context);
-		const composer = context.inputEl;
-		const select = findEditTargetSelect(contentEl);
-		if (select) {
-			select.value = 'full-note';
-			select.dispatch('change');
+		if (context.inputEl) {
+			context.inputEl.value = 'Draft survives target choices';
 		}
-		expect(context.inputEl).toBe(composer);
+		chooseWritingMenuItem(contentEl, 'Edit · Full note');
 		setSelectedText('');
 		await viewPrototype.refreshTargetNote.call(context);
-		viewPrototype.setMode.call(context, 'edit');
 
+		expect(context.selectedMode).toBe('edit');
 		expect(context.editTargetChoice).toBe('full-note');
 		expect(context.displayedEditTarget).toBe('full-note');
-		expect(context.inputEl?.value).toBe('');
+		expect(context.inputEl?.value).toBe('Draft survives target choices');
 		expect(requestChatCompletion).not.toHaveBeenCalled();
 		expect(read).not.toHaveBeenCalled();
 	});
@@ -756,20 +970,10 @@ describe('EmendChatView edit target control', () => {
 			noteLabel: file.path,
 			markdown: snapshot.fullText,
 		});
-		const activeModeIndex = () => findElements(
-			contentEl,
-			(element) => element.className.split(' ').includes('emend-chat-mode-button'),
-		).findIndex((element) => element.className.split(' ').includes('is-active'));
-		const webSelect = () => findElements(
-			contentEl,
-			(element) =>
-				element.tagName === 'select' &&
-				element.attributes['aria-label'] === 'Web search mode',
-		)[0];
 		expect(context.selectedMode).toBe('ask');
-		expect(activeModeIndex()).toBe(0);
+		expect(findWritingTrigger(contentEl)?.textContent).toBe('Chat');
 		expect(context.displayedEditTarget).toBe('selection');
-		expect(webSelect()?.disabled).toBe(false);
+		expect(findWritingTrigger(contentEl)?.disabled).toBe(false);
 		if (context.inputEl) {
 			context.inputEl.value = 'Preserve this draft';
 		}
@@ -781,11 +985,14 @@ describe('EmendChatView edit target control', () => {
 		quickAction?.dispatch('click');
 
 		expect(context.selectedMode).toBe('edit');
-		expect(activeModeIndex()).toBe(1);
-		expect(webSelect()?.disabled).toBe(true);
+		expect(findWritingTrigger(contentEl)?.textContent).toBe('Edit · Selection');
+		const editMenu = openWritingMenu(contentEl);
+		expect(writingMenuItem(editMenu, 'Web Off').checked).toBe(true);
+		expect(writingMenuItem(editMenu, 'Web Review').disabled).toBe(true);
+		editMenu.hide();
 		expect(context.inputEl?.value).toBe('Preserve this draft');
-		expect(context.inputEl?.attributes.placeholder).toBe(
-			'Edit the note or selection with CriticMarkup...',
+		expect(context.inputEl?.attributes.placeholder).toContain(
+			'Edit the note or selection...',
 		);
 		expect(requestSelectionEdit).not.toHaveBeenCalled();
 		expect(requestChatCompletion).not.toHaveBeenCalled();
@@ -797,44 +1004,13 @@ describe('EmendChatView edit target control', () => {
 		if (context.inputEl) {
 			context.inputEl.value = 'Send using the visible mode';
 		}
-		const send = findElements(
-			contentEl,
-			(element) => element.tagName === 'button' && element.textContent === 'Send',
-		)[0];
+		const send = findSubmissionButton(contentEl, 'Send');
 		send?.dispatch('click');
 		await vi.waitFor(() => expect(requestSelectionEdit).toHaveBeenCalledOnce());
 		await vi.waitFor(() => expect(context.isSending).toBe(false));
 
 		expect(requestChatCompletion).not.toHaveBeenCalled();
-		expect(activeModeIndex()).toBe(1);
-	});
-
-	it('clears the selector element reference on close', async () => {
-		const { context } = createEditTargetView();
-		context.editTargetSelectEl = new FakeElement('select');
-
-		await viewPrototype.onClose.call(context);
-
-		expect(context.editTargetSelectEl).toBeNull();
-	});
-});
-
-describe('EmendChatView edit target styles', () => {
-	it('keeps the compact control readable and its disabled state native-looking', () => {
-		const control = getCssRule('.emend-chat-edit-target');
-		const select = getCssRule('.emend-chat-edit-target select');
-		const disabled = getCssRule('.emend-chat-edit-target select:disabled');
-
-		expect(control).toContain('min-width: 0;');
-		expect(control).toContain('color: var(--text-muted);');
-		expect(select).toContain('min-width: 0;');
-		expect(disabled).toContain('color: var(--text-muted);');
-		expect(disabled).toContain('cursor: not-allowed;');
-	});
-
-	it('allows the target selector to wrap within narrow sidebars', () => {
-		expect(getCssRule('@media (max-width: 400px)')).not.toBe('');
-		expect(getCssRule('.emend-chat-edit-target select')).toContain('max-width: 100%;');
+		expect(findWritingTrigger(contentEl)?.textContent).toBe('Edit · Selection');
 	});
 });
 
@@ -1769,13 +1945,19 @@ describe('EmendChatView session runtime', () => {
 		}
 		const stoppedSubmission = viewPrototype.submitPrompt.call(fixture.context);
 		await vi.waitFor(() => expect(fixture.conversationStore.appendReadyMessage).toHaveBeenCalledTimes(2));
-		fixture.context.activeController?.abort();
+		const stop = findSubmissionButton(fixture.contentEl, 'Stop');
+		stop?.dispatch('click');
+		expect(fixture.context.isStopping).toBe(true);
+		fixture.render();
+		expect(findSubmissionButton(fixture.contentEl, 'Stopping')?.disabled).toBe(true);
 		finalSave.resolve();
 		await stoppedSubmission;
 
 		expect(fixture.context.activeRequest).toBeNull();
 		expect(fixture.context.activeController).toBeNull();
 		expect(fixture.context.isSending).toBe(false);
+		expect(fixture.context.isStopping).toBe(false);
+		expect(findSubmissionButton(fixture.contentEl, 'Send')?.disabled).toBe(false);
 		expect(fixture.context.messages[1]).toMatchObject({
 			role: 'assistant',
 			status: 'ready',
@@ -2249,10 +2431,7 @@ describe('EmendChatView session management', () => {
 			}
 			expect(findSessionSelect(fixture.contentEl)?.disabled).toBe(true);
 			if (state === 'isSending') {
-				const stop = findElements(
-					fixture.contentEl,
-					(element) => element.tagName === 'button' && element.textContent === 'Stop',
-				)[0];
+				const stop = findSubmissionButton(fixture.contentEl, 'Stop');
 				expect(stop?.disabled).toBe(false);
 			}
 		}
@@ -2283,7 +2462,6 @@ describe('EmendChatView session management', () => {
 		const fixture = createEditTargetView();
 		await viewPrototype.refreshTargetNote.call(fixture.context);
 		const orderedClasses = [
-			'emend-chat-mode-selector',
 			'emend-context-capacity',
 			'emend-chat-session-controls',
 			'emend-chat-messages',
@@ -3200,10 +3378,11 @@ describe('EmendChatView keyboard shortcuts', () => {
 			inputEl: { value: 'Keep this draft' } as { value: string } | null,
 			isSending: true,
 			activeController: { abort: vi.fn() },
-			render: vi.fn(() => {
-				context.inputEl = { value: '' };
+			render: vi.fn((composerRestore?: ComposerRestoreTestState) => {
+				context.inputEl = { value: composerRestore?.draft ?? '' };
 			}),
 		};
+		Object.setPrototypeOf(context, EmendChatView.prototype);
 
 		viewPrototype.setMode.call(context, 'edit');
 
@@ -3335,6 +3514,7 @@ class FakeElement {
 		createElement: () => new FakeElement(),
 		addEventListener: () => undefined,
 		removeEventListener: () => undefined,
+		activeElement: null as FakeElement | null,
 	};
 	readonly style: Record<string, string> = {};
 	className = '';
@@ -3349,8 +3529,15 @@ class FakeElement {
 	clientHeight = 0;
 	isConnected = true;
 	removed = false;
+	focused = false;
+	selectionStart = 0;
+	selectionEnd = 0;
 
 	constructor(readonly tagName = 'div') {}
+
+	get lastElementChild(): FakeElement | null {
+		return this.children.at(-1) ?? null;
+	}
 
 	createDiv(options?: string | { cls?: string; text?: string }) {
 		return this.append('div', options);
@@ -3380,7 +3567,42 @@ class FakeElement {
 	}
 
 	getBoundingClientRect() {
-		return { top: 0 };
+		return { top: 0, bottom: 0, left: 0 };
+	}
+
+	insertBefore(child: FakeElement, reference: FakeElement | null) {
+		const existingIndex = this.children.indexOf(child);
+		if (existingIndex >= 0) {
+			this.children.splice(existingIndex, 1);
+		}
+		const referenceIndex = reference ? this.children.indexOf(reference) : -1;
+		if (referenceIndex >= 0) {
+			this.children.splice(referenceIndex, 0, child);
+		} else {
+			this.children.push(child);
+		}
+		return child;
+	}
+
+	setAttribute(name: string, value: string) {
+		this.attributes[name] = value;
+	}
+
+	setSelectionRange(start: number, end: number) {
+		this.selectionStart = start;
+		this.selectionEnd = end;
+	}
+
+	focus() {
+		this.focused = true;
+		this.ownerDocument.activeElement = this;
+	}
+
+	blur() {
+		this.focused = false;
+		if (this.ownerDocument.activeElement === this) {
+			this.ownerDocument.activeElement = null;
+		}
 	}
 
 	replaceWith(replacement: FakeElement) {
@@ -4565,7 +4787,7 @@ describe('EmendChatView completion relayout and unread pages', () => {
 
 
 describe('EmendChatView compact Web disclosure', () => {
-	it('keeps the shared disclosure on the Web selector tooltip without requests or a large bottom block', async () => {
+	it('keeps the shared disclosure on the writing trigger tooltip without requests or a large bottom block', async () => {
 		const contentEl = new FakeElement();
 		const requestChatCompletion = vi.fn();
 		const context = {
@@ -4609,19 +4831,14 @@ describe('EmendChatView compact Web disclosure', () => {
 		const disclosure = findElements(contentEl, (element) =>
 			element.className.split(' ').includes('emend-chat-web-disclosure')
 		);
-		const webSelect = findElements(contentEl, (element) =>
-			element.tagName === 'select' && element.attributes['aria-label'] === 'Web search mode'
-		)[0];
+		const writingTrigger = findWritingTrigger(contentEl);
 		expect(disclosure).toHaveLength(0);
-		expect(webSelect?.title).toContain('note context');
-		expect(webSelect?.title).toContain('stored locally with ready chats');
-		expect(webSelect?.title).toContain('Each web call uses an AI extraction reader that receives your current question and extraction goal, may use up to 6 extractor rounds, a verifier, and up to 2 refine rounds, and may incur separate charges. A transient Search or Fetch failure may be retried once. Failed calls also count toward the configured call limit.');
-		if (webSelect) {
-			webSelect.value = 'review';
-			webSelect.dispatch('change');
-			webSelect.value = 'auto';
-			webSelect.dispatch('change');
-		}
+		expect(writingTrigger?.title).toContain('note context');
+		expect(writingTrigger?.title).toContain('stored locally with ready chats');
+		expect(writingTrigger?.title).toContain('Each web call uses an AI extraction reader that receives your current question and extraction goal, may use up to 6 extractor rounds, a verifier, and up to 2 refine rounds, and may incur separate charges. A transient Search or Fetch failure may be retried once. Failed calls also count toward the configured call limit.');
+		chooseWritingMenuItem(contentEl, 'Web Review');
+		chooseWritingMenuItem(contentEl, 'Web Auto');
+		expect(context.webSearchMode).toBe('auto');
 		expect(requestChatCompletion).not.toHaveBeenCalled();
 	});
 });
@@ -4869,7 +5086,8 @@ function createCapacityView(options: CapacityViewOptions = {}) {
 		activeModelEl: null,
 		editTargetChoice: 'auto' as 'auto' | 'full-note' | 'selection',
 		displayedEditTarget: 'full-note' as 'full-note' | 'selection',
-		editTargetSelectEl: null as FakeElement | null,
+		composerControls: null,
+		isStopping: false,
 		webReviewModal: null,
 		pendingRenderFrame: null,
 		pendingMarkdownRenders: 0,
@@ -4878,7 +5096,6 @@ function createCapacityView(options: CapacityViewOptions = {}) {
 		followLatestMessages: true,
 		renderGeneration: 0,
 		cancelPendingRender: vi.fn(),
-		sendButtonEl: null as FakeElement | null,
 		quickActionButtons: [] as Array<{ action: { id: string; prompt: string }; button: FakeElement }>,
 		quickActionCapacityMessages: new Map<string, string>(),
 		capacityDisplay: null,
@@ -4890,7 +5107,9 @@ function createCapacityView(options: CapacityViewOptions = {}) {
 		scheduleMessageRender: vi.fn(),
 	};
 	Object.setPrototypeOf(context, EmendChatView.prototype);
-	const render = vi.fn(() => viewPrototype.render.call(context));
+	const render = vi.fn((composerRestore?: ComposerRestoreTestState) =>
+		viewPrototype.render.call(context, composerRestore)
+	);
 	Object.assign(context, { render });
 
 	const history = () => viewPrototype.toProviderHistory.call(context);
@@ -4997,10 +5216,7 @@ function findCapacitySummary(contentEl: FakeElement): FakeElement | undefined {
 }
 
 function findSendButton(contentEl: FakeElement): FakeElement | undefined {
-	return findElements(
-		contentEl,
-		(element) => element.tagName === 'button' && element.textContent === 'Send',
-	)[0];
+	return findSubmissionButton(contentEl, 'Send');
 }
 
 function findQuickActionButton(
@@ -5015,22 +5231,6 @@ function findQuickActionButton(
 
 function noticeMessages(): string[] {
 	return (Notice as unknown as { messages: string[] }).messages;
-}
-
-function findWebSelect(contentEl: FakeElement): FakeElement | undefined {
-	return findElements(
-		contentEl,
-		(element) =>
-			element.tagName === 'select' &&
-			element.attributes['aria-label'] === 'Web search mode',
-	)[0];
-}
-
-function findActiveModeButtonIndex(contentEl: FakeElement): number {
-	return findElements(
-		contentEl,
-		(element) => element.className.split(' ').includes('emend-chat-mode-button'),
-	).findIndex((element) => element.className.split(' ').includes('is-active'));
 }
 
 function keydownEvent(overrides: Partial<ShortcutEvent> = {}) {
@@ -5054,7 +5254,7 @@ describe('EmendChatView draft capacity estimate', () => {
 		vi.restoreAllMocks();
 	});
 
-	it('places the compact bar between mode and session controls, never in the composer', async () => {
+	it('places the compact bar between the header and session controls, never in the composer', async () => {
 		const fixture = createCapacityView({
 			capacity: { contextWindowTokens: 1000, outputReserveTokens: 100 },
 		});
@@ -5063,8 +5263,8 @@ describe('EmendChatView draft capacity estimate', () => {
 
 		const root = findCapacityRoot(fixture.contentEl);
 		const rootIndex = fixture.contentEl.children.indexOf(root as FakeElement);
-		const modeIndex = fixture.contentEl.children.findIndex((element) =>
-			element.className.split(' ').includes('emend-chat-mode-selector'),
+		const headerIndex = fixture.contentEl.children.findIndex((element) =>
+			element.className.split(' ').includes('emend-chat-header'),
 		);
 		const sessionIndex = fixture.contentEl.children.findIndex((element) =>
 			element.className.split(' ').includes('emend-chat-session-controls'),
@@ -5076,7 +5276,7 @@ describe('EmendChatView draft capacity estimate', () => {
 			element.className.split(' ').includes('emend-chat-composer'),
 		);
 		expect(root).toBeDefined();
-		expect(rootIndex).toBe(modeIndex + 1);
+		expect(rootIndex).toBe(headerIndex + 1);
 		expect(sessionIndex).toBe(rootIndex + 1);
 		expect(messagesIndex).toBe(sessionIndex + 1);
 		expect(rootIndex).toBeGreaterThan(0);
@@ -5397,11 +5597,7 @@ describe('EmendChatView draft capacity estimate', () => {
 		expect(fixture.captureSelectionEditTarget).toHaveBeenCalled();
 		expect(fixture.captureChatContext).not.toHaveBeenCalled();
 
-		const select = findEditTargetSelect(fixture.contentEl);
-		if (select) {
-			select.value = 'full-note';
-			select.dispatch('change');
-		}
+		chooseWritingMenuItem(fixture.contentEl, 'Edit · Full note');
 
 		expect(fixture.context.displayedEditTarget).toBe('full-note');
 		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
@@ -5547,11 +5743,7 @@ describe('EmendChatView draft capacity estimate', () => {
 		expect(fixture.askEstimate(draft).overCapacity).toBe(true);
 		expect(findSendButton(fixture.contentEl)?.disabled).toBe(true);
 
-		const webSelect = findWebSelect(fixture.contentEl);
-		if (webSelect) {
-			webSelect.value = 'review';
-			webSelect.dispatch('change');
-		}
+		chooseWritingMenuItem(fixture.contentEl, 'Web Review');
 
 		expect(fixture.context.webSearchMode).toBe('review');
 		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
@@ -5641,11 +5833,11 @@ describe('EmendChatView draft capacity estimate', () => {
 		findQuickActionButton(fixture.contentEl, 'fix-grammar')?.dispatch('click');
 
 		expect(fixture.context.selectedMode).toBe('ask');
-		expect(findActiveModeButtonIndex(fixture.contentEl)).toBe(0);
-		expect(fixture.context.inputEl?.attributes.placeholder).toBe(
-			'Ask about the active note...',
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Chat');
+		expect(fixture.context.inputEl?.attributes.placeholder).toContain(
+			'Chat about the active note...',
 		);
-		expect(findWebSelect(fixture.contentEl)?.disabled).toBe(false);
+		expect(findWritingTrigger(fixture.contentEl)?.disabled).toBe(false);
 		expect(noticeMessages()).toContain(expectedBlockedNotice(fixEstimate));
 		expect(fixture.context.messages).toEqual([]);
 		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
@@ -5734,7 +5926,7 @@ describe('EmendChatView draft capacity estimate', () => {
 		findQuickActionButton(fixture.contentEl, 'fix-grammar')?.dispatch('click');
 
 		expect(fixture.context.selectedMode).toBe('edit');
-		expect(findActiveModeButtonIndex(fixture.contentEl)).toBe(1);
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Full note');
 		expect(fixture.context.inputEl?.value).toBe('Preserve this draft');
 		expect(noticeMessages()).toContain(expectedBlockedNotice(largeEstimate));
 		expect(fixture.context.messages).toEqual([]);

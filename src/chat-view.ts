@@ -4,7 +4,6 @@ import {
 	Notice,
 	Platform,
 	Scope,
-	setIcon,
 	WorkspaceLeaf,
 	type EventRef,
 } from 'obsidian';
@@ -17,9 +16,14 @@ import {
 	type ChatSession,
 } from './chat-sessions';
 import { ChatSessionControls } from './chat-session-controls';
+import {
+	ChatComposerControls,
+	type ComposerPermissionState,
+	type ComposerWritingChoice,
+} from './chat-composer-controls';
 import { EMEND_BUILD_ID } from './build-info';
 import type EmendPlugin from './main';
-import { getComposerShortcut, getDefaultShortcutLabels } from './chat-shortcuts';
+import { getComposerShortcut, getComposerShortcutLabels } from './chat-shortcuts';
 import {
 	buildFullNoteDraftEstimate,
 	buildReadOnlyDraftEstimate,
@@ -52,7 +56,6 @@ import type {
 	SelectionSnapshot,
 } from './types';
 import { WebSearchModal } from './web-search-modal';
-import { WEB_SEARCH_DISCLOSURE } from './web-search';
 import type {
 	WebActivityRecord,
 	WebSearchActivity,
@@ -72,9 +75,20 @@ function formatSearchWarning(failedSearches: number) {
 }
 
 const MODE_PLACEHOLDERS: Record<SelectableMode, string> = {
-	ask: 'Ask about the active note...',
-	edit: 'Edit the note or selection with CriticMarkup...',
+	ask: 'Chat about the active note...',
+	edit: 'Edit the note or selection...',
 };
+
+function getComposerPlaceholder(mode: SelectableMode, draft: string): string {
+	const base = MODE_PLACEHOLDERS[mode];
+	if (draft) {
+		return base;
+	}
+	const shortcuts = getComposerShortcutLabels(Platform.isMacOS)
+		.map((shortcut) => `${shortcut.keys} ${shortcut.action}`)
+		.join(' · ');
+	return `${base} ${shortcuts}`;
+}
 
 const CAPACITY_REFRESH_DEBOUNCE_MS = 150;
 
@@ -91,6 +105,13 @@ type CapturedDraftTarget =
 	| { type: 'full-note'; mode: 'edit'; context: RequestContext }
 	| { type: 'selection'; mode: 'edit'; target: SelectionEditTarget }
 	| { type: 'read-only'; mode: Exclude<Mode, 'edit'>; context: RequestContext };
+
+interface ComposerRestoreState {
+	draft: string;
+	selectionStart: number;
+	selectionEnd: number;
+	focus: boolean;
+}
 
 export interface ChatIdentity {
 	notePath: string;
@@ -125,13 +146,14 @@ export class EmendChatView extends ItemView {
 	private responseStartMessageId: string | null = null;
 	private inputEl: HTMLTextAreaElement | null = null;
 	private activeModelEl: HTMLElement | null = null;
+	private composerControls: ChatComposerControls | null = null;
 	private isSending = false;
+	private isStopping = false;
 	private isThreadLoading = false;
 	private selectedMode: SelectableMode;
 	private webSearchMode: WebSearchMode = 'off';
 	private editTargetChoice: EditTargetChoice = 'auto';
 	private displayedEditTarget: ResolvedEditTarget = 'full-note';
-	private editTargetSelectEl: HTMLSelectElement | null = null;
 	private webReviewModal: WebSearchModal | null = null;
 	private activeController: AbortController | null = null;
 	private pendingRenderFrame: number | null = null;
@@ -147,7 +169,6 @@ export class EmendChatView extends ItemView {
 	private capacityDisplay: ContextCapacityDisplay | null = null;
 	private capacityRefreshTimer: number | null = null;
 	private unsubscribeAdditionalNotes: (() => void) | null = null;
-	private sendButtonEl: HTMLButtonElement | null = null;
 	private quickActionButtons: Array<{
 		action: QuickAction;
 		button: HTMLButtonElement;
@@ -210,11 +231,11 @@ export class EmendChatView extends ItemView {
 		this.sessionControls = null;
 		this.capacityDisplay?.destroy();
 		this.capacityDisplay = null;
-		this.sendButtonEl = null;
+		this.composerControls?.destroy();
+		this.composerControls = null;
 		this.quickActionButtons = [];
 		this.draftCapacityBlocked = false;
 		this.inputEl = null;
-		this.editTargetSelectEl = null;
 		this.contentEl.empty();
 	}
 
@@ -280,18 +301,77 @@ export class EmendChatView extends ItemView {
 	}
 
 	setMode(mode: SelectableMode) {
-		if (!isSelectableMode(mode)) {
+		if (!isSelectableMode(mode) || this.closed) {
 			return;
 		}
-		const draft = this.inputEl?.value ?? '';
-		this.selectedMode = mode;
-		this.render();
-		if (this.inputEl) {
-			this.inputEl.value = draft;
+		const restoreFocus = this.inputEl?.ownerDocument?.activeElement === this.inputEl;
+		this.renderComposerChange(() => {
+			this.selectedMode = mode;
+		}, restoreFocus);
+	}
+
+	private setWritingChoice(choice: ComposerWritingChoice) {
+		if (this.closed || this.isSending || this.isThreadLoading || this.isSessionMutating) {
+			return;
 		}
-		if (this.capacityDisplay) {
-			this.refreshDraftEstimate(draft);
+		this.renderComposerChange(() => {
+			this.selectedMode = choice.mode;
+			if (choice.mode === 'edit') {
+				this.editTargetChoice = choice.editTarget;
+			}
+		}, true);
+	}
+
+	private setWebSearchMode(mode: WebSearchMode) {
+		if (
+			this.closed ||
+			this.selectedMode === 'edit' ||
+			this.isSending ||
+			this.isThreadLoading ||
+			this.isSessionMutating
+		) {
+			return;
 		}
+		this.renderComposerChange(() => {
+			this.webSearchMode = mode;
+		}, true);
+	}
+
+	private stopActiveRequest() {
+		if (this.closed || !this.isSending || this.isStopping) {
+			return;
+		}
+		this.isStopping = true;
+		this.activeController?.abort();
+		this.updateComposerControls();
+	}
+
+	private renderComposerChange(mutate: () => void, restoreFocus: boolean) {
+		const input = this.inputEl;
+		const restore: ComposerRestoreState = {
+			draft: input?.value ?? '',
+			selectionStart: input?.selectionStart ?? input?.value.length ?? 0,
+			selectionEnd: input?.selectionEnd ?? input?.value.length ?? 0,
+			focus: restoreFocus,
+		};
+		mutate();
+		this.render(restore);
+	}
+
+	private composerState(): ComposerPermissionState {
+		return {
+			mode: this.selectedMode,
+			editTarget: this.displayedEditTarget,
+			webSearchMode: this.webSearchMode,
+			disabled: this.isSending || this.isThreadLoading || this.isSessionMutating,
+			sendDisabled: this.isThreadLoading || this.isSessionMutating || this.draftCapacityBlocked,
+			isSending: this.isSending,
+			isStopping: this.isStopping,
+		};
+	}
+
+	private updateComposerControls() {
+		this.composerControls?.update(this.composerState());
 	}
 
 	async refreshTargetNote() {
@@ -659,6 +739,7 @@ export class EmendChatView extends ItemView {
 		this.activeRequest = null;
 		this.activeController = null;
 		this.isSending = false;
+		this.isStopping = false;
 		controller?.abort();
 		this.webReviewModal?.close();
 		this.webReviewModal = null;
@@ -697,16 +778,14 @@ export class EmendChatView extends ItemView {
 	}
 
 	private refreshEditTargetControl() {
-		if (!this.editTargetSelectEl) {
+		if (!this.composerControls) {
 			return;
 		}
-		const editTarget = resolveEditTarget(
+		this.displayedEditTarget = resolveEditTarget(
 			this.editTargetChoice,
 			this.plugin.hasUsableSelection(),
 		);
-		this.displayedEditTarget = editTarget;
-		this.editTargetSelectEl.value = editTarget;
-		this.editTargetSelectEl.disabled = this.isSending || this.isThreadLoading || this.isSessionMutating;
+		this.updateComposerControls();
 	}
 
 	private refreshDraftEstimate(prompt = this.inputEl?.value ?? '') {
@@ -793,11 +872,7 @@ export class EmendChatView extends ItemView {
 		actionTarget: DraftCapacityTarget | undefined,
 		history: ProviderHistoryMessage[],
 	) {
-		if (this.sendButtonEl && !this.isSending) {
-			this.sendButtonEl.disabled = this.isThreadLoading ||
-				this.isSessionMutating ||
-				this.draftCapacityBlocked;
-		}
+		this.updateComposerControls();
 		const quickActionsDisabled = this.isSessionMutating || areQuickActionsDisabled({
 			notePath: this.notePath,
 			isSending: this.isSending,
@@ -852,7 +927,7 @@ export class EmendChatView extends ItemView {
 		}
 	}
 
-	private render() {
+	private render(composerRestore?: ComposerRestoreState) {
 		const previousScrollTop = this.messagesEl?.scrollTop ?? 0;
 		const wasFollowing = this.followLatestMessages;
 		this.renderGeneration++;
@@ -866,7 +941,8 @@ export class EmendChatView extends ItemView {
 		this.sessionControls = null;
 		this.capacityDisplay?.destroy();
 		this.capacityDisplay = null;
-		this.sendButtonEl = null;
+		this.composerControls?.destroy();
+		this.composerControls = null;
 		this.quickActionButtons = [];
 		const { contentEl } = this;
 		contentEl.empty();
@@ -876,44 +952,10 @@ export class EmendChatView extends ItemView {
 		const titleRowEl = headerEl.createDiv('emend-chat-title-row');
 		titleRowEl.createDiv({ cls: 'emend-chat-title', text: 'Emend' });
 		titleRowEl.createSpan({ cls: 'emend-chat-build', text: EMEND_BUILD_ID });
-		const shortcutsEl = headerEl.createDiv('emend-chat-shortcuts');
-		const modeGroupEl = shortcutsEl.createDiv('emend-chat-shortcut-group');
-		modeGroupEl.createSpan({
-			cls: 'emend-chat-shortcuts-label',
-			text: 'Default shortcuts',
-		});
-		const composerGroupEl = shortcutsEl.createDiv('emend-chat-shortcut-group');
-		for (const [index, shortcut] of getDefaultShortcutLabels(Platform.isMacOS).entries()) {
-			const groupEl = index < 2 ? modeGroupEl : composerGroupEl;
-			const itemEl = groupEl.createSpan({ cls: 'emend-chat-shortcut' });
-			itemEl.createEl('kbd', { text: shortcut.keys });
-			itemEl.createSpan({ text: shortcut.action });
-		}
 		headerEl.createDiv({
 			cls: 'emend-chat-context',
 			text: this.plugin.getActiveNoteLabel(),
 		});
-
-		const modeSelectorEl = contentEl.createDiv('emend-chat-mode-selector');
-		for (const mode of MODES) {
-			if (!isSelectableMode(mode.id)) {
-				continue;
-			}
-			const selectableMode = mode.id;
-			const button = modeSelectorEl.createEl('button', {
-				cls: `emend-chat-mode-button${this.selectedMode === mode.id ? ' is-active' : ''}`,
-				attr: {
-					'aria-pressed': String(this.selectedMode === mode.id),
-					title: mode.label,
-				},
-			});
-			setIcon(button, mode.icon);
-			button.createSpan({ text: mode.label });
-			button.disabled = this.isSending || this.isSessionMutating;
-			button.addEventListener('click', () => {
-				this.setMode(selectableMode);
-			});
-		}
 
 		this.capacityDisplay = new ContextCapacityDisplay(contentEl);
 		this.sessionControls = new ChatSessionControls(contentEl, {
@@ -980,100 +1022,63 @@ export class EmendChatView extends ItemView {
 		);
 
 		const composerEl = contentEl.createDiv('emend-chat-composer');
+		const draft = composerRestore?.draft ?? this.currentDraft();
 		this.inputEl = composerEl.createEl('textarea', {
 			cls: 'emend-chat-input',
 			attr: {
-				placeholder: MODE_PLACEHOLDERS[this.selectedMode],
+				placeholder: getComposerPlaceholder(this.selectedMode, draft),
 				rows: '4',
+				'aria-label': this.selectedMode === 'edit' ? 'Edit prompt' : 'Chat prompt',
+				'aria-keyshortcuts': Platform.isMacOS
+					? 'Enter Meta+Enter Shift+Enter'
+					: 'Enter Control+Enter Shift+Enter',
 			},
 		});
-		this.inputEl.value = this.currentDraft();
+		this.inputEl.value = draft;
 		this.inputEl.disabled = this.isSending || this.isThreadLoading || this.isSessionMutating;
 		this.inputEl.addEventListener('keydown', (event) => {
 			this.handleComposerKeydown(event);
 		});
 		this.inputEl.addEventListener('input', () => {
-			this.refreshDraftEstimate();
+			const currentDraft = this.inputEl?.value ?? '';
+			this.inputEl?.setAttribute(
+				'placeholder',
+				getComposerPlaceholder(this.selectedMode, currentDraft),
+			);
+			this.refreshDraftEstimate(currentDraft);
 		});
 
 		const actionsEl = composerEl.createDiv('emend-chat-composer-actions');
-		const webLabelEl = actionsEl.createEl('label', { cls: 'emend-chat-web-mode' });
-		webLabelEl.createSpan({ text: 'Web' });
-		const webSelectEl = webLabelEl.createEl('select', {
-			attr: { 'aria-label': 'Web search mode' },
-		});
-		webSelectEl.title = WEB_SEARCH_DISCLOSURE;
-		for (const [value, label] of [
-			['off', 'Off'],
-			['review', 'Review'],
-			['auto', 'Auto'],
-		] as const) {
-			webSelectEl.createEl('option', { text: label, attr: { value } });
-		}
-		webSelectEl.value = this.webSearchMode ?? 'off';
-		webSelectEl.disabled = this.isSending || this.isThreadLoading || this.isSessionMutating || this.selectedMode === 'edit';
-		webSelectEl.addEventListener('change', () => {
-			const value = webSelectEl.value;
-			if (value !== 'off' && value !== 'review' && value !== 'auto') {
-				return;
-			}
-			const draft = this.inputEl?.value ?? '';
-			this.webSearchMode = value;
-			this.render();
-			if (this.inputEl) {
-				this.inputEl.value = draft;
-			}
-			if (this.capacityDisplay) {
-				this.refreshDraftEstimate(draft);
-			}
-		});
-		const editTargetLabelEl = actionsEl.createEl('label', {
-			cls: 'emend-chat-edit-target',
-		});
-		editTargetLabelEl.createSpan({ text: 'Edit target' });
-		this.editTargetSelectEl = editTargetLabelEl.createEl('select', {
-			attr: { 'aria-label': 'Edit target' },
-		});
-		// eslint-disable-next-line obsidianmd/ui/sentence-case -- Required Task 2 tooltip.
-		this.editTargetSelectEl.title = 'Applies to Edit and quick actions.';
-		for (const [value, label] of [
-			['full-note', 'Full note'],
-			['selection', 'Selection'],
-		] as const) {
-			this.editTargetSelectEl.createEl('option', { text: label, attr: { value } });
-		}
-		this.editTargetSelectEl.addEventListener('change', () => {
-			const value = this.editTargetSelectEl?.value;
-			if (value !== 'full-note' && value !== 'selection') {
-				return;
-			}
-			this.editTargetChoice = value;
-			this.refreshEditTargetControl();
-			this.refreshDraftEstimate();
-		});
 		this.activeModelEl = actionsEl.createDiv({
 			cls: 'emend-chat-active-model',
 			text: this.getActiveModelLabel(),
 		});
-		const actionButton = actionsEl.createEl('button', {
-			cls: this.isSending
-				? 'emend-chat-secondary-button'
-				: 'emend-chat-primary-button',
-			text: this.isSending ? 'Stop' : 'Send',
-		});
-		actionButton.disabled = !this.isSending && this.isThreadLoading;
-		this.sendButtonEl = actionButton;
-		actionButton.addEventListener('click', () => {
-			if (this.isSending) {
-				this.activeController?.abort();
-				actionButton.disabled = true;
-				actionButton.textContent = 'Stopping...';
-			} else {
+		this.composerControls = new ChatComposerControls({
+			onWritingChoice: (choice) => {
+				this.setWritingChoice(choice);
+			},
+			onWebSearchMode: (mode) => {
+				this.setWebSearchMode(mode);
+			},
+			onSend: () => {
 				void this.submitPrompt();
-			}
+			},
+			onStop: () => {
+				this.stopActiveRequest();
+			},
 		});
+		this.composerControls.render(actionsEl, this.composerState());
+		if (composerRestore && this.inputEl) {
+			this.inputEl.setSelectionRange(
+				composerRestore.selectionStart,
+				composerRestore.selectionEnd,
+			);
+			if (composerRestore.focus) {
+				this.inputEl.focus();
+			}
+		}
 		this.refreshEditTargetControl();
-		this.refreshDraftEstimate();
+		this.refreshDraftEstimate(draft);
 		this.pendingScrollRestore = { previousScrollTop, wasFollowing };
 		if (this.pendingMarkdownRenders === 0) {
 			this.settleMarkdownRender(this.renderGeneration);
@@ -1621,6 +1626,7 @@ export class EmendChatView extends ItemView {
 					this.activeController = null;
 				}
 				this.isSending = false;
+				this.isStopping = false;
 				if (this.isCurrent(identity)) {
 					if (loadingMessage.status === 'ready') {
 						this.responseStartMessageId = loadingMessage.id;
