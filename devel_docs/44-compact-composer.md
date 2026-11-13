@@ -17,7 +17,7 @@ No PR 2/3 behavior or release-metadata change is included or claimed.
 
 ## Preserved safety and privacy boundaries
 
-Chat, menu, Related notes, session-management, and lifecycle interactions make no provider request and no note write. Opening the picker, selecting, removing, or clearing Related notes reads no additional-note content; submission resolves and reads selected content freshly. With path sharing off, the provider prompt uses generic numbered labels without additional-note basenames or vault paths.
+Compact-control, menu, Related-notes, session-management, and lifecycle interactions make no provider request and no note write. Chat submissions are writer-free. Opening the picker, selecting, removing, or clearing Related notes reads no additional-note content; submission resolves and reads selected content freshly. With path sharing off, the provider prompt uses generic numbered labels without additional-note basenames or vault paths.
 
 Full-note Edit retains exactly one guarded `vault.modify` for a changed valid candidate and no native selection replacement. Selection Edit retains exactly one native `editor.replaceRange`, no plugin vault write, exact native undo/redo, and reviewable CriticMarkup. Empty, whitespace-only, or vanished displayed-Selection captures fail closed with no request, message, save, writer call, or Full note fallback. Additional-note-only anchors remain invalid.
 
