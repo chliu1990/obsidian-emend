@@ -52,7 +52,7 @@ import type {
 	SelectionSnapshot,
 } from './types';
 import { WebSearchModal } from './web-search-modal';
-import { WEB_EXTRACTION_DISCLOSURE } from './web-search';
+import { WEB_SEARCH_DISCLOSURE } from './web-search';
 import type {
 	WebActivityRecord,
 	WebSearchActivity,
@@ -62,7 +62,6 @@ import type {
 } from './web-search';
 
 export const EMEND_CHAT_VIEW_TYPE = 'emend-chat-view';
-export const WEB_SEARCH_DISCLOSURE = `DeepSeek may generate search queries and fetch URLs from note context. Review asks before each batch; Auto runs directly. Successful search/fetch calls may be billed separately. Queries, URLs, and outcomes are stored locally with ready chats. ${WEB_EXTRACTION_DISCLOSURE}`;
 
 function formatExtractionWarning(failedExtractions: number) {
 	return `Emend could not extract information from ${failedExtractions} web ${failedExtractions === 1 ? 'query' : 'queries'}. The answer may be incomplete.`;

@@ -18,6 +18,13 @@ export interface ShortcutLabel {
 	action: string;
 }
 
+export function getComposerShortcutLabels(isMacOS: boolean): ShortcutLabel[] {
+	return [
+		{ keys: isMacOS ? 'Enter / ⌘ Enter' : 'Enter / Ctrl+Enter', action: 'to send' },
+		{ keys: isMacOS ? 'Shift Enter' : 'Shift+Enter', action: 'for a newline' },
+	];
+}
+
 export function getDefaultShortcutLabels(isMacOS: boolean): ShortcutLabel[] {
 	return [
 		{ keys: isMacOS ? '⌘⇧A' : 'Ctrl+Shift+A', action: 'Ask' },

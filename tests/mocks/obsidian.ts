@@ -45,6 +45,74 @@ export const Platform = { isMacOS: true };
 
 export function setIcon(): void {}
 
+export class MenuItem {
+	title = '';
+	checked: boolean | null = null;
+	disabled = false;
+	clickHandler: (event: MouseEvent | KeyboardEvent) => unknown = () => undefined;
+
+	setTitle(title: string | DocumentFragment): this {
+		this.title = typeof title === 'string' ? title : title.textContent ?? '';
+		return this;
+	}
+
+	setChecked(checked: boolean | null): this {
+		this.checked = checked;
+		return this;
+	}
+
+	setDisabled(disabled: boolean): this {
+		this.disabled = disabled;
+		return this;
+	}
+
+	onClick(callback: (event: MouseEvent | KeyboardEvent) => unknown): this {
+		this.clickHandler = callback;
+		return this;
+	}
+}
+
+export class Menu {
+	static readonly instances: Menu[] = [];
+	readonly items: Array<MenuItem | 'separator'> = [];
+	position: { x: number; y: number } | null = null;
+	shownDocument: Document | undefined;
+	hideCalls = 0;
+	onHideCallback: () => unknown = () => undefined;
+
+	constructor() {
+		Menu.instances.push(this);
+	}
+
+	addItem(callback: (item: MenuItem) => unknown): this {
+		const item = new MenuItem();
+		this.items.push(item);
+		callback(item);
+		return this;
+	}
+
+	addSeparator(): this {
+		this.items.push('separator');
+		return this;
+	}
+
+	showAtPosition(position: { x: number; y: number }, doc?: Document): this {
+		this.position = position;
+		this.shownDocument = doc;
+		return this;
+	}
+
+	hide(): this {
+		this.hideCalls++;
+		this.onHideCallback();
+		return this;
+	}
+
+	onHide(callback: () => unknown): void {
+		this.onHideCallback = callback;
+	}
+}
+
 export class TFile {
 	path = '';
 }

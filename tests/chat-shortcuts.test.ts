@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	getComposerShortcut,
+	getComposerShortcutLabels,
 	getDefaultShortcutLabels,
 	getModeShortcut,
 	type ShortcutEvent,
@@ -80,6 +81,22 @@ describe('mode shortcuts', () => {
 		{ key: 'x', metaKey: true, shiftKey: true },
 	])('ignores missing, conflicting, or unrelated mode modifiers: %o', (modifiers) => {
 		expect(getModeShortcut(shortcutEvent(modifiers))).toBeNull();
+	});
+});
+
+describe('composer shortcut labels', () => {
+	it('lists only send and newline hints for macOS', () => {
+		expect(getComposerShortcutLabels(true)).toEqual([
+			{ keys: 'Enter / ⌘ Enter', action: 'to send' },
+			{ keys: 'Shift Enter', action: 'for a newline' },
+		]);
+	});
+
+	it('lists only send and newline hints for Windows and Linux', () => {
+		expect(getComposerShortcutLabels(false)).toEqual([
+			{ keys: 'Enter / Ctrl+Enter', action: 'to send' },
+			{ keys: 'Shift+Enter', action: 'for a newline' },
+		]);
 	});
 });
 
