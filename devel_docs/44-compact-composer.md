@@ -104,7 +104,7 @@ The following ignored images from `test_vault/emend-selection-chat-verify/eviden
 - `pr1-edit-selection-after.png`: **Edit · Selection**, all three quick actions, preserved draft, read-only model.
 - `pr1-edit-full-note-before.png`: Selection checked before the change and all Web items disabled in Edit.
 - `pr1-edit-full-note-after.png`: **Edit · Full note** with all quick actions and the same compact layout.
-- `12-narrow-sidebar-240.png`: actual 240 CSS px sidebar with the Full note trigger, Related notes, quick actions, composer, read-only model, and Send inside the visible bounds; the existing Track Changes notice does not indicate a layout failure.
+- `12-narrow-sidebar-240-live.png`: actual 240 CSS px sidebar with the Full note trigger, Related notes, quick actions, composer, read-only model, and Send inside the visible bounds; the existing Track Changes notice does not indicate a layout failure.
 
 ## Verification limits and concerns
 
