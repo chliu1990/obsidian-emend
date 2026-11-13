@@ -35,7 +35,7 @@ import {
 	type EditTargetChoice,
 	type ResolvedEditTarget,
 } from './edit-target';
-import { MODES } from './mode';
+import { isSelectableMode, MODES, type SelectableMode } from './mode';
 import {
 	areQuickActionsDisabled,
 	QUICK_ACTIONS,
@@ -72,11 +72,9 @@ function formatSearchWarning(failedSearches: number) {
 	return `Emend could not complete ${failedSearches} web ${failedSearches === 1 ? 'search' : 'searches'}. The answer may be incomplete.`;
 }
 
-const MODE_PLACEHOLDERS: Record<Mode, string> = {
+const MODE_PLACEHOLDERS: Record<SelectableMode, string> = {
 	ask: 'Ask about the active note...',
 	edit: 'Edit the note or selection with CriticMarkup...',
-	discuss: 'Discuss an idea in the active note...',
-	brainstorm: 'Brainstorm ideas for the active note...',
 };
 
 const CAPACITY_REFRESH_DEBOUNCE_MS = 150;
@@ -130,7 +128,7 @@ export class EmendChatView extends ItemView {
 	private activeModelEl: HTMLElement | null = null;
 	private isSending = false;
 	private isThreadLoading = false;
-	private selectedMode: Mode;
+	private selectedMode: SelectableMode;
 	private webSearchMode: WebSearchMode = 'off';
 	private editTargetChoice: EditTargetChoice = 'auto';
 	private displayedEditTarget: ResolvedEditTarget = 'full-note';
@@ -163,7 +161,9 @@ export class EmendChatView extends ItemView {
 		private readonly plugin: EmendPlugin,
 	) {
 		super(leaf);
-		this.selectedMode = plugin.settings.defaultMode;
+		this.selectedMode = isSelectableMode(plugin.settings.defaultMode)
+			? plugin.settings.defaultMode
+			: 'ask';
 	}
 
 	getViewType() {
@@ -280,7 +280,10 @@ export class EmendChatView extends ItemView {
 		this.activeModelEl.textContent = this.getActiveModelLabel();
 	}
 
-	setMode(mode: Mode) {
+	setMode(mode: SelectableMode) {
+		if (!isSelectableMode(mode)) {
+			return;
+		}
 		const draft = this.inputEl?.value ?? '';
 		this.selectedMode = mode;
 		this.render();
@@ -894,6 +897,10 @@ export class EmendChatView extends ItemView {
 
 		const modeSelectorEl = contentEl.createDiv('emend-chat-mode-selector');
 		for (const mode of MODES) {
+			if (!isSelectableMode(mode.id)) {
+				continue;
+			}
+			const selectableMode = mode.id;
 			const button = modeSelectorEl.createEl('button', {
 				cls: `emend-chat-mode-button${this.selectedMode === mode.id ? ' is-active' : ''}`,
 				attr: {
@@ -905,7 +912,7 @@ export class EmendChatView extends ItemView {
 			button.createSpan({ text: mode.label });
 			button.disabled = this.isSending || this.isSessionMutating;
 			button.addEventListener('click', () => {
-				this.setMode(mode.id);
+				this.setMode(selectableMode);
 			});
 		}
 
@@ -1082,7 +1089,7 @@ export class EmendChatView extends ItemView {
 		});
 		emptyEl.createDiv({
 			cls: 'emend-chat-empty-body',
-			text: 'Ask, discuss, or brainstorm in chat. Edit applies validated CriticMarkup for review in Track Changes.',
+			text: 'Chat about the active note, or use Edit to apply validated CriticMarkup for review in Track Changes.',
 		});
 	}
 

@@ -15,7 +15,7 @@ const HISTORY_PERMISSION_PROMPT = 'History annotations describe earlier requests
 describe('mode definitions and message contracts', () => {
 	it('defines exactly four modes with unique IDs, labels, and icons', () => {
 		expect(MODES).toEqual([
-			{ id: 'ask', label: 'Ask', icon: 'message-circle', canWrite: false },
+			{ id: 'ask', label: 'Chat', icon: 'message-circle', canWrite: false },
 			{ id: 'edit', label: 'Edit', icon: 'pen-line', canWrite: true },
 			{ id: 'discuss', label: 'Discuss', icon: 'messages-square', canWrite: false },
 			{ id: 'brainstorm', label: 'Brainstorm', icon: 'lightbulb', canWrite: false },
@@ -23,6 +23,18 @@ describe('mode definitions and message contracts', () => {
 		expect(new Set(MODES.map((mode) => mode.id)).size).toBe(MODES.length);
 		expect(new Set(MODES.map((mode) => mode.label)).size).toBe(MODES.length);
 		expect(new Set(MODES.map((mode) => mode.icon)).size).toBe(MODES.length);
+	});
+
+	it.each([
+		['ask', true],
+		['edit', true],
+		['discuss', false],
+		['brainstorm', false],
+		['invalid', false],
+		[null, false],
+		[42, false],
+	] as const)('selects only Chat and Edit for new requests: %s', (value, expected) => {
+		expect(modeModule.isSelectableMode(value)).toBe(expected);
 	});
 
 	it('adds the selected mode to AI messages', () => {

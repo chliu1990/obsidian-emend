@@ -382,6 +382,7 @@ describe('EmendPlugin selection capture', () => {
 describe('EmendPlugin mode keyboard commands', () => {
 	interface RegisteredCommand {
 		id: string;
+		name: string;
 		hotkeys?: Array<{ modifiers: string[]; key: string }>;
 		callback?: () => void;
 	}
@@ -432,13 +433,15 @@ describe('EmendPlugin mode keyboard commands', () => {
 		};
 	}
 
-	it('registers Ask and Edit commands with platform Mod default hotkeys', async () => {
+	it('registers Chat and Edit commands with stable IDs, names, and platform Mod default hotkeys', async () => {
 		const { commands } = await createCommandHarness();
 
 		expect(commands.find((command) => command.id === 'emend:switch-to-ask-mode')).toMatchObject({
+			name: 'Switch to chat mode',
 			hotkeys: [{ modifiers: ['Mod', 'Shift'], key: 'A' }],
 		});
 		expect(commands.find((command) => command.id === 'emend:switch-to-edit-mode')).toMatchObject({
+			name: 'Switch to edit mode',
 			hotkeys: [{ modifiers: ['Mod', 'Shift'], key: 'E' }],
 		});
 	});

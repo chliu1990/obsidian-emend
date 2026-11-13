@@ -56,6 +56,18 @@ describe('normalizeSettings', () => {
 	});
 
 	it.each([
+		['ask', 'ask'],
+		['edit', 'edit'],
+		['discuss', 'ask'],
+		['brainstorm', 'ask'],
+		['invalid', 'ask'],
+		[null, 'ask'],
+		[42, 'ask'],
+	] as const)('normalizes new-request default mode %s to %s', (defaultMode, expected) => {
+		expect(normalizeSettings({ defaultMode }).defaultMode).toBe(expected);
+	});
+
+	it.each([
 		42,
 		'invalid',
 		[],
@@ -228,7 +240,7 @@ describe('normalizeSettings', () => {
 					contextCapacityInvalid: false,
 				},
 			},
-			defaultMode: 'discuss',
+			defaultMode: 'edit',
 			includeNotePathInContext: true,
 			smartSelectionContext: false,
 			maxContextCharacters: 24000,
@@ -808,6 +820,27 @@ function createModelSettingsTab() {
 function displaySettings(tab: EmendSettingTab) {
 	(tab as unknown as { display(): void }).display();
 }
+
+describe('EmendSettingTab default mode', () => {
+	beforeEach(() => {
+		settingInstances.length = 0;
+	});
+
+	it('offers exactly Chat and Edit and ignores non-selectable runtime values', async () => {
+		const { plugin, tab } = createModelSettingsTab();
+		displaySettings(tab);
+		const dropdown = latestDropdown('Default mode');
+
+		expect(dropdown.options).toEqual({ ask: 'Chat', edit: 'Edit' });
+		await dropdown.onChangeHandler('discuss');
+		expect(plugin.settings.defaultMode).toBe('ask');
+		expect(plugin.saveSettings).not.toHaveBeenCalled();
+
+		await dropdown.onChangeHandler('edit');
+		expect(plugin.settings.defaultMode).toBe('edit');
+		expect(plugin.saveSettings).toHaveBeenCalledOnce();
+	});
+});
 
 describe('EmendSettingTab chat history limit', () => {
 	beforeEach(() => {

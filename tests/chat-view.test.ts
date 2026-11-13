@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { MarkdownRenderer, Notice, Scope, TFile } from 'obsidian';
+import { MarkdownRenderer, Notice, Scope, TFile, WorkspaceLeaf } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AdditionalNotesStore } from '../src/additional-notes-store';
 import { deriveAutomaticTitle, type ChatSession } from '../src/chat-sessions';
@@ -468,6 +468,59 @@ function findEditTargetSelect(contentEl: FakeElement): FakeElement | undefined {
 	)[0];
 }
 
+describe('EmendChatView selectable modes', () => {
+	it.each([
+		['ask', 'ask'],
+		['edit', 'edit'],
+		['discuss', 'ask'],
+		['brainstorm', 'ask'],
+		['invalid', 'ask'],
+	] as const)('initializes persisted default mode %s as %s', (defaultMode, expected) => {
+		const view = new EmendChatView(
+			new WorkspaceLeaf(),
+			{ settings: { defaultMode } } as unknown as ConstructorParameters<typeof EmendChatView>[1],
+		);
+
+		expect((view as unknown as { selectedMode: Mode }).selectedMode).toBe(expected);
+	});
+
+	it('ignores a runtime Discuss mode change without creating a request', async () => {
+		const { context, requestChatCompletion } = createEditTargetView();
+		await viewPrototype.refreshTargetNote.call(context);
+		viewPrototype.setMode.call(context, 'edit');
+
+		viewPrototype.setMode.call(context, 'discuss');
+
+		expect(context.selectedMode).toBe('edit');
+		expect(requestChatCompletion).not.toHaveBeenCalled();
+	});
+
+	it('offers only Chat and Edit mode buttons for new requests', async () => {
+		const { context, contentEl } = createEditTargetView();
+		await viewPrototype.refreshTargetNote.call(context);
+
+		const labels = findElements(
+			contentEl,
+			(element) => element.className.split(' ').includes('emend-chat-mode-button'),
+		).map((element) => textOf(element).trim());
+		expect(labels).toEqual(['Chat', 'Edit']);
+	});
+
+	it('describes Chat and Edit without advertising new Discuss or Brainstorm requests', async () => {
+		const { context, contentEl } = createEditTargetView();
+		await viewPrototype.refreshTargetNote.call(context);
+
+		const emptyState = findElements(
+			contentEl,
+			(element) => element.className.split(' ').includes('emend-chat-empty'),
+		)[0];
+		const copy = emptyState ? textOf(emptyState) : '';
+		expect(copy).toContain('Chat');
+		expect(copy).toContain('Edit');
+		expect(copy).not.toMatch(/discuss|brainstorm/i);
+	});
+});
+
 describe('EmendChatView edit target control', () => {
 	it('initially displays Selection when automatic targeting has usable text', async () => {
 		const { context, contentEl } = createEditTargetView({ selectedText: 'beta' });
@@ -508,7 +561,7 @@ describe('EmendChatView edit target control', () => {
 		{ choice: 'full-note', selectedText: 'usable selection' },
 		{ choice: 'selection', selectedText: '' },
 	] as const)(
-		'preserves explicit $choice targeting across renders and Ask/Edit switches',
+		'preserves explicit $choice targeting across renders and Chat/Edit switches',
 		async ({ choice, selectedText }) => {
 			const { context, contentEl } = createEditTargetView({ selectedText });
 			await viewPrototype.refreshTargetNote.call(context);
@@ -1247,7 +1300,7 @@ describe('EmendChatView session runtime', () => {
 
 		expect(fixture.context.activeSessionId).toBe('a2');
 		expect(fixture.context.messages).toBe(second.messages);
-		viewPrototype.setMode.call(fixture.context, 'discuss');
+		viewPrototype.setMode.call(fixture.context, 'edit');
 		Object.assign(fixture.context, { webSearchMode: 'auto', editTargetChoice: 'full-note' });
 		fixture.context.plugin.additionalNotesStore.add('A.md', 'Reference.md');
 		const refreshDraftEstimate = vi.fn();
@@ -1261,7 +1314,7 @@ describe('EmendChatView session runtime', () => {
 		expect(fixture.context.activeSessionId).toBe('a1');
 		expect(fixture.context.messages).toBe(first.messages);
 		expect(fixture.context.inputEl?.value).toBe('');
-		expect(fixture.context.selectedMode).toBe('discuss');
+		expect(fixture.context.selectedMode).toBe('edit');
 		expect(fixture.context.webSearchMode).toBe('auto');
 		expect(fixture.context.editTargetChoice).toBe('full-note');
 		expect(fixture.context.plugin.additionalNotesStore.list('A.md')).toEqual(['Reference.md']);
@@ -1278,6 +1331,7 @@ describe('EmendChatView session runtime', () => {
 		if (fixture.context.inputEl) {
 			fixture.context.inputEl.value = 'Follow-up question';
 		}
+		viewPrototype.setMode.call(fixture.context, 'ask');
 		await viewPrototype.submitPrompt.call(fixture.context);
 
 		const submission = fixture.requestChatCompletion.mock.calls[0]?.[0];
@@ -3423,6 +3477,21 @@ function renderForFooter(message: ChatMessage) {
 	);
 	return container;
 }
+
+describe('EmendChatView persisted mode compatibility', () => {
+	it.each([
+		['discuss', 'Discuss'],
+		['brainstorm', 'Brainstorm'],
+	] as const)('renders the original badge for a persisted %s message', (mode, label) => {
+		const container = renderForFooter({ ...message(mode, 'Note.md'), mode });
+
+		const badges = findElements(
+			container,
+			(element) => element.className.split(' ').includes('emend-chat-mode-badge'),
+		);
+		expect(badges.map((badge) => badge.textContent)).toEqual([label]);
+	});
+});
 
 describe('EmendChatView token usage footer', () => {
 	it('shows provider total, prompt, and completion usage on completed answers', () => {
