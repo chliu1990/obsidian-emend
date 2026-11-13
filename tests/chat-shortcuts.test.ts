@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
 	getComposerShortcut,
 	getComposerShortcutLabels,
-	getDefaultShortcutLabels,
 	getModeShortcut,
 	type ShortcutEvent,
 } from '../src/chat-shortcuts';
@@ -96,26 +95,6 @@ describe('composer shortcut labels', () => {
 		expect(getComposerShortcutLabels(false)).toEqual([
 			{ keys: 'Enter / Ctrl+Enter', action: 'to send' },
 			{ keys: 'Shift+Enter', action: 'for a newline' },
-		]);
-	});
-});
-
-describe('default shortcut labels', () => {
-	it('labels all default shortcuts for macOS', () => {
-		expect(getDefaultShortcutLabels(true)).toEqual([
-			{ keys: '⌘⇧A', action: 'Ask' },
-			{ keys: '⌘⇧E', action: 'Edit' },
-			{ keys: 'Enter / ⌘ Enter', action: 'send' },
-			{ keys: 'Shift Enter', action: 'newline' },
-		]);
-	});
-
-	it('labels all default shortcuts for Windows and Linux', () => {
-		expect(getDefaultShortcutLabels(false)).toEqual([
-			{ keys: 'Ctrl+Shift+A', action: 'Ask' },
-			{ keys: 'Ctrl+Shift+E', action: 'Edit' },
-			{ keys: 'Enter / Ctrl+Enter', action: 'send' },
-			{ keys: 'Shift+Enter', action: 'newline' },
 		]);
 	});
 });

@@ -41,6 +41,10 @@ class FakeElement {
 		this.listeners.set(event, listeners);
 	}
 
+	setAttribute(name: string, value: string) {
+		this.attributes[name] = value;
+	}
+
 	click() {
 		if (this.disabled) {
 			return;
@@ -102,6 +106,10 @@ function findButton(root: FakeElement, label: string) {
 		root,
 		(element) => element.tagName === 'button' && element.attributes['aria-label'] === label,
 	)[0];
+}
+
+function findTrigger(root: FakeElement) {
+	return findByClass(root, 'emend-chat-related-notes-trigger');
 }
 
 function textOf(root: FakeElement): string {
@@ -176,7 +184,7 @@ describe('RelatedNotesControl', () => {
 	it('shows a count without an empty disclosure and preserves open details across updates', () => {
 		const { store, container, control } = createControl();
 		control.render(container as unknown as HTMLElement, false);
-		const trigger = findButton(container, 'Related notes');
+		const trigger = findTrigger(container);
 
 		expect(trigger).toBeDefined();
 		expect(findByClass(container, 'emend-chat-related-notes-count')?.textContent).toBe('0');
@@ -210,7 +218,7 @@ describe('RelatedNotesControl', () => {
 		store.add('Active.md', 'Already selected.md');
 
 		expect(findByClass(container, 'emend-chat-related-notes-details')?.open).toBe(true);
-		expect(findButton(container, 'Related notes')).toBe(trigger);
+		expect(findTrigger(container)).toBe(trigger);
 		expect(findByClass(container, 'emend-chat-related-notes-count')?.textContent).toBe('3');
 	});
 
@@ -226,7 +234,7 @@ describe('RelatedNotesControl', () => {
 		control.render(container as unknown as HTMLElement, false);
 
 		expect(getMarkdownFiles).not.toHaveBeenCalled();
-		findButton(container, 'Related notes')?.click();
+		findTrigger(container)?.click();
 
 		expect(getAbstractFileByPath).toHaveBeenCalledWith('Active.md');
 		expect(getMarkdownFiles).toHaveBeenCalledTimes(1);
@@ -252,7 +260,7 @@ describe('RelatedNotesControl', () => {
 		store.add('Other.md', 'Keep for other.md');
 		control.render(container as unknown as HTMLElement, false);
 
-		findButton(container, 'Related notes')?.click();
+		findTrigger(container)?.click();
 		const picker = fuzzyModalInstances()[0];
 		const first = picker?.items.find((item) => item.path === 'First.md');
 		if (!picker || !first) {
@@ -264,7 +272,7 @@ describe('RelatedNotesControl', () => {
 		findButton(container, 'Remove First.md')?.click();
 		expect(store.list('Active.md')).toEqual([]);
 		expect(store.list('Other.md')).toEqual(['Keep for other.md']);
-		expect(findButton(container, 'Related notes')?.focused).toBe(true);
+		expect(findTrigger(container)?.focused).toBe(true);
 
 		store.add('Active.md', 'First.md');
 		store.add('Active.md', 'Folder/Second.md');
@@ -276,21 +284,66 @@ describe('RelatedNotesControl', () => {
 		expect(fetch).not.toHaveBeenCalled();
 	});
 
+	it('includes the selected count in the trigger accessible name', () => {
+		const { store, container, control } = createControl();
+		control.render(container as unknown as HTMLElement, false);
+		const trigger = findTrigger(container);
+
+		expect(trigger?.attributes['aria-label']).toBe('Related notes');
+		store.add('Other.md', 'Other target only.md');
+		expect(trigger?.attributes['aria-label']).toBe('Related notes');
+		store.add('Active.md', 'First.md');
+		expect(trigger?.attributes['aria-label']).toBe('Related notes, 1 selected');
+		store.add('Active.md', 'Folder/Second.md');
+		expect(trigger?.attributes['aria-label']).toBe('Related notes, 2 selected');
+		store.clear('Active.md');
+		expect(trigger?.attributes['aria-label']).toBe('Related notes');
+	});
+
+	it.each(['rerender', 'destroy'] as const)(
+		'ignores stale trigger, Remove, and Clear handlers after %s',
+		(lifecycle) => {
+			const { store, container, control, setTargetPath } = createControl();
+			store.add('Active.md', 'First.md');
+			store.add('Active.md', 'Folder/Second.md');
+			store.add('Other.md', 'First.md');
+			store.add('Other.md', 'Folder/Second.md');
+			control.render(container as unknown as HTMLElement, false);
+			const staleTrigger = findTrigger(container);
+			const staleRemove = findButton(container, 'Remove First.md');
+			const staleClear = findButton(container, 'Clear all related notes');
+
+			if (lifecycle === 'rerender') {
+				control.render(container as unknown as HTMLElement, false);
+			} else {
+				control.destroy();
+				control.destroy();
+			}
+			setTargetPath('Other.md');
+			staleTrigger?.click();
+			staleRemove?.click();
+			staleClear?.click();
+
+			expect(fuzzyModalInstances()).toHaveLength(0);
+			expect(store.list('Other.md')).toEqual(['First.md', 'Folder/Second.md']);
+		},
+	);
+
 	it('disables all actions while pending or without a target', () => {
 		const { store, container, control, setTargetPath } = createControl(null);
 		control.render(container as unknown as HTMLElement, false);
-		expect(findButton(container, 'Related notes')?.disabled).toBe(true);
+		expect(findTrigger(container)?.disabled).toBe(true);
 
 		setTargetPath('Active.md');
 		control.setDisabled(false);
-		expect(findButton(container, 'Related notes')?.disabled).toBe(false);
+		expect(findTrigger(container)?.disabled).toBe(false);
 		store.add('Active.md', 'First.md');
 		control.setDisabled(true);
 
 		const buttons = findElements(container, (element) => element.tagName === 'button');
 		expect(buttons.length).toBeGreaterThanOrEqual(3);
 		expect(buttons.every((button) => button.disabled)).toBe(true);
-		findButton(container, 'Related notes')?.click();
+		findTrigger(container)?.click();
 		findButton(container, 'Remove First.md')?.click();
 		findButton(container, 'Clear all related notes')?.click();
 		expect(fuzzyModalInstances()).toHaveLength(0);
@@ -304,7 +357,7 @@ describe('RelatedNotesControl', () => {
 	it('closes its picker and unsubscribes on destroy', () => {
 		const { store, container, control } = createControl();
 		control.render(container as unknown as HTMLElement, false);
-		findButton(container, 'Related notes')?.click();
+		findTrigger(container)?.click();
 		const picker = fuzzyModalInstances()[0];
 		store.add('Active.md', 'First.md');
 		expect(textOf(container)).toContain('First.md');

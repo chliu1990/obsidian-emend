@@ -14,6 +14,7 @@ export class RelatedNotesControl {
 	private activePicker: AdditionalNotesPicker | null = null;
 	private disabled = false;
 	private pendingFocus: 'details' | 'trigger' | null = null;
+	private generation = 0;
 
 	constructor(
 		private readonly app: App,
@@ -23,6 +24,7 @@ export class RelatedNotesControl {
 
 	render(container: HTMLElement, disabled: boolean): void {
 		this.destroy();
+		const generation = this.generation;
 		this.disabled = disabled;
 		const rootEl = container.createDiv('emend-chat-related-notes');
 		const triggerRowEl = rootEl.createDiv('emend-chat-related-notes-trigger-row');
@@ -33,6 +35,9 @@ export class RelatedNotesControl {
 			'Related notes',
 		);
 		this.triggerButton.addEventListener('click', () => {
+			if (generation !== this.generation) {
+				return;
+			}
 			const targetPath = this.getTargetPath();
 			const targetFile = !this.disabled && targetPath
 				? this.app.vault.getAbstractFileByPath(targetPath)
@@ -49,8 +54,8 @@ export class RelatedNotesControl {
 			attr: { 'aria-hidden': 'true' },
 		});
 		this.detailsHost = rootEl.createDiv('emend-chat-related-notes-details-host');
-		this.unsubscribe = this.store.subscribe(() => this.renderPaths());
-		this.renderPaths();
+		this.unsubscribe = this.store.subscribe(() => this.renderPaths(generation));
+		this.renderPaths(generation);
 	}
 
 	setDisabled(disabled: boolean): void {
@@ -59,6 +64,7 @@ export class RelatedNotesControl {
 	}
 
 	destroy(): void {
+		this.generation += 1;
 		this.activePicker?.close();
 		this.activePicker = null;
 		this.unsubscribe?.();
@@ -73,14 +79,23 @@ export class RelatedNotesControl {
 		this.pendingFocus = null;
 	}
 
-	private renderPaths(): void {
-		if (!this.detailsHost || !this.triggerButton || !this.countEl) {
+	private renderPaths(generation: number): void {
+		if (
+			generation !== this.generation ||
+			!this.detailsHost ||
+			!this.triggerButton ||
+			!this.countEl
+		) {
 			return;
 		}
 		const wasOpen = this.detailsEl?.open ?? false;
 		const targetPath = this.getTargetPath();
 		const paths = targetPath ? this.store.list(targetPath) : [];
 		this.countEl.textContent = String(paths.length);
+		this.triggerButton.setAttribute(
+			'aria-label',
+			paths.length > 0 ? `Related notes, ${paths.length} selected` : 'Related notes',
+		);
 		this.detailsHost.empty();
 		this.buttons.clear();
 		this.buttons.add(this.triggerButton);
@@ -113,6 +128,9 @@ export class RelatedNotesControl {
 				);
 				this.removeButtons.add(removeButton);
 				removeButton.addEventListener('click', () => {
+					if (generation !== this.generation) {
+						return;
+					}
 					const currentTargetPath = this.getTargetPath();
 					if (!this.disabled && currentTargetPath) {
 						this.pendingFocus = 'details';
@@ -127,6 +145,9 @@ export class RelatedNotesControl {
 				'Clear all related notes',
 			);
 			this.clearButton.addEventListener('click', () => {
+				if (generation !== this.generation) {
+					return;
+				}
 				const currentTargetPath = this.getTargetPath();
 				if (!this.disabled && currentTargetPath) {
 					this.pendingFocus = 'trigger';
