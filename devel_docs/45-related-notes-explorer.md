@@ -30,7 +30,7 @@ The trigger retains its selected count, ordered **Selected notes** paths, per-pa
 
 ## Submission, privacy, and capacity preservation
 
-Opening, searching, All/Links switching, selecting, unselecting, Remove/Clear, Refresh, dismissal, and lifecycle actions perform zero note-content reads and zero provider requests. Discovery uses path and metadata APIs only. Submission still captures the ordered path list before its first await, resolves all paths, and reads each selected note freshly.
+Opening, searching, All/Links switching, selecting, unselecting, Remove/Clear, Refresh, dismissal, and lifecycle actions perform zero note-content reads and zero provider requests. Discovery uses path and metadata APIs only. Lifecycle/accessibility assertions reset instrumentation after target-editor or application bootstrap and then check every explorer/store action before and after those boundaries; no selected/additional-note read or provider call is exempted. Submission still captures the ordered path list before its first await, resolves all paths, and reads each selected note freshly.
 
 The allowed real Chat scenario selected seven notes through the `Related` folder with a 1,000-character combined source budget. The exact request contained each expected prefix and omission marker; unused allocation rolled forward in selection order, total included source stayed within 1,000 characters, and Large used its full 156-character allocation. Every selected note was read exactly once through `vault.read`, generic path-off prompt framing remained intact, the loopback answer completed once, and active/additional note bytes and both writers remained untouched.
 
@@ -48,7 +48,7 @@ Initial commands from the repository root on 2026-11-14 (Asia/Shanghai), before 
 | `git diff --check` | Exited 0 with no output. |
 | `sha256sum main.js` | `c6da706e1f5e9f04f534ce94b3262bbeb245ae67580c5106c257deb6855684ec`. |
 
-The runtime-vault bundle hash matched the root production bundle before startup. Both final evidence summaries record HEAD `712c312acae8a66299ad8f93e52db2ff2f7d5536`, the same bundle hash, and `loadedBundleMatchedRoot: true`.
+The runtime-vault bundle hash matched the root production bundle before startup. The original focused/compact summaries recorded product HEAD `712c312acae8a66299ad8f93e52db2ff2f7d5536`; the fix-round focused summary records documentation HEAD `0250a221c07f4dc47b10c5fed3d61bd9c2803588`. Every final summary records the same production bundle hash and `loadedBundleMatchedRoot: true`.
 
 ## Real-Obsidian loopback evidence
 
@@ -63,9 +63,9 @@ node test_vault/emend-selection-chat-verify/verify.mjs --compact
 
 Complete results:
 
-- Focused explorer: **10/10 scenarios, 114/114 assertions**, generated `2026-11-14T17:07:34.783Z`, preserved in ignored `test_vault/emend-selection-chat-verify/evidence-related-notes-complete/summary.json`.
+- Focused explorer: **10/10 scenarios, 126/126 assertions**, generated `2026-11-14T17:37:22.213Z`, preserved in ignored `test_vault/emend-selection-chat-verify/evidence-related-notes-fix1-complete/summary.json`.
 - Adjacent compact regression: **1/1 scenario, 28/28 assertions**, generated `2026-11-14T17:08:22.398Z`, preserved separately in ignored `test_vault/emend-selection-chat-verify/evidence-compact-complete/summary.json`.
-- Combined final runtime evidence: **11/11 scenario runs and 142/142 assertions**. Failed development attempts were preserved separately and are not stitched into these complete-run totals.
+- Combined final runtime evidence: **11/11 scenario runs and 154/154 assertions**. Failed development attempts, including the first fix-round run that exposed target-editor bootstrap reads, were preserved separately and are not stitched into these complete-run totals.
 
 ### Focused scenario matrix
 
@@ -75,18 +75,18 @@ Complete results:
 | 02 Selection/helpers/Remove/Clear | 19 | Manual/folder/All/Links overlap, complete-scope bulk behavior, checked/indeterminate states, Links exclusion, individual removal, helper-only unselect semantics, exact count/details, focus, zero reads/requests. |
 | 03 Explicit Refresh | 11 | Stale open snapshots before Refresh; one-snapshot manual preservation, stale removal, individual re-add, new Links/folder matches; removed helpers stayed removed; zero post-fixture reads/requests. |
 | 04 Incomplete/partial cache | 4 | Exact limitation disclosure, deterministic partial resolved links, unresolved exclusion, zero body reads/requests. |
-| 05 Rename/delete/isolation/reload | 12 | Real file/folder events, sibling-prefix control, A/B isolation, stale-panel close/handler guard, delete maintenance, actual reload clearing paths/helpers. |
+| 05 Rename/delete/isolation/reload | 18 | Real file/folder events, sibling-prefix control, A/B isolation, stale-panel close/handler guard, delete maintenance, actual reload clearing paths/helpers, plus explicit zero vault reads, adapter reads, and provider requests before reload and after the post-reload bootstrap reset. |
 | 06 Modify Selection sharing | 7 | Same ordered store paths in chat/modal, modal Remove/Clear reflected in chat, unchanged empty modal/cancel behavior, zero reads/requests/writes. |
 | 07 Allowed submission/fair budget | 23 | Seven-folder-selection zero pre-reads, exact fair prefixes/rollover/markers, one submission-time read per note, path-off framing, one loopback answer, unchanged bytes/writers. |
 | 08 Exact capacity | 8 | Passing unread-content draft, unchanged estimate, exact 476-versus-158 rejection, zero provider calls/answer/writes, ready-user-only persistence. |
 | 09 Pending/stale lifecycle | 7 | Rerender/view-close stale guards, outside dismissal/focus, pending disabling, Stop recovery, unchanged note/writers. |
-| 10 Accessibility/themes/popout | 7 | 240 px dark/light layouts, dialog/search names, trusted Tab order, real theme restyling, supported popout owner-document selection/dismissal/focus. |
+| 10 Accessibility/themes/popout | 13 | 240 px dark/light layouts, dialog/search names, trusted Tab order, real theme restyling, supported popout owner-document selection/dismissal/focus, plus explicit zero vault reads, adapter reads, and provider requests across those actions and the final post-reopen Clear. |
 
 The compact regression rechecked the six-item Writing/Web menu, retained Chat Web state, both Edit targets, draft/caret/focus preservation, Related notes count/details/Remove/Clear with the new explorer, pending lifecycle, popout owner-document behavior, zero non-submission requests/reads, and unchanged note bytes/writers.
 
 ## Screenshot inspection
 
-These ignored images under `test_vault/emend-selection-chat-verify/evidence-related-notes-complete/screenshots/` were opened and visually inspected:
+These ignored images under `test_vault/emend-selection-chat-verify/evidence-related-notes-fix1-complete/screenshots/` were opened and visually inspected:
 
 - `related-notes-all.png`: All/Refresh actions, search and Select-all, scrollable candidate tree, disabled Active row, implied Related folder, and bounded dark panel.
 - `related-notes-links-incomplete.png`: Links mode with the exact incomplete-cache disclosure legible above the submission-budget disclosure.
