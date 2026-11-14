@@ -18,12 +18,10 @@ export interface ShortcutLabel {
 	action: string;
 }
 
-export function getDefaultShortcutLabels(isMacOS: boolean): ShortcutLabel[] {
+export function getComposerShortcutLabels(isMacOS: boolean): ShortcutLabel[] {
 	return [
-		{ keys: isMacOS ? '⌘⇧A' : 'Ctrl+Shift+A', action: 'Ask' },
-		{ keys: isMacOS ? '⌘⇧E' : 'Ctrl+Shift+E', action: 'Edit' },
-		{ keys: isMacOS ? 'Enter / ⌘ Enter' : 'Enter / Ctrl+Enter', action: 'send' },
-		{ keys: isMacOS ? 'Shift Enter' : 'Shift+Enter', action: 'newline' },
+		{ keys: isMacOS ? 'Enter / ⌘ Enter' : 'Enter / Ctrl+Enter', action: 'to send' },
+		{ keys: isMacOS ? 'Shift Enter' : 'Shift+Enter', action: 'for a newline' },
 	];
 }
 

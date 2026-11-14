@@ -4,6 +4,7 @@ import {
 	resolveContextCapacity,
 } from './context-accounting';
 import { discoverProviderModels } from './model-discovery';
+import { isSelectableMode, MODES } from './mode';
 import { getDocumentedCapacityDefaults } from './provider-capacity-defaults';
 import type EmendPlugin from './main';
 import type {
@@ -35,7 +36,6 @@ export const AI_PROVIDERS = [
 	},
 ] as const;
 
-const DEFAULT_MODES = ['ask', 'edit', 'discuss', 'brainstorm'] as const;
 const REASONING_EFFORTS: ReasoningEffort[] = ['low', 'medium', 'high'];
 const CUSTOM_MODEL_OPTION = '__custom__';
 
@@ -94,7 +94,7 @@ export function normalizeSettings(data: unknown): EmendSettings {
 	const activeProvider = isProviderId(root.activeProvider)
 		? root.activeProvider
 		: DEFAULT_SETTINGS.activeProvider;
-	const defaultMode = isDefaultMode(root.defaultMode)
+	const defaultMode = isSelectableMode(root.defaultMode)
 		? root.defaultMode
 		: DEFAULT_SETTINGS.defaultMode;
 
@@ -469,14 +469,16 @@ export class EmendSettingTab extends PluginSettingTab {
 			.setName('Default mode')
 			.setDesc('Initial chat mode for each chat session.')
 			.addDropdown((dropdown) => {
-				for (const mode of DEFAULT_MODES) {
-					dropdown.addOption(mode, capitalize(mode));
+				for (const mode of MODES) {
+					if (isSelectableMode(mode.id)) {
+						dropdown.addOption(mode.id, mode.label);
+					}
 				}
 
 				dropdown
 					.setValue(this.plugin.settings.defaultMode)
 					.onChange(async (value) => {
-						if (!isDefaultMode(value)) {
+						if (!isSelectableMode(value)) {
 							return;
 						}
 
@@ -775,12 +777,6 @@ function isProviderId(value: unknown): value is ProviderId {
 
 function isReasoningEffort(value: unknown): value is ReasoningEffort {
 	return REASONING_EFFORTS.some((effort) => effort === value);
-}
-
-function isDefaultMode(
-	value: unknown,
-): value is EmendSettings['defaultMode'] {
-	return DEFAULT_MODES.some((mode) => mode === value);
 }
 
 function capitalize(value: string) {

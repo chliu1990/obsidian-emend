@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	getComposerShortcut,
-	getDefaultShortcutLabels,
+	getComposerShortcutLabels,
 	getModeShortcut,
 	type ShortcutEvent,
 } from '../src/chat-shortcuts';
@@ -83,22 +83,18 @@ describe('mode shortcuts', () => {
 	});
 });
 
-describe('default shortcut labels', () => {
-	it('labels all default shortcuts for macOS', () => {
-		expect(getDefaultShortcutLabels(true)).toEqual([
-			{ keys: '⌘⇧A', action: 'Ask' },
-			{ keys: '⌘⇧E', action: 'Edit' },
-			{ keys: 'Enter / ⌘ Enter', action: 'send' },
-			{ keys: 'Shift Enter', action: 'newline' },
+describe('composer shortcut labels', () => {
+	it('lists only send and newline hints for macOS', () => {
+		expect(getComposerShortcutLabels(true)).toEqual([
+			{ keys: 'Enter / ⌘ Enter', action: 'to send' },
+			{ keys: 'Shift Enter', action: 'for a newline' },
 		]);
 	});
 
-	it('labels all default shortcuts for Windows and Linux', () => {
-		expect(getDefaultShortcutLabels(false)).toEqual([
-			{ keys: 'Ctrl+Shift+A', action: 'Ask' },
-			{ keys: 'Ctrl+Shift+E', action: 'Edit' },
-			{ keys: 'Enter / Ctrl+Enter', action: 'send' },
-			{ keys: 'Shift+Enter', action: 'newline' },
+	it('lists only send and newline hints for Windows and Linux', () => {
+		expect(getComposerShortcutLabels(false)).toEqual([
+			{ keys: 'Enter / Ctrl+Enter', action: 'to send' },
+			{ keys: 'Shift+Enter', action: 'for a newline' },
 		]);
 	});
 });

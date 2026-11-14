@@ -646,6 +646,30 @@ describe('SelectionModal draft capacity estimate', () => {
 		expect(contentEl.className.split(' ')).toContain('emend-selection-modal');
 	});
 
+	it('keeps the shared quick-action layout unchanged by chat-only alignment', () => {
+		const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+		const sharedRule = css.match(
+			/^\.emend-chat-quick-actions\s*\{([^}]*)\}/m,
+		)?.[1] ?? '';
+		const { contentEl } = openModal(vi.fn(async () => ({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+		})));
+
+		expect(findElements(contentEl, (element) =>
+			element.className.split(' ').includes('emend-chat-context-row'),
+		)).toEqual([]);
+		expect(sharedRule).toContain('display: flex;');
+		expect(sharedRule).toContain('flex: 0 0 auto;');
+		expect(sharedRule).toContain('flex-wrap: wrap;');
+		expect(sharedRule).toContain('gap: 6px;');
+		expect(sharedRule).not.toContain('justify-content: flex-end;');
+		expect(sharedRule).not.toContain('max-width: 100%;');
+		expect(sharedRule).not.toContain('min-width: 0;');
+		expect(sharedRule).not.toContain('margin-inline-start: auto;');
+	});
+
 	it('uses the shared narrow-layout floating-details styles in the modal', () => {
 		const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 		const { contentEl } = openModal(vi.fn(async () => ({

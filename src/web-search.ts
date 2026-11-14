@@ -53,6 +53,8 @@ export interface WebToolLoopResult {
 
 export const WEB_EXTRACTION_DISCLOSURE = 'Each web call uses an AI extraction reader that receives your current question and extraction goal, may use up to 6 extractor rounds, a verifier, and up to 2 refine rounds, and may incur separate charges. A transient Search or Fetch failure may be retried once. Failed calls also count toward the configured call limit.';
 
+export const WEB_SEARCH_DISCLOSURE = `DeepSeek may generate search queries and fetch URLs from note context. Review asks before each batch; Auto runs directly. Successful search/fetch calls may be billed separately. Queries, URLs, and outcomes are stored locally with ready chats. ${WEB_EXTRACTION_DISCLOSURE}`;
+
 export type WebToolCall =
 	| { id: string; name: 'web_search'; query: string; extractionGoal: string }
 	| { id: string; name: 'web_fetch'; url: string; extractionGoal: string };

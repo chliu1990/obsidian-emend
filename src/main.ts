@@ -15,6 +15,7 @@ import { ConversationStore } from './conversation-store';
 import { DeepSeekWebSearchCoordinator } from './deepseek-web';
 import { getEditStrategy } from './edit-strategy';
 import { loadAllInstructions } from './instructions-loader';
+import type { SelectableMode } from './mode';
 import { createVaultNoteWriter } from './note-writer';
 import { requestAiResponse } from './provider-stream';
 import {
@@ -43,7 +44,6 @@ import {
 } from './settings';
 import type {
 	EmendSettings,
-	Mode,
 	ProviderHistoryMessage,
 	ProviderId,
 	SelectionSnapshot,
@@ -131,7 +131,7 @@ export default class EmendPlugin extends Plugin {
 		this.addCommand({
 			// eslint-disable-next-line obsidianmd/commands/no-plugin-id-in-command-id -- Required Stage 13 public identifier.
 			id: 'emend:switch-to-ask-mode',
-			name: 'Switch to ask mode',
+			name: 'Switch to chat mode',
 			// eslint-disable-next-line obsidianmd/commands/no-default-hotkeys -- Required Stage 13 shortcut.
 			hotkeys: [{ modifiers: ['Mod', 'Shift'], key: 'A' }],
 			callback: () => {
@@ -288,7 +288,7 @@ export default class EmendPlugin extends Plugin {
 		this.app.workspace.setActiveLeaf(leaf, { focus: true });
 	}
 
-	private async activateChatMode(mode: Mode) {
+	private async activateChatMode(mode: SelectableMode) {
 		await this.activateChatView();
 		for (const leaf of this.app.workspace.getLeavesOfType(
 			EMEND_CHAT_VIEW_TYPE,
