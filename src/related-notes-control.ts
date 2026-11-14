@@ -20,6 +20,13 @@ type ExplorerRow = {
 	parentPath: string | null;
 };
 
+type ExplorerTreeEntry = Pick<ExplorerRow, 'type' | 'path'>;
+
+type ExplorerScopeIndex = {
+	paths: readonly string[];
+	folderDescendants: ReadonlyMap<string, readonly string[]>;
+};
+
 interface RelatedNotesExplorerOptions {
 	app: App;
 	store: AdditionalNotesStore;
@@ -55,8 +62,11 @@ class RelatedNotesExplorer {
 	private readonly collapsedFolders = new Set<string>();
 	private rows: ExplorerRow[] = [];
 	private snapshot: RelatedNotesSnapshot;
+	private scopeIndexes: Record<ExplorerMode, ExplorerScopeIndex>;
 	private mode: ExplorerMode = 'all';
 	private query = '';
+	private selectionRevision = 0;
+	private selectionUpdatesSuspended = 0;
 	private disabled = false;
 	private closed = false;
 	private activeNoteRow: HTMLElement | null = null;
@@ -86,6 +96,7 @@ class RelatedNotesExplorer {
 		this.store = options.store;
 		this.targetPath = options.targetPath;
 		this.snapshot = options.snapshot;
+		this.scopeIndexes = buildScopeIndexes(options.snapshot);
 		this.trigger = options.trigger;
 		this.isCurrent = options.isCurrent;
 		this.isDisabled = options.isDisabled;
@@ -184,29 +195,42 @@ class RelatedNotesExplorer {
 	}
 
 	updateSelection(): void {
-		if (this.closed) {
+		if (this.closed || this.selectionUpdatesSuspended > 0) {
 			return;
 		}
 		if (!this.isCurrent()) {
 			this.close();
 			return;
 		}
+		this.selectionRevision += 1;
 		const selected = new Set(this.store.list(this.targetPath));
 		const scopePaths = this.scopePaths();
+		const folderSelectedCounts = new Map<string, number>();
+		let scopeSelectedCount = 0;
+		for (const path of scopePaths) {
+			if (!selected.has(path)) {
+				continue;
+			}
+			scopeSelectedCount += 1;
+			let parent = parentFolder(path);
+			while (parent) {
+				folderSelectedCounts.set(parent, (folderSelectedCounts.get(parent) ?? 0) + 1);
+				parent = parentFolder(parent);
+			}
+		}
 		for (const [path, input] of this.noteInputs) {
 			const active = path === this.targetPath;
 			input.checked = !active && selected.has(path);
 			input.indeterminate = false;
 		}
 		for (const [path, input] of this.folderInputs) {
-			const descendants = this.folderDescendants(path, scopePaths);
-			const selectedCount = descendants.filter((candidate) => selected.has(candidate)).length;
-			input.checked = descendants.length > 0 && selectedCount === descendants.length;
-			input.indeterminate = selectedCount > 0 && selectedCount < descendants.length;
+			const descendantCount = this.folderDescendants(path).length;
+			const selectedCount = folderSelectedCounts.get(path) ?? 0;
+			input.checked = descendantCount > 0 && selectedCount === descendantCount;
+			input.indeterminate = selectedCount > 0 && selectedCount < descendantCount;
 		}
-		const selectedCount = scopePaths.filter((path) => selected.has(path)).length;
-		this.selectAllInput.checked = scopePaths.length > 0 && selectedCount === scopePaths.length;
-		this.selectAllInput.indeterminate = selectedCount > 0 && selectedCount < scopePaths.length;
+		this.selectAllInput.checked = scopePaths.length > 0 && scopeSelectedCount === scopePaths.length;
+		this.selectAllInput.indeterminate = scopeSelectedCount > 0 && scopeSelectedCount < scopePaths.length;
 		this.updateDisabled();
 	}
 
@@ -259,10 +283,16 @@ class RelatedNotesExplorer {
 			return;
 		}
 		this.snapshot = snapshot;
-		this.store.refresh(
-			this.targetPath,
-			(helper) => resolveAdditionalNoteHelper(snapshot, helper),
-		);
+		this.scopeIndexes = buildScopeIndexes(snapshot);
+		this.selectionUpdatesSuspended += 1;
+		try {
+			this.store.refresh(
+				this.targetPath,
+				(helper) => resolveAdditionalNoteHelper(snapshot, helper),
+			);
+		} finally {
+			this.selectionUpdatesSuspended -= 1;
+		}
 		this.renderTree();
 		this.updateDisclosure();
 		this.updateSelection();
@@ -276,12 +306,15 @@ class RelatedNotesExplorer {
 		const helper: AdditionalNoteHelper = this.mode === 'all'
 			? { type: 'all' }
 			: { type: 'links', targetPath: this.targetPath };
+		const selectionRevision = this.selectionRevision;
 		if (this.selectAllInput.checked) {
 			this.store.addHelper(this.targetPath, helper, this.scopePaths());
 		} else {
 			this.store.removeHelper(this.targetPath, helper);
 		}
-		this.updateSelection();
+		if (selectionRevision === this.selectionRevision) {
+			this.updateSelection();
+		}
 	}
 
 	private toggleFolder(path: string): void {
@@ -298,12 +331,15 @@ class RelatedNotesExplorer {
 		if (!input) {
 			return;
 		}
+		const selectionRevision = this.selectionRevision;
 		if (input.checked) {
 			this.store.addHelper(this.targetPath, helper, this.folderDescendants(path));
 		} else {
 			this.store.removeHelper(this.targetPath, helper);
 		}
-		this.updateSelection();
+		if (selectionRevision === this.selectionRevision) {
+			this.updateSelection();
+		}
 	}
 
 	private toggleNote(path: string): void {
@@ -315,12 +351,15 @@ class RelatedNotesExplorer {
 		if (!input) {
 			return;
 		}
+		const selectionRevision = this.selectionRevision;
 		if (input.checked) {
 			this.store.add(this.targetPath, path);
 		} else {
 			this.store.remove(this.targetPath, path);
 		}
-		this.updateSelection();
+		if (selectionRevision === this.selectionRevision) {
+			this.updateSelection();
+		}
 	}
 
 	private helperScope(): AdditionalNoteHelperScope {
@@ -330,14 +369,11 @@ class RelatedNotesExplorer {
 	}
 
 	private scopePaths(): readonly string[] {
-		return this.mode === 'all' ? this.snapshot.allPaths : this.snapshot.linkedPaths;
+		return this.scopeIndexes[this.mode].paths;
 	}
 
-	private folderDescendants(
-		folderPath: string,
-		paths = this.scopePaths(),
-	): readonly string[] {
-		return paths.filter((path) => path.startsWith(`${folderPath}/`));
+	private folderDescendants(folderPath: string): readonly string[] {
+		return this.scopeIndexes[this.mode].folderDescendants.get(folderPath) ?? [];
 	}
 
 	private renderTree(): void {
@@ -359,7 +395,20 @@ class RelatedNotesExplorer {
 			});
 		}
 		const folders = getRelatedFolderPaths(treePaths);
-		this.renderTreeLevel(null, 0, treePaths, folders);
+		const entriesByParent = new Map<string | null, ExplorerTreeEntry[]>();
+		for (const entry of [
+			...folders.map((path): ExplorerTreeEntry => ({ type: 'folder', path })),
+			...treePaths.map((path): ExplorerTreeEntry => ({ type: 'note', path })),
+		]) {
+			const parent = parentFolder(entry.path);
+			const siblings = entriesByParent.get(parent) ?? [];
+			siblings.push(entry);
+			entriesByParent.set(parent, siblings);
+		}
+		for (const entries of entriesByParent.values()) {
+			entries.sort((left, right) => comparePaths(left.path, right.path));
+		}
+		this.renderTreeLevel(null, 0, entriesByParent);
 		if (treePaths.length === 0) {
 			this.treeEl.createDiv({
 				cls: 'emend-chat-related-notes-explorer-empty',
@@ -373,21 +422,12 @@ class RelatedNotesExplorer {
 	private renderTreeLevel(
 		parentPath: string | null,
 		depth: number,
-		paths: readonly string[],
-		folders: readonly string[],
+		entriesByParent: ReadonlyMap<string | null, ExplorerTreeEntry[]>,
 	): void {
-		const entries: Array<{ type: 'folder' | 'note'; path: string }> = [
-			...folders
-				.filter((path) => parentFolder(path) === parentPath)
-				.map((path) => ({ type: 'folder' as const, path })),
-			...paths
-				.filter((path) => parentFolder(path) === parentPath)
-				.map((path) => ({ type: 'note' as const, path })),
-		].sort((left, right) => comparePaths(left.path, right.path));
-		for (const entry of entries) {
+		for (const entry of entriesByParent.get(parentPath) ?? []) {
 			if (entry.type === 'folder') {
 				this.createFolderRow(entry.path, parentPath, depth);
-				this.renderTreeLevel(entry.path, depth + 1, paths, folders);
+				this.renderTreeLevel(entry.path, depth + 1, entriesByParent);
 			} else {
 				const row = this.createNoteRow(this.treeEl, entry.path, parentPath, depth);
 				if (entry.path === this.targetPath) {
@@ -584,6 +624,27 @@ class RelatedNotesExplorer {
 		this.panelEl.style.top = `${top}px`;
 		this.panelEl.style.maxHeight = `${maxHeight}px`;
 	}
+}
+
+function buildScopeIndexes(snapshot: RelatedNotesSnapshot): Record<ExplorerMode, ExplorerScopeIndex> {
+	return {
+		all: buildScopeIndex(snapshot.allPaths),
+		links: buildScopeIndex(snapshot.linkedPaths),
+	};
+}
+
+function buildScopeIndex(paths: readonly string[]): ExplorerScopeIndex {
+	const folderDescendants = new Map<string, string[]>();
+	for (const path of paths) {
+		let parent = parentFolder(path);
+		while (parent) {
+			const descendants = folderDescendants.get(parent) ?? [];
+			descendants.push(path);
+			folderDescendants.set(parent, descendants);
+			parent = parentFolder(parent);
+		}
+	}
+	return { paths, folderDescendants };
 }
 
 function comparePaths(left: string, right: string): number {

@@ -667,6 +667,77 @@ describe('AdditionalNotesStore provenance and refresh', () => {
 		expect(listener).toHaveBeenCalledTimes(1);
 	});
 
+	it('renames the root folder across target keys, paths, descriptors, and Links scopes', () => {
+		const store = new AdditionalNotesStore();
+		const rootFolder: AdditionalNoteHelper = {
+			type: 'folder',
+			path: '/',
+			scope: { type: 'all' },
+		};
+		const nestedFolder: AdditionalNoteHelper = {
+			type: 'folder',
+			path: 'Folder',
+			scope: { type: 'links', targetPath: 'Links.md' },
+		};
+		const links: AdditionalNoteHelper = { type: 'links', targetPath: 'Links.md' };
+		store.addHelper('Target.md', rootFolder, ['Root.md', 'Folder/Nested.md']);
+		store.addHelper('Target.md', nestedFolder, ['Folder/Linked.md']);
+		store.addHelper('Target.md', links, ['Linked.md']);
+
+		store.renameFolder('/', 'Renamed');
+
+		expect(store.list('Target.md')).toEqual([]);
+		expect(store.list('Renamed/Target.md')).toEqual([
+			'Renamed/Root.md',
+			'Renamed/Folder/Nested.md',
+			'Renamed/Folder/Linked.md',
+			'Renamed/Linked.md',
+		]);
+		expect(store.listHelpers('Renamed/Target.md')).toEqual([
+			{ type: 'folder', path: 'Renamed', scope: { type: 'all' } },
+			{
+				type: 'folder',
+				path: 'Renamed/Folder',
+				scope: { type: 'links', targetPath: 'Renamed/Links.md' },
+			},
+			{ type: 'links', targetPath: 'Renamed/Links.md' },
+		]);
+		expect(store.list('Renamed/Target.md').every((path) => !path.includes('//'))).toBe(true);
+	});
+
+	it('deletes root descendants and invalid provenance while retaining target-keyed All helpers', () => {
+		const store = new AdditionalNotesStore();
+		const all: AdditionalNoteHelper = { type: 'all' };
+		const rootFolder: AdditionalNoteHelper = {
+			type: 'folder',
+			path: '/',
+			scope: { type: 'all' },
+		};
+		const scopedFolder: AdditionalNoteHelper = {
+			type: 'folder',
+			path: 'Outside',
+			scope: { type: 'links', targetPath: 'Links.md' },
+		};
+		store.addHelper('Target.md', all, ['All.md']);
+		store.addHelper('Target.md', rootFolder, ['Root.md']);
+		store.addHelper('Target.md', scopedFolder, ['Scoped.md']);
+		store.addHelper('Target.md', { type: 'links', targetPath: 'Links.md' }, ['Linked.md']);
+		store.add('Folder/Target.md', 'Folder/Nested.md');
+		store.addHelper('Folder/Target.md', all, ['Other.md']);
+		const listener = vi.fn();
+		store.subscribe(listener);
+
+		store.removeDeletedFolder('/');
+
+		expect(store.list('Target.md')).toEqual([]);
+		expect(store.listHelpers('Target.md')).toEqual([all]);
+		expect(store.list('Folder/Target.md')).toEqual([]);
+		expect(store.listHelpers('Folder/Target.md')).toEqual([all]);
+		expect(listener).toHaveBeenCalledTimes(1);
+		store.removeDeletedFolder('/');
+		expect(listener).toHaveBeenCalledTimes(1);
+	});
+
 	it('clears paths and helpers together and canonicalizes empty target state', () => {
 		const store = new AdditionalNotesStore();
 		store.add('A.md', 'manual.md');

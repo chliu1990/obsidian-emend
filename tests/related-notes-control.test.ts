@@ -598,6 +598,18 @@ describe('RelatedNotesControl', () => {
 		unsubscribe();
 	});
 
+	it('refreshes selection state only from the store notification for a bulk action', () => {
+		const fixture = createControl();
+		const { store, container, control } = fixture;
+		control.render(container as unknown as HTMLElement, false);
+		const panel = openExplorer(fixture);
+		const list = vi.spyOn(store, 'list');
+
+		selectAllCheckbox(panel).click();
+
+		expect(list.mock.calls.filter(([targetPath]) => targetPath === 'Active.md')).toHaveLength(2);
+	});
+
 	it('scopes a Links folder selection to linked descendants only, even when search hides them', () => {
 		const fixture = createControl();
 		const { store, container, control } = fixture;

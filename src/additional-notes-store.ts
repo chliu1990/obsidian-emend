@@ -67,6 +67,22 @@ function sourcesEqual(left: AdditionalNoteSource, right: AdditionalNoteSource): 
 	return helpersEqual(left, right);
 }
 
+function helperKey(helper: AdditionalNoteHelper): string {
+	switch (helper.type) {
+		case 'all':
+			return 'all';
+		case 'links':
+			return JSON.stringify(['links', helper.targetPath]);
+		case 'folder':
+			return JSON.stringify([
+				'folder',
+				helper.path,
+				helper.scope.type,
+				helper.scope.type === 'links' ? helper.scope.targetPath : null,
+			]);
+	}
+}
+
 function hasSource(entry: AdditionalNoteEntry, source: AdditionalNoteSource): boolean {
 	return entry.sources.some((candidate) => sourcesEqual(candidate, source));
 }
@@ -138,11 +154,24 @@ function mapSource(
 }
 
 function isWithinFolder(path: string, folderPath: string): boolean {
-	return path === folderPath || path.startsWith(`${folderPath}/`);
+	return folderPath === '/' || path === folderPath || path.startsWith(`${folderPath}/`);
 }
 
 function mapFolderPath(path: string, oldPath: string, newPath: string): string {
-	return isWithinFolder(path, oldPath) ? `${newPath}${path.slice(oldPath.length)}` : path;
+	if (!isWithinFolder(path, oldPath)) {
+		return path;
+	}
+	if (oldPath === '/') {
+		if (path === '/' || newPath === '/') {
+			return newPath === '/' ? path : newPath;
+		}
+		return `${newPath}/${path}`;
+	}
+	const suffix = path.slice(oldPath.length);
+	if (newPath === '/') {
+		return suffix ? suffix.slice(1) : '/';
+	}
+	return `${newPath}${suffix}`;
 }
 
 export class AdditionalNotesStore {
@@ -166,7 +195,8 @@ export class AdditionalNotesStore {
 			return false;
 		}
 		const next = cloneState(this.selections.get(targetPath) ?? emptyState());
-		let changed = this.addSource(next, targetPath, notePath, source);
+		const entriesByPath = new Map(next.entries.map((entry) => [entry.path, entry]));
+		let changed = this.addSource(next, targetPath, notePath, source, entriesByPath);
 		if (source.type !== 'manual' && !hasHelper(next, source)) {
 			next.helpers.push(cloneHelper(source));
 			changed = true;
@@ -190,8 +220,9 @@ export class AdditionalNotesStore {
 			next.helpers.push(cloneHelper(helper));
 			changed = true;
 		}
+		const entriesByPath = new Map(next.entries.map((entry) => [entry.path, entry]));
 		for (const notePath of notePaths) {
-			changed = this.addSource(next, targetPath, notePath, helper) || changed;
+			changed = this.addSource(next, targetPath, notePath, helper, entriesByPath) || changed;
 		}
 		if (!changed) {
 			return false;
@@ -250,25 +281,31 @@ export class AdditionalNotesStore {
 			return paths;
 		});
 
+		const resolutionSets = resolutions.map((paths) => new Set(paths));
+		const helperIndices = new Map(current.helpers.map((helper, index) => [helperKey(helper), index]));
 		const entries: AdditionalNoteEntry[] = [];
+		const entriesByPath = new Map<string, AdditionalNoteEntry>();
 		for (const entry of current.entries) {
 			const sources = entry.sources.filter((source) => {
 				if (source.type === 'manual') {
 					return true;
 				}
-				const helperIndex = current.helpers.findIndex((helper) => helpersEqual(helper, source));
-				return helperIndex >= 0 && resolutions[helperIndex]?.includes(entry.path) === true;
+				const helperIndex = helperIndices.get(helperKey(source));
+				return helperIndex !== undefined && resolutionSets[helperIndex]?.has(entry.path) === true;
 			}).map(cloneSource);
 			if (sources.length > 0) {
-				entries.push({ path: entry.path, sources });
+				const nextEntry = { path: entry.path, sources };
+				entries.push(nextEntry);
+				entriesByPath.set(nextEntry.path, nextEntry);
 			}
 		}
 		current.helpers.forEach((helper, helperIndex) => {
 			for (const path of resolutions[helperIndex] ?? []) {
-				let entry = entries.find((candidate) => candidate.path === path);
+				let entry = entriesByPath.get(path);
 				if (!entry) {
 					entry = { path, sources: [] };
 					entries.push(entry);
+					entriesByPath.set(path, entry);
 				}
 				if (!hasSource(entry, helper)) {
 					entry.sources.push(cloneHelper(helper));
@@ -329,14 +366,16 @@ export class AdditionalNotesStore {
 		targetPath: string,
 		notePath: string,
 		source: AdditionalNoteSource,
+		entriesByPath: Map<string, AdditionalNoteEntry>,
 	): boolean {
 		if (targetPath === notePath) {
 			return false;
 		}
-		let entry = state.entries.find((candidate) => candidate.path === notePath);
+		let entry = entriesByPath.get(notePath);
 		if (!entry) {
 			entry = { path: notePath, sources: [] };
 			state.entries.push(entry);
+			entriesByPath.set(notePath, entry);
 		}
 		if (hasSource(entry, source)) {
 			return false;
