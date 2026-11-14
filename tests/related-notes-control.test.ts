@@ -734,6 +734,70 @@ describe('RelatedNotesControl', () => {
 		expect(store.listHelpers('Active.md')).toEqual([]);
 	});
 
+	it('uses one explicit snapshot to refresh coexisting folder and Links helpers after path and metadata changes', () => {
+		const fixture = createControl();
+		const { store, container, control, files, resolvedLinks, getMarkdownFiles } = fixture;
+		control.render(container as unknown as HTMLElement, false);
+		const panel = openExplorer(fixture);
+		folderCheckbox(panel, 'Folder').click();
+		findButton(panel, 'Links')?.click();
+		selectAllCheckbox(panel).click();
+		findButton(panel, 'All')?.click();
+		const initialPaths = [
+			'Folder/Linked.md',
+			'Folder/Nested/Deep.md',
+			'Folder/Unrelated.md',
+			'Both.md',
+			'Incoming.md',
+			'Outgoing.md',
+		];
+		expect(store.list('Active.md')).toEqual(initialPaths);
+		expect(store.listHelpers('Active.md')).toEqual([
+			{
+				type: 'folder',
+				path: 'Folder',
+				scope: { type: 'all' },
+			},
+			{ type: 'links', targetPath: 'Active.md' },
+		]);
+
+		const removed = files.findIndex((candidate) => candidate.path === 'Folder/Unrelated.md');
+		if (removed < 0) {
+			throw new Error('Expected the folder fixture to exist.');
+		}
+		files.splice(removed, 1);
+		files.push(file('Folder/New.md'), file('New Link.md'));
+		const activeLinks = resolvedLinks['Active.md'];
+		if (!activeLinks) {
+			throw new Error('Expected active-note link metadata.');
+		}
+		delete activeLinks['Outgoing.md'];
+		activeLinks['New Link.md'] = 1;
+		findButton(panel, 'Links')?.click();
+
+		expect(getMarkdownFiles).toHaveBeenCalledTimes(1);
+		expect(store.list('Active.md')).toEqual(initialPaths);
+		expect(visibleNotePaths(panel)).toContain('Outgoing.md');
+		expect(visibleNotePaths(panel)).not.toContain('New Link.md');
+		findButton(panel, 'Refresh')?.click();
+
+		expect(getMarkdownFiles).toHaveBeenCalledTimes(2);
+		expect(store.list('Active.md')).toEqual([
+			'Folder/Linked.md',
+			'Folder/Nested/Deep.md',
+			'Both.md',
+			'Incoming.md',
+			'Folder/New.md',
+			'New Link.md',
+		]);
+		expect(visibleNotePaths(panel)).toContain('New Link.md');
+		expect(visibleNotePaths(panel)).not.toContain('Outgoing.md');
+		findButton(panel, 'All')?.click();
+		expect(getMarkdownFiles).toHaveBeenCalledTimes(2);
+		expect(visibleNotePaths(panel)).toContain('Folder/New.md');
+		expect(visibleNotePaths(panel)).not.toContain('Folder/Unrelated.md');
+	});
+
 	it('refreshes every helper from exactly one new snapshot and preserves manual paths', () => {
 		const fixture = createControl();
 		const { store, container, control, files, getMarkdownFiles } = fixture;
