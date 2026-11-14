@@ -14,25 +14,23 @@ Requested in the maintainer's roadmap discussion.
 - [ ] Generate deterministic links and handle duplicate titles, renamed/deleted files, empty folders, and large vaults honestly.
 - [ ] Apply any TOC edit only through the existing active-note Operations/Track Changes path. Never write other discovered files.
 
-## 2. Linked-document context toggle
+## 2. Linked-document context (explicit baseline implemented)
 
-Requested in the maintainer's roadmap discussion.
+The explicit snapshot baseline is implemented and verified in [Stage 45](45-related-notes-explorer.md). Chat's **Links** view includes deduplicated resolved outgoing and incoming documents, displays selected paths with Remove/Clear, preserves note-path privacy and bounded read-only submission snapshots, and never makes linked notes edit targets. It uses Obsidian metadata without body scans, discloses incomplete caches, handles unresolved links conservatively, and updates only on manual Refresh.
 
-- [ ] Add a default-off checkbox or equivalent explicit control for automatically including documents linked from the active note, reverse-linked/backlinked documents, or separately selectable combinations of the two.
-- [ ] Display selected linked paths with remove/clear controls before submission and apply existing note-path privacy settings consistently.
-- [ ] Deduplicate active, explicitly selected, outgoing, and reverse-linked notes. Preserve the current explicit additional-note selection flow.
-- [ ] Reuse bounded read-only snapshots and combined context accounting. Linked notes never become edit targets.
-- [ ] Define link-scope and result-count limits, broken-link behavior, and stale rename/delete handling without automatic recursive expansion.
+- [x] Provide an explicit control for outgoing and reverse-linked documents with visible paths and deduplication.
+- [x] Reuse bounded read-only snapshots and combined context accounting without automatic recursive expansion.
+- [ ] Evaluate any separate default-off automatic linked-document inclusion or recursive expansion in a new design; the implemented Links helper is an explicit snapshot, not an automatic context toggle.
+- [ ] Define any future result-count limits and additional scope combinations without background discovery or hidden uploads.
 
-## 3. Folder-based document selection
+## 3. Folder-based document selection (explicit baseline implemented)
 
-Requested in the maintainer's roadmap discussion.
+The explicit folder-helper baseline is implemented and verified in [Stage 45](45-related-notes-explorer.md). Folder rows are implied by the current All/Links candidates, select only descendants in that scope, support overlapping manual/helper provenance and recursive nested paths, and show included document paths before submission. Non-Markdown files and empty folders are excluded; large selections retain the fair combined content budget and capacity rejection rather than gaining a write path.
 
-- [ ] Let users explicitly choose folders whose documents may be opened and included as read-only request context.
-- [ ] Show the chosen folder scope and included document paths before submission. Define whether subfolders are included rather than assuming recursive access.
-- [ ] Bound folder enumeration and combined content, deduplicate overlapping folder/note selections, and provide clear omission feedback.
-- [ ] Do not scan folders in the background, include unselected folders, or grant folder documents a write path.
-- [ ] Handle missing/renamed folders, large folders, non-Markdown files, and switching the active target without leaking context.
+- [x] Let users explicitly choose folder scopes and nested descendants for read-only request context.
+- [x] Deduplicate overlapping folder/note selections and handle missing/renamed/deleted folders, large folders, non-Markdown files, and target isolation.
+- [x] Avoid background folder scans, unselected-folder inclusion, and new write permissions.
+- [ ] Evaluate any future automatic folder-context inclusion, background indexing, or different enumeration bounds separately; none is current behavior.
 
 ## 4. Easier selected-text editing — issue #24 (implemented)
 
@@ -83,14 +81,14 @@ Track: https://github.com/chliu1990/obsidian-emend/issues/13
 - [ ] Require explicit migration/overwrite confirmation and a separate **Forget shared keys** action. Make no cross-device synchronization claim.
 - [ ] Review the deliberate exception to vault-only file access and test supported desktop platforms before any implementation.
 
-## 9. Compact composer controls
+## 9. Compact composer controls (implemented)
 
-Requested in the maintainer's UI review after the DeepSeek web-search follow-ups.
+Implemented and verified in [Stage 44](44-compact-composer.md), with the Related-notes explorer extended in [Stage 45](45-related-notes-explorer.md); no deferred checklist item remains here.
 
-- [ ] Move Fix grammar, Make concise, Add examples, and additional-note selection into smaller icon buttons and dropdown menus beside the composer rather than large dedicated sections.
-- [ ] Preserve accessible labels/tooltips, selected-note paths and remove/clear behavior, shared submission paths, pending/disabled states, and target-note isolation.
-- [ ] Keep privacy details at the point of action or in compact menus rather than persistent bottom disclosures. Do not hide query/URL review controls or change provider/write permissions.
-- [ ] Verify keyboard navigation, narrow sidebars, native picker/modal behavior, draft preservation, latest-message scrolling, and real-Obsidian layout in a separate UI PR.
+- [x] Move Fix grammar, Make concise, Add examples, and additional-note selection into compact composer controls rather than large dedicated sections.
+- [x] Preserve accessible labels/tooltips, selected-note paths and Remove/Clear, shared submission paths, pending/disabled states, and target-note isolation.
+- [x] Keep privacy details at the point of action without hiding query/URL review controls or changing provider/write permissions.
+- [x] Verify trusted keyboard navigation, narrow sidebars, native controls, draft preservation, lifecycle/popout behavior, and real-Obsidian layout. Physical keyboard and screen-reader verification remain outside the recorded evidence.
 
 ## 10. Insert-only text enrichment
 
@@ -172,9 +170,9 @@ Track: https://github.com/chliu1990/obsidian-emend/issues/44
 
 ## Delivery constraints
 
-- Keep every roadmap item and issue in its own focused PR; do not bundle discovery, linked notes, folder selection, mode redesign, translation, multiple sessions, review-change attribution, or credential storage into one PR.
+- Keep every remaining roadmap item and issue in its own focused PR; the completed explicit All/Links/folder snapshot baseline does not authorize bundling automatic discovery, mode redesign, translation, review-change attribution, or credential storage into another PR.
 - Keep review-change attribution independent from post-edit change summaries, follow-up-edit merging, Track Changes dependency research, and other workflow PRs; attribution must not depend on or block those changes.
-- Keep the public-launch path to three independent content PRs plus the normal separate release PR: documentation and promotional material, post-edit change summaries, and compact composer controls. Publication preparation does not authorize implementation of deferred features.
+- Post-edit summaries, compact composer controls, and the Related-notes explorer are implemented baselines. Keep remaining publication work and every deferred feature in separate focused PRs; publication preparation does not authorize implementation of deferred features.
 - Keep either translation mode, multiple sessions, and toolchain maintenance out of launch PRs. Toolchain upgrades require their own workflow-authorized PR and are not launch prerequisites unless security- or release-breaking.
 - Preserve explicit actions, local data control, bounded context, credential safety, and the active-target-only write model.
 - Update current documentation only when a feature is actually implemented and verified.
