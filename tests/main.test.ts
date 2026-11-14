@@ -1,4 +1,4 @@
-import { MarkdownView, TFile } from 'obsidian';
+import { MarkdownView, TFile, TFolder } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resolveActiveSession } from '../src/chat-sessions';
 import { EmendChatView } from '../src/chat-view';
@@ -469,7 +469,7 @@ describe('EmendPlugin mode keyboard commands', () => {
 });
 
 describe('EmendPlugin additional-note lifecycle', () => {
-	it('routes TFile rename and delete events without vault reads or requests', async () => {
+	it('routes file and folder rename/delete events without discovery, refresh, reads, or requests', async () => {
 		type VaultHandler = (file: unknown, oldPath?: string) => void;
 		const handlers = new Map<string, VaultHandler>();
 		const renameEvent = {};
@@ -477,20 +477,30 @@ describe('EmendPlugin additional-note lifecycle', () => {
 		const registerEvent = vi.fn();
 		const read = vi.fn();
 		const getMarkdownFiles = vi.fn();
+		const metadataDiscovery = vi.fn();
 		const requestChatCompletion = vi.fn();
 		const requestSelectionEdit = vi.fn();
+		const vaultOn = vi.fn((event: string, handler: VaultHandler) => {
+			handlers.set(event, handler);
+			return event === 'rename' ? renameEvent : deleteEvent;
+		});
 		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
 		Object.assign(plugin, {
 			app: {
 				vault: {
 					adapter: new MemoryAdapter(),
 					configDir: '.test-config',
-					on: (event: string, handler: VaultHandler) => {
-						handlers.set(event, handler);
-						return event === 'rename' ? renameEvent : deleteEvent;
-					},
+					on: vaultOn,
 					read,
 					getMarkdownFiles,
+				},
+				metadataCache: {
+					get resolvedLinks() {
+						metadataDiscovery();
+						return {};
+					},
+					getFileCache: metadataDiscovery,
+					on: metadataDiscovery,
 				},
 				workspace: {
 					on: () => ({}),
@@ -509,24 +519,36 @@ describe('EmendPlugin additional-note lifecycle', () => {
 		});
 
 		await plugin.onload();
+		const refresh = vi.spyOn(plugin.additionalNotesStore, 'refresh');
 		expect(plugin.additionalNotesStore.list('A.md')).toEqual([]);
+		expect(vaultOn.mock.calls.map(([event]) => event)).toEqual(['rename', 'delete']);
 		expect(registerEvent).toHaveBeenCalledWith(renameEvent);
 		expect(registerEvent).toHaveBeenCalledWith(deleteEvent);
 		expect(read).not.toHaveBeenCalled();
 		expect(getMarkdownFiles).not.toHaveBeenCalled();
+		expect(metadataDiscovery).not.toHaveBeenCalled();
 		expect(requestChatCompletion).not.toHaveBeenCalled();
 		expect(requestSelectionEdit).not.toHaveBeenCalled();
 
-		plugin.additionalNotesStore.add('A.md', 'B.md');
+		plugin.additionalNotesStore.addHelper('A.md', {
+			type: 'links',
+			targetPath: 'B.md',
+		}, ['B.md']);
 		plugin.additionalNotesStore.add('B.md', 'C.md');
 		handlers.get('rename')?.({ path: 'ignored.md' }, 'A.md');
 		expect(plugin.additionalNotesStore.list('A.md')).toEqual(['B.md']);
+		expect(plugin.additionalNotesStore.listHelpers('A.md')).toEqual([
+			{ type: 'links', targetPath: 'B.md' },
+		]);
 		expect(plugin.additionalNotesStore.list('B.md')).toEqual(['C.md']);
 
 		const renamedFile = new TFile();
 		renamedFile.path = 'D.md';
 		handlers.get('rename')?.(renamedFile, 'B.md');
 		expect(plugin.additionalNotesStore.list('A.md')).toEqual(['D.md']);
+		expect(plugin.additionalNotesStore.listHelpers('A.md')).toEqual([
+			{ type: 'links', targetPath: 'D.md' },
+		]);
 		expect(plugin.additionalNotesStore.list('B.md')).toEqual([]);
 		expect(plugin.additionalNotesStore.list('D.md')).toEqual(['C.md']);
 
@@ -540,7 +562,38 @@ describe('EmendPlugin additional-note lifecycle', () => {
 		expect(plugin.additionalNotesStore.list('A.md')).toEqual(['D.md']);
 		handlers.get('delete')?.(renamedFile);
 		expect(plugin.additionalNotesStore.list('A.md')).toEqual([]);
+		expect(plugin.additionalNotesStore.listHelpers('A.md')).toEqual([]);
 		expect(plugin.additionalNotesStore.list('D.md')).toEqual([]);
+
+		plugin.additionalNotesStore.addHelper('Folder/Target.md', {
+			type: 'folder',
+			path: 'Folder',
+			scope: { type: 'links', targetPath: 'Folder/Linked.md' },
+		}, ['Folder/Linked.md']);
+		plugin.additionalNotesStore.add('Other.md', 'Folder/Keep.md');
+		plugin.additionalNotesStore.add('Outside.md', 'Outside/Keep.md');
+		const renamedFolder = new TFolder();
+		renamedFolder.path = 'Renamed';
+		handlers.get('rename')?.(renamedFolder, 'Folder');
+		expect(plugin.additionalNotesStore.list('Folder/Target.md')).toEqual([]);
+		expect(plugin.additionalNotesStore.list('Renamed/Target.md')).toEqual(['Renamed/Linked.md']);
+		expect(plugin.additionalNotesStore.listHelpers('Renamed/Target.md')).toEqual([{
+			type: 'folder',
+			path: 'Renamed',
+			scope: { type: 'links', targetPath: 'Renamed/Linked.md' },
+		}]);
+		expect(plugin.additionalNotesStore.list('Other.md')).toEqual(['Renamed/Keep.md']);
+		expect(plugin.additionalNotesStore.list('Outside.md')).toEqual(['Outside/Keep.md']);
+
+		handlers.get('delete')?.({ path: 'Renamed' });
+		expect(plugin.additionalNotesStore.list('Renamed/Target.md')).toEqual(['Renamed/Linked.md']);
+		const deletedFolder = new TFolder();
+		deletedFolder.path = 'Renamed';
+		handlers.get('delete')?.(deletedFolder);
+		expect(plugin.additionalNotesStore.list('Renamed/Target.md')).toEqual([]);
+		expect(plugin.additionalNotesStore.listHelpers('Renamed/Target.md')).toEqual([]);
+		expect(plugin.additionalNotesStore.list('Other.md')).toEqual([]);
+		expect(plugin.additionalNotesStore.list('Outside.md')).toEqual(['Outside/Keep.md']);
 
 		plugin.additionalNotesStore.add('A.md', 'Ephemeral.md');
 		const reloadedPlugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
@@ -560,8 +613,10 @@ describe('EmendPlugin additional-note lifecycle', () => {
 		expect(reloadedPlugin.additionalNotesStore).not.toBe(plugin.additionalNotesStore);
 		expect(reloadedPlugin.additionalNotesStore.list('A.md')).toEqual([]);
 
+		expect(refresh).not.toHaveBeenCalled();
 		expect(read).not.toHaveBeenCalled();
 		expect(getMarkdownFiles).not.toHaveBeenCalled();
+		expect(metadataDiscovery).not.toHaveBeenCalled();
 		expect(requestChatCompletion).not.toHaveBeenCalled();
 		expect(requestSelectionEdit).not.toHaveBeenCalled();
 	});

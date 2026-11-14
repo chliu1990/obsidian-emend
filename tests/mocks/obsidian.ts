@@ -117,6 +117,10 @@ export class TFile {
 	path = '';
 }
 
+export class TFolder {
+	path = '';
+}
+
 export class FuzzySuggestModal<T> {
 	static readonly instances: FuzzySuggestModal<unknown>[] = [];
 	items: T[] = [];
