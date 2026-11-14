@@ -29,7 +29,7 @@
 		"esbuild": "0.25.5",
 		"eslint": "^9.39.4",
 		"eslint-plugin-obsidianmd": "^0.3.0",
-		"globals": "^17.6.0",
+		"globals": "^17.14.0",
 		"jiti": "^2.6.1",
 		"obsidian": "1.14.4",
 		"typescript": "^5.8.3",
