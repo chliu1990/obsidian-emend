@@ -14,7 +14,10 @@ export function buildSelectionDecorations(
 		.filter((range) => !range.empty)
 		.map((range) => Decoration.mark({
 			class: 'emend-selection-highlight',
-		}).range(range.from, range.to));
+		}).range(
+			Math.min(range.from, range.to),
+			Math.max(range.from, range.to),
+		));
 	return decorations.length > 0 ? Decoration.set(decorations, true) : Decoration.none;
 }
 

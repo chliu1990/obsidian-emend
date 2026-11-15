@@ -97,6 +97,22 @@ describe('selection presentation decorations', () => {
 		]);
 	});
 
+	it('normalizes an inverted remapped selection after whole-document replacement', () => {
+		const original = '# Stale\n\nStale target changes.\n';
+		let state = stateWith(original, EditorSelection.single(9, 30));
+		state = state.update({ changes: { from: 0, insert: 'USER_STALE_EDIT ' } }).state;
+		const next = state.update({
+			changes: { from: 0, to: state.doc.length, insert: original },
+		}).state;
+
+		expect(next.selection.main.from).toBe(31);
+		expect(next.selection.main.to).toBe(0);
+		expect(next.selection.main.empty).toBe(false);
+		expect(ranges(next.field(selectionPresentationField), next.doc.length)).toEqual([
+			{ from: 0, to: 31, className: 'emend-selection-highlight' },
+		]);
+	});
+
 	it('keeps independent A and B editor states isolated', () => {
 		const a = stateWith('alpha beta gamma', EditorSelection.single(0, 5));
 		const b = stateWith('alpha beta gamma', EditorSelection.single(11, 16));
