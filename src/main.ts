@@ -231,18 +231,22 @@ export default class EmendPlugin extends Plugin {
 		return (this.apiKeyStorage ??= new ApiKeyStorage(this.app.secretStorage));
 	}
 
-	async saveSettings() {
-		await this.saveData(sanitizeSettings(this.settings));
-		this.refreshChatModelLabels();
+	async saveSettings(nextSettings: EmendSettings = this.settings) {
+		await this.saveData(sanitizeSettings(nextSettings));
+		this.settings = nextSettings;
+		this.refreshChatModelControls();
 		this.refreshChatCapacityDisplays();
 	}
 
-	private refreshChatModelLabels() {
+	private refreshChatModelControls() {
+		if (!this.app.workspace) {
+			return;
+		}
 		for (const leaf of this.app.workspace.getLeavesOfType(
 			EMEND_CHAT_VIEW_TYPE,
 		)) {
 			if (leaf.view instanceof EmendChatView) {
-				leaf.view.refreshActiveModelLabel();
+				leaf.view.refreshModelControl();
 			}
 		}
 	}

@@ -734,18 +734,18 @@ describe('EmendPlugin Selection history', () => {
 });
 
 describe('EmendPlugin settings capacity refresh', () => {
-	it('refreshes every open chat view after saving settings', async () => {
-		const refreshActiveModelLabel = vi.fn();
+	function makeSaveFixture(saveData: ReturnType<typeof vi.fn>) {
+		const refreshModelControl = vi.fn();
 		const refreshCapacityEstimate = vi.fn();
+		const otherRefreshModelControl = vi.fn();
+		const otherRefreshCapacityEstimate = vi.fn();
 		const view = Object.create(EmendChatView.prototype) as EmendChatView;
-		Object.assign(view, { refreshActiveModelLabel, refreshCapacityEstimate });
+		Object.assign(view, { refreshModelControl, refreshCapacityEstimate });
 		const otherView = Object.create(EmendChatView.prototype) as EmendChatView;
-		const otherRefresh = vi.fn();
 		Object.assign(otherView, {
-			refreshActiveModelLabel: vi.fn(),
-			refreshCapacityEstimate: otherRefresh,
+			refreshModelControl: otherRefreshModelControl,
+			refreshCapacityEstimate: otherRefreshCapacityEstimate,
 		});
-		const saveData = vi.fn(async (_data: unknown) => undefined);
 		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
 		Object.assign(plugin, {
 			settings: structuredClone(DEFAULT_SETTINGS),
@@ -760,13 +760,91 @@ describe('EmendPlugin settings capacity refresh', () => {
 				},
 			},
 		});
+		return {
+			plugin,
+			refreshModelControl,
+			refreshCapacityEstimate,
+			otherRefreshModelControl,
+			otherRefreshCapacityEstimate,
+		};
+	}
 
-		await plugin.saveSettings();
+	it('retains no-argument saves and refreshes every open chat view', async () => {
+		const saveData = vi.fn(async (_data: unknown) => undefined);
+		const fixture = makeSaveFixture(saveData);
+
+		await fixture.plugin.saveSettings();
 
 		expect(saveData).toHaveBeenCalledOnce();
-		expect(refreshActiveModelLabel).toHaveBeenCalledOnce();
-		expect(refreshCapacityEstimate).toHaveBeenCalledOnce();
-		expect(otherRefresh).toHaveBeenCalledOnce();
+		expect(fixture.refreshModelControl).toHaveBeenCalledOnce();
+		expect(fixture.refreshCapacityEstimate).toHaveBeenCalledOnce();
+		expect(fixture.otherRefreshModelControl).toHaveBeenCalledOnce();
+		expect(fixture.otherRefreshCapacityEstimate).toHaveBeenCalledOnce();
+	});
+
+	it('sanitizes a candidate once, assigns it after saving, and refreshes both views', async () => {
+		const pendingSave = deferred<void>();
+		const saveData = vi.fn((_data: unknown) => pendingSave.promise);
+		const fixture = makeSaveFixture(saveData);
+		const original = fixture.plugin.settings;
+		const candidate = structuredClone(DEFAULT_SETTINGS);
+		candidate.activeProvider = 'custom';
+		candidate.defaultMode = 'edit';
+		candidate.historyMessageLimit = 13;
+		candidate.providers.deepseek.apiKey = 'deepseek-secret';
+		candidate.providers.kimi.apiKey = 'kimi-secret';
+		candidate.providers.custom.apiKey = 'custom-secret';
+		candidate.providers.custom.name = 'Local';
+		candidate.providers.custom.model = 'Candidate model';
+		candidate.providers.custom.baseUrl = 'https://candidate.invalid/v1';
+
+		const saving = fixture.plugin.saveSettings(candidate);
+
+		expect(saveData).toHaveBeenCalledOnce();
+		expect(fixture.plugin.settings).toBe(original);
+		const persisted = saveData.mock.calls[0]?.[0] as EmendSettings;
+		expect(persisted).not.toBe(candidate);
+		expect(persisted.activeProvider).toBe('custom');
+		expect(persisted.defaultMode).toBe('edit');
+		expect(persisted.historyMessageLimit).toBe(13);
+		expect(persisted.providers.custom.model).toBe('Candidate model');
+		expect(persisted.providers.custom.baseUrl).toBe('https://candidate.invalid/v1');
+		expect(persisted.providers.deepseek.apiKey).toBe('');
+		expect(persisted.providers.kimi.apiKey).toBe('');
+		expect(persisted.providers.custom.apiKey).toBe('');
+		expect(candidate.providers.custom.apiKey).toBe('custom-secret');
+		expect(fixture.refreshModelControl).not.toHaveBeenCalled();
+		expect(fixture.refreshCapacityEstimate).not.toHaveBeenCalled();
+
+		pendingSave.resolve();
+		await saving;
+
+		expect(saveData).toHaveBeenCalledOnce();
+		expect(fixture.plugin.settings).toBe(candidate);
+		expect(fixture.refreshModelControl).toHaveBeenCalledOnce();
+		expect(fixture.refreshCapacityEstimate).toHaveBeenCalledOnce();
+		expect(fixture.otherRefreshModelControl).toHaveBeenCalledOnce();
+		expect(fixture.otherRefreshCapacityEstimate).toHaveBeenCalledOnce();
+	});
+
+	it('leaves live settings and every view unchanged when a candidate save rejects', async () => {
+		const saveData = vi.fn(async (_data: unknown) => {
+			throw new Error('Disk full');
+		});
+		const fixture = makeSaveFixture(saveData);
+		const original = fixture.plugin.settings;
+		const candidate = structuredClone(DEFAULT_SETTINGS);
+		candidate.activeProvider = 'kimi';
+		candidate.providers.kimi.model = 'candidate-kimi';
+
+		await expect(fixture.plugin.saveSettings(candidate)).rejects.toThrow('Disk full');
+
+		expect(saveData).toHaveBeenCalledOnce();
+		expect(fixture.plugin.settings).toBe(original);
+		expect(fixture.refreshModelControl).not.toHaveBeenCalled();
+		expect(fixture.refreshCapacityEstimate).not.toHaveBeenCalled();
+		expect(fixture.otherRefreshModelControl).not.toHaveBeenCalled();
+		expect(fixture.otherRefreshCapacityEstimate).not.toHaveBeenCalled();
 	});
 });
 

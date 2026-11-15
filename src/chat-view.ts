@@ -9,6 +9,10 @@ import {
 } from 'obsidian';
 import { RelatedNotesControl } from './related-notes-control';
 import {
+	ChatModelControl,
+	type ChatModelSelection,
+} from './chat-model-control';
+import {
 	createChatSession,
 	createChatSessionId,
 	normalizeManualTitle,
@@ -53,6 +57,7 @@ import type {
 	EmendSettings,
 	Mode,
 	ProviderHistoryMessage,
+	ReasoningEffort,
 	SelectionSnapshot,
 } from './types';
 import { WebSearchModal } from './web-search-modal';
@@ -145,8 +150,9 @@ export class EmendChatView extends ItemView {
 	private followLatestMessages = true;
 	private responseStartMessageId: string | null = null;
 	private inputEl: HTMLTextAreaElement | null = null;
-	private activeModelEl: HTMLElement | null = null;
+	private modelControl: ChatModelControl | null = null;
 	private composerControls: ChatComposerControls | null = null;
+	private isModelSelectionSaving = false;
 	private isSending = false;
 	private isStopping = false;
 	private isThreadLoading = false;
@@ -223,7 +229,8 @@ export class EmendChatView extends ItemView {
 		this.cancelPendingRender();
 		this.pendingMessages.clear();
 		this.messageBodyEls.clear();
-		this.activeModelEl = null;
+		this.modelControl?.destroy();
+		this.modelControl = null;
 		this.messagesEl = null;
 		this.relatedNotesControl?.destroy();
 		this.relatedNotesControl = null;
@@ -291,13 +298,65 @@ export class EmendChatView extends ItemView {
 		this.capacityRefreshTimer = null;
 	}
 
-	refreshActiveModelLabel() {
-		if (!this.activeModelEl) {
-			this.render();
+	refreshModelControl() {
+		if (this.closed || !this.modelControl) {
 			return;
 		}
+		this.modelControl.refresh(this.plugin.settings);
+		this.modelControl.update(this.modelControlState());
+	}
 
-		this.activeModelEl.textContent = this.getActiveModelLabel();
+	private modelControlState() {
+		return {
+			settings: this.plugin.settings,
+			disabled: this.isModelSelectionSaving ||
+				this.isSending ||
+				this.isThreadLoading ||
+				this.isSessionMutating,
+		};
+	}
+
+	private async selectChatModel(
+		selection: ChatModelSelection,
+		effort: ReasoningEffort,
+	) {
+		if (
+			this.closed ||
+			this.isModelSelectionSaving ||
+			this.isSending ||
+			this.isThreadLoading ||
+			this.isSessionMutating
+		) {
+			return;
+		}
+		const current = this.plugin.settings;
+		const provider = current.providers[selection.providerId];
+		const nextSettings: EmendSettings = {
+			...current,
+			activeProvider: selection.providerId,
+			providers: {
+				...current.providers,
+				[selection.providerId]: {
+					...provider,
+					model: selection.modelId,
+					reasoningEffort: effort,
+				},
+			},
+		};
+		this.isModelSelectionSaving = true;
+		this.modelControl?.update(this.modelControlState());
+		this.applyDraftCapacityControls(undefined, []);
+		try {
+			await this.plugin.saveSettings(nextSettings);
+		} catch (error) {
+			new Notice(`Emend: Could not save model settings. ${getErrorMessage(error)}`);
+		} finally {
+			this.isModelSelectionSaving = false;
+			if (!this.closed) {
+				this.refreshModelControl();
+				this.refreshCapacityEstimate();
+			}
+		}
 	}
 
 	setMode(mode: SelectableMode) {
@@ -311,7 +370,13 @@ export class EmendChatView extends ItemView {
 	}
 
 	private setWritingChoice(choice: ComposerWritingChoice) {
-		if (this.closed || this.isSending || this.isThreadLoading || this.isSessionMutating) {
+		if (
+			this.closed ||
+			this.isModelSelectionSaving ||
+			this.isSending ||
+			this.isThreadLoading ||
+			this.isSessionMutating
+		) {
 			return;
 		}
 		this.renderComposerChange(() => {
@@ -326,6 +391,7 @@ export class EmendChatView extends ItemView {
 		if (
 			this.closed ||
 			this.selectedMode === 'edit' ||
+			this.isModelSelectionSaving ||
 			this.isSending ||
 			this.isThreadLoading ||
 			this.isSessionMutating
@@ -363,8 +429,14 @@ export class EmendChatView extends ItemView {
 			mode: this.selectedMode,
 			editTarget: this.displayedEditTarget,
 			webSearchMode: this.webSearchMode,
-			disabled: this.isSending || this.isThreadLoading || this.isSessionMutating,
-			sendDisabled: this.isThreadLoading || this.isSessionMutating || this.draftCapacityBlocked,
+			disabled: this.isModelSelectionSaving ||
+				this.isSending ||
+				this.isThreadLoading ||
+				this.isSessionMutating,
+			sendDisabled: this.isModelSelectionSaving ||
+				this.isThreadLoading ||
+				this.isSessionMutating ||
+				this.draftCapacityBlocked,
 			isSending: this.isSending,
 			isStopping: this.isStopping,
 		};
@@ -873,11 +945,13 @@ export class EmendChatView extends ItemView {
 		history: ProviderHistoryMessage[],
 	) {
 		this.updateComposerControls();
-		const quickActionsDisabled = this.isSessionMutating || areQuickActionsDisabled({
-			notePath: this.notePath,
-			isSending: this.isSending,
-			isThreadLoading: this.isThreadLoading,
-		});
+		const quickActionsDisabled = this.isModelSelectionSaving ||
+			this.isSessionMutating ||
+			areQuickActionsDisabled({
+				notePath: this.notePath,
+				isSending: this.isSending,
+				isThreadLoading: this.isThreadLoading,
+			});
 		for (const { action, button } of this.quickActionButtons) {
 			const { estimate } = this.getQuickActionCapacity(
 				action,
@@ -941,6 +1015,8 @@ export class EmendChatView extends ItemView {
 		this.sessionControls = null;
 		this.capacityDisplay?.destroy();
 		this.capacityDisplay = null;
+		this.modelControl?.destroy();
+		this.modelControl = null;
 		this.composerControls?.destroy();
 		this.composerControls = null;
 		this.quickActionButtons = [];
@@ -1004,11 +1080,13 @@ export class EmendChatView extends ItemView {
 		);
 		if (this.selectedMode === 'edit') {
 			const quickActionsEl = contextRowEl.createDiv('emend-chat-quick-actions');
-			const quickActionsDisabled = this.isSessionMutating || areQuickActionsDisabled({
-				notePath: this.notePath,
-				isSending: this.isSending,
-				isThreadLoading: this.isThreadLoading,
-			});
+			const quickActionsDisabled = this.isModelSelectionSaving ||
+				this.isSessionMutating ||
+				areQuickActionsDisabled({
+					notePath: this.notePath,
+					isSending: this.isSending,
+					isThreadLoading: this.isThreadLoading,
+				});
 			for (const action of QUICK_ACTIONS) {
 				const button = quickActionsEl.createEl('button', {
 					cls: 'emend-chat-quick-action',
@@ -1051,10 +1129,10 @@ export class EmendChatView extends ItemView {
 		});
 
 		const actionsEl = composerEl.createDiv('emend-chat-composer-actions');
-		this.activeModelEl = actionsEl.createDiv({
-			cls: 'emend-chat-active-model',
-			text: this.getActiveModelLabel(),
+		this.modelControl = new ChatModelControl({
+			onSelect: (selection, effort) => this.selectChatModel(selection, effort),
 		});
+		this.modelControl.render(actionsEl, this.modelControlState());
 		this.composerControls = new ChatComposerControls({
 			onWritingChoice: (choice) => {
 				this.setWritingChoice(choice);
@@ -1324,6 +1402,12 @@ export class EmendChatView extends ItemView {
 	}
 
 	private handleComposerKeydown(event: KeyboardEvent) {
+		if (this.isModelSelectionSaving) {
+			if (getComposerShortcut(event) === 'send') {
+				event.preventDefault();
+			}
+			return;
+		}
 		const shortcut = getComposerShortcut(event, {
 			isSending: this.isSending || this.isSessionMutating,
 			isThreadLoading: this.isThreadLoading,
@@ -1335,7 +1419,7 @@ export class EmendChatView extends ItemView {
 	}
 
 	private async submitQuickAction(action: QuickAction) {
-		if (this.isSessionMutating || areQuickActionsDisabled({
+		if (this.isModelSelectionSaving || this.isSessionMutating || areQuickActionsDisabled({
 			notePath: this.notePath,
 			isSending: this.isSending,
 			isThreadLoading: this.isThreadLoading,
@@ -1356,7 +1440,13 @@ export class EmendChatView extends ItemView {
 		prompt = this.inputEl?.value.trim() ?? '',
 		options?: { fromQuickAction?: boolean },
 	) {
-		if (!prompt || this.isSending || this.isThreadLoading || this.isSessionMutating) {
+		if (
+			!prompt ||
+			this.isModelSelectionSaving ||
+			this.isSending ||
+			this.isThreadLoading ||
+			this.isSessionMutating
+		) {
 			return;
 		}
 		const notePath = this.notePath;
@@ -1735,13 +1825,6 @@ export class EmendChatView extends ItemView {
 		}));
 	}
 
-	private getActiveModelLabel() {
-		const provider = this.plugin.settings.providers[
-			this.plugin.settings.activeProvider
-		];
-		const model = provider.model.trim();
-		return model ? `${provider.name} · ${model}` : provider.name;
-	}
 }
 
 interface VaultNameSource {
