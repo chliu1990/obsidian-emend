@@ -1079,6 +1079,27 @@ describe('EmendChatView composer model selection', () => {
 		expect(candidate).toEqual(expected);
 	});
 
+	it('rebases a queued model selection onto the latest provider effort', async () => {
+		const fixture = createModelControlView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const original = fixture.settings;
+
+		chooseModelMenuItem(fixture.contentEl, 'DeepSeek', 'deepseek-v4-pro');
+		await vi.waitFor(() => expect(fixture.saveSettings).toHaveBeenCalledOnce());
+
+		const update = fixture.saveSettings.mock.calls[0]?.[0];
+		if (typeof update !== 'function') {
+			throw new Error('Model selection did not supply a settings updater.');
+		}
+		const latest = structuredClone(original);
+		latest.providers.deepseek.reasoningEffort = 'high';
+		const candidate = update(latest);
+		const expected = structuredClone(latest);
+		expected.activeProvider = 'deepseek';
+		expected.providers.deepseek.model = 'deepseek-v4-pro';
+		expect(candidate).toEqual(expected);
+	});
+
 	it('derives model availability from getApiKey and refreshes it after key and config saves', async () => {
 		const fixture = createModelControlView();
 		await viewPrototype.refreshTargetNote.call(fixture.context);
