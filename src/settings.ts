@@ -6,6 +6,7 @@ import {
 import { discoverProviderModels } from './model-discovery';
 import { isSelectableMode, MODES } from './mode';
 import { getDocumentedCapacityDefaults } from './provider-capacity-defaults';
+import { getProviderModelOptions } from './provider-model-options';
 import type EmendPlugin from './main';
 import type {
 	DiscoveredModel,
@@ -36,7 +37,7 @@ export const AI_PROVIDERS = [
 	},
 ] as const;
 
-const REASONING_EFFORTS: ReasoningEffort[] = ['low', 'medium', 'high'];
+export const REASONING_EFFORTS: readonly ReasoningEffort[] = ['low', 'medium', 'high'];
 const CUSTOM_MODEL_OPTION = '__custom__';
 
 export const DEFAULT_SETTINGS: EmendSettings = {
@@ -229,22 +230,12 @@ export class EmendSettingTab extends PluginSettingTab {
 		setIcon(modelSetting.nameEl.createSpan(), 'cpu');
 		modelSetting
 			.addDropdown((dropdown) => {
-				const options = new Map<string, string>();
-				if (provider.defaultModel) {
-					options.set(provider.defaultModel, provider.defaultModel);
+				for (const option of getProviderModelOptions(provider.id, config)) {
+					dropdown.addOption(option.id, option.label);
 				}
-				for (const model of config.discoveredModels) {
-					options.set(model.id, model.displayName);
-				}
-				if (config.model) {
-					options.set(config.model, config.model);
-				}
-				options.set(CUSTOM_MODEL_OPTION, 'Custom model');
-				for (const [value, label] of options) {
-					dropdown.addOption(value, label);
-				}
+				dropdown.addOption(CUSTOM_MODEL_OPTION, 'Custom model');
 				dropdown
-					.setValue(config.model || CUSTOM_MODEL_OPTION)
+					.setValue(config.model.trim() || CUSTOM_MODEL_OPTION)
 					.onChange(async (value) => {
 						if (value === CUSTOM_MODEL_OPTION) {
 							return;

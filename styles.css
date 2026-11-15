@@ -645,14 +645,29 @@
 }
 
 .emend-chat-active-model {
-	flex: 1 1 100px;
+	flex: 0 1 auto;
 	min-width: 0;
+	max-width: min(100%, 320px);
 	margin-inline-start: auto;
+	padding: var(--size-4-1) var(--size-4-2);
+	border-radius: var(--radius-s);
+	background: var(--background-secondary);
+	box-shadow: none;
 	color: var(--text-muted);
 	font-size: var(--font-ui-smaller);
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+.emend-chat-active-model:hover {
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+}
+
+.emend-chat-active-model:focus-visible {
+	outline: 2px solid var(--focus-border-color);
+	outline-offset: 1px;
 }
 
 .emend-chat-primary-button,
@@ -770,6 +785,10 @@
 
 	.emend-chat-composer-actions {
 		flex-wrap: wrap;
+	}
+
+	.emend-chat-active-model {
+		flex: 1 1 100%;
 	}
 
 	.emend-context-capacity-details {

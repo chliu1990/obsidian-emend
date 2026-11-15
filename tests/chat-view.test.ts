@@ -11,9 +11,10 @@ import {
 	type ActiveRequest,
 } from '../src/chat-view';
 import { buildDraftCapacityEstimate } from '../src/context-capacity-ui';
-import { formatVaultQualifiedPath } from '../src/context';
+import { formatVaultQualifiedPath, type RequestContext } from '../src/context';
 import type { LoadedChatConversation } from '../src/conversation-store';
-import { normalizeContextLimit } from '../src/settings';
+import { DEFAULT_SETTINGS, normalizeContextLimit } from '../src/settings';
+import EmendPlugin from '../src/main';
 import { getEditStrategy } from '../src/edit-strategy';
 import type { EditSummaryItem } from '../src/edit-strategy';
 import { getSystemPrompt } from '../src/mode';
@@ -39,9 +40,11 @@ import type {
 } from '../src/selection-editor';
 import type {
 	ChatMessage,
+	EmendSettings,
 	Mode,
 	ProviderConfig,
 	ProviderHistoryMessage,
+	ProviderId,
 	SelectionSnapshot,
 } from '../src/types';
 import type { WebActivityRecord } from '../src/web-search';
@@ -61,11 +64,30 @@ describe('EmendChatView compact composer styles', () => {
 
 	it('wraps the bottom row without shrinking controls out of a narrow sidebar', () => {
 		const row = getCssRule('.emend-chat-composer-actions');
+		const model = getCssRule('.emend-chat-active-model');
 		expect(row).toContain('flex-wrap: wrap;');
 		expect(row).toContain('min-width: 0;');
 		expect(getCssRule('.emend-chat-writing-trigger')).toContain('min-width: 0;');
-		expect(getCssRule('.emend-chat-active-model')).toContain('min-width: 0;');
+		expect(model).toContain('flex: 0 1 auto;');
+		expect(model).toContain('min-width: 0;');
+		expect(model).toContain('max-width: min(100%, 320px);');
+		expect(model).toContain('margin-inline-start: auto;');
+		expect(model).toContain('overflow: hidden;');
+		expect(model).toContain('text-overflow: ellipsis;');
+		expect(model).toContain('white-space: nowrap;');
+		expect(model).toContain('background: var(--background-secondary);');
+		expect(getCssRule('.emend-chat-active-model:hover')).toContain(
+			'background: var(--background-modifier-hover);',
+		);
+		expect(getCssRule('.emend-chat-active-model:focus-visible')).toContain(
+			'outline: 2px solid var(--focus-border-color);',
+		);
 		expect(getCssRule('.emend-chat-send-button')).toContain('flex: 0 0 auto;');
+		const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+		const narrow = css.slice(css.indexOf('@media (max-width: 400px)'));
+		expect(narrow).toMatch(
+			/\.emend-chat-active-model\s*\{[^}]*flex: 1 1 100%;[^}]*\}/,
+		);
 	});
 
 	it('wraps Related notes and right-aligned quick actions without narrow-sidebar overflow', () => {
@@ -143,6 +165,7 @@ const viewPrototype = EmendChatView.prototype as unknown as {
 	toProviderHistory(this: unknown): ProviderHistoryMessage[];
 	refreshDraftEstimate(this: unknown, prompt?: string): void;
 	refreshCapacityEstimate(this: unknown): void;
+	refreshModelControl(this: unknown): void;
 };
 
 function message(id: string, sourcePath: string): ChatMessage {
@@ -388,6 +411,7 @@ function createEditTargetView(options: {
 		app: { vault: { adapter: { read } } },
 		contentEl,
 		plugin: {
+			getApiKey: (_providerId: ProviderId) => 'test-key',
 			getActiveNotePath: () => activePath,
 			getActiveNoteLabel: () => activePath,
 			hasUsableSelection: () => Boolean(selectedText.trim()),
@@ -399,12 +423,12 @@ function createEditTargetView(options: {
 				activeProvider: 'custom',
 				historyMessageLimit: 8,
 				providers: {
+					deepseek: { ...DEFAULT_SETTINGS.providers.deepseek },
+					kimi: { ...DEFAULT_SETTINGS.providers.kimi },
 					custom: {
+						...DEFAULT_SETTINGS.providers.custom,
 						name: 'Local',
 						model: 'Test model',
-						contextWindowTokens: null,
-						outputReserveTokens: null,
-						contextCapacityInvalid: false,
 					},
 				},
 			},
@@ -432,6 +456,7 @@ function createEditTargetView(options: {
 		messageBodyEls: new Map<string, HTMLElement>(),
 		scheduleMessageRender: vi.fn(),
 		activeModelEl: null,
+		modelControl: null,
 		editTargetChoice: 'auto' as 'auto' | 'full-note' | 'selection',
 		displayedEditTarget: 'full-note' as 'full-note' | 'selection',
 		composerControls: null,
@@ -465,6 +490,70 @@ function createEditTargetView(options: {
 			selectedText = text;
 		},
 	};
+}
+
+function createModelControlView() {
+	const fixture = createEditTargetView();
+	const settings = structuredClone(DEFAULT_SETTINGS);
+	settings.activeProvider = 'custom';
+	settings.defaultMode = 'ask';
+	settings.includeNotePathInContext = true;
+	settings.smartSelectionContext = false;
+	settings.maxContextCharacters = 2345;
+	settings.maxWebToolCalls = 11;
+	settings.maxWebContentCharactersPerCall = 34567;
+	settings.historyMessageLimit = 13;
+	settings.providers.deepseek.apiKey = 'deepseek-live-key';
+	settings.providers.deepseek.baseUrl = 'https://deepseek.local/v1';
+	settings.providers.deepseek.reasoningEffort = 'low';
+	settings.providers.deepseek.discoveredModels = [
+		{ id: 'deepseek-cached', displayName: 'Cached DeepSeek' },
+	];
+	settings.providers.deepseek.contextWindowTokens = 8000;
+	settings.providers.deepseek.outputReserveTokens = 800;
+	settings.providers.kimi.apiKey = 'kimi-live-key';
+	settings.providers.kimi.baseUrl = 'https://kimi.local/v1';
+	settings.providers.kimi.reasoningEffort = 'medium';
+	settings.providers.kimi.discoveredModels = [
+		{ id: 'kimi-cached', displayName: 'Cached Kimi' },
+	];
+	settings.providers.kimi.contextWindowTokens = 6000;
+	settings.providers.kimi.outputReserveTokens = 600;
+	settings.providers.custom.name = 'Local';
+	settings.providers.custom.apiKey = 'custom-live-key';
+	settings.providers.custom.baseUrl = 'https://custom.local/v1';
+	settings.providers.custom.model = 'Test model';
+	settings.providers.custom.reasoningEffort = 'high';
+	settings.providers.custom.requestUsage = true;
+	settings.providers.custom.discoveredModels = [
+		{ id: 'second-local', displayName: 'Second local' },
+	];
+	settings.providers.custom.contextWindowTokens = 4000;
+	settings.providers.custom.outputReserveTokens = 400;
+	const plugin = fixture.context.plugin as unknown as {
+		settings: EmendSettings;
+		additionalNotesStore: AdditionalNotesStore;
+		getApiKey(providerId: ProviderId): string;
+		saveSettings(
+			update?: EmendSettings | ((current: EmendSettings) => EmendSettings),
+		): Promise<void>;
+	};
+	const apiKeys: Record<ProviderId, string> = {
+		deepseek: 'deepseek-secret-storage-key',
+		kimi: 'kimi-secret-storage-key',
+		custom: 'custom-secret-storage-key',
+	};
+	const getApiKey = vi.fn((providerId: ProviderId) => apiKeys[providerId]);
+	const saveSettings = vi.fn(async (
+		update?: EmendSettings | ((current: EmendSettings) => EmendSettings),
+	) => {
+		plugin.settings = typeof update === 'function'
+			? update(plugin.settings)
+			: update ?? plugin.settings;
+		viewPrototype.refreshModelControl.call(fixture.context);
+	});
+	Object.assign(plugin, { settings, getApiKey, saveSettings });
+	return { ...fixture, plugin, settings, apiKeys, getApiKey, saveSettings };
 }
 
 type ChatViewMenu = Menu & {
@@ -520,6 +609,74 @@ function writingMenuItem(menu: ChatViewMenu, title: string): ChatViewMenuItem {
 
 function chooseWritingMenuItem(contentEl: FakeElement, title: string): void {
 	writingMenuItem(openWritingMenu(contentEl), title).clickHandler({} as MouseEvent);
+}
+
+function findModelTrigger(contentEl: FakeElement): FakeElement | undefined {
+	return findElements(
+		contentEl,
+		(element) => element.className.split(' ').includes('emend-chat-active-model'),
+	)[0];
+}
+
+function openModelMenu(contentEl: FakeElement): ChatViewMenu {
+	findModelTrigger(contentEl)?.dispatch('click');
+	const menu = chatViewMenus.instances.at(-1);
+	if (!menu) {
+		throw new Error('The model trigger did not open a menu.');
+	}
+	return menu;
+}
+
+function modelMenuItem(
+	menu: ChatViewMenu,
+	provider: string,
+	title: string,
+): ChatViewMenuItem {
+	const start = menu.items.findIndex(
+		(item) => item !== 'separator' && item.title === provider,
+	);
+	if (start < 0) {
+		throw new Error(`Missing model provider group: ${provider}`);
+	}
+	for (const item of menu.items.slice(start)) {
+		if (item === 'separator') {
+			break;
+		}
+		if (item.title === title) {
+			return item;
+		}
+	}
+	throw new Error(`Missing ${provider} model menu item: ${title}`);
+}
+
+function reasoningMenuItem(menu: ChatViewMenu, title: string): ChatViewMenuItem {
+	const start = menu.items.findIndex(
+		(item) => item !== 'separator' && item.title === 'Reasoning effort',
+	);
+	const item = menu.items.slice(start + 1).find(
+		(candidate): candidate is ChatViewMenuItem =>
+			candidate instanceof MenuItem && candidate.title === title,
+	);
+	if (start < 0 || !item) {
+		throw new Error(`Missing reasoning effort item: ${title}`);
+	}
+	return item;
+}
+
+function chooseModelMenuItem(
+	contentEl: FakeElement,
+	provider: string,
+	title: string,
+): ChatViewMenuItem {
+	const item = modelMenuItem(openModelMenu(contentEl), provider, title);
+	item.clickHandler({} as MouseEvent);
+	return item;
+}
+
+function chooseReasoningMenuItem(contentEl: FakeElement, title: string): ChatViewMenuItem {
+	const item = reasoningMenuItem(openModelMenu(contentEl), title);
+	item.clickHandler({} as MouseEvent);
+	return item;
 }
 
 describe('EmendChatView selectable modes', () => {
@@ -638,7 +795,7 @@ describe('EmendChatView compact composer', () => {
 			element.textContent,
 		])).toEqual([
 			['emend-chat-writing-trigger', 'Chat'],
-			['emend-chat-active-model', 'Local · Test model'],
+			['emend-chat-active-model', 'Custom · Test model · High'],
 			['emend-chat-primary-button', ''],
 		]);
 
@@ -804,6 +961,379 @@ describe('EmendChatView compact composer', () => {
 		expect(fixture.context.selectedMode).toBe('ask');
 		expect(fixture.context.editTargetChoice).toBe('auto');
 		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+	});
+});
+
+describe('EmendChatView composer model selection', () => {
+	beforeEach(() => {
+		chatViewMenus.instances.length = 0;
+		noticeMessages().length = 0;
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.restoreAllMocks();
+	});
+
+	it('renders the full summary and saves only the selected provider and model', async () => {
+		const fixture = createModelControlView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const trigger = findModelTrigger(fixture.contentEl);
+		const bottomRow = findElements(fixture.contentEl, (element) =>
+			element.className.split(' ').includes('emend-chat-composer-actions')
+		)[0];
+		expect(bottomRow?.children.map((element) => [
+			element.className.split(' ')[0],
+			element.textContent,
+		])).toEqual([
+			['emend-chat-writing-trigger', 'Chat'],
+			['emend-chat-active-model', 'Custom · Test model · High'],
+			['emend-chat-primary-button', ''],
+		]);
+		expect(trigger?.tagName).toBe('button');
+		expect(trigger?.title).toBe('Custom · Test model · High');
+		expect(trigger?.attributes['aria-label']).toBe(
+			'Provider, model, and reasoning: Custom · Test model · High',
+		);
+		const original = fixture.settings;
+		const originalDeepSeek = original.providers.deepseek;
+		const originalKimi = original.providers.kimi;
+		const originalCustom = original.providers.custom;
+		fixture.render.mockClear();
+
+		chooseModelMenuItem(fixture.contentEl, 'DeepSeek', 'deepseek-v4-pro');
+		await vi.waitFor(() => expect(fixture.saveSettings).toHaveBeenCalledOnce());
+		await vi.waitFor(() => expect(trigger?.textContent).toBe(
+			'DeepSeek · deepseek-v4-pro · Low',
+		));
+
+		const update = fixture.saveSettings.mock.calls[0]?.[0];
+		if (typeof update !== 'function') {
+			throw new Error('Model selection did not supply a settings updater.');
+		}
+		const candidate = update(original);
+		const expected = structuredClone(original);
+		expected.activeProvider = 'deepseek';
+		expected.providers.deepseek.model = 'deepseek-v4-pro';
+		expect(candidate).toEqual(expected);
+		expect(candidate).not.toBe(original);
+		expect(candidate.providers.deepseek).not.toBe(originalDeepSeek);
+		expect(candidate.providers.kimi).toBe(originalKimi);
+		expect(candidate.providers.custom).toBe(originalCustom);
+		expect(original.activeProvider).toBe('custom');
+		expect(originalDeepSeek.model).toBe('deepseek-flash');
+		expect(originalDeepSeek.reasoningEffort).toBe('low');
+		expect(originalDeepSeek.apiKey).toBe('deepseek-live-key');
+		expect(originalDeepSeek.baseUrl).toBe('https://deepseek.local/v1');
+		expect(originalCustom.apiKey).toBe('custom-live-key');
+		expect(originalCustom.discoveredModels).toEqual([
+			{ id: 'second-local', displayName: 'Second local' },
+		]);
+		expect(fixture.render).not.toHaveBeenCalled();
+	});
+
+	it('selects effort only for the active provider and preserves its model and unrelated settings', async () => {
+		const fixture = createModelControlView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const original = fixture.settings;
+
+		chooseReasoningMenuItem(fixture.contentEl, 'Low reasoning');
+		await vi.waitFor(() => expect(fixture.saveSettings).toHaveBeenCalledOnce());
+
+		const update = fixture.saveSettings.mock.calls[0]?.[0];
+		if (typeof update !== 'function') {
+			throw new Error('Effort selection did not supply a settings updater.');
+		}
+		const candidate = update(original);
+		const expected = structuredClone(original);
+		expected.activeProvider = 'custom';
+		expected.providers.custom.reasoningEffort = 'low';
+		expect(candidate).toEqual(expected);
+		expect(candidate.activeProvider).toBe('custom');
+		expect(candidate.providers.custom.model).toBe('Test model');
+		expect(candidate.providers.custom.baseUrl).toBe('https://custom.local/v1');
+		expect(candidate.providers.custom.apiKey).toBe('custom-live-key');
+		expect(candidate.providers.custom.contextWindowTokens).toBe(4000);
+		expect(candidate.providers.custom.outputReserveTokens).toBe(400);
+		expect(candidate.providers.deepseek).toBe(original.providers.deepseek);
+		expect(candidate.providers.kimi).toBe(original.providers.kimi);
+	});
+
+	it('rebases a queued reasoning-only selection onto the latest current model', async () => {
+		const fixture = createModelControlView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const original = fixture.settings;
+
+		chooseReasoningMenuItem(fixture.contentEl, 'Low reasoning');
+		await vi.waitFor(() => expect(fixture.saveSettings).toHaveBeenCalledOnce());
+
+		const update = fixture.saveSettings.mock.calls[0]?.[0];
+		if (typeof update !== 'function') {
+			throw new Error('Effort selection did not supply a settings updater.');
+		}
+		const latest = structuredClone(original);
+		latest.providers.custom.model = 'Model chosen while the effort save was queued';
+		const candidate = update(latest);
+		const expected = structuredClone(latest);
+		expected.providers.custom.reasoningEffort = 'low';
+		expect(candidate).toEqual(expected);
+	});
+
+	it('rebases a queued model selection onto the latest provider effort', async () => {
+		const fixture = createModelControlView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const original = fixture.settings;
+
+		chooseModelMenuItem(fixture.contentEl, 'DeepSeek', 'deepseek-v4-pro');
+		await vi.waitFor(() => expect(fixture.saveSettings).toHaveBeenCalledOnce());
+
+		const update = fixture.saveSettings.mock.calls[0]?.[0];
+		if (typeof update !== 'function') {
+			throw new Error('Model selection did not supply a settings updater.');
+		}
+		const latest = structuredClone(original);
+		latest.providers.deepseek.reasoningEffort = 'high';
+		const candidate = update(latest);
+		const expected = structuredClone(latest);
+		expected.activeProvider = 'deepseek';
+		expected.providers.deepseek.model = 'deepseek-v4-pro';
+		expect(candidate).toEqual(expected);
+	});
+
+	it('derives model availability from getApiKey and refreshes it after key and config saves', async () => {
+		const fixture = createModelControlView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+		const providerHeadings = () => openModelMenu(fixture.contentEl).items.flatMap((item) =>
+			item !== 'separator' && ['DeepSeek', 'Kimi', 'Custom'].includes(item.title)
+				? [item.title]
+				: []
+		);
+
+		expect(providerHeadings()).toEqual(['DeepSeek', 'Kimi', 'Custom']);
+		for (const providerId of ['deepseek', 'kimi', 'custom'] as const) {
+			expect(fixture.getApiKey).toHaveBeenCalledWith(providerId);
+		}
+
+		fixture.apiKeys.kimi = '';
+		await fixture.saveSettings();
+		expect(providerHeadings()).toEqual(['DeepSeek', 'Custom']);
+
+		await fixture.saveSettings((current) => ({
+			...current,
+			providers: {
+				...current.providers,
+				custom: {
+					...current.providers.custom,
+					model: '',
+					discoveredModels: [],
+				},
+			},
+		}));
+		expect(providerHeadings()).toEqual(['DeepSeek']);
+		expect(fixture.saveSettings).toHaveBeenCalledTimes(2);
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it('blocks submissions and duplicate choices during a deferred save without rerendering', async () => {
+		const fixture = createModelControlView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		chooseWritingMenuItem(fixture.contentEl, 'Web Review');
+		chooseWritingMenuItem(fixture.contentEl, 'Edit · Full note');
+		fixture.plugin.additionalNotesStore.add('A.md', 'Related.md');
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Preserve this draft';
+			fixture.context.inputEl.setSelectionRange(4, 11);
+			fixture.context.inputEl.focus();
+		}
+		const sessionId = fixture.context.activeSessionId;
+		const messages = fixture.context.messages;
+		const pendingSave = deferred<void>();
+		fixture.saveSettings.mockImplementationOnce(() => pendingSave.promise);
+		fixture.render.mockClear();
+		fixture.captureChatContext.mockClear();
+		const writingMenu = openWritingMenu(fixture.contentEl);
+		const selectedItem = chooseModelMenuItem(
+			fixture.contentEl,
+			'DeepSeek',
+			'deepseek-v4-pro',
+		);
+		const saving = () => (fixture.context as unknown as {
+			isModelSelectionSaving: boolean;
+		}).isModelSelectionSaving;
+
+		expect(saving()).toBe(true);
+		expect(fixture.saveSettings).toHaveBeenCalledOnce();
+		expect(findModelTrigger(fixture.contentEl)?.disabled).toBe(true);
+		expect(findWritingTrigger(fixture.contentEl)?.disabled).toBe(true);
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(true);
+		for (const title of ['Chat', 'Edit · Selection', 'Edit · Full note', 'Web Off', 'Web Review', 'Web Auto']) {
+			expect(writingMenuItem(writingMenu, title).disabled).toBe(true);
+		}
+		for (const action of QUICK_ACTIONS) {
+			expect(findQuickActionButton(fixture.contentEl, action.id)?.disabled).toBe(true);
+		}
+		selectedItem.clickHandler({} as MouseEvent);
+		expect(fixture.saveSettings).toHaveBeenCalledOnce();
+		for (const modifiers of [{}, { metaKey: true }, { ctrlKey: true }]) {
+			const event = keydownEvent(modifiers);
+			viewPrototype.handleComposerKeydown.call(fixture.context, event);
+			expect(event.preventDefault).toHaveBeenCalledOnce();
+		}
+		findQuickActionButton(fixture.contentEl, 'fix-grammar')?.dispatch('click');
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.captureChatContext).not.toHaveBeenCalled();
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(fixture.conversationStore.createSession).not.toHaveBeenCalled();
+		expect(fixture.conversationStore.appendReadyMessage).not.toHaveBeenCalled();
+		expect(fixture.context.messages).toBe(messages);
+		expect(fixture.context.messages).toEqual([]);
+		expect(fixture.context.inputEl?.disabled).toBe(false);
+		expect(fixture.context.inputEl?.value).toBe('Preserve this draft');
+		expect(fixture.context.inputEl?.selectionStart).toBe(4);
+		expect(fixture.context.inputEl?.selectionEnd).toBe(11);
+		expect(fixture.context.inputEl?.focused).toBe(true);
+		expect(fixture.context.activeSessionId).toBe(sessionId);
+		expect(fixture.context.webSearchMode).toBe('review');
+		expect(fixture.context.editTargetChoice).toBe('full-note');
+		expect(fixture.plugin.additionalNotesStore.list('A.md')).toEqual(['Related.md']);
+		expect(fixture.render).not.toHaveBeenCalled();
+
+		pendingSave.resolve();
+		await vi.waitFor(() => expect(saving()).toBe(false));
+
+		expect(fixture.saveSettings).toHaveBeenCalledOnce();
+		expect(findModelTrigger(fixture.contentEl)?.disabled).toBe(false);
+		expect(findWritingTrigger(fixture.contentEl)?.disabled).toBe(false);
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(false);
+		for (const action of QUICK_ACTIONS) {
+			expect(findQuickActionButton(fixture.contentEl, action.id)?.disabled).toBe(false);
+		}
+		expect(fixture.render).not.toHaveBeenCalled();
+	});
+
+	it('reports a rejected save, preserves live settings, and permits a successful retry', async () => {
+		const fixture = createModelControlView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const original = fixture.plugin.settings;
+		const pendingSave = deferred<void>();
+		fixture.saveSettings.mockImplementationOnce(() => pendingSave.promise);
+		fixture.render.mockClear();
+
+		chooseModelMenuItem(fixture.contentEl, 'DeepSeek', 'deepseek-v4-pro');
+		pendingSave.reject(new Error('Disk full'));
+		await vi.waitFor(() => expect(noticeMessages()).toContain(
+			'Emend: Could not save model settings. Disk full',
+		));
+
+		expect(fixture.plugin.settings).toBe(original);
+		expect(fixture.saveSettings).toHaveBeenCalledOnce();
+		expect(findModelTrigger(fixture.contentEl)?.disabled).toBe(false);
+		expect(findWritingTrigger(fixture.contentEl)?.disabled).toBe(false);
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(false);
+		expect(fixture.render).not.toHaveBeenCalled();
+
+		chooseModelMenuItem(fixture.contentEl, 'DeepSeek', 'deepseek-v4-pro');
+		await vi.waitFor(() => expect(fixture.plugin.settings.activeProvider).toBe('deepseek'));
+
+		expect(fixture.saveSettings).toHaveBeenCalledTimes(2);
+		expect(fixture.plugin.settings.providers.deepseek.model).toBe('deepseek-v4-pro');
+		expect(noticeMessages().filter((message) =>
+			message.startsWith('Emend: Could not save model settings.')
+		)).toEqual(['Emend: Could not save model settings. Disk full']);
+		expect(fixture.render).not.toHaveBeenCalled();
+	});
+
+	it('does not rerender a closed view when a deferred save settles', async () => {
+		const fixture = createModelControlView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const pendingSave = deferred<void>();
+		fixture.saveSettings.mockImplementationOnce(() => pendingSave.promise);
+		chooseModelMenuItem(fixture.contentEl, 'DeepSeek', 'deepseek-v4-pro');
+		fixture.render.mockClear();
+
+		await viewPrototype.onClose.call(fixture.context);
+		pendingSave.resolve();
+		await vi.waitFor(() => expect((fixture.context as unknown as {
+			isModelSelectionSaving: boolean;
+		}).isModelSelectionSaving).toBe(false));
+
+		expect(fixture.context.closed).toBe(true);
+		expect(fixture.render).not.toHaveBeenCalled();
+		expect(fixture.context.modelControl).toBeNull();
+	});
+
+	it('retains Review after switching to Kimi and fails explicitly without fallback retrieval', async () => {
+		const fixture = createModelControlView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+		// eslint-disable-next-line @typescript-eslint/unbound-method -- The explicit call supplies the real plugin receiver.
+		const requestReadOnly = EmendPlugin.prototype.requestChatCompletion as unknown as (
+			this: EmendPlugin,
+			submission: ReadOnlySubmission,
+		) => Promise<ChatStreamResult>;
+		fixture.requestChatCompletion.mockImplementation(async (submission) =>
+			requestReadOnly.call(fixture.plugin as unknown as EmendPlugin, submission)
+		);
+		chooseWritingMenuItem(fixture.contentEl, 'Web Review');
+		chooseModelMenuItem(fixture.contentEl, 'Kimi', 'k3.1-pro');
+		await vi.waitFor(() => expect(fixture.plugin.settings.activeProvider).toBe('kimi'));
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Research this with Review';
+		}
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.context.webSearchMode).toBe('review');
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Chat · Review search');
+		expect(fixture.requestChatCompletion).toHaveBeenCalledOnce();
+		expect(fixture.requestChatCompletion.mock.calls[0]?.[0].webSearch?.mode).toBe('review');
+		expect(fetchMock).not.toHaveBeenCalled();
+		expect(noticeMessages()).toContain(
+			'Emend: Online search is only available for DeepSeek deepseek-flash and deepseek-v4-pro.',
+		);
+		expect(fixture.context.messages.map((message) => message.status)).toEqual([
+			'ready',
+			'error',
+		]);
+		expect(fixture.context.messages[1]?.content).toBe(
+			'Online search is only available for DeepSeek deepseek-flash and deepseek-v4-pro.',
+		);
+	});
+
+	it('refreshes capacity for the newly active provider without applying documented defaults', async () => {
+		const fixture = createModelControlView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const before = findCapacitySummary(fixture.contentEl)?.textContent;
+		expect(before).toContain('3600 effective capacity.');
+
+		chooseModelMenuItem(fixture.contentEl, 'DeepSeek', 'deepseek-v4-pro');
+		await vi.waitFor(() => expect(fixture.plugin.settings.activeProvider).toBe('deepseek'));
+		await vi.waitFor(() => expect(findCapacitySummary(fixture.contentEl)?.textContent).not.toBe(before));
+
+		const requestContext = fixture.captureChatContext() as unknown as RequestContext;
+		const expected = buildDraftCapacityEstimate({
+			provider: fixture.plugin.settings.providers.deepseek,
+			request: {
+				systemPrompt: getSystemPrompt('ask'),
+				userPrompt: buildUserPrompt(requestContext, '', []),
+				history: [],
+			},
+		});
+		expect(expected.capacity.kind).toBe('valid');
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedCapacitySummary(expected),
+		);
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toContain(
+			'7200 effective capacity.',
+		);
+		expect(fixture.plugin.settings.providers.deepseek.contextWindowTokens).toBe(8000);
+		expect(fixture.plugin.settings.providers.deepseek.outputReserveTokens).toBe(800);
+		expect(fixture.plugin.settings.providers.custom.contextWindowTokens).toBe(4000);
+		expect(fixture.plugin.settings.providers.custom.outputReserveTokens).toBe(400);
 	});
 });
 
@@ -3273,6 +3803,7 @@ describe('EmendChatView additional notes', () => {
 			app: {},
 			contentEl,
 			plugin: {
+				getApiKey: (_providerId: ProviderId) => 'test-key',
 				getActiveNotePath: () => activePath,
 				getActiveNoteLabel: () => activePath,
 				hasUsableSelection: () => false,
@@ -3283,12 +3814,12 @@ describe('EmendChatView additional notes', () => {
 				settings: {
 					activeProvider: 'custom',
 					providers: {
+					deepseek: { ...DEFAULT_SETTINGS.providers.deepseek },
+					kimi: { ...DEFAULT_SETTINGS.providers.kimi },
 					custom: {
+						...DEFAULT_SETTINGS.providers.custom,
 						name: 'Local',
 						model: 'Test model',
-						contextWindowTokens: null,
-						outputReserveTokens: null,
-						contextCapacityInvalid: false,
 					},
 				},
 				},
@@ -3375,6 +3906,7 @@ describe('EmendChatView additional notes', () => {
 			app: {},
 			contentEl,
 			plugin: {
+				getApiKey: (_providerId: ProviderId) => 'test-key',
 				getActiveNotePath: () => activePath,
 				getActiveNoteLabel: () => activePath,
 				hasUsableSelection: () => false,
@@ -3387,12 +3919,12 @@ describe('EmendChatView additional notes', () => {
 				settings: {
 					activeProvider: 'custom',
 					providers: {
+					deepseek: { ...DEFAULT_SETTINGS.providers.deepseek },
+					kimi: { ...DEFAULT_SETTINGS.providers.kimi },
 					custom: {
+						...DEFAULT_SETTINGS.providers.custom,
 						name: 'Local',
 						model: 'Test model',
-						contextWindowTokens: null,
-						outputReserveTokens: null,
-						contextCapacityInvalid: false,
 					},
 				},
 				},
@@ -4981,6 +5513,7 @@ describe('EmendChatView compact Web disclosure', () => {
 			app: {},
 			contentEl,
 			plugin: {
+				getApiKey: (_providerId: ProviderId) => 'test-key',
 				getActiveNotePath: () => 'Note.md',
 				getActiveNoteLabel: () => 'Note.md',
 				hasUsableSelection: () => false,
@@ -4991,7 +5524,14 @@ describe('EmendChatView compact Web disclosure', () => {
 				requestChatCompletion,
 				settings: {
 					activeProvider: 'deepseek',
-					providers: { deepseek: { name: 'DeepSeek', model: 'deepseek-flash' } },
+					providers: {
+					deepseek: {
+						...DEFAULT_SETTINGS.providers.deepseek,
+						model: 'deepseek-flash',
+					},
+					kimi: { ...DEFAULT_SETTINGS.providers.kimi },
+					custom: { ...DEFAULT_SETTINGS.providers.custom },
+				},
 				},
 			},
 			notePath: null as string | null,
@@ -5051,6 +5591,7 @@ describe('EmendChatView render-end response alignment', () => {
 			app: {},
 			contentEl,
 			plugin: {
+				getApiKey: (_providerId: ProviderId) => 'test-key',
 				getActiveNotePath: () => 'Note.md',
 				getActiveNoteLabel: () => 'Note.md',
 				hasUsableSelection: () => false,
@@ -5066,7 +5607,14 @@ describe('EmendChatView render-end response alignment', () => {
 				additionalNotesStore: new AdditionalNotesStore(),
 				settings: {
 					activeProvider: 'deepseek',
-					providers: { deepseek: { name: 'DeepSeek', model: 'deepseek-flash' } },
+					providers: {
+					deepseek: {
+						...DEFAULT_SETTINGS.providers.deepseek,
+						model: 'deepseek-flash',
+					},
+					kimi: { ...DEFAULT_SETTINGS.providers.kimi },
+					custom: { ...DEFAULT_SETTINGS.providers.custom },
+				},
 				},
 			},
 			notePath: null as string | null,
@@ -5230,6 +5778,7 @@ function createCapacityView(options: CapacityViewOptions = {}) {
 		app: { vault: { getName: () => 'Vault', adapter: { read } } },
 		contentEl,
 		plugin: {
+			getApiKey: (_providerId: ProviderId) => 'test-key',
 			getActiveNotePath: () => file.path,
 			getActiveNoteLabel: () => file.path,
 			hasUsableSelection: () => Boolean(selectedText.trim()),
@@ -5243,7 +5792,11 @@ function createCapacityView(options: CapacityViewOptions = {}) {
 			requestSelectionEdit,
 			settings: {
 				activeProvider: 'custom',
-				providers: { custom: provider },
+				providers: {
+					deepseek: { ...DEFAULT_SETTINGS.providers.deepseek },
+					kimi: { ...DEFAULT_SETTINGS.providers.kimi },
+					custom: provider,
+				},
 				defaultMode: 'ask',
 				includeNotePathInContext: includeNotePath,
 				smartSelectionContext: true,

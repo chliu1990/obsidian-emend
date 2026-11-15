@@ -63,6 +63,7 @@ export default class EmendPlugin extends Plugin {
 	conversationStore!: ConversationStore;
 	additionalNotesStore!: AdditionalNotesStore;
 	private apiKeyStorage: ApiKeyStorage | undefined;
+	private settingsSaveQueue: Promise<void> | undefined;
 	private lastMarkdownView: MarkdownView | null = null;
 	private pendingNotePaths: Set<string> | undefined;
 
@@ -231,18 +232,39 @@ export default class EmendPlugin extends Plugin {
 		return (this.apiKeyStorage ??= new ApiKeyStorage(this.app.secretStorage));
 	}
 
-	async saveSettings() {
-		await this.saveData(sanitizeSettings(this.settings));
-		this.refreshChatModelLabels();
-		this.refreshChatCapacityDisplays();
+	async saveSettings(
+		update?: EmendSettings | ((current: EmendSettings) => EmendSettings),
+	) {
+		const save = async () => {
+			const nextSettings = typeof update === 'function'
+				? update(this.settings)
+				: update ?? this.settings;
+			await this.saveData(sanitizeSettings(nextSettings));
+			const appliedSettings = typeof update === 'function'
+				? update(this.settings)
+				: nextSettings;
+			const { providers, ...rootSettings } = appliedSettings;
+			Object.assign(this.settings, rootSettings);
+			for (const providerId of ['deepseek', 'kimi', 'custom'] as const) {
+				Object.assign(this.settings.providers[providerId], providers[providerId]);
+			}
+			this.refreshChatModelControls();
+			this.refreshChatCapacityDisplays();
+		};
+		const saving = (this.settingsSaveQueue ?? Promise.resolve()).then(save);
+		this.settingsSaveQueue = saving.catch(() => undefined);
+		await saving;
 	}
 
-	private refreshChatModelLabels() {
+	private refreshChatModelControls() {
+		if (!this.app.workspace) {
+			return;
+		}
 		for (const leaf of this.app.workspace.getLeavesOfType(
 			EMEND_CHAT_VIEW_TYPE,
 		)) {
 			if (leaf.view instanceof EmendChatView) {
-				leaf.view.refreshActiveModelLabel();
+				leaf.view.refreshModelControl();
 			}
 		}
 	}

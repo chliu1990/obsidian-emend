@@ -92,10 +92,12 @@ function message(id: string, notePath: string): ChatMessage {
 
 function deferred<T>() {
 	let resolve!: (value: T) => void;
-	const promise = new Promise<T>((resolvePromise) => {
+	let reject!: (reason: unknown) => void;
+	const promise = new Promise<T>((resolvePromise, rejectPromise) => {
 		resolve = resolvePromise;
+		reject = rejectPromise;
 	});
-	return { promise, resolve };
+	return { promise, reject, resolve };
 }
 
 async function waitFor(condition: () => boolean) {
@@ -734,18 +736,18 @@ describe('EmendPlugin Selection history', () => {
 });
 
 describe('EmendPlugin settings capacity refresh', () => {
-	it('refreshes every open chat view after saving settings', async () => {
-		const refreshActiveModelLabel = vi.fn();
+	function makeSaveFixture(saveData: ReturnType<typeof vi.fn>) {
+		const refreshModelControl = vi.fn();
 		const refreshCapacityEstimate = vi.fn();
+		const otherRefreshModelControl = vi.fn();
+		const otherRefreshCapacityEstimate = vi.fn();
 		const view = Object.create(EmendChatView.prototype) as EmendChatView;
-		Object.assign(view, { refreshActiveModelLabel, refreshCapacityEstimate });
+		Object.assign(view, { refreshModelControl, refreshCapacityEstimate });
 		const otherView = Object.create(EmendChatView.prototype) as EmendChatView;
-		const otherRefresh = vi.fn();
 		Object.assign(otherView, {
-			refreshActiveModelLabel: vi.fn(),
-			refreshCapacityEstimate: otherRefresh,
+			refreshModelControl: otherRefreshModelControl,
+			refreshCapacityEstimate: otherRefreshCapacityEstimate,
 		});
-		const saveData = vi.fn(async (_data: unknown) => undefined);
 		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
 		Object.assign(plugin, {
 			settings: structuredClone(DEFAULT_SETTINGS),
@@ -760,13 +762,248 @@ describe('EmendPlugin settings capacity refresh', () => {
 				},
 			},
 		});
+		return {
+			plugin,
+			refreshModelControl,
+			refreshCapacityEstimate,
+			otherRefreshModelControl,
+			otherRefreshCapacityEstimate,
+		};
+	}
 
-		await plugin.saveSettings();
+	it('retains no-argument saves and refreshes every open chat view', async () => {
+		const saveData = vi.fn(async (_data: unknown) => undefined);
+		const fixture = makeSaveFixture(saveData);
+
+		await fixture.plugin.saveSettings();
 
 		expect(saveData).toHaveBeenCalledOnce();
-		expect(refreshActiveModelLabel).toHaveBeenCalledOnce();
-		expect(refreshCapacityEstimate).toHaveBeenCalledOnce();
-		expect(otherRefresh).toHaveBeenCalledOnce();
+		expect(fixture.refreshModelControl).toHaveBeenCalledOnce();
+		expect(fixture.refreshCapacityEstimate).toHaveBeenCalledOnce();
+		expect(fixture.otherRefreshModelControl).toHaveBeenCalledOnce();
+		expect(fixture.otherRefreshCapacityEstimate).toHaveBeenCalledOnce();
+	});
+
+	it('sanitizes a candidate once, applies it in place after saving, and refreshes both views', async () => {
+		const pendingSave = deferred<void>();
+		const saveData = vi.fn((_data: unknown) => pendingSave.promise);
+		const fixture = makeSaveFixture(saveData);
+		const original = fixture.plugin.settings;
+		const originalProviders = original.providers;
+		const originalConfigs = {
+			deepseek: original.providers.deepseek,
+			kimi: original.providers.kimi,
+			custom: original.providers.custom,
+		};
+		const candidate = structuredClone(DEFAULT_SETTINGS);
+		candidate.activeProvider = 'custom';
+		candidate.defaultMode = 'edit';
+		candidate.historyMessageLimit = 13;
+		candidate.providers.deepseek.apiKey = 'deepseek-secret';
+		candidate.providers.kimi.apiKey = 'kimi-secret';
+		candidate.providers.custom.apiKey = 'custom-secret';
+		candidate.providers.custom.name = 'Local';
+		candidate.providers.custom.model = 'Candidate model';
+		candidate.providers.custom.baseUrl = 'https://candidate.invalid/v1';
+
+		const saving = fixture.plugin.saveSettings(candidate);
+
+		await waitFor(() => saveData.mock.calls.length === 1);
+		expect(saveData).toHaveBeenCalledOnce();
+		expect(fixture.plugin.settings).toBe(original);
+		const persisted = saveData.mock.calls[0]?.[0] as EmendSettings;
+		expect(persisted).not.toBe(candidate);
+		expect(persisted.activeProvider).toBe('custom');
+		expect(persisted.defaultMode).toBe('edit');
+		expect(persisted.historyMessageLimit).toBe(13);
+		expect(persisted.providers.custom.model).toBe('Candidate model');
+		expect(persisted.providers.custom.baseUrl).toBe('https://candidate.invalid/v1');
+		expect(persisted.providers.deepseek.apiKey).toBe('');
+		expect(persisted.providers.kimi.apiKey).toBe('');
+		expect(persisted.providers.custom.apiKey).toBe('');
+		expect(candidate.providers.custom.apiKey).toBe('custom-secret');
+		expect(fixture.refreshModelControl).not.toHaveBeenCalled();
+		expect(fixture.refreshCapacityEstimate).not.toHaveBeenCalled();
+
+		pendingSave.resolve();
+		await saving;
+
+		expect(saveData).toHaveBeenCalledOnce();
+		expect(fixture.plugin.settings).toBe(original);
+		expect(fixture.plugin.settings).toEqual(candidate);
+		expect(fixture.plugin.settings).not.toBe(candidate);
+		expect(fixture.plugin.settings.providers).toBe(originalProviders);
+		for (const providerId of ['deepseek', 'kimi', 'custom'] as const) {
+			expect(fixture.plugin.settings.providers[providerId]).toBe(
+				originalConfigs[providerId],
+			);
+		}
+		expect(fixture.refreshModelControl).toHaveBeenCalledOnce();
+		expect(fixture.refreshCapacityEstimate).toHaveBeenCalledOnce();
+		expect(fixture.otherRefreshModelControl).toHaveBeenCalledOnce();
+		expect(fixture.otherRefreshCapacityEstimate).toHaveBeenCalledOnce();
+	});
+
+	it('leaves live settings and every view unchanged when a candidate save rejects', async () => {
+		const saveData = vi.fn(async (_data: unknown) => {
+			throw new Error('Disk full');
+		});
+		const fixture = makeSaveFixture(saveData);
+		const original = fixture.plugin.settings;
+		const candidate = structuredClone(DEFAULT_SETTINGS);
+		candidate.activeProvider = 'kimi';
+		candidate.providers.kimi.model = 'candidate-kimi';
+
+		await expect(fixture.plugin.saveSettings(candidate)).rejects.toThrow('Disk full');
+
+		expect(saveData).toHaveBeenCalledOnce();
+		expect(fixture.plugin.settings).toBe(original);
+		expect(fixture.refreshModelControl).not.toHaveBeenCalled();
+		expect(fixture.refreshCapacityEstimate).not.toHaveBeenCalled();
+		expect(fixture.otherRefreshModelControl).not.toHaveBeenCalled();
+		expect(fixture.otherRefreshCapacityEstimate).not.toHaveBeenCalled();
+	});
+
+	it('serializes two deferred model selections and rebases the second updater', async () => {
+		const firstDiskSave = deferred<void>();
+		const saveData = vi.fn()
+			.mockImplementationOnce(() => firstDiskSave.promise)
+			.mockImplementation(async () => undefined);
+		const fixture = makeSaveFixture(saveData);
+		fixture.plugin.settings.activeProvider = 'custom';
+		fixture.plugin.settings.providers.custom.baseUrl = 'https://newer.invalid/v1';
+		fixture.plugin.settings.providers.custom.discoveredModels = [
+			{ id: 'newer-cache', displayName: 'Newer cache' },
+		];
+
+		const first = fixture.plugin.saveSettings((current) => ({
+			...current,
+			activeProvider: 'deepseek',
+			providers: {
+				...current.providers,
+				deepseek: {
+					...current.providers.deepseek,
+					model: 'deepseek-v4-pro',
+					reasoningEffort: 'low',
+				},
+			},
+		}));
+		const second = fixture.plugin.saveSettings((current) => ({
+			...current,
+			activeProvider: 'kimi',
+			providers: {
+				...current.providers,
+				kimi: {
+					...current.providers.kimi,
+					model: 'k3.1-pro',
+					reasoningEffort: 'medium',
+				},
+			},
+		}));
+		void first.catch(() => undefined);
+		void second.catch(() => undefined);
+
+		await waitFor(() => saveData.mock.calls.length === 1);
+		expect(saveData).toHaveBeenCalledOnce();
+		expect(fixture.plugin.settings.activeProvider).toBe('custom');
+		firstDiskSave.resolve();
+		await first;
+		await second;
+
+		expect(saveData).toHaveBeenCalledTimes(2);
+		const firstPersisted = saveData.mock.calls[0]?.[0] as EmendSettings;
+		const secondPersisted = saveData.mock.calls[1]?.[0] as EmendSettings;
+		expect(firstPersisted.activeProvider).toBe('deepseek');
+		expect(firstPersisted.providers.deepseek.model).toBe('deepseek-v4-pro');
+		expect(firstPersisted.providers.deepseek.reasoningEffort).toBe('low');
+		expect(secondPersisted.activeProvider).toBe('kimi');
+		expect(secondPersisted.providers.deepseek.model).toBe('deepseek-v4-pro');
+		expect(secondPersisted.providers.deepseek.reasoningEffort).toBe('low');
+		expect(secondPersisted.providers.kimi.reasoningEffort).toBe('medium');
+		expect(secondPersisted.providers.custom.baseUrl).toBe('https://newer.invalid/v1');
+		expect(secondPersisted.providers.custom.discoveredModels).toEqual([
+			{ id: 'newer-cache', displayName: 'Newer cache' },
+		]);
+	});
+
+	it('rebases a pending composer candidate around a later no-argument Settings save', async () => {
+		const firstDiskSave = deferred<void>();
+		const saveData = vi.fn()
+			.mockImplementationOnce(() => firstDiskSave.promise)
+			.mockImplementation(async () => undefined);
+		const fixture = makeSaveFixture(saveData);
+		const originalRoot = fixture.plugin.settings;
+		const originalProviders = originalRoot.providers;
+		const originalDeepSeek = originalProviders.deepseek;
+
+		const composerSave = fixture.plugin.saveSettings((current) => ({
+			...current,
+			activeProvider: 'deepseek',
+			providers: {
+				...current.providers,
+				deepseek: {
+					...current.providers.deepseek,
+					model: 'deepseek-v4-pro',
+					reasoningEffort: 'low',
+				},
+			},
+		}));
+		void composerSave.catch(() => undefined);
+		await waitFor(() => saveData.mock.calls.length === 1);
+		originalDeepSeek.baseUrl = 'https://settings-open.invalid/v1';
+		originalDeepSeek.contextWindowTokens = 98765;
+		originalProviders.kimi.model = 'settings-open-kimi';
+		originalRoot.historyMessageLimit = 17;
+		const settingsSave = fixture.plugin.saveSettings();
+
+		expect(saveData).toHaveBeenCalledOnce();
+		firstDiskSave.resolve();
+		await composerSave;
+		await settingsSave;
+
+		expect(saveData).toHaveBeenCalledTimes(2);
+		const firstPersisted = saveData.mock.calls[0]?.[0] as EmendSettings;
+		expect(firstPersisted.providers.deepseek.model).toBe('deepseek-v4-pro');
+		expect(firstPersisted.providers.deepseek.baseUrl).toBe('https://api.deepseek.com');
+		const finalPersisted = saveData.mock.calls[1]?.[0] as EmendSettings;
+		expect(finalPersisted.providers.deepseek.model).toBe('deepseek-v4-pro');
+		expect(finalPersisted.providers.deepseek.baseUrl).toBe('https://settings-open.invalid/v1');
+		expect(finalPersisted.providers.deepseek.contextWindowTokens).toBe(98765);
+		expect(finalPersisted.providers.kimi.model).toBe('settings-open-kimi');
+		expect(finalPersisted.historyMessageLimit).toBe(17);
+		expect(fixture.plugin.settings).toBe(originalRoot);
+		expect(fixture.plugin.settings.providers).toBe(originalProviders);
+		expect(fixture.plugin.settings.providers.deepseek).toBe(originalDeepSeek);
+	});
+
+	it('continues the settings queue after a rejected save without a failure refresh', async () => {
+		const firstDiskSave = deferred<void>();
+		const saveData = vi.fn()
+			.mockImplementationOnce(() => firstDiskSave.promise)
+			.mockImplementation(async () => undefined);
+		const fixture = makeSaveFixture(saveData);
+		const rejected = structuredClone(fixture.plugin.settings);
+		rejected.activeProvider = 'kimi';
+		const accepted = structuredClone(fixture.plugin.settings);
+		accepted.activeProvider = 'custom';
+		accepted.providers.custom.model = 'accepted-model';
+
+		const first = fixture.plugin.saveSettings(rejected);
+		void first.catch(() => undefined);
+		const second = fixture.plugin.saveSettings(accepted);
+		void second.catch(() => undefined);
+		await waitFor(() => saveData.mock.calls.length === 1);
+		expect(saveData).toHaveBeenCalledOnce();
+		firstDiskSave.reject(new Error('Disk full'));
+
+		await expect(first).rejects.toThrow('Disk full');
+		await second;
+		expect(saveData).toHaveBeenCalledTimes(2);
+		expect((saveData.mock.calls[1]?.[0] as EmendSettings).activeProvider).toBe('custom');
+		expect(fixture.plugin.settings.activeProvider).toBe('custom');
+		expect(fixture.plugin.settings.providers.custom.model).toBe('accepted-model');
+		expect(fixture.refreshModelControl).toHaveBeenCalledOnce();
+		expect(fixture.refreshCapacityEstimate).toHaveBeenCalledOnce();
 	});
 });
 
