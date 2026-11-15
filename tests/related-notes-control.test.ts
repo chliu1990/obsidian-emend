@@ -1,4 +1,4 @@
-import { App, FuzzySuggestModal, TFile } from 'obsidian';
+import { App, FuzzySuggestModal, setIcon, TFile } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AdditionalNotesStore } from '../src/additional-notes-store';
 import { AdditionalNotesControl } from '../src/additional-notes-ui';
@@ -384,6 +384,25 @@ function folderCheckbox(panel: FakeElement, path: string): FakeElement {
 	return input;
 }
 
+function folderDisclosure(panel: FakeElement, path: string): FakeElement {
+	const button = findButton(panel, `Toggle folder ${path}`);
+	if (!button) {
+		throw new Error(`Folder disclosure missing: ${path}`);
+	}
+	return button;
+}
+
+function noteRow(panel: FakeElement, path: string): FakeElement {
+	const row = findElements(panel, (element) =>
+		element.className.split(' ').includes('emend-chat-related-notes-explorer-note-row')
+		&& element.attributes['data-note-path'] === path
+	)[0];
+	if (!row) {
+		throw new Error(`Note row missing: ${path}`);
+	}
+	return row;
+}
+
 function selectAllCheckbox(panel: FakeElement): FakeElement {
 	const input = findByClass(panel, 'emend-chat-related-notes-explorer-select-all');
 	if (!input) {
@@ -442,6 +461,7 @@ describe('RelatedNotesControl', () => {
 
 	beforeEach(() => {
 		fuzzyModalInstances().length = 0;
+		vi.mocked(setIcon).mockClear();
 		fetchMock = vi.fn();
 		vi.stubGlobal('fetch', fetchMock);
 	});
@@ -479,6 +499,100 @@ describe('RelatedNotesControl', () => {
 		expect(findTrigger(container)).toBe(trigger);
 	});
 
+	it('renders decorative folder and file icons immediately before names without replacing controls', () => {
+		const fixture = createControl();
+		const { container, control } = fixture;
+		control.render(container as unknown as HTMLElement, false);
+		const panel = openExplorer(fixture);
+		const rows = findElements(panel, (element) =>
+			element.className.split(' ').includes('emend-chat-related-notes-explorer-row')
+		);
+
+		expect(rows).toHaveLength(10);
+		for (const row of rows) {
+			const folder = row.attributes['data-folder-path'] !== undefined;
+			const icon = findByClass(row, 'emend-chat-related-notes-explorer-icon');
+			const path = findByClass(row, 'emend-chat-related-notes-explorer-path');
+			expect(icon?.attributes['data-icon']).toBe(folder ? 'folder' : 'file-text');
+			expect(icon?.attributes['aria-hidden']).toBe('true');
+			expect(icon && path && row.children.indexOf(icon) + 1 === row.children.indexOf(path)).toBe(true);
+		}
+		expect(vi.mocked(setIcon).mock.calls.filter(([, icon]) => icon === 'folder')).toHaveLength(2);
+		expect(vi.mocked(setIcon).mock.calls.filter(([, icon]) => icon === 'file-text')).toHaveLength(8);
+		expect(noteCheckbox(panel, 'Active.md').attributes['aria-label']).toBe('Active note Active.md');
+		expect(textOf(noteRow(panel, 'Active.md'))).toContain('Active');
+		expect(folderDisclosure(panel, 'Folder').attributes['aria-label']).toBe('Toggle folder Folder');
+		expect(folderCheckbox(panel, 'Folder').attributes['aria-label']).toBe('Select folder Folder');
+	});
+
+	it('expands the active note ancestors while leaving unrelated folders and descendants collapsed', () => {
+		const fixture = createControl('Folder/Nested/Deep.md');
+		const { container, control, files } = fixture;
+		files.push(file('Other/Visible.md'), file('Other/Nested/Hidden.md'));
+		control.render(container as unknown as HTMLElement, false);
+		const panel = openExplorer(fixture);
+
+		expect(visibleFolderPaths(panel)).toEqual(['Folder', 'Folder/Nested', 'Other']);
+		expect(folderDisclosure(panel, 'Folder').attributes['aria-expanded']).toBe('true');
+		expect(folderDisclosure(panel, 'Folder/Nested').attributes['aria-expanded']).toBe('true');
+		expect(folderDisclosure(panel, 'Other').attributes['aria-expanded']).toBe('false');
+		expect(isVisible(noteRow(panel, 'Folder/Nested/Deep.md'))).toBe(true);
+		expect(isVisible(noteRow(panel, 'Other/Visible.md'))).toBe(false);
+		expect(isVisible(noteRow(panel, 'Other/Nested/Hidden.md'))).toBe(false);
+
+		folderDisclosure(panel, 'Folder').click();
+		findButton(panel, 'Links')?.click();
+		findButton(panel, 'All')?.click();
+		findButton(panel, 'Refresh')?.click();
+		expect(folderDisclosure(panel, 'Folder').attributes['aria-expanded']).toBe('false');
+		expect(isVisible(noteRow(panel, 'Folder/Nested/Deep.md'))).toBe(false);
+	});
+
+	it('starts every folder collapsed when the active note is at vault root', () => {
+		const fixture = createControl();
+		const { container, control, files } = fixture;
+		files.push(file('Other/Visible.md'), file('Other/Nested/Hidden.md'));
+		control.render(container as unknown as HTMLElement, false);
+		const panel = openExplorer(fixture);
+
+		expect(visibleNotePaths(panel)).toEqual([
+			'Active.md',
+			'Both.md',
+			'Incoming.md',
+			'Outgoing.md',
+			'Zeta.md',
+		]);
+		expect(visibleFolderPaths(panel)).toEqual(['Folder', 'Other']);
+		expect(folderDisclosure(panel, 'Folder').attributes['aria-expanded']).toBe('false');
+		expect(folderDisclosure(panel, 'Other').attributes['aria-expanded']).toBe('false');
+		expect(isVisible(noteRow(panel, 'Folder/Nested/Deep.md'))).toBe(false);
+		expect(isVisible(noteRow(panel, 'Other/Nested/Hidden.md'))).toBe(false);
+	});
+
+	it('preserves manual expansion across modes and Refresh while new folders start collapsed', () => {
+		const fixture = createControl();
+		const { container, control, files } = fixture;
+		files.push(file('Other/Visible.md'), file('Other/Nested/Hidden.md'));
+		control.render(container as unknown as HTMLElement, false);
+		const panel = openExplorer(fixture);
+		folderDisclosure(panel, 'Folder').click();
+		folderDisclosure(panel, 'Folder/Nested').click();
+		folderDisclosure(panel, 'Other').click();
+		findButton(panel, 'Links')?.click();
+		findButton(panel, 'All')?.click();
+		files.push(file('Folder/Fresh/New.md'), file('Other/Fresh/New.md'));
+
+		findButton(panel, 'Refresh')?.click();
+
+		expect(folderDisclosure(panel, 'Folder').attributes['aria-expanded']).toBe('true');
+		expect(folderDisclosure(panel, 'Folder/Nested').attributes['aria-expanded']).toBe('true');
+		expect(folderDisclosure(panel, 'Other').attributes['aria-expanded']).toBe('true');
+		expect(folderDisclosure(panel, 'Folder/Fresh').attributes['aria-expanded']).toBe('false');
+		expect(folderDisclosure(panel, 'Other/Fresh').attributes['aria-expanded']).toBe('false');
+		expect(isVisible(noteRow(panel, 'Folder/Fresh/New.md'))).toBe(false);
+		expect(isVisible(noteRow(panel, 'Other/Fresh/New.md'))).toBe(false);
+	});
+
 	it('opens one snapshot-based All explorer without a modal, content read, or provider call', () => {
 		const fixture = createControl();
 		const {
@@ -499,8 +613,15 @@ describe('RelatedNotesControl', () => {
 		expect(getAbstractFileByPath).toHaveBeenCalledWith('Active.md');
 		expect(getMarkdownFiles).toHaveBeenCalledTimes(1);
 		expect(fuzzyModalInstances()).toHaveLength(0);
-		expect([...visibleNotePaths(panel)].sort()).toEqual(['Active.md', ...allCandidatePaths]);
-		expect(visibleFolderPaths(panel)).toEqual(['Folder', 'Folder/Nested']);
+		expect(visibleNotePaths(panel)).toEqual([
+			'Active.md',
+			'Both.md',
+			'Incoming.md',
+			'Outgoing.md',
+			'Zeta.md',
+		]);
+		expect(visibleFolderPaths(panel)).toEqual(['Folder']);
+		expect(isVisible(noteRow(panel, 'Folder/Nested/Deep.md'))).toBe(false);
 		const active = noteCheckbox(panel, 'Active.md');
 		expect(active.disabled).toBe(true);
 		expect(active.attributes['aria-label']).toBe('Active note Active.md');
@@ -536,7 +657,8 @@ describe('RelatedNotesControl', () => {
 
 		findButton(panel, 'Links')?.click();
 
-		expect([...visibleNotePaths(panel)].sort()).toEqual(['Active.md', ...linkedCandidatePaths]);
+		expect(visibleNotePaths(panel)).toEqual(['Active.md', 'Both.md', 'Incoming.md', 'Outgoing.md']);
+		expect(isVisible(noteRow(panel, 'Folder/Linked.md'))).toBe(false);
 		expect(visibleNotePaths(panel)).not.toContain('Folder/Unrelated.md');
 		expect(visibleNotePaths(panel)).not.toContain('Zeta.md');
 		expect(findButton(panel, 'All')?.attributes['aria-pressed']).toBe('false');
@@ -545,16 +667,20 @@ describe('RelatedNotesControl', () => {
 		expect(noteCheckbox(panel, 'Active.md').disabled).toBe(true);
 	});
 
-	it('filters full paths case-insensitively while preserving ancestors and the snapshot', () => {
+	it('filters full paths case-insensitively and reveals matching ancestors despite collapsed state', () => {
 		const fixture = createControl();
 		const { container, control, getMarkdownFiles } = fixture;
 		control.render(container as unknown as HTMLElement, false);
 		const panel = openExplorer(fixture);
+		expect(folderDisclosure(panel, 'Folder').attributes['aria-expanded']).toBe('false');
+		expect(folderDisclosure(panel, 'Folder/Nested').attributes['aria-expanded']).toBe('false');
 
 		setSearch(panel, 'nested/deep');
 
 		expect(visibleNotePaths(panel)).toEqual(['Folder/Nested/Deep.md']);
 		expect(visibleFolderPaths(panel)).toEqual(['Folder', 'Folder/Nested']);
+		expect(folderDisclosure(panel, 'Folder').attributes['aria-expanded']).toBe('false');
+		expect(folderDisclosure(panel, 'Folder/Nested').attributes['aria-expanded']).toBe('false');
 		setSearch(panel, 'OUTGOING');
 		expect(visibleNotePaths(panel)).toEqual(['Outgoing.md']);
 		expect(getMarkdownFiles).toHaveBeenCalledTimes(1);
@@ -807,6 +933,8 @@ describe('RelatedNotesControl', () => {
 		expect(visibleNotePaths(panel)).not.toContain('Outgoing.md');
 		findButton(panel, 'All')?.click();
 		expect(getMarkdownFiles).toHaveBeenCalledTimes(2);
+		expect(isVisible(noteRow(panel, 'Folder/New.md'))).toBe(false);
+		folderDisclosure(panel, 'Folder').click();
 		expect(visibleNotePaths(panel)).toContain('Folder/New.md');
 		expect(visibleNotePaths(panel)).not.toContain('Folder/Unrelated.md');
 	});
@@ -935,20 +1063,22 @@ describe('RelatedNotesControl', () => {
 		control.render(container as unknown as HTMLElement, false);
 		const panel = openExplorer(fixture);
 		const search = searchInput(panel);
-		const disclosure = findButton(panel, 'Toggle folder Folder') as FakeElement;
-		const deep = findElements(panel, (element) =>
-			element.attributes['data-note-path'] === 'Folder/Nested/Deep.md'
-			&& element.className.includes('note-row')
-		)[0] as FakeElement;
+		const disclosure = folderDisclosure(panel, 'Folder');
+		const deep = noteRow(panel, 'Folder/Nested/Deep.md');
 
 		expect(panel.attributes.role).toBe('dialog');
 		expect(search.tagName).toBe('input');
 		expect(search.attributes.type).toBe('search');
 		expect(noteCheckbox(panel, 'Outgoing.md').attributes.type).toBe('checkbox');
 		expect(disclosure.tagName).toBe('button');
-		expect(disclosure.attributes['aria-expanded']).toBe('true');
-		disclosure.click();
 		expect(disclosure.attributes['aria-expanded']).toBe('false');
+		expect(isVisible(deep)).toBe(false);
+		disclosure.click();
+		expect(disclosure.attributes['aria-expanded']).toBe('true');
+		expect(isVisible(deep)).toBe(false);
+		folderDisclosure(panel, 'Folder/Nested').click();
+		expect(isVisible(deep)).toBe(true);
+		disclosure.click();
 		expect(isVisible(deep)).toBe(false);
 		disclosure.click();
 		setSearch(panel, 'Outgoing');

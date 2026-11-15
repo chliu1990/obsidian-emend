@@ -1,4 +1,4 @@
-import { App, TFile } from 'obsidian';
+import { App, setIcon, TFile } from 'obsidian';
 import type {
 	AdditionalNoteHelper,
 	AdditionalNoteHelperScope,
@@ -59,7 +59,7 @@ class RelatedNotesExplorer {
 	private readonly noteInputs = new Map<string, HTMLInputElement>();
 	private readonly folderInputs = new Map<string, HTMLInputElement>();
 	private readonly folderButtons = new Map<string, HTMLButtonElement>();
-	private readonly collapsedFolders = new Set<string>();
+	private readonly expandedFolders: Set<string>;
 	private rows: ExplorerRow[] = [];
 	private snapshot: RelatedNotesSnapshot;
 	private scopeIndexes: Record<ExplorerMode, ExplorerScopeIndex>;
@@ -95,6 +95,7 @@ class RelatedNotesExplorer {
 		this.app = options.app;
 		this.store = options.store;
 		this.targetPath = options.targetPath;
+		this.expandedFolders = activeAncestorFolders(options.targetPath);
 		this.snapshot = options.snapshot;
 		this.scopeIndexes = buildScopeIndexes(options.snapshot);
 		this.trigger = options.trigger;
@@ -445,11 +446,11 @@ class RelatedNotesExplorer {
 		rowEl.style.paddingInlineStart = `${depth * 14}px`;
 		const disclosure = rowEl.createEl('button', {
 			cls: 'emend-chat-related-notes-explorer-folder-disclosure',
-			text: '▾',
+			text: this.expandedFolders.has(path) ? '▾' : '▸',
 			attr: {
 				type: 'button',
 				'aria-label': `Toggle folder ${path}`,
-				'aria-expanded': 'true',
+				'aria-expanded': String(this.expandedFolders.has(path)),
 			},
 		});
 		this.folderButtons.set(path, disclosure);
@@ -457,10 +458,10 @@ class RelatedNotesExplorer {
 			if (!this.canInteract()) {
 				return;
 			}
-			if (this.collapsedFolders.has(path)) {
-				this.collapsedFolders.delete(path);
+			if (this.expandedFolders.has(path)) {
+				this.expandedFolders.delete(path);
 			} else {
-				this.collapsedFolders.add(path);
+				this.expandedFolders.add(path);
 			}
 			this.applyVisibility();
 		});
@@ -474,6 +475,7 @@ class RelatedNotesExplorer {
 		});
 		input.addEventListener('change', () => this.toggleFolder(path));
 		this.folderInputs.set(path, input);
+		this.createRowIcon(rowEl, 'folder');
 		rowEl.createSpan({
 			cls: 'emend-chat-related-notes-explorer-path',
 			text: path,
@@ -505,6 +507,7 @@ class RelatedNotesExplorer {
 		input.disabled = active;
 		input.addEventListener('change', () => this.toggleNote(path));
 		this.noteInputs.set(path, input);
+		this.createRowIcon(rowEl, 'file-text');
 		rowEl.createSpan({
 			cls: 'emend-chat-related-notes-explorer-path',
 			text: path,
@@ -518,6 +521,14 @@ class RelatedNotesExplorer {
 		}
 		this.rows.push({ element: rowEl, type: 'note', path, parentPath });
 		return rowEl;
+	}
+
+	private createRowIcon(rowEl: HTMLElement, icon: 'folder' | 'file-text'): void {
+		const iconEl = rowEl.createSpan({
+			cls: 'emend-chat-related-notes-explorer-icon',
+			attr: { 'aria-hidden': 'true' },
+		});
+		setIcon(iconEl, icon);
 	}
 
 	private applyVisibility(): void {
@@ -545,7 +556,7 @@ class RelatedNotesExplorer {
 				let parent = row.parentPath;
 				visible = true;
 				while (parent) {
-					if (this.collapsedFolders.has(parent)) {
+					if (!this.expandedFolders.has(parent)) {
 						visible = false;
 						break;
 					}
@@ -555,8 +566,8 @@ class RelatedNotesExplorer {
 			row.element.hidden = !visible;
 		}
 		for (const [path, button] of this.folderButtons) {
-			button.setAttribute('aria-expanded', String(!this.collapsedFolders.has(path)));
-			button.textContent = this.collapsedFolders.has(path) ? '▸' : '▾';
+			button.setAttribute('aria-expanded', String(this.expandedFolders.has(path)));
+			button.textContent = this.expandedFolders.has(path) ? '▾' : '▸';
 		}
 	}
 
@@ -648,6 +659,16 @@ function buildScopeIndex(paths: readonly string[]): ExplorerScopeIndex {
 
 function comparePaths(left: string, right: string): number {
 	return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function activeAncestorFolders(path: string): Set<string> {
+	const ancestors = new Set<string>();
+	let parent = parentFolder(path);
+	while (parent) {
+		ancestors.add(parent);
+		parent = parentFolder(parent);
+	}
+	return ancestors;
 }
 
 function parentFolder(path: string): string | null {

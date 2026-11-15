@@ -382,6 +382,21 @@
 	color: var(--text-muted);
 }
 
+.emend-chat-related-notes-explorer-icon {
+	display: inline-flex;
+	flex: 0 0 auto;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	color: var(--text-muted);
+}
+
+.emend-chat-related-notes-explorer-icon svg {
+	width: 14px;
+	height: 14px;
+}
+
 .emend-chat-related-notes-explorer-path {
 	flex: 1 1 auto;
 	min-width: 0;
