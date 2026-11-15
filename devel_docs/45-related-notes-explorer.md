@@ -2,11 +2,12 @@
 
 ## Status and scope
 
-The Related-notes explorer is implemented and verified on `feat/2.10-related-notes-explorer` at product HEAD `932af57d86bc043ae0769524eca2bea56b221d31`. PR 2 replaces chat's flat additional-note picker with explicit path/metadata snapshots and preserves the Stage 35 submission path, Stage 42 capacity guards, Stage 43 sessions, Stage 44 compact controls, and both guarded writers.
+The Related-notes explorer is implemented and verified on `feat/2.10-related-notes-explorer` at product HEAD `5348d68c2ee0b3358b8a54930ee5475d2507643d`. PR 2 replaces chat's flat additional-note picker with explicit path/metadata snapshots and preserves the Stage 35 submission path, Stage 42 capacity guards, Stage 43 sessions, Stage 44 compact controls, and both guarded writers.
 
 - **All** lists every current vault Markdown path except the active target. The active note appears separately as a disabled, labelled row and cannot be selected. Non-Markdown files and unresolved-link targets are not candidates.
 - **Links** lists the deduplicated union of resolved outgoing and incoming links for the captured target, including bidirectional links, sorted by full path. It uses Obsidian's `resolvedLinks` and file-cache metadata only. Emend does not read note bodies to discover links, recursively expand linked notes, or invent candidates for unresolved links.
 - Opening captures one All/Links snapshot. Switching modes and case-insensitive full-path search reuse that snapshot; search changes visibility only and retains ancestor folders needed to reach matches. Folder rows are implied by candidate paths, so empty folders are not invented. Select-all applies to the complete current All or Links result set, including search-hidden rows, and its accessible label/title says so.
+- Every folder and note name has a separate decorative Obsidian `setIcon` glyph immediately before it (`folder` and `file-text`, respectively), with `aria-hidden="true"`; the native disclosure, checkbox, accessible names, and current-note **Active** label remain separate. Initial expansion contains only `parentFolder(targetPath)` and its ancestors, so the active note is revealed while unrelated folders and all folders of a root-level active note start collapsed. Manual choices survive All/Links rebuilds and Refresh, newly appearing folders start collapsed, and search reveals matches and all ancestors without rewriting expansion state.
 - **Refresh** is the only explorer action that captures a replacement snapshot. New paths and changed link membership do not alter the open snapshot or helper-derived membership automatically. Independent vault rename/delete events still maintain selected paths and helper provenance immediately.
 - No new command, setting, provider/model control, background index, automatic TOC, or automatic linked/folder context mode is included. Modify Selection retains its unchanged **Add notes** flat picker.
 
@@ -28,7 +29,7 @@ The Links disclosure appears when resolved-link data is unavailable or any curre
 
 Partial resolved-link data remains deterministic; there is no body-scan fallback or claim that Links is complete. File/folder rename remaps true descendants and helper paths with segment boundaries, not sibling string prefixes. Root `/` includes itself and every non-root vault path for store lifecycle maintenance; root rename joins the replacement with exactly one separator across target keys, selected paths, folder descriptors, and Links scopes. Root deletion removes descendant selections and affected folder/Links provenance while retaining target-keyed All-helper state. File/folder deletion otherwise removes affected selections and invalid helpers without touching other targets or sibling-prefix paths. Target switches, rerenders, and view close dismiss owned panels and make stale handlers inert. Pending submissions disable the trigger and any still-mounted explorer controls; a full rerender may close the panel, and Stop permits a fresh enabled explorer.
 
-The trigger retains its selected count, ordered **Selected notes** paths, per-path **Remove**, **Clear all**, focus restoration, and `Selected note content is sent with your next request.` disclosure. The explorer itself states: `Contents are read at submission and share the existing context budget. Large selections may be rejected by capacity checks.` Collapsing a folder marks every descendant folder/note row hidden, and scoped explorer-row `[hidden]` CSS guarantees computed `display: none`; expanding restores the rows, and search after reopening retains matching descendants and their ancestors. The floating panel prefers below placement only when the 480 px preferred height fits below or below has at least as much space as above. Otherwise it opens above, with height capped by the selected side and the complete panel kept inside the owner viewport; no resize listener or trigger-toggle behavior was added.
+The trigger retains its selected count, ordered **Selected notes** paths, per-path **Remove**, **Clear all**, focus restoration, and `Selected note content is sent with your next request.` disclosure. The explorer itself states: `Contents are read at submission and share the existing context budget. Large selections may be rejected by capacity checks.` Collapsing a folder marks every descendant folder/note row hidden, and scoped explorer-row `[hidden]` CSS guarantees computed `display: none`; expanding restores only descendants whose own ancestor folders are expanded, and search retains matching descendants and their ancestors regardless of collapsed state. The floating panel prefers below placement only when the 480 px preferred height fits below or below has at least as much space as above. Otherwise it opens above, with height capped by the selected side and the complete panel kept inside the owner viewport; no resize listener or trigger-toggle behavior was added.
 
 ## Submission, privacy, and capacity preservation
 
@@ -40,18 +41,18 @@ The focused capacity scenario used history disabled for deterministic estimates.
 
 ## Local verification
 
-PR #63 interaction-fix commands from the repository root on 2026-11-15 (Asia/Shanghai):
+PR #63 hierarchy-fix commands from the repository root on 2026-11-15 (Asia/Shanghai):
 
 | Command | Result |
 | --- | --- |
-| `npm test -- tests/related-notes-control.test.ts` | **24/24 focused tests passed** after the positioning regression failed for the intended reason before the fix. |
-| `npm test` | **49/49 Vitest files, 1,638/1,638 tests passed**; duration 4.35 s. |
+| `npm test -- tests/related-notes-control.test.ts` | **28/28 focused tests passed** after the new icon/expansion regressions failed for the intended reasons before the fix. |
+| `npm test` | **49/49 Vitest files, 1,642/1,642 tests passed**; duration 4.26 s. |
 | `npm run build` | Strict `tsc -noEmit -skipLibCheck` and production esbuild exited 0. |
 | `npm run lint` | ESLint exited 0 with no errors or warnings. |
 | `git diff --check` | Exited 0 with no output. |
-| `sha256sum main.js` | Final production bundle `4478566ce1708572f6719b1b3663a3b571461c9f6a5fe6bb50512576689589fc`. |
+| `sha256sum main.js` | Final production bundle `61e681cd3436a42bfbf069ccbcaebcc7cd2d00ae52b50c177dffa49ac4e1b7c0`. |
 
-The runtime-vault bundle hash matched the root production bundle before every startup. The final PR #63 runtime summaries record pre-commit BASE `92eb80050b25afe71814b901c7e4399bf3562612` because the bundle was built immediately before the product commit; `932af57d86bc043ae0769524eca2bea56b221d31` contains the exact source/test diff exercised by the final runtime matrices. Every final summary has `loadedBundleMatchedRoot: true`. The earlier unoptimized large-vault baseline bundle was `97d46e8e70e04dbe57394dbd7006692ae5d9e7ea79e03101396ba7f593b4726c`, and the earlier optimized bundle was `919701ae2ea3db1eaf9b196a61c239c313e0df23f6ccff325df19aecf068120f`; their measurements remain historical performance evidence rather than the current interaction-fix bundle.
+The runtime-vault bundle hash matched the root production bundle before every startup and in the final explicit `sha256sum` comparison. The final PR #63 runtime summaries record pre-commit BASE `ffb1f79709735183a783d57c19e0c5c549de73d0` because the bundle was built immediately before the product commit; `5348d68c2ee0b3358b8a54930ee5475d2507643d` contains the exact source/test diff exercised by the final runtime matrices. Every final summary has `loadedBundleMatchedRoot: true`. The earlier interaction-fix bundle was `4478566ce1708572f6719b1b3663a3b571461c9f6a5fe6bb50512576689589fc`; the unoptimized large-vault baseline bundle was `97d46e8e70e04dbe57394dbd7006692ae5d9e7ea79e03101396ba7f593b4726c`, and the earlier optimized bundle was `919701ae2ea3db1eaf9b196a61c239c313e0df23f6ccff325df19aecf068120f`. Those measurements remain historical evidence rather than the current hierarchy bundle.
 
 ## Real-Obsidian loopback evidence
 
@@ -64,11 +65,11 @@ node test_vault/emend-selection-chat-verify/verify.mjs --related-notes
 node test_vault/emend-selection-chat-verify/verify.mjs --compact
 ```
 
-Current PR #63 interaction-fix results:
+Current PR #63 hierarchy-fix results:
 
-- Focused explorer: **13/13 scenarios, 155/155 assertions**, generated `2026-11-15T00:28:59.459Z`, preserved in ignored `.superpowers/pr63-explorer-feedback/related-final/summary.json`.
-- Adjacent compact regression: **1/1 scenario, 28/28 assertions**, generated `2026-11-15T00:29:11.640Z`, preserved separately in ignored `.superpowers/pr63-explorer-feedback/compact-final/summary.json`.
-- Combined current runtime evidence: **14/14 scenario runs and 183/183 assertions**. The focused RED reproduction and focused GREEN run are preserved separately under `.superpowers/pr63-explorer-feedback/red/` and `green-focused/`; they are not stitched into these complete-run totals.
+- Focused explorer: **15/15 scenarios, 168/168 assertions**, generated `2026-11-15T02:27:28.724Z`, preserved in ignored `.superpowers/pr63-explorer-icons-related-final/summary.json`.
+- Adjacent compact regression: **1/1 scenario, 28/28 assertions**, generated `2026-11-15T02:27:42.356Z`, preserved separately in ignored `.superpowers/pr63-explorer-icons-compact-final/summary.json`.
+- Combined current runtime evidence: **16/16 scenario runs and 196/196 assertions**. The focused RED reproduction and focused GREEN run are preserved separately under `.superpowers/pr63-explorer-icons-red/` and `.superpowers/pr63-explorer-icons-green-focused/`; they are not stitched into these complete-run totals.
 
 Historical large-vault performance evidence remains available: the unoptimized baseline completed **11/11 scenarios, 147/147 assertions** in `test_vault/emend-selection-chat-verify/evidence-related-notes-large-baseline-complete/summary.json`, and the earlier optimized run completed **11/11 scenarios, 147/147 assertions** in `test_vault/emend-selection-chat-verify/evidence-related-notes-final-fix-complete/summary.json`. Those runs use the historical bundles identified above, not the current PR #63 bundle.
 
@@ -76,21 +77,33 @@ Historical large-vault performance evidence remains available: the unoptimized b
 
 | Scenario | Assertions | Verified behavior |
 | --- | ---: | --- |
-| 01 Discovery/All/Links/search | 16 | Exact 47-other-note All fixture and three-link Links fixture, active-note treatment, implied folders, unresolved/non-Markdown exclusion, complete-cache state, search visibility/scope labels, trusted Escape/focus, zero reads/requests/writes. |
-| 02 Collapse/computed display | 4 | Real top-level collapse hid every nested folder/note with `hidden === true`, computed `display === 'none'`, and zero client rects; expansion restored all rows, and search after reopening retained the deep note and both ancestor folders. |
-| 03 Selected-note positioning | 4 | Visible selected-note details/path, real 298.6875 px below versus 447.3125 px above, visible in-panel submission disclosure, and complete above-positioned panel within the 1024×800 owner viewport. |
-| 04 Selection/helpers/Remove/Clear | 19 | Manual/folder/All/Links overlap, complete-scope bulk behavior, checked/indeterminate states, Links exclusion, individual removal, helper-only unselect semantics, exact count/details, focus, zero reads/requests. |
-| 05 Explicit Refresh | 11 | Stale open snapshots before Refresh; one-snapshot manual preservation, stale removal, individual re-add, new Links/folder matches; removed helpers stayed removed; zero post-fixture reads/requests. |
-| 06 Incomplete/partial cache | 4 | Exact limitation disclosure, deterministic partial resolved links, unresolved exclusion, zero body reads/requests. |
-| 07 Rename/delete/isolation/reload | 27 | Real file/folder events, sibling-prefix control, A/B isolation, stale-panel close/handler guard, delete maintenance, actual reload clearing paths/helpers, plus five separately checked segments with zero vault reads, adapter reads, and provider requests before every bootstrap reset. |
-| 08 Modify Selection sharing | 7 | Same ordered store paths in chat/modal, modal Remove/Clear reflected in chat, unchanged empty modal/cancel behavior, zero reads/requests/writes. |
-| 09 Allowed submission/fair budget | 23 | Seven-folder-selection zero pre-reads, exact fair prefixes/rollover/markers, one submission-time read per note, path-off framing, one loopback answer, unchanged bytes/writers. |
-| 10 Exact capacity | 8 | Passing unread-content draft, unchanged estimate, exact 476-versus-158 rejection, zero provider calls/answer/writes, ready-user-only persistence. |
-| 11 Pending/stale lifecycle | 7 | Rerender/view-close stale guards, outside dismissal/focus, pending disabling, Stop recovery, unchanged note/writers. |
-| 12 Accessibility/themes/popout | 13 | 240 px dark/light layouts, dialog/search names, trusted Tab order, real theme restyling, supported popout owner-document selection/dismissal/focus, plus explicit zero vault reads, adapter reads, and provider requests across those actions and the final post-reopen Clear. |
-| 13 Large-vault Select all/Refresh | 12 | 600 synthetic bulk notes in 30 nested groups, 648 total candidates and 63 folder rows; exact Select-all membership/order/helper/notification/count/checkbox state; real deletion maintenance, manual provenance, individual re-add and 12 created/12 deleted notes across Refresh; exact post-Refresh order and new-folder state; zero reads/new requests/writes; synchronous elapsed timings. |
+| 01 Discovery/All/Links/search | 16 | Exact 47-other-note All fixture and three-link Links fixture, active-note treatment, implied folders, unresolved/non-Markdown exclusion, active-parent expansion versus unrelated nested collapse, search visibility/scope labels, trusted Escape/focus, zero reads/requests/writes. |
+| 02 Hierarchy icons | 4 | Actual decorative note `file-text` SVGs and folder-alias `folder-open` SVGs immediately before names, preserved accessible names/Active label/native controls, zero reads/requests and unchanged bytes. |
+| 03 Active-ancestor expansion | 8 | Nested active-note ancestors expanded, unrelated folders/descendants collapsed, manual choices across All/Links and Refresh, new folders collapsed, search override without state rewriting, root-active all-collapsed behavior, segmented zero reads/requests and unchanged bytes. |
+| 04 Collapse/computed display | 5 | Real top-level collapse hid every nested folder/note with `hidden === true`, computed `display === 'none'`, and zero client rects; expanding the parent retained the nested folder's collapsed state, expanding that folder restored the deep note, and search after reopening retained the match and ancestors. |
+| 05 Selected-note positioning | 4 | Visible selected-note details/path, real 298.6875 px below versus 447.3125 px above, visible in-panel submission disclosure, and complete above-positioned panel within the 1024×800 owner viewport. |
+| 06 Selection/helpers/Remove/Clear | 19 | Manual/folder/All/Links overlap, complete-scope bulk behavior, checked/indeterminate states, Links exclusion, individual removal, helper-only unselect semantics, exact count/details, focus, zero reads/requests. |
+| 07 Explicit Refresh | 11 | Stale open snapshots before Refresh; one-snapshot manual preservation, stale removal, individual re-add, new Links/folder matches; removed helpers stayed removed; zero post-fixture reads/requests. |
+| 08 Incomplete/partial cache | 4 | Exact limitation disclosure, deterministic partial resolved links, unresolved exclusion, zero body reads/requests. |
+| 09 Rename/delete/isolation/reload | 27 | Real file/folder events, sibling-prefix control, A/B isolation, stale-panel close/handler guard, delete maintenance, actual reload clearing paths/helpers, plus five separately checked segments with zero vault reads, adapter reads, and provider requests before every bootstrap reset. |
+| 10 Modify Selection sharing | 7 | Same ordered store paths in chat/modal, modal Remove/Clear reflected in chat, unchanged empty modal/cancel behavior, zero reads/requests/writes. |
+| 11 Allowed submission/fair budget | 23 | Seven-folder-selection zero pre-reads, exact fair prefixes/rollover/markers, one submission-time read per note, path-off framing, one loopback answer, unchanged bytes/writers. |
+| 12 Exact capacity | 8 | Passing unread-content draft, unchanged estimate, exact 476-versus-158 rejection, zero provider calls/answer/writes, ready-user-only persistence. |
+| 13 Pending/stale lifecycle | 7 | Rerender/view-close stale guards, outside dismissal/focus, pending disabling, Stop recovery, unchanged note/writers. |
+| 14 Accessibility/themes/popout | 13 | 240 px dark/light layouts, dialog/search names, trusted Tab order, real theme restyling, supported popout owner-document selection/dismissal/focus, plus explicit zero vault reads, adapter reads, and provider requests across those actions and the final post-reopen Clear. |
+| 15 Large-vault Select all/Refresh | 12 | 600 synthetic bulk notes in 30 nested groups, 648 total candidates and 63 folder rows; exact Select-all membership/order/helper/notification/count/checkbox state; real deletion maintenance, manual provenance, individual re-add and 12 created/12 deleted notes across Refresh; exact post-Refresh order and new-folder state; zero reads/new requests/writes; synchronous elapsed timings. |
 
 The compact regression rechecked the six-item Writing/Web menu, retained Chat Web state, both Edit targets, draft/caret/focus preservation, Related notes count/details/Remove/Clear with the new explorer, pending lifecycle, popout owner-document behavior, zero non-submission requests/reads, and unchanged note bytes/writers.
+
+## PR #63 hierarchy RED→GREEN evidence
+
+Before any production edit, the focused unit run had **9 failures and 19 passes out of 28 tests**. The new cases failed because no row icons or `setIcon` boundary calls existed, unrelated and root-active nested descendants remained visible, the initial disclosure states were expanded, and newly appearing folders did not start collapsed. Updated existing cases failed on the deliberately changed visibility defaults rather than weakened selection or positioning assertions.
+
+The new real-Obsidian `--explorer-hierarchy` reproduction at BASE `ffb1f79709735183a783d57c19e0c5c549de73d0`, on bundle `bbad4f05f7e65b1fc2a45bbd4b7136f903767a9a2aad2da442a30eca2eec8854`, failed both scenarios with zero passing assertions: note SVGs were absent and unrelated folders were expanded with visible descendants. Its summary and failure screenshots are preserved under `.superpowers/pr63-explorer-icons-red/`; `loadedBundleMatchedRoot` was true.
+
+After the minimal icon/expansion implementation, the focused unit file passed **28/28** and the focused runtime matrix passed **2/2 scenarios with 12/12 assertions**. Real Obsidian renders the requested `folder` alias as `lucide-folder-open`, while unit boundary assertions require exactly `setIcon(element, 'folder')` and `setIcon(element, 'file-text')`. Fixture-indexing and note-opening reads were excluded by resetting instrumentation only after those setup steps; separate mode, Refresh/search, and root-explorer audit segments all retained zero-read/request assertions. The existing collapse scenario now explicitly checks that expanding a parent does not expand an unrelated nested folder, then expands that nested folder and retains the original computed-display restoration assertion.
+
+The first full-suite run after extending the mock exposed 46 failures in unrelated lightweight icon hosts because the mock unconditionally called `setAttribute`. Making only that observability call optional restored the prior no-op behavior for those hosts while keeping real explorer controls under test; the final full suite passed **49/49 files and 1,642/1,642 tests**. Final complete runtime matrices passed **15/15 focused scenarios with 168 assertions** and **1/1 compact scenario with 28 assertions** on bundle `61e681cd3436a42bfbf069ccbcaebcc7cd2d00ae52b50c177dffa49ac4e1b7c0`.
 
 ## PR #63 interaction-fix RED→GREEN evidence
 
@@ -114,7 +127,16 @@ Both measurements used 648 candidates and 63 folder rows, with the same 600-note
 
 ## Screenshot inspection
 
-The final PR #63 images were opened and visually inspected:
+The final PR #63 hierarchy images were opened and visually inspected:
+
+- `.superpowers/pr63-explorer-icons-related-final/screenshots/pr63-hierarchy-icons.png`: distinct small file and folder glyphs immediately before names, separate disclosure/checkbox controls, disabled **Active** row, readable dark-theme paths, and bounded panel layout.
+- `.superpowers/pr63-explorer-icons-related-final/screenshots/pr63-hierarchy-nested-active.png`: expanded `Related` and `Related/Nested` ancestors revealing the nested active note, while unrelated `Other` remained collapsed in the vault and explorer state.
+- `.superpowers/pr63-explorer-icons-related-final/screenshots/pr63-hierarchy-refresh.png`: intact post-Refresh layout and preserved active region; the crop does not show every new folder, so the explicit DOM assertions—not this screenshot alone—establish new-folder collapsed state and hidden descendants.
+- `.superpowers/pr63-explorer-icons-related-final/screenshots/pr63-hierarchy-root-active.png`: the root-level `Typed.md` active row with the explorer scrolled to it; DOM assertions establish that every folder was collapsed and every nested descendant hidden.
+- `.superpowers/pr63-explorer-icons-related-final/screenshots/related-notes-240-dark.png`: icons and native controls remained legible without horizontal overflow in the 240 px chat layout. The pre-existing capacity Notice remains visible and does not indicate a hierarchy failure.
+- `.superpowers/pr63-explorer-icons-compact-final/screenshots/pr1-related-notes-details.png`: unchanged ordered selected paths, Remove/Clear controls, and next-request disclosure after the adjacent compact regression.
+
+The earlier interaction-fix images were also opened and visually inspected:
 
 - `.superpowers/pr63-explorer-feedback/related-final/collapsed-nested-folder.png`: the collapsed `Related` disclosure with no `Related` descendant folder/note rows visible; unrelated root-level notes remain visible.
 - `.superpowers/pr63-explorer-feedback/related-final/selected-note-position.png`: the full explorer above the Related-notes trigger, the selected `Related/Unrelated.md` details below it, and the visible in-panel submission disclosure within the 1024×800 viewport.
