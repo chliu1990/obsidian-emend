@@ -528,10 +528,14 @@ function createModelControlView() {
 	const plugin = fixture.context.plugin as unknown as {
 		settings: EmendSettings;
 		additionalNotesStore: AdditionalNotesStore;
-		saveSettings(nextSettings?: EmendSettings): Promise<void>;
+		saveSettings(
+			update?: EmendSettings | ((current: EmendSettings) => EmendSettings),
+		): Promise<void>;
 	};
-	const saveSettings = vi.fn(async (nextSettings: EmendSettings = settings) => {
-		plugin.settings = nextSettings;
+	const saveSettings = vi.fn(async (
+		update: EmendSettings | ((current: EmendSettings) => EmendSettings) = settings,
+	) => {
+		plugin.settings = typeof update === 'function' ? update(plugin.settings) : update;
 	});
 	Object.assign(plugin, { settings, saveSettings });
 	return { ...fixture, plugin, settings, saveSettings };
@@ -968,10 +972,11 @@ describe('EmendChatView composer model selection', () => {
 			'DeepSeek · deepseek-v4-pro · Low',
 		));
 
-		const candidate = fixture.saveSettings.mock.calls[0]?.[0];
-		if (!candidate) {
-			throw new Error('Model selection did not supply a settings candidate.');
+		const update = fixture.saveSettings.mock.calls[0]?.[0];
+		if (typeof update !== 'function') {
+			throw new Error('Model selection did not supply a settings updater.');
 		}
+		const candidate = update(original);
 		const expected = structuredClone(original);
 		expected.activeProvider = 'deepseek';
 		expected.providers.deepseek.model = 'deepseek-v4-pro';
@@ -1000,7 +1005,11 @@ describe('EmendChatView composer model selection', () => {
 		chooseModelMenuItem(fixture.contentEl, 'Kimi', 'Low reasoning');
 		await vi.waitFor(() => expect(fixture.saveSettings).toHaveBeenCalledOnce());
 
-		const candidate = fixture.saveSettings.mock.calls[0]?.[0];
+		const update = fixture.saveSettings.mock.calls[0]?.[0];
+		if (typeof update !== 'function') {
+			throw new Error('Effort selection did not supply a settings updater.');
+		}
+		const candidate = update(original);
 		const expected = structuredClone(original);
 		expected.activeProvider = 'kimi';
 		expected.providers.kimi.reasoningEffort = 'low';

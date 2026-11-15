@@ -235,7 +235,7 @@ export class EmendSettingTab extends PluginSettingTab {
 				}
 				dropdown.addOption(CUSTOM_MODEL_OPTION, 'Custom model');
 				dropdown
-					.setValue(config.model || CUSTOM_MODEL_OPTION)
+					.setValue(config.model.trim() || CUSTOM_MODEL_OPTION)
 					.onChange(async (value) => {
 						if (value === CUSTOM_MODEL_OPTION) {
 							return;

@@ -71,7 +71,7 @@ When a draft is at or above capacity, Send and the affected quick actions are di
    What is the main topic of this note? Reply with one sentence and show $x^2$ as inline math.
    ```
 
-4. Confirm that the answer streams into chat, reasoning is folded when present, and the note does not change. Chat has no Edit quick actions. The provider/model/reasoning button beside Send opens the model menu without submitting; changing it preserves your draft and takes effect on the next actual request.
+4. Confirm that the answer streams into chat, reasoning is folded when present, and the note does not change. Chat has no Edit quick actions. The provider/model/reasoning button beside Send opens the model menu without submitting or saving; an actual selection performs one sanitized local settings save, preserves your draft, and takes effect on the next actual request.
 5. Click **Related notes** and explicitly choose another Markdown note in the explorer. Use **All** for current vault Markdown paths or **Links** for resolved outgoing/incoming links; search full paths, select individual notes or folders, and try Select-all. Folder and Select-all helpers apply to the complete current All/Links scope, including search-hidden results. The trigger shows the selected count; expand **Selected notes** to review full paths and use **Remove** or **Clear all**. Opening, searching, selecting, removing or clearing selections, and switching notes send no provider request and read no additional-note content before submission.
 6. Submit another question and confirm that the response can use the selected note while neither the active note nor the additional note changes. Additional-note content is read-only context in Chat, Edit, and Modify Selection.
 

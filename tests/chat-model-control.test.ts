@@ -359,6 +359,43 @@ describe('ChatModelControl', () => {
 		expect(menu.hideCalls).toBe(0);
 	});
 
+	it.each(['deepseek', 'kimi', 'custom'] as const)(
+		'disables %s reasoning with a blank current model while retaining model choices',
+		(providerId) => {
+			const settings = createSettings();
+			settings.activeProvider = providerId;
+			settings.providers[providerId].model = '   ';
+			const { trigger, callbacks, control } = renderControl(settings);
+			const menu = openMenu(trigger);
+			const providerName = providerId === 'deepseek'
+				? 'DeepSeek'
+				: providerId === 'kimi' ? 'Kimi' : 'Custom';
+
+			for (const effort of ['Low reasoning', 'Medium reasoning', 'High reasoning']) {
+				const item = menuItem(menu, providerName, effort);
+				expect(item.disabled).toBe(true);
+				choose(item);
+			}
+			expect(callbacks.onSelect).not.toHaveBeenCalled();
+			expect(menu.hideCalls).toBe(0);
+			const modelId = providerId === 'deepseek'
+				? 'deepseek-v4-pro'
+				: providerId === 'kimi' ? 'k3.1-pro' : 'Discovered Custom';
+			expect(menuItem(menu, providerName, modelId).disabled).toBe(false);
+
+			const validSettings = createSettings();
+			validSettings.activeProvider = providerId;
+			control.update(createState(validSettings));
+			expect(menuItem(menu, providerName, 'Low reasoning').disabled).toBe(false);
+			validSettings.providers[providerId].model = '';
+			control.update(createState(validSettings));
+			const disabledEffort = menuItem(menu, providerName, 'Low reasoning');
+			expect(disabledEffort.disabled).toBe(true);
+			choose(disabledEffort);
+			expect(callbacks.onSelect).not.toHaveBeenCalled();
+		},
+	);
+
 	it('refreshes the summary and options, closes the old menu, and rejects stale items', () => {
 		const { trigger, callbacks, control } = renderControl();
 		const staleMenu = openMenu(trigger);

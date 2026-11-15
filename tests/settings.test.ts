@@ -10,7 +10,7 @@ import {
 	normalizeSettings,
 	sanitizeSettings,
 } from '../src/settings';
-import type EmendPlugin from '../src/main';
+import EmendPlugin from '../src/main';
 import type { Setting as MockSetting } from './mocks/obsidian';
 
 vi.mock('../src/model-discovery', () => ({
@@ -821,6 +821,102 @@ function displaySettings(tab: EmendSettingTab) {
 	(tab as unknown as { display(): void }).display();
 }
 
+function createRealSaveSettingsTab() {
+	const saveData = vi.fn(async (_data: unknown) => undefined);
+	const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+	Object.assign(plugin, {
+		settings: structuredClone(DEFAULT_SETTINGS),
+		saveData,
+		getApiKey: vi.fn(() => 'dummy-key'),
+		app: {
+			workspace: {
+				getLeavesOfType: () => [],
+			},
+		},
+	});
+	const tab = new EmendSettingTab(
+		{} as ConstructorParameters<typeof EmendSettingTab>[0],
+		plugin,
+	);
+	Object.assign(tab, { containerEl: { empty: vi.fn() } });
+	return { plugin, saveData, tab };
+}
+
+describe('EmendSettingTab live settings identity', () => {
+	beforeEach(() => {
+		settingInstances.length = 0;
+		noticeMessages.length = 0;
+		vi.mocked(discoverProviderModels).mockReset();
+	});
+
+	it('persists subsequent edits from a tab opened before a composer candidate save', async () => {
+		const { plugin, saveData, tab } = createRealSaveSettingsTab();
+		displaySettings(tab);
+		const baseUrlText = latestSetting('DeepSeek base URL').texts[0];
+		if (!baseUrlText) throw new Error('Missing base URL input');
+		const originalRoot = plugin.settings;
+		const originalProviders = originalRoot.providers;
+		const originalDeepSeek = originalProviders.deepseek;
+		const candidate = structuredClone(originalRoot);
+		candidate.activeProvider = 'deepseek';
+		candidate.providers.deepseek.model = 'deepseek-v4-pro';
+		candidate.providers.deepseek.reasoningEffort = 'low';
+
+		await plugin.saveSettings(candidate);
+
+		expect(plugin.settings).toBe(originalRoot);
+		expect(plugin.settings.providers).toBe(originalProviders);
+		expect(plugin.settings.providers.deepseek).toBe(originalDeepSeek);
+		await baseUrlText.onChangeHandler(' https://settings-still-open.invalid/v1 ');
+
+		expect(saveData).toHaveBeenCalledTimes(2);
+		const persisted = saveData.mock.calls[1]?.[0];
+		expect(persisted).toMatchObject({
+			activeProvider: 'deepseek',
+			providers: {
+				deepseek: {
+					model: 'deepseek-v4-pro',
+					reasoningEffort: 'low',
+					baseUrl: 'https://settings-still-open.invalid/v1',
+					discoveredModels: [],
+				},
+			},
+		});
+	});
+
+	it('lets in-flight discovery finish against the live config after a candidate save', async () => {
+		const discovery = createDeferred<Awaited<ReturnType<typeof discoverProviderModels>>>();
+		vi.mocked(discoverProviderModels).mockReturnValue(discovery.promise);
+		const { plugin, saveData, tab } = createRealSaveSettingsTab();
+		displaySettings(tab);
+		const refreshing = latestModelButton().clickHandler();
+		const originalDeepSeek = plugin.settings.providers.deepseek;
+		const candidate = structuredClone(plugin.settings);
+		candidate.providers.deepseek.model = 'deepseek-v4-pro';
+		await plugin.saveSettings(candidate);
+
+		discovery.resolve([{ id: 'discovered-live', displayName: 'Discovered live' }]);
+		await refreshing;
+
+		expect(plugin.settings.providers.deepseek).toBe(originalDeepSeek);
+		expect(plugin.settings.providers.deepseek.model).toBe('deepseek-v4-pro');
+		expect(plugin.settings.providers.deepseek.discoveredModels).toEqual([
+			{ id: 'discovered-live', displayName: 'Discovered live' },
+		]);
+		expect(saveData).toHaveBeenCalledTimes(2);
+		expect(saveData.mock.calls[1]?.[0]).toMatchObject({
+			providers: {
+				deepseek: {
+					model: 'deepseek-v4-pro',
+					discoveredModels: [
+						{ id: 'discovered-live', displayName: 'Discovered live' },
+					],
+				},
+			},
+		});
+	});
+});
+
 describe('EmendSettingTab default mode', () => {
 	beforeEach(() => {
 		settingInstances.length = 0;
@@ -1009,6 +1105,18 @@ describe('EmendSettingTab model discovery', () => {
 		]);
 		expect(dropdown.value).toBe('local-custom');
 		expect(discoverProviderModels).not.toHaveBeenCalled();
+	});
+
+	it('selects the trimmed shared-option identity for a whitespace-surrounded current model', () => {
+		const { plugin, tab } = createModelSettingsTab();
+		plugin.settings.providers.deepseek.model = '  local-custom  ';
+
+		displaySettings(tab);
+
+		const dropdown = latestDropdown('DeepSeek model');
+		expect(dropdown.options).toHaveProperty('local-custom', 'local-custom');
+		expect(dropdown.value).toBe('local-custom');
+		expect(latestModelText().value).toBe('  local-custom  ');
 	});
 
 	it('refreshes once and preserves the current custom model', async () => {

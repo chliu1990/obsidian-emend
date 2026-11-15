@@ -155,7 +155,7 @@ export class ChatModelControl {
 			}
 			for (const effort of REASONING_EFFORTS) {
 				const item = this.addItem(menu, effortLabel(effort), () => {
-					this.choose(active, options.length === 0, () => this.callbacks.onSelect(
+					this.choose(active, this.state.settings.providers[provider.id].model.trim() === '', () => this.callbacks.onSelect(
 						{
 							providerId: provider.id,
 							modelId: this.state.settings.providers[provider.id].model.trim(),
@@ -168,7 +168,7 @@ export class ChatModelControl {
 					providerId: provider.id,
 					kind: 'effort',
 					effort,
-					disabled: options.length === 0,
+					disabled: false,
 				});
 			}
 		}
@@ -234,7 +234,11 @@ export class ChatModelControl {
 				: config.reasoningEffort === entry.effort);
 			entry.item
 				.setChecked(checked)
-				.setDisabled(disabled || entry.disabled);
+				.setDisabled(
+					disabled ||
+					entry.disabled ||
+					(entry.kind === 'effort' && config.model.trim() === ''),
+				);
 		}
 	}
 }

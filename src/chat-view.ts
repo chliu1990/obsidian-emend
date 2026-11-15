@@ -329,25 +329,22 @@ export class EmendChatView extends ItemView {
 		) {
 			return;
 		}
-		const current = this.plugin.settings;
-		const provider = current.providers[selection.providerId];
-		const nextSettings: EmendSettings = {
-			...current,
-			activeProvider: selection.providerId,
-			providers: {
-				...current.providers,
-				[selection.providerId]: {
-					...provider,
-					model: selection.modelId,
-					reasoningEffort: effort,
-				},
-			},
-		};
 		this.isModelSelectionSaving = true;
 		this.modelControl?.update(this.modelControlState());
 		this.applyDraftCapacityControls(undefined, []);
 		try {
-			await this.plugin.saveSettings(nextSettings);
+			await this.plugin.saveSettings((current) => ({
+				...current,
+				activeProvider: selection.providerId,
+				providers: {
+					...current.providers,
+					[selection.providerId]: {
+						...current.providers[selection.providerId],
+						model: selection.modelId,
+						reasoningEffort: effort,
+					},
+				},
+			}));
 		} catch (error) {
 			new Notice(`Emend: Could not save model settings. ${getErrorMessage(error)}`);
 		} finally {
