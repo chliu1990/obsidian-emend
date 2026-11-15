@@ -177,16 +177,24 @@ export default class EmendPlugin extends Plugin {
 					);
 					const modal = new SelectionModal(
 						this.app,
-						(prompt, signal, additionalNotePaths) => this.requestSelectionEdit(
+						(prompt, signal, additionalNotePaths, selectionContext) => this.requestSelectionEdit(
 							snapshot,
 							prompt,
 							signal,
 							editor,
 							additionalNotePaths,
+							[],
+							undefined,
+							selectionContext,
 						),
 						this.additionalNotesStore,
 						snapshot.file.path,
-						(prompt) => this.estimateSelectionDraft(snapshot, prompt),
+						(prompt, selectionContext) => this.estimateSelectionDraft(
+							snapshot,
+							prompt,
+							selectionContext,
+						),
+						this.settings.smartSelectionContext,
 					);
 					this.register(() => modal.close());
 					modal.open();

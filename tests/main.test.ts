@@ -10,6 +10,7 @@ import {
 } from '../src/context-capacity-ui';
 import EmendPlugin from '../src/main';
 import type { ReadOnlySubmission } from '../src/request-coordinator';
+import type { SelectionContextPolicy } from '../src/selection-focus';
 import { SelectionModal } from '../src/selection-modal';
 import { createSelectionPresentation } from '../src/selection-presentation';
 import {
@@ -1380,7 +1381,7 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 		}
 	});
 
-	it('passes the plugin estimate callback to the command selection modal', async () => {
+	it('forwards identical modal policies after capturing the selection once', async () => {
 		interface RegisteredCommand {
 			id: string;
 			editorCheckCallback?: (
@@ -1393,6 +1394,8 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 		const commands: RegisteredCommand[] = [];
 		const settings = selectionSettings();
 		const { view, editor } = makeSelectionView('beta');
+		const getValue = vi.fn(editor.getValue);
+		editor.getValue = getValue;
 		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
 		Object.assign(plugin, {
 			app: {
@@ -1422,6 +1425,31 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 			getTargetMarkdownView: () => view,
 		});
 		await plugin.onload();
+		const snapshot: SelectionSnapshot = {
+			file: view.file,
+			fullText: 'BeforebetaAfter',
+			selectedText: 'beta',
+			from: 6,
+			to: 10,
+		};
+		const estimateResult = plugin.estimateSelectionDraft(
+			snapshot,
+			'Tighten this.',
+			'default',
+		);
+		const estimateSelectionDraft = vi.fn(() => estimateResult);
+		const requestSelectionEdit = vi.fn(async () => ({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+			usage: {
+				promptTokens: 1,
+				completionTokens: 1,
+				totalTokens: 2,
+				source: 'provider' as const,
+			},
+		}));
+		Object.assign(plugin, { estimateSelectionDraft, requestSelectionEdit });
 
 		const opened: SelectionModal[] = [];
 		const prototype = SelectionModal.prototype as unknown as {
@@ -1437,29 +1465,55 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 			);
 			expect(modifyCommand).toBeDefined();
 			expect(modifyCommand?.editorCheckCallback?.(false, editor, view)).toBe(true);
+			expect(getValue).toHaveBeenCalledTimes(1);
 			const modal = opened[0];
 			if (!modal) {
 				throw new Error('Selection modal was not opened.');
 			}
-			const estimateDraft = (
-				modal as unknown as {
-					estimateDraft: (prompt: string) => DraftCapacityEstimate;
-				}
-			).estimateDraft;
-			const snapshot: SelectionSnapshot = {
-				file: view.file,
-				fullText: editor.getValue(),
-				selectedText: 'beta',
-				from: 6,
-				to: 10,
+			const callbacks = modal as unknown as {
+				smartSelectionContext: boolean;
+				submitSelection: (
+					prompt: string,
+					signal: AbortSignal,
+					additionalNotePaths: readonly string[],
+					selectionContext: SelectionContextPolicy,
+				) => Promise<unknown>;
+				estimateDraft: (
+					prompt: string,
+					selectionContext: SelectionContextPolicy,
+				) => DraftCapacityEstimate;
 			};
+			const signal = new AbortController().signal;
 
-			const estimate = estimateDraft('Tighten this.');
-
-			expect(estimate).toEqual(
-				plugin.estimateSelectionDraft(snapshot, 'Tighten this.'),
+			await callbacks.submitSelection(
+				'Tighten this.',
+				signal,
+				['Context.md'],
+				'full-note',
 			);
-			expect(estimate.categories.history).toBe(0);
+			const estimate = callbacks.estimateDraft('Tighten this.', 'full-note');
+
+			expect(callbacks.smartSelectionContext).toBe(false);
+			expect(requestSelectionEdit).toHaveBeenCalledOnce();
+			expect(requestSelectionEdit).toHaveBeenCalledWith(
+				snapshot,
+				'Tighten this.',
+				signal,
+				expect.any(Object),
+				['Context.md'],
+				[],
+				undefined,
+				'full-note',
+			);
+			expect(requestSelectionEdit.mock.calls[0]).toHaveLength(8);
+			expect(estimateSelectionDraft).toHaveBeenCalledOnce();
+			expect(estimateSelectionDraft).toHaveBeenCalledWith(
+				snapshot,
+				'Tighten this.',
+				'full-note',
+			);
+			expect(estimate).toBe(estimateResult);
+			expect(getValue).toHaveBeenCalledTimes(1);
 		} finally {
 			if (originalOpen) {
 				prototype.open = originalOpen;

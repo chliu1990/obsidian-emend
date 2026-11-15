@@ -8,6 +8,7 @@ import {
 } from './context-capacity-ui';
 import type { EditResult } from './note-writer';
 import { QUICK_ACTIONS, type QuickAction } from './quick-actions';
+import type { SelectionContextPolicy } from './selection-focus';
 
 export class SelectionModal extends Modal {
 	private inputEl: HTMLTextAreaElement | null = null;
@@ -21,6 +22,8 @@ export class SelectionModal extends Modal {
 	private additionalNotesControl: AdditionalNotesControl | null = null;
 	private targetFile: TFile | null = null;
 	private capacityDisplay: ContextCapacityDisplay | null = null;
+	private selectionContextSelect: HTMLSelectElement | null = null;
+	private selectionContext: SelectionContextPolicy = 'default';
 	private draftCapacityBlocked = false;
 
 	constructor(
@@ -29,15 +32,21 @@ export class SelectionModal extends Modal {
 			prompt: string,
 			signal: AbortSignal,
 			additionalNotePaths: readonly string[],
+			selectionContext: SelectionContextPolicy,
 		) => Promise<EditResult>,
 		private readonly additionalNotesStore: AdditionalNotesStore,
 		private readonly targetPath: string,
-		private readonly estimateDraft: (prompt: string) => DraftCapacityEstimate,
+		private readonly estimateDraft: (
+			prompt: string,
+			selectionContext: SelectionContextPolicy,
+		) => DraftCapacityEstimate,
+		private readonly smartSelectionContext: boolean,
 	) {
 		super(app);
 	}
 
 	onOpen() {
+		this.selectionContext = 'default';
 		this.setTitle('Modify selected text');
 		this.contentEl.empty();
 		this.contentEl.addClass('emend-selection-modal');
@@ -56,6 +65,38 @@ export class SelectionModal extends Modal {
 				void this.submit(action.prompt);
 			});
 		}
+
+		const selectionContextEl = this.contentEl.createDiv('emend-selection-context');
+		selectionContextEl.createEl('label', {
+			text: 'Selection context',
+			attr: { for: 'emend-selection-context-select' },
+		});
+		this.selectionContextSelect = selectionContextEl.createEl('select', {
+			cls: 'emend-selection-context-select',
+			attr: {
+				id: 'emend-selection-context-select',
+				'aria-label': 'Selection context',
+			},
+		});
+		this.selectionContextSelect.createEl('option', {
+			text: this.smartSelectionContext ? 'Default (Smart)' : 'Default (Symmetric)',
+			attr: { value: 'default' },
+		});
+		this.selectionContextSelect.createEl('option', {
+			text: 'Full note',
+			attr: { value: 'full-note' },
+		});
+		this.selectionContextSelect.value = this.selectionContext;
+		this.selectionContextSelect.addEventListener('change', () => {
+			this.selectionContext = this.selectionContextSelect?.value === 'full-note'
+				? 'full-note'
+				: 'default';
+			this.refreshCapacityEstimate();
+		});
+		selectionContextEl.createSpan({
+			cls: 'emend-selection-context-description',
+			text: 'Full note sends the complete note; only the selection is edited.',
+		});
 
 		this.additionalNotesControl = new AdditionalNotesControl(
 			this.app,
@@ -121,6 +162,7 @@ export class SelectionModal extends Modal {
 		this.additionalNotesControl = null;
 		this.capacityDisplay?.destroy();
 		this.capacityDisplay = null;
+		this.selectionContextSelect = null;
 		this.draftCapacityBlocked = false;
 		this.targetFile = null;
 		this.contentEl.empty();
@@ -153,7 +195,7 @@ export class SelectionModal extends Modal {
 		prompt: string,
 	): DraftCapacityEstimate | undefined {
 		try {
-			return this.estimateDraft(prompt);
+			return this.estimateDraft(prompt, this.selectionContext);
 		} catch {
 			return undefined;
 		}
@@ -162,6 +204,9 @@ export class SelectionModal extends Modal {
 	private setPending(pending: boolean) {
 		if (this.inputEl) {
 			this.inputEl.disabled = pending;
+		}
+		if (this.selectionContextSelect) {
+			this.selectionContextSelect.disabled = pending;
 		}
 		this.additionalNotesControl?.setDisabled(pending);
 		if (pending) {
@@ -206,6 +251,7 @@ export class SelectionModal extends Modal {
 				submittedPrompt,
 				controller.signal,
 				additionalNotePaths,
+				this.selectionContext,
 			);
 			if (controller.signal.aborted) {
 				return;
