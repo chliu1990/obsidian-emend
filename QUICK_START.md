@@ -47,6 +47,8 @@ API keys are stored in Obsidian SecretStorage, not as plaintext in Emend's `data
 
 The editable presets above are DeepSeek `deepseek-flash` and Kimi `k3.1-pro`. Operations is the only editing protocol; there is no CriticMarkup strategy selector. DeepSeek `deepseek-flash` and `deepseek-v4-pro` support default-off **Web Review / Web Auto** research through Chat's **Writing and web search** menu; other providers and editing paths do not. Automatic context compression and other-provider search adapters remain deferred; see the [context-management roadmap](devel_docs/future-context-management.md) and [remaining web-search work](devel_docs/future-web-search.md).
 
+**Refresh models** is available only in **Settings → Emend**. Clicking it explicitly sends an authenticated `GET <base URL>/models`; discovery never runs automatically, and failures preserve the previous list. Custom model names remain editable as text in Settings. In chat, click the provider/model/reasoning button between **Writing and web search** and Send to choose a built-in, discovered, or current model and reasoning effort. Opening or selecting from that menu performs no provider request or note read/write; a selection makes one sanitized local settings save and refreshes open chat views and capacity estimates.
+
 ### Context capacity (optional)
 
 Set **Context window (tokens)** and **Output reserve (tokens)** manually, or explicitly click **Use documented defaults** when that action is available. Both are required together, must be positive integers, and the window must be larger than the reserve; effective input capacity is `window − reserve`. Leave both empty, or use **Clear capacity settings**, to turn capacity checks off. An invalid pair shows a warning in settings and blocks requests until you fix it. The reserve is local accounting only — it is never sent as `max_tokens`.
@@ -69,7 +71,7 @@ When a draft is at or above capacity, Send and the affected quick actions are di
    What is the main topic of this note? Reply with one sentence and show $x^2$ as inline math.
    ```
 
-4. Confirm that the answer streams into chat, reasoning is folded when present, and the note does not change. Chat has no Edit quick actions, and the active provider/model beside Send is a read-only label.
+4. Confirm that the answer streams into chat, reasoning is folded when present, and the note does not change. Chat has no Edit quick actions. The provider/model/reasoning button beside Send opens the model menu without submitting; changing it preserves your draft and takes effect on the next actual request.
 5. Click **Related notes** and explicitly choose another Markdown note in the explorer. Use **All** for current vault Markdown paths or **Links** for resolved outgoing/incoming links; search full paths, select individual notes or folders, and try Select-all. Folder and Select-all helpers apply to the complete current All/Links scope, including search-hidden results. The trigger shows the selected count; expand **Selected notes** to review full paths and use **Remove** or **Clear all**. Opening, searching, selecting, removing or clearing selections, and switching notes send no provider request and read no additional-note content before submission.
 6. Submit another question and confirm that the response can use the selected note while neither the active note nor the additional note changes. Additional-note content is read-only context in Chat, Edit, and Modify Selection.
 
