@@ -75,7 +75,7 @@ describe('getProviderModelOptions', () => {
 
 	it('orders Custom discoveries before its trimmed configured model without replacing labels', () => {
 		const config = createConfig({
-			model: ' configured ',
+			model: ' configured-only ',
 			discoveredModels: [
 				{ id: ' discovered ', displayName: ' Discovered ' },
 				{ id: 'configured', displayName: 'Discovered configured' },
@@ -86,6 +86,7 @@ describe('getProviderModelOptions', () => {
 		expect(getProviderModelOptions('custom', config)).toEqual([
 			{ id: 'discovered', label: 'Discovered' },
 			{ id: 'configured', label: 'Discovered configured' },
+			{ id: 'configured-only', label: 'configured-only' },
 		]);
 	});
 
