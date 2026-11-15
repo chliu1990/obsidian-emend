@@ -921,6 +921,7 @@ describe('shared draft estimate builders', () => {
 				prompt: 'Tighten this selection.',
 				maxContextCharacters: 1000,
 				smartSelectionContext,
+				selectionContext: 'default',
 				notePath,
 				history,
 			});
@@ -933,6 +934,7 @@ describe('shared draft estimate builders', () => {
 						prompt: 'Tighten this selection.',
 						maxContextCharacters: 1000,
 						smartSelectionContext,
+						selectionContext: 'default',
 						additionalNotes: [],
 						notePath,
 					}),
@@ -943,6 +945,57 @@ describe('shared draft estimate builders', () => {
 			expect(estimate).toEqual(expected);
 		},
 	);
+
+	it('matches direct Full-note Selection accounting including the duplicate selection', () => {
+		const context = draftContext({
+			sourceText: `Alpha ${'word '.repeat(400)}beta ${'tail '.repeat(200)}`,
+		});
+		const snapshot = draftSnapshot(context);
+		const history = draftHistory();
+		const input = {
+			snapshot,
+			prompt: 'Tighten this selection.',
+			maxContextCharacters: 100,
+			smartSelectionContext: true,
+			selectionContext: 'full-note' as const,
+			additionalNotes: [],
+		};
+
+		const fullNote = buildSelectionDraftEstimate({
+			provider,
+			...input,
+			history,
+		});
+		const boundedSmart = buildSelectionDraftEstimate({
+			provider,
+			...input,
+			selectionContext: 'default',
+			history,
+		});
+		const boundedSymmetric = buildSelectionDraftEstimate({
+			provider,
+			...input,
+			smartSelectionContext: false,
+			selectionContext: 'default',
+			history,
+		});
+		const expectedUserPrompt = buildSelectionUserPrompt(input);
+
+		expect(fullNote).toEqual(buildDraftCapacityEstimate({
+			provider,
+			request: {
+				systemPrompt: getEditStrategy().getSelectionPrompt(undefined),
+				userPrompt: expectedUserPrompt,
+				history,
+			},
+		}));
+		expect(fullNote.categories.user).toBe(expectedUserPrompt.length);
+		expect(fullNote.categories.user).toBeGreaterThan(
+			snapshot.fullText.length + snapshot.selectedText.length,
+		);
+		expect(fullNote.categories.user).toBeGreaterThan(boundedSmart.categories.user);
+		expect(fullNote.categories.user).toBeGreaterThan(boundedSymmetric.categories.user);
+	});
 
 	it('lets an explicit note path override the captured context path', () => {
 		const context = draftContext({ notePath: 'Vault/Captured.md' });

@@ -1893,6 +1893,7 @@ function buildCapacityForTarget(
 					settings.maxContextCharacters,
 				),
 				smartSelectionContext: settings.smartSelectionContext,
+				selectionContext: 'default',
 				notePath: settings.includeNotePathInContext
 					? formatVaultQualifiedPath(
 						app.vault.getName(),

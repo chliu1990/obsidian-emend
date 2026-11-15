@@ -12,6 +12,7 @@ import { getEditStrategy } from './edit-strategy';
 import { getSystemPrompt } from './mode';
 import { buildUserPrompt } from './request-coordinator';
 import { buildSelectionUserPrompt } from './selection-editor';
+import type { SelectionContextPolicy } from './selection-focus';
 import type {
 	Mode,
 	ProviderConfig,
@@ -94,6 +95,7 @@ export function buildSelectionDraftEstimate(input: {
 	prompt: string;
 	maxContextCharacters: number;
 	smartSelectionContext: boolean;
+	selectionContext: SelectionContextPolicy;
 	notePath?: string;
 	history: ProviderHistoryMessage[];
 }): DraftCapacityEstimate {
@@ -106,6 +108,7 @@ export function buildSelectionDraftEstimate(input: {
 				prompt: input.prompt,
 				maxContextCharacters: input.maxContextCharacters,
 				smartSelectionContext: input.smartSelectionContext,
+				selectionContext: input.selectionContext,
 				additionalNotes: [],
 				notePath: input.notePath,
 			}),

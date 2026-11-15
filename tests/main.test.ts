@@ -780,6 +780,76 @@ describe('EmendPlugin Selection history', () => {
 		expect(current?.role).toBe('user');
 		expect(current?.content).toContain('User message:');
 	});
+
+	it('keeps Full-note-context Operations confined with zero native or vault writes', async () => {
+		const response = JSON.stringify([
+			{ type: 'replace', target: 'Outside only', replacement: 'Changed' },
+		]);
+		const event = JSON.stringify({ choices: [{ delta: { content: response } }] });
+		const encoder = new TextEncoder();
+		const fetchMock = vi.fn().mockImplementation(async () => {
+			const stream = new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(encoder.encode(`data: ${event}\n\n`));
+					controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+					controller.close();
+				},
+			});
+			return new Response(stream);
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		const file = new TFile();
+		file.path = 'Selection.md';
+		const fullText = 'Outside only\nAlpha beta gamma.';
+		const from = fullText.indexOf('beta');
+		const snapshot: SelectionSnapshot = {
+			file,
+			fullText,
+			selectedText: 'beta',
+			from,
+			to: from + 4,
+		};
+		const editor: SelectionEditorAdapter = {
+			readCurrentText: () => fullText,
+			isTargetCurrent: () => true,
+			replaceRange: vi.fn(),
+		};
+		const vaultModify = vi.fn();
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, {
+			settings: structuredClone(DEFAULT_SETTINGS),
+			app: {
+				vault: {
+					getAbstractFileByPath: () => null,
+					modify: vaultModify,
+				},
+			},
+			getApiKey: () => 'dummy-key',
+		});
+
+		await expect(plugin.requestSelectionEdit(
+			snapshot,
+			'Improve this selection.',
+			new AbortController().signal,
+			editor,
+			[],
+			[],
+			undefined,
+			'full-note',
+		)).rejects.toThrow(/not found|match/i);
+
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+		const body = JSON.parse(init.body as string) as {
+			messages: Array<{ content: string }>;
+		};
+		expect(body.messages.at(-1)?.content).toContain(
+			`Full note (supporting context):\n${fullText}\n\nSelected text (the only edit target):\nbeta`,
+		);
+		expect(editor.replaceRange).not.toHaveBeenCalled();
+		expect(vaultModify).not.toHaveBeenCalled();
+		expect(snapshot.fullText).toBe(fullText);
+	});
 });
 
 describe('EmendPlugin settings capacity refresh', () => {
@@ -1117,6 +1187,7 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 			prompt: 'Tighten this.',
 			maxContextCharacters: normalizeContextLimit(0),
 			smartSelectionContext: false,
+			selectionContext: 'default',
 			notePath: formatVaultQualifiedPath('Vault', file.path),
 			history: [],
 		}));
@@ -1129,6 +1200,7 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 				prompt: 'Tighten this.',
 				maxContextCharacters: 12000,
 				smartSelectionContext: false,
+				selectionContext: 'default',
 				notePath: formatVaultQualifiedPath('Vault', file.path),
 				history: [],
 			}).categories.user,
@@ -1142,7 +1214,7 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 		);
 	});
 
-	it('uses the same Selection request options for submission and the draft estimate', async () => {
+	it('forwards trailing Full-note policy to both Selection submission and draft estimation', async () => {
 		const settings = selectionSettings();
 		const file = new TFile();
 		file.path = 'Selection.md';
@@ -1164,6 +1236,7 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 			| {
 				maxContextCharacters: number;
 				smartSelectionContext: boolean;
+				selectionContext: 'default' | 'full-note';
 				notePath?: string;
 			}
 			| undefined;
@@ -1197,21 +1270,29 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 				editor,
 				[],
 				[],
+				undefined,
+				'full-note',
 			);
 
 			expect(captured).toBeDefined();
 			expect(captured).toMatchObject({
 				maxContextCharacters: 1000,
 				smartSelectionContext: false,
+				selectionContext: 'full-note',
 				notePath: 'Vault/Selection.md',
 			});
-			const estimate = plugin.estimateSelectionDraft(snapshot, 'Tighten this.');
+			const estimate = plugin.estimateSelectionDraft(
+				snapshot,
+				'Tighten this.',
+				'full-note',
+			);
 			expect(estimate).toEqual(buildSelectionDraftEstimate({
 				provider: settings.providers[settings.activeProvider],
 				snapshot,
 				prompt: 'Tighten this.',
 				maxContextCharacters: captured?.maxContextCharacters ?? 0,
 				smartSelectionContext: captured?.smartSelectionContext ?? true,
+				selectionContext: 'full-note',
 				notePath: captured?.notePath,
 				history: [],
 			}));

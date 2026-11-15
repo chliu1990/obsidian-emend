@@ -34,6 +34,7 @@ import {
 	type SelectionEditResult,
 	type SelectionEditTarget,
 } from './selection-editor';
+import type { SelectionContextPolicy } from './selection-focus';
 import { SelectionModal } from './selection-modal';
 import { createSelectionPresentation } from './selection-presentation';
 import { ApiKeyStorage } from './secret-storage';
@@ -284,11 +285,13 @@ export default class EmendPlugin extends Plugin {
 	estimateSelectionDraft(
 		snapshot: SelectionSnapshot,
 		prompt: string,
+		selectionContext: SelectionContextPolicy = 'default',
 	): DraftCapacityEstimate {
 		return buildSelectionDraftEstimate({
 			provider: this.settings.providers[this.settings.activeProvider],
 			snapshot,
 			prompt,
+			selectionContext,
 			...this.getSelectionRequestOptions(snapshot),
 			history: [],
 		});
@@ -439,6 +442,7 @@ export default class EmendPlugin extends Plugin {
 		additionalNotePaths: readonly string[] = [],
 		history: ProviderHistoryMessage[] = [],
 		callbacks?: SelectionEditCallbacks,
+		selectionContext: SelectionContextPolicy = 'default',
 	): Promise<SelectionEditResult> {
 		if (!prompt.trim()) {
 			throw new Error('Enter a prompt first.');
@@ -463,6 +467,7 @@ export default class EmendPlugin extends Plugin {
 			return coordinator.submit({
 				snapshot,
 				prompt,
+				selectionContext,
 				...this.getSelectionRequestOptions(snapshot),
 				additionalNotePaths,
 				history,

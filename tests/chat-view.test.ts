@@ -5883,6 +5883,7 @@ function createCapacityView(options: CapacityViewOptions = {}) {
 					options.maxContextCharacters,
 				),
 				smartSelectionContext: true,
+				selectionContext: 'default',
 				additionalNotes: [],
 				notePath: includeNotePath
 					? formatVaultQualifiedPath('Vault', file.path)
@@ -6736,6 +6737,7 @@ describe('EmendChatView draft capacity estimate', () => {
 					prompt: '',
 					maxContextCharacters: normalizeContextLimit(0),
 					smartSelectionContext: true,
+					selectionContext: 'default',
 					additionalNotes: [],
 					notePath: formatVaultQualifiedPath('Vault', 'Note.md'),
 				}),
