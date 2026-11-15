@@ -645,9 +645,9 @@
 }
 
 .emend-chat-active-model {
-	flex: 1 1 100px;
+	flex: 0 1 auto;
 	min-width: 0;
-	max-width: 100%;
+	max-width: min(100%, 320px);
 	margin-inline-start: auto;
 	padding: var(--size-4-1) var(--size-4-2);
 	border-radius: var(--radius-s);

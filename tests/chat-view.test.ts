@@ -68,8 +68,10 @@ describe('EmendChatView compact composer styles', () => {
 		expect(row).toContain('flex-wrap: wrap;');
 		expect(row).toContain('min-width: 0;');
 		expect(getCssRule('.emend-chat-writing-trigger')).toContain('min-width: 0;');
+		expect(model).toContain('flex: 0 1 auto;');
 		expect(model).toContain('min-width: 0;');
-		expect(model).toContain('max-width: 100%;');
+		expect(model).toContain('max-width: min(100%, 320px);');
+		expect(model).toContain('margin-inline-start: auto;');
 		expect(model).toContain('overflow: hidden;');
 		expect(model).toContain('text-overflow: ellipsis;');
 		expect(model).toContain('white-space: nowrap;');
