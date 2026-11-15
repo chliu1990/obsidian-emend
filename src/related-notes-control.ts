@@ -614,10 +614,9 @@ class RelatedNotesExplorer {
 		const left = Math.max(8, Math.min(rectangle.left, view.innerWidth - width - 8));
 		const belowTop = rectangle.bottom + 4;
 		const belowSpace = view.innerHeight - belowTop - 8;
-		const useBelow = belowSpace >= 180;
-		const maxHeight = useBelow
-			? Math.min(480, belowSpace)
-			: Math.min(480, Math.max(0, rectangle.top - 12));
+		const aboveSpace = Math.max(0, rectangle.top - 12);
+		const useBelow = belowSpace >= 480 || belowSpace >= aboveSpace;
+		const maxHeight = Math.min(480, useBelow ? belowSpace : aboveSpace);
 		const top = useBelow ? belowTop : Math.max(8, rectangle.top - 4 - maxHeight);
 		this.panelEl.style.width = `${width}px`;
 		this.panelEl.style.left = `${left}px`;

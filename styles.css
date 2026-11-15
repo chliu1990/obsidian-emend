@@ -363,6 +363,10 @@
 	font-size: var(--font-ui-smaller);
 }
 
+.emend-chat-related-notes-explorer-row[hidden] {
+	display: none;
+}
+
 .emend-chat-related-notes-explorer-row.is-active {
 	background: var(--background-secondary);
 	color: var(--text-muted);

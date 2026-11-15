@@ -89,6 +89,7 @@ class FakeElement {
 	removed = false;
 	isConnected = true;
 	scrollIntoViewCalls = 0;
+	rectangle = { left: 20, top: 30, bottom: 60, right: 220, width: 200, height: 30 };
 
 	constructor(
 		readonly tagName = 'div',
@@ -193,7 +194,7 @@ class FakeElement {
 	}
 
 	getBoundingClientRect() {
-		return { left: 20, top: 30, bottom: 60, right: 220, width: 200, height: 30 };
+		return this.rectangle;
 	}
 
 	scrollIntoView(): void {
@@ -955,6 +956,45 @@ describe('RelatedNotesControl', () => {
 		setSearch(panel, '');
 		findButton(panel, 'Links')?.click();
 		expect(selectAllCheckbox(panel).attributes['aria-label']).toContain('links');
+	});
+
+	it('positions above when below has 180px but above has more space', () => {
+		const fixture = createControl();
+		const { container, control, document } = fixture;
+		control.render(container as unknown as HTMLElement, false);
+		document.defaultView.innerHeight = 600;
+		findTrigger(container).rectangle = { left: 20, top: 320, bottom: 360, right: 220, width: 200, height: 40 };
+
+		const panel = openExplorer(fixture);
+
+		expect(panel.style.top).toBe('8px');
+		expect(panel.style.maxHeight).toBe('308px');
+	});
+
+	it('retains below placement when below has more space but less than the preferred height', () => {
+		const fixture = createControl();
+		const { container, control, document } = fixture;
+		control.render(container as unknown as HTMLElement, false);
+		document.defaultView.innerHeight = 800;
+		findTrigger(container).rectangle = { left: 20, top: 300, bottom: 340, right: 220, width: 200, height: 40 };
+
+		const panel = openExplorer(fixture);
+
+		expect(panel.style.top).toBe('344px');
+		expect(panel.style.maxHeight).toBe('448px');
+	});
+
+	it('prefers below placement whenever below fits the preferred height', () => {
+		const fixture = createControl();
+		const { container, control, document } = fixture;
+		control.render(container as unknown as HTMLElement, false);
+		document.defaultView.innerHeight = 1200;
+		findTrigger(container).rectangle = { left: 20, top: 600, bottom: 640, right: 220, width: 200, height: 40 };
+
+		const panel = openExplorer(fixture);
+
+		expect(panel.style.top).toBe('644px');
+		expect(panel.style.maxHeight).toBe('480px');
 	});
 
 	it('handles Escape and outside pointer-down, ignores inside clicks, and cleans up listeners', () => {
