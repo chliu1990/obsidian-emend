@@ -177,11 +177,11 @@ SHA-256 values after the final production build and runtime runs:
 
 Both summaries record `loadedBundleMatchedRoot: true`, and the final post-gate `sha256sum` comparison independently confirmed root/loaded equality. This final bundle hash supersedes Task 3's pre-final-verification hash; no product change occurred between Task 4's runtime and local-gate builds.
 
-## Verification limits and pending review
+## Independent review and verification limits
 
 - Verification covers Linux/Xvfb and official Obsidian 1.15.0 only. Windows, macOS, other Obsidian versions, display scales, and physical OS-level keyboards were not exercised. CDP-dispatched events were trusted browser events, not physical typing. No screen reader or assistive-technology output was exercised.
 - Source and Live Preview were exercised with Obsidian's default dark (`obsidian`) and light (`moonstone`) themes. **No user-implicated custom theme or CSS snippet was available**, so no matched custom-theme/snippet trace was run and no claim is made for every community theme or snippet.
 - Synthetic notes, existing Track Changes fixtures, the local mock, and dummy credentials were used. No real provider/account/credential, external Emend request, paid call, or other vault was used.
 - The non-chat scenario is a computed-style/no-collateral control; the separate chat-refocus control is the strict visible host-DOM-selection proof. The existing fail-closed rerender's `BODY` focus is recorded above and was not changed by this presentation fix.
-- Two deferred minor registration-test non-call spies remain for whole-branch review triage. They were not altered in Task 4; production runtime registration, focus, no-I/O, and lifecycle controls independently passed.
-- Independent/final whole-branch review is **pending** with the controller. This record does not claim independent review, push, PR creation, CI, release, or real-provider verification completed.
+- The final whole-branch review found no Critical or Important findings and judged the branch ready to merge. Its two Minor findings were addressed in `0ff7140006ea725bb68da8d5c3c93ca92799b2e2`: disconnected registration-test spies/assertions were removed without weakening meaningful coverage, and the privacy wording now accurately distinguishes the current `DecorationSet` from separately retained snapshots or stale offsets. The scoped re-review passed with no new issues. Targeted `tests/main.test.ts` verification passed **22/22 tests**, followed by **52 files / 1,695 tests**, build, lint, and diff checks. These were test/documentation-only changes, so no runtime rerun was required.
+- Push, PR creation, CI, release, and real-provider verification remain pending and are not claimed here.
