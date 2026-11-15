@@ -14,7 +14,7 @@ import type {
 
 export interface ChatModelSelection {
 	providerId: ProviderId;
-	modelId: string;
+	modelId: string | null;
 }
 
 export interface ChatModelControlState {
@@ -177,7 +177,7 @@ export class ChatModelControl {
 				this.choose(active, this.isEffortDisabled(activeProviderId), () => this.callbacks.onSelect(
 					{
 						providerId: activeProviderId,
-						modelId: this.state.settings.providers[activeProviderId].model.trim(),
+						modelId: null,
 					},
 					effort,
 				));

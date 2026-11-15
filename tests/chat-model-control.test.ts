@@ -346,7 +346,7 @@ describe('ChatModelControl', () => {
 		await Promise.resolve();
 
 		expect(callbacks.onSelect).toHaveBeenCalledExactlyOnceWith(
-			{ providerId: 'kimi', modelId: 'k3.1-pro' },
+			{ providerId: 'kimi', modelId: null },
 			'medium',
 		);
 		expect(menu.hideCalls).toBe(1);

@@ -1057,6 +1057,26 @@ describe('EmendChatView composer model selection', () => {
 		expect(candidate.providers.kimi).toBe(original.providers.kimi);
 	});
 
+	it('rebases a queued reasoning-only selection onto the latest current model', async () => {
+		const fixture = createModelControlView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const original = fixture.settings;
+
+		chooseReasoningMenuItem(fixture.contentEl, 'Low reasoning');
+		await vi.waitFor(() => expect(fixture.saveSettings).toHaveBeenCalledOnce());
+
+		const update = fixture.saveSettings.mock.calls[0]?.[0];
+		if (typeof update !== 'function') {
+			throw new Error('Effort selection did not supply a settings updater.');
+		}
+		const latest = structuredClone(original);
+		latest.providers.custom.model = 'Model chosen while the effort save was queued';
+		const candidate = update(latest);
+		const expected = structuredClone(latest);
+		expected.providers.custom.reasoningEffort = 'low';
+		expect(candidate).toEqual(expected);
+	});
+
 	it('derives model availability from getApiKey and refreshes it after key and config saves', async () => {
 		const fixture = createModelControlView();
 		await viewPrototype.refreshTargetNote.call(fixture.context);

@@ -344,7 +344,7 @@ export class EmendChatView extends ItemView {
 					...current.providers,
 					[selection.providerId]: {
 						...current.providers[selection.providerId],
-						model: selection.modelId,
+						model: selection.modelId ?? current.providers[selection.providerId].model,
 						reasoningEffort: effort,
 					},
 				},
