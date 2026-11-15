@@ -283,6 +283,151 @@
 	line-height: 1.4;
 }
 
+.emend-chat-related-notes-explorer {
+	position: fixed;
+	z-index: var(--layer-popover);
+	display: flex;
+	box-sizing: border-box;
+	flex-direction: column;
+	gap: var(--size-4-2);
+	width: 360px;
+	max-width: calc(100vw - 16px);
+	max-height: min(480px, calc(100vh - 16px));
+	padding: var(--size-4-3);
+	overflow: hidden;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	background: var(--background-primary);
+	box-shadow: var(--shadow-s);
+	color: var(--text-normal);
+}
+
+.emend-chat-related-notes-explorer :focus-visible {
+	outline: 2px solid var(--focus-border-color);
+	outline-offset: 1px;
+}
+
+.emend-chat-related-notes-explorer-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-4-1);
+}
+
+.emend-chat-related-notes-explorer-action {
+	padding: var(--size-4-1) var(--size-4-2);
+	border-radius: var(--radius-s);
+	font-size: var(--font-ui-smaller);
+}
+
+.emend-chat-related-notes-explorer-action[aria-pressed='true'] {
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
+
+.emend-chat-related-notes-explorer-search {
+	box-sizing: border-box;
+	width: 100%;
+	min-width: 0;
+}
+
+.emend-chat-related-notes-explorer-select-all-row,
+.emend-chat-related-notes-explorer-row {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-2);
+	min-width: 0;
+}
+
+.emend-chat-related-notes-explorer-select-all-row {
+	font-size: var(--font-ui-smaller);
+}
+
+.emend-chat-related-notes-explorer-checkbox,
+.emend-chat-related-notes-explorer-select-all {
+	flex: 0 0 auto;
+	margin: 0;
+	accent-color: var(--interactive-accent);
+}
+
+.emend-chat-related-notes-explorer-tree {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+
+.emend-chat-related-notes-explorer-row {
+	min-height: 28px;
+	box-sizing: border-box;
+	border-radius: var(--radius-s);
+	font-size: var(--font-ui-smaller);
+}
+
+.emend-chat-related-notes-explorer-row[hidden] {
+	display: none;
+}
+
+.emend-chat-related-notes-explorer-row.is-active {
+	background: var(--background-secondary);
+	color: var(--text-muted);
+}
+
+.emend-chat-related-notes-explorer-folder-disclosure {
+	flex: 0 0 auto;
+	box-sizing: border-box;
+	width: 24px;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--text-muted);
+}
+
+.emend-chat-related-notes-explorer-icon {
+	display: inline-flex;
+	flex: 0 0 auto;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	color: var(--text-muted);
+}
+
+.emend-chat-related-notes-explorer-icon svg {
+	width: 14px;
+	height: 14px;
+}
+
+.emend-chat-related-notes-explorer-path {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.emend-chat-related-notes-explorer-active-label {
+	flex: 0 0 auto;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+.emend-chat-related-notes-explorer-links-separator,
+.emend-chat-related-notes-explorer-empty,
+.emend-chat-related-notes-explorer-cache-disclosure,
+.emend-chat-related-notes-explorer-disclosure {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	line-height: 1.4;
+}
+
+.emend-chat-related-notes-explorer-links-separator {
+	margin: var(--size-4-2) 0 var(--size-4-1);
+}
+
+.emend-chat-related-notes-explorer-cache-disclosure[hidden] {
+	display: none;
+}
+
 .emend-chat-quick-actions {
 	display: flex;
 	flex: 0 0 auto;

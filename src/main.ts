@@ -1,4 +1,4 @@
-import { MarkdownView, Notice, Plugin, TFile } from 'obsidian';
+import { MarkdownView, Notice, Plugin, TFile, TFolder } from 'obsidian';
 import { captureAdditionalNotes } from './additional-notes-context';
 import { AdditionalNotesStore } from './additional-notes-store';
 import { EMEND_CHAT_VIEW_TYPE, EmendChatView } from './chat-view';
@@ -101,6 +101,8 @@ export default class EmendPlugin extends Plugin {
 				this.app.vault.on('rename', (file, oldPath) => {
 					if (file instanceof TFile) {
 						this.additionalNotesStore.rename(oldPath, file.path);
+					} else if (file instanceof TFolder) {
+						this.additionalNotesStore.renameFolder(oldPath, file.path);
 					}
 				}),
 			);
@@ -108,6 +110,8 @@ export default class EmendPlugin extends Plugin {
 				this.app.vault.on('delete', (file) => {
 					if (file instanceof TFile) {
 						this.additionalNotesStore.removeDeleted(file.path);
+					} else if (file instanceof TFolder) {
+						this.additionalNotesStore.removeDeletedFolder(file.path);
 					}
 				}),
 			);

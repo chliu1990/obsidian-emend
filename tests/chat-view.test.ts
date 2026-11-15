@@ -78,6 +78,18 @@ describe('EmendChatView compact composer styles', () => {
 		expect(getCssRule('.emend-chat-related-notes')).toContain('min-width: 0;');
 		expect(getCssRule('.emend-chat-related-notes-path')).toContain('overflow-wrap: anywhere;');
 	});
+
+	it('bounds the Related notes explorer and keeps its tree and focus readable', () => {
+		const panel = getCssRule('.emend-chat-related-notes-explorer');
+		expect(panel).toContain('position: fixed;');
+		expect(panel).toContain('max-width: calc(100vw - 16px);');
+		expect(panel).toContain('max-height: min(480px, calc(100vh - 16px));');
+		expect(getCssRule('.emend-chat-related-notes-explorer-tree')).toContain('overflow-y: auto;');
+		expect(getCssRule('.emend-chat-related-notes-explorer-path')).toContain('text-overflow: ellipsis;');
+		expect(getCssRule('.emend-chat-related-notes-explorer :focus-visible')).toContain(
+			'outline: 2px solid var(--focus-border-color);',
+		);
+	});
 });
 
 // eslint-disable-next-line @typescript-eslint/unbound-method -- The test wrapper supplies an explicit receiver.
@@ -3166,6 +3178,93 @@ describe('EmendChatView additional notes', () => {
 		await submission;
 	});
 
+	it('destroys the explorer on render and close while submission keeps ordered store paths', async () => {
+		const fixture = createEditTargetView();
+		const files = ['A.md', 'First.md', 'Folder/Second.md'].map((path) => {
+			const file = new TFile();
+			file.path = path;
+			return file;
+		});
+		const getMarkdownFiles = vi.fn(() => files);
+		Object.assign(fixture.context.app, {
+			metadataCache: { resolvedLinks: {}, getFileCache: () => ({}) },
+		});
+		Object.assign(fixture.context.app.vault, {
+			getMarkdownFiles,
+			getAbstractFileByPath: (path: string) =>
+				files.find((file) => file.path === path) ?? null,
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+
+		const openPanel = () => {
+			const trigger = findElements(fixture.contentEl, (element) =>
+				element.className.split(' ').includes('emend-chat-related-notes-trigger')
+			)[0];
+			if (!trigger) {
+				throw new Error('Related notes trigger missing.');
+			}
+			trigger.dispatch('click');
+			const panel = findElements(trigger.ownerDocument.body, (element) =>
+				element.className.split(' ').includes('emend-chat-related-notes-explorer')
+				&& !element.removed
+			).at(-1);
+			if (!panel) {
+				throw new Error('Related notes explorer missing.');
+			}
+			return panel;
+		};
+		const noteCheckbox = (panel: FakeElement, path: string) => {
+			const input = findElements(panel, (element) =>
+				element.tagName === 'input' && element.attributes['data-note-path'] === path
+			)[0];
+			if (!input) {
+				throw new Error(`Missing note checkbox: ${path}`);
+			}
+			return input;
+		};
+
+		const stalePanel = openPanel();
+		const staleNote = noteCheckbox(stalePanel, 'First.md');
+		fixture.render();
+		expect(stalePanel.removed).toBe(true);
+		staleNote.checked = true;
+		staleNote.dispatch('change');
+		expect(fixture.context.plugin.additionalNotesStore.list('A.md')).toEqual([]);
+
+		const selectionPanel = openPanel();
+		for (const path of ['First.md', 'Folder/Second.md']) {
+			const input = noteCheckbox(selectionPanel, path);
+			input.checked = true;
+			input.dispatch('change');
+		}
+		expect(fixture.context.plugin.additionalNotesStore.list('A.md')).toEqual([
+			'First.md',
+			'Folder/Second.md',
+		]);
+		fixture.requestChatCompletion.mockImplementation(async ({ callbacks }) => {
+			callbacks.onContent('Answer');
+			return { content: 'Answer', reasoning: '' };
+		});
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Question';
+		}
+		await viewPrototype.submitPrompt.call(fixture.context);
+		expect(fixture.requestChatCompletion.mock.calls[0]?.[0].additionalNotePaths).toEqual([
+			'First.md',
+			'Folder/Second.md',
+		]);
+
+		const closingPanel = openPanel();
+		const staleRefresh = findElements(closingPanel, (element) =>
+			element.tagName === 'button' && element.attributes['aria-label'] === 'Refresh'
+		)[0];
+		const capturesBeforeClose = getMarkdownFiles.mock.calls.length;
+		await viewPrototype.onClose.call(fixture.context);
+		expect(closingPanel.removed).toBe(true);
+		staleRefresh?.dispatch('click');
+		expect(getMarkdownFiles).toHaveBeenCalledTimes(capturesBeforeClose);
+	});
+
 	it('keeps independent per-note drafts and selections and disables controls while pending', async () => {
 		let activePath = 'A.md';
 		const additionalNotesStore = new AdditionalNotesStore();
@@ -3560,11 +3659,13 @@ describe('EmendChatView presentation', () => {
 class FakeElement {
 	readonly children: FakeElement[] = [];
 	readonly attributes: Record<string, string> = {};
-	readonly ownerDocument = {
-		createElement: () => new FakeElement(),
-		addEventListener: () => undefined,
-		removeEventListener: () => undefined,
-		activeElement: null as FakeElement | null,
+	readonly ownerDocument: {
+		body: FakeElement;
+		defaultView: { innerWidth: number; innerHeight: number };
+		createElement: () => FakeElement;
+		addEventListener: () => undefined;
+		removeEventListener: () => undefined;
+		activeElement: FakeElement | null;
 	};
 	readonly style: Record<string, string> = {};
 	className = '';
@@ -3572,6 +3673,8 @@ class FakeElement {
 	title = '';
 	disabled = false;
 	value = '';
+	checked = false;
+	indeterminate = false;
 	open = false;
 	hidden = false;
 	scrollTop = 0;
@@ -3582,8 +3685,25 @@ class FakeElement {
 	focused = false;
 	selectionStart = 0;
 	selectionEnd = 0;
+	parentElement: FakeElement | null = null;
+	scrollIntoViewCalls = 0;
 
-	constructor(readonly tagName = 'div') {}
+	constructor(readonly tagName = 'div', ownerDocument?: FakeElement['ownerDocument']) {
+		if (ownerDocument) {
+			this.ownerDocument = ownerDocument;
+		} else {
+			const document = {
+				body: null as unknown as FakeElement,
+				defaultView: { innerWidth: 800, innerHeight: 600 },
+				createElement: () => new FakeElement('div', this.ownerDocument),
+				addEventListener: () => undefined,
+				removeEventListener: () => undefined,
+				activeElement: null,
+			};
+			this.ownerDocument = document;
+			document.body = new FakeElement('body', document);
+		}
+	}
 
 	get lastElementChild(): FakeElement | null {
 		return this.children.at(-1) ?? null;
@@ -3617,7 +3737,15 @@ class FakeElement {
 	}
 
 	getBoundingClientRect() {
-		return { top: 0, bottom: 0, left: 0 };
+		return { top: 0, bottom: 30, left: 0, right: 200, width: 200, height: 30 };
+	}
+
+	contains(candidate: FakeElement | null): boolean {
+		return candidate === this || this.children.some((child) => child.contains(candidate));
+	}
+
+	scrollIntoView() {
+		this.scrollIntoViewCalls += 1;
 	}
 
 	insertBefore(child: FakeElement, reference: FakeElement | null) {
@@ -3681,7 +3809,15 @@ class FakeElement {
 	}
 
 	remove() {
+		if (this.parentElement) {
+			const index = this.parentElement.children.indexOf(this);
+			if (index >= 0) {
+				this.parentElement.children.splice(index, 1);
+			}
+		}
+		this.parentElement = null;
 		this.removed = true;
+		this.isConnected = false;
 	}
 
 	private append(
@@ -3692,7 +3828,8 @@ class FakeElement {
 			attr?: Record<string, string>;
 		},
 	) {
-		const child = new FakeElement(tagName);
+		const child = new FakeElement(tagName, this.ownerDocument);
+		child.parentElement = this;
 		if (typeof options === 'string') {
 			child.className = options;
 		} else {

@@ -1,3 +1,5 @@
+import { vi } from 'vitest';
+
 export class App {}
 
 export class Plugin {}
@@ -43,7 +45,9 @@ export class Notice {
 
 export const Platform = { isMacOS: true };
 
-export function setIcon(): void {}
+export const setIcon = vi.fn((element: HTMLElement, icon: string): void => {
+	element.setAttribute?.('data-icon', icon);
+});
 
 export class MenuItem {
 	title = '';
@@ -114,6 +118,10 @@ export class Menu {
 }
 
 export class TFile {
+	path = '';
+}
+
+export class TFolder {
 	path = '';
 }
 
