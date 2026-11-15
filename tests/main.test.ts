@@ -263,8 +263,6 @@ describe('EmendPlugin selection presentation registration', () => {
 		const requestChatCompletion = vi.fn();
 		const requestSelectionEdit = vi.fn();
 		const modify = vi.fn();
-		const replaceRange = vi.fn();
-		const selectionMutation = vi.fn();
 		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
 		Object.assign(plugin, {
 			app: {
@@ -298,8 +296,6 @@ describe('EmendPlugin selection presentation registration', () => {
 		expect(requestChatCompletion).not.toHaveBeenCalled();
 		expect(requestSelectionEdit).not.toHaveBeenCalled();
 		expect(modify).not.toHaveBeenCalled();
-		expect(replaceRange).not.toHaveBeenCalled();
-		expect(selectionMutation).not.toHaveBeenCalled();
 	});
 });
 
