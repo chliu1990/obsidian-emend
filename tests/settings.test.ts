@@ -994,13 +994,15 @@ describe('EmendSettingTab model discovery', () => {
 
 		const dropdown = latestDropdown('DeepSeek model');
 		expect(dropdown.options).toEqual({
-			'deepseek-flash': 'Duplicate preset',
+			'deepseek-flash': 'deepseek-flash',
+			'deepseek-v4-pro': 'deepseek-v4-pro',
 			'model-a': 'Model A',
-			'local-custom': 'local-custom',
+			'local-custom': 'Duplicate current',
 			__custom__: 'Custom model',
 		});
 		expect(Object.keys(dropdown.options)).toEqual([
 			'deepseek-flash',
+			'deepseek-v4-pro',
 			'model-a',
 			'local-custom',
 			'__custom__',
