@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-The Related-notes explorer is implemented and verified on `feat/2.10-related-notes-explorer` at product HEAD `2c0f170776989971ac648b4e70685c0737af385f`. PR 2 replaces chat's flat additional-note picker with explicit path/metadata snapshots and preserves the Stage 35 submission path, Stage 42 capacity guards, Stage 43 sessions, Stage 44 compact controls, and both guarded writers.
+The Related-notes explorer is implemented and verified on `feat/2.10-related-notes-explorer` at product HEAD `932af57d86bc043ae0769524eca2bea56b221d31`. PR 2 replaces chat's flat additional-note picker with explicit path/metadata snapshots and preserves the Stage 35 submission path, Stage 42 capacity guards, Stage 43 sessions, Stage 44 compact controls, and both guarded writers.
 
 - **All** lists every current vault Markdown path except the active target. The active note appears separately as a disabled, labelled row and cannot be selected. Non-Markdown files and unresolved-link targets are not candidates.
 - **Links** lists the deduplicated union of resolved outgoing and incoming links for the captured target, including bidirectional links, sorted by full path. It uses Obsidian's `resolvedLinks` and file-cache metadata only. Emend does not read note bodies to discover links, recursively expand linked notes, or invent candidates for unresolved links.
@@ -28,7 +28,7 @@ The Links disclosure appears when resolved-link data is unavailable or any curre
 
 Partial resolved-link data remains deterministic; there is no body-scan fallback or claim that Links is complete. File/folder rename remaps true descendants and helper paths with segment boundaries, not sibling string prefixes. Root `/` includes itself and every non-root vault path for store lifecycle maintenance; root rename joins the replacement with exactly one separator across target keys, selected paths, folder descriptors, and Links scopes. Root deletion removes descendant selections and affected folder/Links provenance while retaining target-keyed All-helper state. File/folder deletion otherwise removes affected selections and invalid helpers without touching other targets or sibling-prefix paths. Target switches, rerenders, and view close dismiss owned panels and make stale handlers inert. Pending submissions disable the trigger and any still-mounted explorer controls; a full rerender may close the panel, and Stop permits a fresh enabled explorer.
 
-The trigger retains its selected count, ordered **Selected notes** paths, per-path **Remove**, **Clear all**, focus restoration, and `Selected note content is sent with your next request.` disclosure. The explorer itself states: `Contents are read at submission and share the existing context budget. Large selections may be rejected by capacity checks.`
+The trigger retains its selected count, ordered **Selected notes** paths, per-path **Remove**, **Clear all**, focus restoration, and `Selected note content is sent with your next request.` disclosure. The explorer itself states: `Contents are read at submission and share the existing context budget. Large selections may be rejected by capacity checks.` Collapsing a folder marks every descendant folder/note row hidden, and scoped explorer-row `[hidden]` CSS guarantees computed `display: none`; expanding restores the rows, and search after reopening retains matching descendants and their ancestors. The floating panel prefers below placement only when the 480 px preferred height fits below or below has at least as much space as above. Otherwise it opens above, with height capped by the selected side and the complete panel kept inside the owner viewport; no resize listener or trigger-toggle behavior was added.
 
 ## Submission, privacy, and capacity preservation
 
@@ -40,17 +40,18 @@ The focused capacity scenario used history disabled for deterministic estimates.
 
 ## Local verification
 
-Final-fix pre-runtime commands from the repository root on 2026-11-15 (Asia/Shanghai):
+PR #63 interaction-fix commands from the repository root on 2026-11-15 (Asia/Shanghai):
 
 | Command | Result |
 | --- | --- |
-| `npm test` | **49/49 Vitest files, 1,635/1,635 tests passed**; duration 4.26 s. |
+| `npm test -- tests/related-notes-control.test.ts` | **24/24 focused tests passed** after the positioning regression failed for the intended reason before the fix. |
+| `npm test` | **49/49 Vitest files, 1,638/1,638 tests passed**; duration 4.35 s. |
 | `npm run build` | Strict `tsc -noEmit -skipLibCheck` and production esbuild exited 0. |
 | `npm run lint` | ESLint exited 0 with no errors or warnings. |
 | `git diff --check` | Exited 0 with no output. |
-| `sha256sum main.js` | Optimized runtime bundle `919701ae2ea3db1eaf9b196a61c239c313e0df23f6ccff325df19aecf068120f`. |
+| `sha256sum main.js` | Final production bundle `4478566ce1708572f6719b1b3663a3b571461c9f6a5fe6bb50512576689589fc`. |
 
-The runtime-vault bundle hash matched the root production bundle before every startup. The unoptimized baseline bundle was `97d46e8e70e04dbe57394dbd7006692ae5d9e7ea79e03101396ba7f593b4726c`; the optimized bundle was `919701ae…068120f`. Both runtime summaries record pre-commit HEAD `fe08be2e3391d744d2cc96f707f69df77d7ad488` because each bundle was built immediately before the product commit; `2c0f170776989971ac648b4e70685c0737af385f` contains the exact optimized source/test diff exercised by the final runtime matrix. Every final summary has `loadedBundleMatchedRoot: true`.
+The runtime-vault bundle hash matched the root production bundle before every startup. The final PR #63 runtime summaries record pre-commit BASE `92eb80050b25afe71814b901c7e4399bf3562612` because the bundle was built immediately before the product commit; `932af57d86bc043ae0769524eca2bea56b221d31` contains the exact source/test diff exercised by the final runtime matrices. Every final summary has `loadedBundleMatchedRoot: true`. The earlier unoptimized large-vault baseline bundle was `97d46e8e70e04dbe57394dbd7006692ae5d9e7ea79e03101396ba7f593b4726c`, and the earlier optimized bundle was `919701ae2ea3db1eaf9b196a61c239c313e0df23f6ccff325df19aecf068120f`; their measurements remain historical performance evidence rather than the current interaction-fix bundle.
 
 ## Real-Obsidian loopback evidence
 
@@ -63,30 +64,39 @@ node test_vault/emend-selection-chat-verify/verify.mjs --related-notes
 node test_vault/emend-selection-chat-verify/verify.mjs --compact
 ```
 
-Complete results:
+Current PR #63 interaction-fix results:
 
-- Unoptimized large-vault baseline: **11/11 scenarios, 147/147 assertions**, generated `2026-11-14T18:12:48.062Z`, preserved in ignored `test_vault/emend-selection-chat-verify/evidence-related-notes-large-baseline-complete/summary.json` (SHA-256 `d5a367185962731ebdf7e88b4e82a48aeae28e3581562b6745d75169d9e7aafe`).
-- Optimized focused explorer: **11/11 scenarios, 147/147 assertions**, generated `2026-11-14T18:20:38.826Z`, preserved in ignored `test_vault/emend-selection-chat-verify/evidence-related-notes-final-fix-complete/summary.json` (SHA-256 `c449538beb88fb5606c802de097c283f80345821864b740328293741c0d8ac71`).
-- Adjacent compact regression: **1/1 scenario, 28/28 assertions**, generated `2026-11-14T18:21:01.990Z`, preserved separately in ignored `test_vault/emend-selection-chat-verify/evidence-compact-final-fix-complete/summary.json` (SHA-256 `4ed5ab9901987345f10a3b30dfba78927617e29c3f115e009d26ce9ef528fe11`).
-- Combined final optimized runtime evidence: **12/12 scenario runs and 175/175 assertions**. Failed harness-setup attempts were preserved separately and are not stitched into these complete-run totals.
+- Focused explorer: **13/13 scenarios, 155/155 assertions**, generated `2026-11-15T00:28:59.459Z`, preserved in ignored `.superpowers/pr63-explorer-feedback/related-final/summary.json`.
+- Adjacent compact regression: **1/1 scenario, 28/28 assertions**, generated `2026-11-15T00:29:11.640Z`, preserved separately in ignored `.superpowers/pr63-explorer-feedback/compact-final/summary.json`.
+- Combined current runtime evidence: **14/14 scenario runs and 183/183 assertions**. The focused RED reproduction and focused GREEN run are preserved separately under `.superpowers/pr63-explorer-feedback/red/` and `green-focused/`; they are not stitched into these complete-run totals.
+
+Historical large-vault performance evidence remains available: the unoptimized baseline completed **11/11 scenarios, 147/147 assertions** in `test_vault/emend-selection-chat-verify/evidence-related-notes-large-baseline-complete/summary.json`, and the earlier optimized run completed **11/11 scenarios, 147/147 assertions** in `test_vault/emend-selection-chat-verify/evidence-related-notes-final-fix-complete/summary.json`. Those runs use the historical bundles identified above, not the current PR #63 bundle.
 
 ### Focused scenario matrix
 
 | Scenario | Assertions | Verified behavior |
 | --- | ---: | --- |
 | 01 Discovery/All/Links/search | 16 | Exact 47-other-note All fixture and three-link Links fixture, active-note treatment, implied folders, unresolved/non-Markdown exclusion, complete-cache state, search visibility/scope labels, trusted Escape/focus, zero reads/requests/writes. |
-| 02 Selection/helpers/Remove/Clear | 19 | Manual/folder/All/Links overlap, complete-scope bulk behavior, checked/indeterminate states, Links exclusion, individual removal, helper-only unselect semantics, exact count/details, focus, zero reads/requests. |
-| 03 Explicit Refresh | 11 | Stale open snapshots before Refresh; one-snapshot manual preservation, stale removal, individual re-add, new Links/folder matches; removed helpers stayed removed; zero post-fixture reads/requests. |
-| 04 Incomplete/partial cache | 4 | Exact limitation disclosure, deterministic partial resolved links, unresolved exclusion, zero body reads/requests. |
-| 05 Rename/delete/isolation/reload | 27 | Real file/folder events, sibling-prefix control, A/B isolation, stale-panel close/handler guard, delete maintenance, actual reload clearing paths/helpers, plus five separately checked segments with zero vault reads, adapter reads, and provider requests before every bootstrap reset. |
-| 06 Modify Selection sharing | 7 | Same ordered store paths in chat/modal, modal Remove/Clear reflected in chat, unchanged empty modal/cancel behavior, zero reads/requests/writes. |
-| 07 Allowed submission/fair budget | 23 | Seven-folder-selection zero pre-reads, exact fair prefixes/rollover/markers, one submission-time read per note, path-off framing, one loopback answer, unchanged bytes/writers. |
-| 08 Exact capacity | 8 | Passing unread-content draft, unchanged estimate, exact 476-versus-158 rejection, zero provider calls/answer/writes, ready-user-only persistence. |
-| 09 Pending/stale lifecycle | 7 | Rerender/view-close stale guards, outside dismissal/focus, pending disabling, Stop recovery, unchanged note/writers. |
-| 10 Accessibility/themes/popout | 13 | 240 px dark/light layouts, dialog/search names, trusted Tab order, real theme restyling, supported popout owner-document selection/dismissal/focus, plus explicit zero vault reads, adapter reads, and provider requests across those actions and the final post-reopen Clear. |
-| 11 Large-vault Select all/Refresh | 12 | 600 synthetic bulk notes in 30 nested groups, 648 total candidates and 63 folder rows; exact Select-all membership/order/helper/notification/count/checkbox state; real deletion maintenance, manual provenance, individual re-add and 12 created/12 deleted notes across Refresh; exact post-Refresh order and new-folder state; zero reads/new requests/writes; synchronous elapsed timings. |
+| 02 Collapse/computed display | 4 | Real top-level collapse hid every nested folder/note with `hidden === true`, computed `display === 'none'`, and zero client rects; expansion restored all rows, and search after reopening retained the deep note and both ancestor folders. |
+| 03 Selected-note positioning | 4 | Visible selected-note details/path, real 298.6875 px below versus 447.3125 px above, visible in-panel submission disclosure, and complete above-positioned panel within the 1024×800 owner viewport. |
+| 04 Selection/helpers/Remove/Clear | 19 | Manual/folder/All/Links overlap, complete-scope bulk behavior, checked/indeterminate states, Links exclusion, individual removal, helper-only unselect semantics, exact count/details, focus, zero reads/requests. |
+| 05 Explicit Refresh | 11 | Stale open snapshots before Refresh; one-snapshot manual preservation, stale removal, individual re-add, new Links/folder matches; removed helpers stayed removed; zero post-fixture reads/requests. |
+| 06 Incomplete/partial cache | 4 | Exact limitation disclosure, deterministic partial resolved links, unresolved exclusion, zero body reads/requests. |
+| 07 Rename/delete/isolation/reload | 27 | Real file/folder events, sibling-prefix control, A/B isolation, stale-panel close/handler guard, delete maintenance, actual reload clearing paths/helpers, plus five separately checked segments with zero vault reads, adapter reads, and provider requests before every bootstrap reset. |
+| 08 Modify Selection sharing | 7 | Same ordered store paths in chat/modal, modal Remove/Clear reflected in chat, unchanged empty modal/cancel behavior, zero reads/requests/writes. |
+| 09 Allowed submission/fair budget | 23 | Seven-folder-selection zero pre-reads, exact fair prefixes/rollover/markers, one submission-time read per note, path-off framing, one loopback answer, unchanged bytes/writers. |
+| 10 Exact capacity | 8 | Passing unread-content draft, unchanged estimate, exact 476-versus-158 rejection, zero provider calls/answer/writes, ready-user-only persistence. |
+| 11 Pending/stale lifecycle | 7 | Rerender/view-close stale guards, outside dismissal/focus, pending disabling, Stop recovery, unchanged note/writers. |
+| 12 Accessibility/themes/popout | 13 | 240 px dark/light layouts, dialog/search names, trusted Tab order, real theme restyling, supported popout owner-document selection/dismissal/focus, plus explicit zero vault reads, adapter reads, and provider requests across those actions and the final post-reopen Clear. |
+| 13 Large-vault Select all/Refresh | 12 | 600 synthetic bulk notes in 30 nested groups, 648 total candidates and 63 folder rows; exact Select-all membership/order/helper/notification/count/checkbox state; real deletion maintenance, manual provenance, individual re-add and 12 created/12 deleted notes across Refresh; exact post-Refresh order and new-folder state; zero reads/new requests/writes; synchronous elapsed timings. |
 
 The compact regression rechecked the six-item Writing/Web menu, retained Chat Web state, both Edit targets, draft/caret/focus preservation, Related notes count/details/Remove/Clear with the new explorer, pending lifecycle, popout owner-document behavior, zero non-submission requests/reads, and unchanged note bytes/writers.
+
+## PR #63 interaction-fix RED→GREEN evidence
+
+Before any production edit, the focused real-Obsidian reproduction failed both new scenarios at BASE `92eb800`. All nine `Related` descendants, including `Related/Nested` and `Related/Nested/Deep Note.md`, had `hidden: true` but computed `display: flex` and one client rect because the explorer row's flex rule overrode the browser's native hidden presentation. With selected-note details visible, the trigger rectangle left 298.6875 px below and 447.3125 px above; the old `belowSpace >= 180` branch nevertheless placed the panel below at `top: 493.3125`, with only 298.6875 px height. The new unit positioning test also failed before the fix (`top: 364px` instead of `8px`), while the two below-placement control cases passed. The ignored RED summary, computed-style/geometry JSON, and screenshots are under `.superpowers/pr63-explorer-feedback/red/`.
+
+After the scoped `[hidden]` rule and above/below comparison, the focused unit file passed **24/24**, and both focused real scenarios passed **8/8 assertions**. In the same selected-note geometry, the panel moved above to `top: 8`, `bottom: 455.3125`, `maxHeight: 447.312px`; its disclosure stayed visible and the entire panel remained inside the viewport. The final complete matrices then passed **13/13 focused scenarios with 155 assertions** and **1/1 compact scenario with 28 assertions** on bundle `4478566ce1708572f6719b1b3663a3b571461c9f6a5fe6bb50512576689589fc`.
 
 ## Final-review root and large-vault evidence
 
@@ -104,7 +114,12 @@ Both measurements used 648 candidates and 63 folder rows, with the same 600-note
 
 ## Screenshot inspection
 
-These ignored images under `test_vault/emend-selection-chat-verify/evidence-related-notes-final-fix-complete/screenshots/` were opened and visually inspected:
+The final PR #63 images were opened and visually inspected:
+
+- `.superpowers/pr63-explorer-feedback/related-final/collapsed-nested-folder.png`: the collapsed `Related` disclosure with no `Related` descendant folder/note rows visible; unrelated root-level notes remain visible.
+- `.superpowers/pr63-explorer-feedback/related-final/selected-note-position.png`: the full explorer above the Related-notes trigger, the selected `Related/Unrelated.md` details below it, and the visible in-panel submission disclosure within the 1024×800 viewport.
+
+These historical ignored images under `test_vault/emend-selection-chat-verify/evidence-related-notes-final-fix-complete/screenshots/` were also opened and visually inspected:
 
 - `related-notes-all.png`: All/Refresh actions, search and Select-all, scrollable candidate tree, disabled Active row, implied Related folder, and bounded dark panel.
 - `related-notes-links-incomplete.png`: Links mode with the exact incomplete-cache disclosure legible above the submission-budget disclosure.
