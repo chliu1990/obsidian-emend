@@ -11,6 +11,7 @@ import {
 import EmendPlugin from '../src/main';
 import type { ReadOnlySubmission } from '../src/request-coordinator';
 import { SelectionModal } from '../src/selection-modal';
+import { createSelectionPresentation } from '../src/selection-presentation';
 import {
 	SelectionEditRequestCoordinator,
 	type SelectionEditorAdapter,
@@ -137,6 +138,7 @@ describe('EmendPlugin workspace conversation events', () => {
 			},
 			loadSettings: vi.fn().mockResolvedValue(undefined),
 			registerView: vi.fn(),
+			registerEditorExtension: vi.fn(),
 			registerEvent: vi.fn(),
 			rememberActiveMarkdownView: vi.fn(),
 			addRibbonIcon: vi.fn(),
@@ -252,6 +254,52 @@ describe('EmendPlugin workspace conversation events', () => {
 			(await plugin.conversationStore.loadConversation('A.md')).conversation,
 		)?.messages ?? [];
 		expect(aStored.map((item) => item.id)).toEqual(['A saved']);
+	});
+});
+
+describe('EmendPlugin selection presentation registration', () => {
+	it('registers one live-selection extension without requests, writes, or selection mutation', async () => {
+		const registerEditorExtension = vi.fn();
+		const requestChatCompletion = vi.fn();
+		const requestSelectionEdit = vi.fn();
+		const modify = vi.fn();
+		const replaceRange = vi.fn();
+		const selectionMutation = vi.fn();
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, {
+			app: {
+				vault: {
+					adapter: new MemoryAdapter(),
+					configDir: '.test-config',
+					on: () => ({}),
+					modify,
+				},
+				workspace: {
+					on: () => ({}),
+					getLeavesOfType: () => [],
+				},
+			},
+			loadSettings: vi.fn().mockResolvedValue(undefined),
+			registerView: vi.fn(),
+			registerEditorExtension,
+			registerEvent: vi.fn(),
+			rememberActiveMarkdownView: vi.fn(),
+			addRibbonIcon: vi.fn(),
+			addCommand: vi.fn(),
+			addSettingTab: vi.fn(),
+			requestChatCompletion,
+			requestSelectionEdit,
+		});
+
+		await plugin.onload();
+
+		expect(registerEditorExtension).toHaveBeenCalledTimes(1);
+		expect(registerEditorExtension).toHaveBeenCalledWith(createSelectionPresentation());
+		expect(requestChatCompletion).not.toHaveBeenCalled();
+		expect(requestSelectionEdit).not.toHaveBeenCalled();
+		expect(modify).not.toHaveBeenCalled();
+		expect(replaceRange).not.toHaveBeenCalled();
+		expect(selectionMutation).not.toHaveBeenCalled();
 	});
 });
 
@@ -415,6 +463,7 @@ describe('EmendPlugin mode keyboard commands', () => {
 			},
 			loadSettings: vi.fn().mockResolvedValue(undefined),
 			registerView: vi.fn(),
+			registerEditorExtension: vi.fn(),
 			registerEvent: vi.fn(),
 			rememberActiveMarkdownView: vi.fn(),
 			addRibbonIcon: vi.fn(),
@@ -511,6 +560,7 @@ describe('EmendPlugin additional-note lifecycle', () => {
 			},
 			loadSettings: vi.fn().mockResolvedValue(undefined),
 			registerView: vi.fn(),
+			registerEditorExtension: vi.fn(),
 			registerEvent,
 			rememberActiveMarkdownView: vi.fn(),
 			addRibbonIcon: vi.fn(),
@@ -603,6 +653,7 @@ describe('EmendPlugin additional-note lifecycle', () => {
 			app: plugin.app,
 			loadSettings: vi.fn().mockResolvedValue(undefined),
 			registerView: vi.fn(),
+			registerEditorExtension: vi.fn(),
 			registerEvent: vi.fn(),
 			rememberActiveMarkdownView: vi.fn(),
 			addRibbonIcon: vi.fn(),
@@ -1206,6 +1257,7 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 			settings,
 			loadSettings: vi.fn().mockResolvedValue(undefined),
 			registerView: vi.fn(),
+			registerEditorExtension: vi.fn(),
 			registerEvent: vi.fn(),
 			rememberActiveMarkdownView: vi.fn(),
 			addRibbonIcon: vi.fn(),

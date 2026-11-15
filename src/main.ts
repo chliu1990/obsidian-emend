@@ -35,6 +35,7 @@ import {
 	type SelectionEditTarget,
 } from './selection-editor';
 import { SelectionModal } from './selection-modal';
+import { createSelectionPresentation } from './selection-presentation';
 import { ApiKeyStorage } from './secret-storage';
 import {
 	EmendSettingTab,
@@ -75,6 +76,7 @@ export default class EmendPlugin extends Plugin {
 			(message) => new Notice(message),
 		);
 		this.additionalNotesStore = new AdditionalNotesStore();
+		this.registerEditorExtension(createSelectionPresentation());
 
 		this.registerView(
 			EMEND_CHAT_VIEW_TYPE,

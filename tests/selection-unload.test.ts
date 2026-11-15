@@ -105,6 +105,7 @@ describe('selection request plugin unload', () => {
 			loadSettings: vi.fn().mockResolvedValue(undefined),
 			register: vi.fn((callback: () => void) => unloadCallbacks.push(callback)),
 			registerView: vi.fn(),
+			registerEditorExtension: vi.fn(),
 			registerEvent: vi.fn(),
 			rememberActiveMarkdownView: vi.fn(),
 			addRibbonIcon: vi.fn(),
