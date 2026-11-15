@@ -137,7 +137,9 @@ function composerState(
 ): ComposerPermissionState {
 	return {
 		mode: 'ask',
+		chatTarget: 'note',
 		editTarget: 'full-note',
+		selectionContext: 'default',
 		webSearchMode: 'off',
 		disabled: false,
 		sendDisabled: false,
@@ -205,16 +207,20 @@ beforeEach(() => {
 
 describe('ChatComposerControls', () => {
 	it.each([
-		[{ mode: 'ask', webSearchMode: 'off' }, 'Chat'],
-		[{ mode: 'ask', webSearchMode: 'review' }, 'Chat · Review search'],
-		[{ mode: 'ask', webSearchMode: 'auto' }, 'Chat · Auto search'],
-		[{ mode: 'edit', editTarget: 'selection' }, 'Edit · Selection'],
-		[{ mode: 'edit', editTarget: 'full-note' }, 'Edit · Full note'],
-	] as const)('shows the exact writing summary for %o', (overrides, summary) => {
+		[{ mode: 'ask', webSearchMode: 'off' }, 'Chat', ''],
+		[{ mode: 'ask', webSearchMode: 'review' }, 'Chat · Review search', ''],
+		[{ mode: 'ask', webSearchMode: 'auto' }, 'Chat · Auto search', ''],
+		[{ mode: 'ask', chatTarget: 'selection', webSearchMode: 'off' }, 'Chat · Selection', 'Full note is sent with the selection as focus.'],
+		[{ mode: 'ask', chatTarget: 'selection', webSearchMode: 'review' }, 'Chat · Selection · Review search', 'Full note is sent with the selection as focus.'],
+		[{ mode: 'ask', chatTarget: 'selection', webSearchMode: 'auto' }, 'Chat · Selection · Auto search', 'Full note is sent with the selection as focus.'],
+		[{ mode: 'edit', editTarget: 'selection' }, 'Edit · Selection', ''],
+		[{ mode: 'edit', editTarget: 'selection', selectionContext: 'full-note' }, 'Edit · Selection · Full note', 'Full note is sent; only the selection is edited.'],
+		[{ mode: 'edit', editTarget: 'full-note' }, 'Edit · Full note', ''],
+	] as const)('shows the exact writing summary for %o', (overrides, summary, prefix) => {
 		const { container, modelLabel, trigger, submission } = renderControls(overrides);
 
 		expect(trigger.textContent).toBe(summary);
-		expect(trigger.title).toBe(DISCLOSURE);
+		expect(trigger.title).toBe(prefix ? `${prefix}\n${DISCLOSURE}` : DISCLOSURE);
 		expect(trigger.attributes.type).toBe('button');
 		expect(trigger.attributes['aria-label']).toContain(summary);
 		expect(container.children).toEqual([trigger, modelLabel, submission]);
@@ -223,8 +229,10 @@ describe('ChatComposerControls', () => {
 	});
 
 	it.each([
-		['Chat', { mode: 'ask' }],
-		['Edit · Selection', { mode: 'edit', editTarget: 'selection' }],
+		['Chat', { mode: 'ask', chatTarget: 'note' }],
+		['Chat · Selection', { mode: 'ask', chatTarget: 'selection' }],
+		['Edit · Selection', { mode: 'edit', editTarget: 'selection', selectionContext: 'default' }],
+		['Edit · Selection · Full note', { mode: 'edit', editTarget: 'selection', selectionContext: 'full-note' }],
 		['Edit · Full note', { mode: 'edit', editTarget: 'full-note' }],
 	] as const)('emits one writing choice from %s', (title, choice) => {
 		const { trigger, callbacks } = renderControls();
@@ -247,7 +255,9 @@ describe('ChatComposerControls', () => {
 		expect(menu.items.filter((item) => item === 'separator')).toHaveLength(1);
 		expect(menuItems(menu).map((item) => [item.title, item.checked])).toEqual([
 			['Chat', true],
+			['Chat · Selection', false],
 			['Edit · Selection', false],
+			['Edit · Selection · Full note', false],
 			['Edit · Full note', false],
 			['Web Off', webSearchMode === 'off'],
 			['Web Review', webSearchMode === 'review'],
@@ -255,6 +265,28 @@ describe('ChatComposerControls', () => {
 		]);
 		choose(menuItem(menu, selectedTitle));
 		expect(callbacks.onWebSearchMode).toHaveBeenCalledExactlyOnceWith(webSearchMode);
+	});
+
+	it.each([
+		[{ chatTarget: 'selection' }, 'Chat · Selection'],
+		[{ mode: 'edit', editTarget: 'selection' }, 'Edit · Selection'],
+		[{ mode: 'edit', editTarget: 'selection', selectionContext: 'full-note' }, 'Edit · Selection · Full note'],
+		[{ mode: 'edit', editTarget: 'full-note' }, 'Edit · Full note'],
+	] as const)('checks only the active writing choice for %o', (overrides, checkedTitle) => {
+		const { trigger } = renderControls(overrides);
+		const menu = openMenu(trigger);
+		const writingItems = menuItems(menu).slice(0, 5);
+
+		expect(writingItems.map((item) => item.title)).toEqual([
+			'Chat',
+			'Chat · Selection',
+			'Edit · Selection',
+			'Edit · Selection · Full note',
+			'Edit · Full note',
+		]);
+		for (const item of writingItems) {
+			expect(item.checked).toBe(item.title === checkedTitle);
+		}
 	});
 
 	it('displays checked disabled Web Off in Edit without erasing the maintained choice', () => {

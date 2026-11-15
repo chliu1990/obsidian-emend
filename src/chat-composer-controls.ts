@@ -1,18 +1,22 @@
 import { Menu, setIcon, type MenuItem } from 'obsidian';
 import type { ResolvedEditTarget } from './edit-target';
 import type { SelectableMode } from './mode';
+import type { ChatTarget, SelectionContextPolicy } from './selection-focus';
 import {
 	WEB_SEARCH_DISCLOSURE,
 	type WebSearchMode,
 } from './web-search';
 
 export type ComposerWritingChoice =
-	| { mode: 'ask' }
-	| { mode: 'edit'; editTarget: ResolvedEditTarget };
+	| { mode: 'ask'; chatTarget: ChatTarget }
+	| { mode: 'edit'; editTarget: 'selection'; selectionContext: SelectionContextPolicy }
+	| { mode: 'edit'; editTarget: 'full-note' };
 
 export interface ComposerPermissionState {
 	mode: SelectableMode;
+	chatTarget: ChatTarget;
 	editTarget: ResolvedEditTarget;
+	selectionContext: SelectionContextPolicy;
 	webSearchMode: WebSearchMode;
 	disabled: boolean;
 	sendDisabled: boolean;
@@ -30,7 +34,9 @@ export interface ComposerPermissionCallbacks {
 interface ActiveComposerMenu {
 	menu: Menu;
 	chatItem: MenuItem;
+	chatSelectionItem: MenuItem;
 	selectionItem: MenuItem;
+	fullNoteSelectionItem: MenuItem;
 	fullNoteItem: MenuItem;
 	webItems: Record<WebSearchMode, MenuItem>;
 }
@@ -38,7 +44,9 @@ interface ActiveComposerMenu {
 export class ChatComposerControls {
 	private state: ComposerPermissionState = {
 		mode: 'ask',
+		chatTarget: 'note',
 		editTarget: 'full-note',
+		selectionContext: 'default',
 		webSearchMode: 'off',
 		disabled: false,
 		sendDisabled: false,
@@ -101,7 +109,7 @@ export class ChatComposerControls {
 		const summary = writingSummary(state);
 		if (this.triggerEl) {
 			this.triggerEl.textContent = summary;
-			this.triggerEl.title = WEB_SEARCH_DISCLOSURE;
+			this.triggerEl.title = writingTooltip(state);
 			this.triggerEl.disabled = state.disabled;
 			this.triggerEl.setAttribute('aria-label', `Writing and web search: ${summary}`);
 		}
@@ -147,12 +155,29 @@ export class ChatComposerControls {
 		const active: ActiveComposerMenu = {
 			menu,
 			chatItem: this.addChoiceItem(menu, 'Chat', () => {
-				this.choose(menu, () => this.callbacks.onWritingChoice({ mode: 'ask' }));
+				this.choose(menu, () => this.callbacks.onWritingChoice({
+					mode: 'ask',
+					chatTarget: 'note',
+				}));
+			}),
+			chatSelectionItem: this.addChoiceItem(menu, 'Chat · Selection', () => {
+				this.choose(menu, () => this.callbacks.onWritingChoice({
+					mode: 'ask',
+					chatTarget: 'selection',
+				}));
 			}),
 			selectionItem: this.addChoiceItem(menu, 'Edit · Selection', () => {
 				this.choose(menu, () => this.callbacks.onWritingChoice({
 					mode: 'edit',
 					editTarget: 'selection',
+					selectionContext: 'default',
+				}));
+			}),
+			fullNoteSelectionItem: this.addChoiceItem(menu, 'Edit · Selection · Full note', () => {
+				this.choose(menu, () => this.callbacks.onWritingChoice({
+					mode: 'edit',
+					editTarget: 'selection',
+					selectionContext: 'full-note',
 				}));
 			}),
 			fullNoteItem: this.addChoiceItem(menu, 'Edit · Full note', () => {
@@ -228,9 +253,21 @@ export class ChatComposerControls {
 
 	private updateMenu(active: ActiveComposerMenu): void {
 		const { state } = this;
-		active.chatItem.setChecked(state.mode === 'ask').setDisabled(state.disabled);
+		active.chatItem.setChecked(
+			state.mode === 'ask' && state.chatTarget === 'note',
+		).setDisabled(state.disabled);
+		active.chatSelectionItem.setChecked(
+			state.mode === 'ask' && state.chatTarget === 'selection',
+		).setDisabled(state.disabled);
 		active.selectionItem.setChecked(
-			state.mode === 'edit' && state.editTarget === 'selection',
+			state.mode === 'edit' &&
+			state.editTarget === 'selection' &&
+			state.selectionContext === 'default',
+		).setDisabled(state.disabled);
+		active.fullNoteSelectionItem.setChecked(
+			state.mode === 'edit' &&
+			state.editTarget === 'selection' &&
+			state.selectionContext === 'full-note',
 		).setDisabled(state.disabled);
 		active.fullNoteItem.setChecked(
 			state.mode === 'edit' && state.editTarget === 'full-note',
@@ -246,13 +283,30 @@ export class ChatComposerControls {
 
 function writingSummary(state: ComposerPermissionState): string {
 	if (state.mode === 'edit') {
-		return state.editTarget === 'selection' ? 'Edit · Selection' : 'Edit · Full note';
+		if (state.editTarget === 'full-note') {
+			return 'Edit · Full note';
+		}
+		return state.selectionContext === 'full-note'
+			? 'Edit · Selection · Full note'
+			: 'Edit · Selection';
 	}
+	const target = state.chatTarget === 'selection' ? 'Chat · Selection' : 'Chat';
 	if (state.webSearchMode === 'review') {
-		return 'Chat · Review search';
+		return `${target} · Review search`;
 	}
 	if (state.webSearchMode === 'auto') {
-		return 'Chat · Auto search';
+		return `${target} · Auto search`;
 	}
-	return 'Chat';
+	return target;
+}
+
+function writingTooltip(state: ComposerPermissionState): string {
+	const prefix = state.mode === 'ask' && state.chatTarget === 'selection'
+		? 'Full note is sent with the selection as focus.'
+		: state.mode === 'edit' &&
+			state.editTarget === 'selection' &&
+			state.selectionContext === 'full-note'
+			? 'Full note is sent; only the selection is edited.'
+			: '';
+	return prefix ? `${prefix}\n${WEB_SEARCH_DISCLOSURE}` : WEB_SEARCH_DISCLOSURE;
 }

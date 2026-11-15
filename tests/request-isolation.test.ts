@@ -560,6 +560,78 @@ describe('shared per-note request isolation', () => {
 		expect(fixture.writes).toEqual([]);
 	});
 
+	it('holds the same-note lock for writer-free composer Chat Selection', async () => {
+		const fixture = makePluginFixture({ 'Note.md': 'Alpha beta.' });
+		const context = {
+			...fixture.makeContext('Note.md'),
+			selection: { from: 6, to: 10 },
+		};
+		const captureChatSelectionContext = vi.fn(() => context);
+		const captureSelectionEditTarget = vi.fn();
+		Object.assign(fixture.plugin, {
+			captureChatSelectionContext,
+			captureSelectionEditTarget,
+		});
+		const pendingResponse = holdResponse('Focused answer');
+		const messages: ChatMessage[] = [];
+		const session = {
+			id: 'session', title: 'New chat', titleSource: 'auto' as const,
+			createdAt: 1, updatedAt: 1, messages,
+		};
+		const view = Object.create(EmendChatView.prototype) as EmendChatView;
+		Object.assign(view, {
+			plugin: fixture.plugin,
+			inputEl: { value: 'Explain beta.' },
+			isSending: false,
+			isThreadLoading: false,
+			isSessionMutating: false,
+			selectedMode: 'ask',
+			chatTarget: 'selection',
+			webSearchMode: 'off',
+			notePath: 'Note.md',
+			conversationGeneration: 0,
+			sessions: [session],
+			activeSessionId: session.id,
+			activeRequest: null,
+			transientSessionIds: new Set<string>(),
+			transientSessions: new Map(),
+			drafts: new Map<string, Map<string, string>>(),
+			messages,
+			activeController: null,
+			closed: false,
+			render: vi.fn(),
+			scheduleMessageRender: vi.fn(),
+			persistMessages: vi.fn(async () => undefined),
+		});
+		const state = view as unknown as { submitPrompt(): Promise<void> };
+
+		const pending = state.submitPrompt();
+		await pendingResponse.started;
+
+		await expect(
+			fixture.plugin.requestChatCompletion(
+				makeReadOnlySubmission(fixture, 'Note.md'),
+			),
+		).rejects.toEqual(new Error(PENDING_ERROR));
+		expect(requestMock).toHaveBeenCalledOnce();
+		expect(requestMock.mock.calls[0]?.[0].userPrompt).toContain(
+			'Full note (supporting context):\nAlpha beta.',
+		);
+		expect(requestMock.mock.calls[0]?.[0].userPrompt).toContain(
+			'Selected text (read-only conversational focus):\nbeta',
+		);
+		expect(captureChatSelectionContext).toHaveBeenCalledOnce();
+		expect(captureSelectionEditTarget).not.toHaveBeenCalled();
+		expect(fixture.writes).toEqual([]);
+
+		pendingResponse.finish();
+		await pending;
+
+		expect(messages.map((item) => item.mode)).toEqual(['ask', 'ask']);
+		expect(messages[1]?.content).toBe('Focused answer');
+		expect(fixture.writes).toEqual([]);
+	});
+
 	it('keeps the same-note pending lock across a session switch until the aborted request settles', async () => {
 		const fixture = makePluginFixture({ 'Note.md': 'Alpha beta.' });
 		const first = {

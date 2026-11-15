@@ -20,7 +20,10 @@ import type { EditSummaryItem } from '../src/edit-strategy';
 import { getSystemPrompt } from '../src/mode';
 import { operationEditStrategy } from '../src/operation-edit-strategy';
 import { QUICK_ACTIONS } from '../src/quick-actions';
-import { buildUserPrompt } from '../src/request-coordinator';
+import {
+	buildChatSelectionUserPrompt,
+	buildUserPrompt,
+} from '../src/request-coordinator';
 import { buildSelectionUserPrompt } from '../src/selection-editor';
 import type {
 	AiProviderRequest,
@@ -381,6 +384,13 @@ function createEditTargetView(options: {
 		noteLabel: activePath,
 		markdown: '',
 	}));
+	const captureChatSelectionContext = vi.fn(() => ({
+		file: { path: activePath },
+		sourceText: `Alpha ${selectedText}.`,
+		selection: { from: 6, to: 6 + selectedText.length },
+		noteLabel: activePath,
+		markdown: `Alpha ${selectedText}.`,
+	}));
 	const conversationStore = {
 		loadConversation: vi.fn<(notePath: string) => Promise<LoadedChatConversation>>(
 			async () => loadedConversation([]),
@@ -416,6 +426,7 @@ function createEditTargetView(options: {
 			getActiveNoteLabel: () => activePath,
 			hasUsableSelection: () => Boolean(selectedText.trim()),
 			captureChatContext,
+			captureChatSelectionContext,
 			conversationStore,
 			additionalNotesStore,
 			requestChatCompletion,
@@ -443,6 +454,8 @@ function createEditTargetView(options: {
 		transientSessions: new Map<string, ChatSession>(),
 		messages: [] as ChatMessage[],
 		selectedMode: 'ask' as Mode,
+		chatTarget: 'note' as 'note' | 'selection',
+		selectionContext: 'default' as 'default' | 'full-note',
 		webSearchMode: 'off' as const,
 		isThreadLoading: false,
 		isSending: false,
@@ -482,6 +495,7 @@ function createEditTargetView(options: {
 		read,
 		requestChatCompletion,
 		captureChatContext,
+		captureChatSelectionContext,
 		conversationStore,
 		setActivePath: (path: string) => {
 			activePath = path;
@@ -706,7 +720,7 @@ describe('EmendChatView selectable modes', () => {
 		expect(requestChatCompletion).not.toHaveBeenCalled();
 	});
 
-	it('offers Chat and both Edit targets through the compact writing menu', async () => {
+	it('offers both Chat targets and all three Edit choices through the compact writing menu', async () => {
 		const { context, contentEl } = createEditTargetView();
 		await viewPrototype.refreshTargetNote.call(context);
 
@@ -715,7 +729,9 @@ describe('EmendChatView selectable modes', () => {
 			(item) => item.title,
 		)).toEqual([
 			'Chat',
+			'Chat · Selection',
 			'Edit · Selection',
+			'Edit · Selection · Full note',
 			'Edit · Full note',
 			'Web Off',
 			'Web Review',
@@ -847,6 +863,44 @@ describe('EmendChatView compact composer', () => {
 		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
 	});
 
+	it.each([
+		{
+			title: 'Chat · Selection',
+			mode: 'ask',
+			chatTarget: 'selection',
+			editTarget: 'auto',
+			selectionContext: 'default',
+		},
+		{
+			title: 'Edit · Selection · Full note',
+			mode: 'edit',
+			chatTarget: 'note',
+			editTarget: 'selection',
+			selectionContext: 'full-note',
+		},
+	] as const)('applies $title atomically with its targeting policy', async (scenario) => {
+		const fixture = createEditTargetView({ selectedText: 'beta' });
+		const { context, contentEl } = fixture;
+		await viewPrototype.refreshTargetNote.call(context);
+		const refreshDraftEstimate = vi.fn(() =>
+			viewPrototype.refreshDraftEstimate.call(context)
+		);
+		Object.assign(context, { refreshDraftEstimate });
+		fixture.render.mockClear();
+
+		chooseWritingMenuItem(contentEl, scenario.title);
+
+		expect(context).toMatchObject({
+			selectedMode: scenario.mode,
+			chatTarget: scenario.chatTarget,
+			editTargetChoice: scenario.editTarget,
+			selectionContext: scenario.selectionContext,
+		});
+		expect(fixture.render).toHaveBeenCalledOnce();
+		expect(refreshDraftEstimate).toHaveBeenCalledOnce();
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+	});
+
 	it('retains the explicit target and maintained Web choice through Edit and Chat', async () => {
 		const { context, contentEl } = createEditTargetView({ selectedText: 'beta' });
 		await viewPrototype.refreshTargetNote.call(context);
@@ -867,6 +921,30 @@ describe('EmendChatView compact composer', () => {
 		expect(context.displayedEditTarget).toBe('full-note');
 		expect(context.webSearchMode).toBe('review');
 		expect(findWritingTrigger(contentEl)?.textContent).toBe('Chat · Review search');
+	});
+
+	it('retains Chat and Edit targeting policies across unrelated writing and mode choices', async () => {
+		const { context, contentEl } = createEditTargetView({ selectedText: 'beta' });
+		await viewPrototype.refreshTargetNote.call(context);
+		chooseWritingMenuItem(contentEl, 'Chat · Selection');
+		chooseWritingMenuItem(contentEl, 'Edit · Selection · Full note');
+
+		chooseWritingMenuItem(contentEl, 'Chat · Selection');
+		expect(context).toMatchObject({
+			selectedMode: 'ask',
+			chatTarget: 'selection',
+			editTargetChoice: 'selection',
+			selectionContext: 'full-note',
+		});
+		viewPrototype.setMode.call(context, 'edit');
+		expect(findWritingTrigger(contentEl)?.textContent).toBe('Edit · Selection · Full note');
+		viewPrototype.setMode.call(context, 'ask');
+		expect(context.chatTarget).toBe('selection');
+
+		chooseWritingMenuItem(contentEl, 'Chat');
+		expect(context.chatTarget).toBe('note');
+		expect(context.editTargetChoice).toBe('selection');
+		expect(context.selectionContext).toBe('full-note');
 	});
 
 	it('preserves draft, caret, and textarea focus for writing and Web menu choices', async () => {
@@ -1168,7 +1246,7 @@ describe('EmendChatView composer model selection', () => {
 		expect(findModelTrigger(fixture.contentEl)?.disabled).toBe(true);
 		expect(findWritingTrigger(fixture.contentEl)?.disabled).toBe(true);
 		expect(findSendButton(fixture.contentEl)?.disabled).toBe(true);
-		for (const title of ['Chat', 'Edit · Selection', 'Edit · Full note', 'Web Off', 'Web Review', 'Web Auto']) {
+		for (const title of ['Chat', 'Chat · Selection', 'Edit · Selection', 'Edit · Selection · Full note', 'Edit · Full note', 'Web Off', 'Web Review', 'Web Auto']) {
 			expect(writingMenuItem(writingMenu, title).disabled).toBe(true);
 		}
 		for (const action of QUICK_ACTIONS) {
@@ -1403,11 +1481,17 @@ describe('EmendChatView edit target control', () => {
 		await viewPrototype.refreshTargetNote.call(context);
 		expect(context.displayedEditTarget).toBe('selection');
 		chooseWritingMenuItem(contentEl, 'Edit · Full note');
+		Object.assign(context, {
+			chatTarget: 'selection',
+			selectionContext: 'full-note',
+		});
 
 		setActivePath('B.md');
 		setSelectedText('B selection');
 		await viewPrototype.refreshTargetNote.call(context);
 
+		expect(context.chatTarget).toBe('note');
+		expect(context.selectionContext).toBe('default');
 		expect(context.editTargetChoice).toBe('auto');
 		expect(context.selectedMode).toBe('edit');
 		expect(context.displayedEditTarget).toBe('selection');
@@ -2068,7 +2152,12 @@ describe('EmendChatView session runtime', () => {
 		expect(fixture.context.activeSessionId).toBe('a2');
 		expect(fixture.context.messages).toBe(second.messages);
 		viewPrototype.setMode.call(fixture.context, 'edit');
-		Object.assign(fixture.context, { webSearchMode: 'auto', editTargetChoice: 'full-note' });
+		Object.assign(fixture.context, {
+			webSearchMode: 'auto',
+			chatTarget: 'selection',
+			editTargetChoice: 'full-note',
+			selectionContext: 'full-note',
+		});
 		fixture.context.plugin.additionalNotesStore.add('A.md', 'Reference.md');
 		const refreshDraftEstimate = vi.fn();
 		Object.assign(fixture.context, { refreshDraftEstimate });
@@ -2083,7 +2172,9 @@ describe('EmendChatView session runtime', () => {
 		expect(fixture.context.inputEl?.value).toBe('');
 		expect(fixture.context.selectedMode).toBe('edit');
 		expect(fixture.context.webSearchMode).toBe('auto');
+		expect(fixture.context.chatTarget).toBe('selection');
 		expect(fixture.context.editTargetChoice).toBe('full-note');
+		expect(fixture.context.selectionContext).toBe('full-note');
 		expect(fixture.context.plugin.additionalNotesStore.list('A.md')).toEqual(['Reference.md']);
 		expect(refreshDraftEstimate).toHaveBeenCalled();
 		if (fixture.context.inputEl) {
@@ -3120,6 +3211,7 @@ function createSelectionEditSubmission(options: SelectionSubmissionOptions = {})
 		_additionalNotePaths: readonly string[],
 		_history: ProviderHistoryMessage[],
 		callbacks?: SelectionEditCallbacks,
+		_selectionContext?: 'default' | 'full-note',
 	): Promise<SelectionEditResult> => {
 		callbacks?.onReasoning?.('REJECTED raw JSON and diagnostics');
 		callbacks?.onRetry?.();
@@ -3175,6 +3267,8 @@ function createSelectionEditSubmission(options: SelectionSubmissionOptions = {})
 		isSending: false,
 		isThreadLoading: false,
 		selectedMode: 'edit' as Mode,
+		chatTarget: 'note' as 'note' | 'selection',
+		selectionContext: 'default' as 'default' | 'full-note',
 		editTargetChoice: 'auto' as 'auto' | 'full-note' | 'selection',
 		displayedEditTarget: 'selection' as 'full-note' | 'selection',
 		webSearchMode: 'off' as const,
@@ -3242,6 +3336,7 @@ describe('EmendChatView selection edit submission', () => {
 		expect(args?.[5]).toEqual([]);
 		expect(typeof args?.[6]?.onReasoning).toBe('function');
 		expect(typeof args?.[6]?.onRetry).toBe('function');
+		expect(args?.[7]).toBe('default');
 		expect(fixture.context.messages[1]).toMatchObject({
 			status: 'ready',
 			content: summary,
@@ -3270,6 +3365,19 @@ describe('EmendChatView selection edit submission', () => {
 			'Edit selection',
 			summary,
 		]);
+	});
+
+	it('keeps full-note Selection context on the native selection writer only', async () => {
+		const fixture = createSelectionEditSubmission();
+		fixture.context.selectionContext = 'full-note';
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.requestSelectionEdit).toHaveBeenCalledOnce();
+		expect(fixture.requestSelectionEdit.mock.calls[0]?.[7]).toBe('full-note');
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(fixture.captureChatContext).not.toHaveBeenCalled();
+		expect(fixture.context.messages[0]?.mode).toBe('edit');
 	});
 
 	it('sends the same captured ready history as full-note and read-only requests', async () => {
@@ -5735,14 +5843,18 @@ function createCapacityView(options: CapacityViewOptions = {}) {
 	const contentEl = new FakeElement();
 	const read = vi.fn();
 	const captureChatContext = vi.fn(() => requestContext);
+	const captureChatSelectionContext = vi.fn(() => requestContext);
 	const captureSelectionEditTarget = vi.fn(() => ({ snapshot, editor }));
 	const additionalNotesStore = new AdditionalNotesStore();
 	const requestChatCompletion = vi.fn(async (submission: {
 		mode: Mode;
+		chatTarget?: 'note' | 'selection';
+		context?: RequestContext;
 		prompt: string;
 		history: ProviderHistoryMessage[];
 		additionalNotePaths: readonly string[];
 		callbacks?: { onContent?: (text: string) => void };
+		webSearch?: { mode: string };
 	}) => {
 		submission.callbacks?.onContent?.('Answer');
 		return {
@@ -5763,6 +5875,12 @@ function createCapacityView(options: CapacityViewOptions = {}) {
 	const requestSelectionEdit = vi.fn(async (
 		_snapshot: SelectionSnapshot,
 		_prompt: string,
+		_signal?: AbortSignal,
+		_editor?: SelectionEditorAdapter,
+		_additionalNotePaths?: readonly string[],
+		_history?: ProviderHistoryMessage[],
+		_callbacks?: SelectionEditCallbacks,
+		_selectionContext?: 'default' | 'full-note',
 	) => ({
 		applied: false,
 		changeCount: 0,
@@ -5783,6 +5901,7 @@ function createCapacityView(options: CapacityViewOptions = {}) {
 			getActiveNoteLabel: () => file.path,
 			hasUsableSelection: () => Boolean(selectedText.trim()),
 			captureChatContext,
+			captureChatSelectionContext,
 			captureSelectionEditTarget,
 			conversationStore: {
 				loadConversation: vi.fn(async () => loadedConversation([])),
@@ -5816,6 +5935,8 @@ function createCapacityView(options: CapacityViewOptions = {}) {
 		transientSessions: new Map<string, ChatSession>(),
 		messages: [] as ChatMessage[],
 		selectedMode: options.mode ?? 'ask',
+		chatTarget: 'note' as 'note' | 'selection',
+		selectionContext: 'default' as 'default' | 'full-note',
 		webSearchMode: 'off' as const,
 		isThreadLoading: false,
 		isSending: false,
@@ -5872,7 +5993,18 @@ function createCapacityView(options: CapacityViewOptions = {}) {
 			history: history(),
 		},
 	});
-	const selectionEstimate = (prompt: string) => buildDraftCapacityEstimate({
+	const chatSelectionEstimate = (prompt: string) => buildDraftCapacityEstimate({
+		provider,
+		request: {
+			systemPrompt: getSystemPrompt('ask'),
+			userPrompt: buildChatSelectionUserPrompt(requestContext, prompt, []),
+			history: history(),
+		},
+	});
+	const selectionEstimate = (
+		prompt: string,
+		selectionContext: 'default' | 'full-note' = 'default',
+	) => buildDraftCapacityEstimate({
 		provider,
 		request: {
 			systemPrompt: getEditStrategy().getSelectionPrompt(undefined),
@@ -5883,7 +6015,7 @@ function createCapacityView(options: CapacityViewOptions = {}) {
 					options.maxContextCharacters,
 				),
 				smartSelectionContext: true,
-				selectionContext: 'default',
+				selectionContext,
 				additionalNotes: [],
 				notePath: includeNotePath
 					? formatVaultQualifiedPath('Vault', file.path)
@@ -5904,11 +6036,13 @@ function createCapacityView(options: CapacityViewOptions = {}) {
 		editor,
 		additionalNotesStore,
 		captureChatContext,
+		captureChatSelectionContext,
 		captureSelectionEditTarget,
 		requestChatCompletion,
 		requestSelectionEdit,
 		savedSnapshots,
 		askEstimate,
+		chatSelectionEstimate,
 		fullNoteEstimate,
 		selectionEstimate,
 	};
@@ -5988,6 +6122,156 @@ function keydownEvent(overrides: Partial<ShortcutEvent> = {}) {
 		...overrides,
 	};
 }
+
+describe('EmendChatView Chat Selection submission', () => {
+	beforeEach(() => {
+		noticeMessages().length = 0;
+	});
+
+	it('captures the latest range and submits writer-free Ask metadata with Web options', async () => {
+		const fixture = createCapacityView({ selectedText: 'beta' });
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		Object.assign(fixture.context, { webSearchMode: 'review' });
+		chooseWritingMenuItem(fixture.contentEl, 'Chat · Selection');
+		fixture.captureChatContext.mockClear();
+		fixture.captureChatSelectionContext.mockClear();
+		fixture.captureSelectionEditTarget.mockClear();
+		fixture.requestContext.selection = { from: 0, to: 5 };
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Explain this focus';
+		}
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.captureChatSelectionContext).toHaveBeenCalled();
+		expect(fixture.captureChatContext).not.toHaveBeenCalled();
+		expect(fixture.captureSelectionEditTarget).not.toHaveBeenCalled();
+		expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
+		expect(fixture.editor.replaceRange).not.toHaveBeenCalled();
+		const submission = fixture.requestChatCompletion.mock.calls[0]?.[0];
+		expect(submission).toMatchObject({
+			mode: 'ask',
+			chatTarget: 'selection',
+			context: fixture.requestContext,
+			prompt: 'Explain this focus',
+			webSearch: { mode: 'review' },
+		});
+		expect(submission?.context?.selection).toEqual({ from: 0, to: 5 });
+		expect(fixture.context.messages.map((item) => item.mode)).toEqual(['ask', 'ask']);
+		expect(JSON.stringify(fixture.savedSnapshots)).not.toContain('sourceText');
+		expect(JSON.stringify(fixture.savedSnapshots)).not.toContain('"selection"');
+	});
+
+	it('keeps ordinary Chat bounded and note-targeted even with a usable selection', async () => {
+		const fixture = createCapacityView({ selectedText: 'beta' });
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		fixture.captureChatContext.mockClear();
+		fixture.captureChatSelectionContext.mockClear();
+		fixture.captureSelectionEditTarget.mockClear();
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Ordinary question';
+		}
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.captureChatContext).toHaveBeenCalled();
+		expect(fixture.captureChatSelectionContext).not.toHaveBeenCalled();
+		expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
+		expect(fixture.requestChatCompletion.mock.calls[0]?.[0]).toMatchObject({
+			mode: 'ask',
+			chatTarget: 'note',
+			context: fixture.requestContext,
+		});
+	});
+
+	it.each(['', ' \n\t'])('fails before messages, saves, requests, or fallback for a vanished Chat Selection: %j', async () => {
+		const fixture = createCapacityView({ selectedText: 'beta' });
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		chooseWritingMenuItem(fixture.contentEl, 'Chat · Selection');
+		fixture.captureChatSelectionContext.mockImplementation(() => {
+			throw new Error('Select non-whitespace text first.');
+		});
+		fixture.captureChatContext.mockClear();
+		fixture.captureSelectionEditTarget.mockClear();
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Focused question';
+		}
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(noticeMessages()).toContain('Emend: Select non-whitespace text first.');
+		expect(fixture.captureChatContext).not.toHaveBeenCalled();
+		expect(fixture.captureSelectionEditTarget).not.toHaveBeenCalled();
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
+		expect(fixture.editor.replaceRange).not.toHaveBeenCalled();
+		expect(fixture.context.messages).toEqual([]);
+		expect(fixture.savedSnapshots).toEqual([]);
+		expect(fixture.context.isSending).toBe(false);
+	});
+
+	it('keeps full-note Selection Edit fail-closed without a full-note fallback', async () => {
+		const fixture = createCapacityView({ mode: 'edit', selectedText: 'beta' });
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		chooseWritingMenuItem(fixture.contentEl, 'Edit · Selection · Full note');
+		fixture.captureSelectionEditTarget.mockImplementation(() => {
+			throw new Error('Select non-whitespace text first.');
+		});
+		fixture.captureChatContext.mockClear();
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Edit with full context';
+		}
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.captureChatContext).not.toHaveBeenCalled();
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
+		expect(fixture.context.messages).toEqual([]);
+		expect(fixture.savedSnapshots).toEqual([]);
+	});
+
+	it('aborts Chat Selection on a note switch and resets all target policies', async () => {
+		const fixture = createEditTargetView({ selectedText: 'beta' });
+		const captureSelectionEditTarget = vi.fn();
+		const requestSelectionEdit = vi.fn();
+		Object.assign(fixture.context.plugin, {
+			captureSelectionEditTarget,
+			requestSelectionEdit,
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		chooseWritingMenuItem(fixture.contentEl, 'Chat · Selection');
+		captureSelectionEditTarget.mockClear();
+		const response = deferred<SessionChatResult>();
+		let requestSignal: AbortSignal | undefined;
+		fixture.requestChatCompletion.mockImplementationOnce((submission) => {
+			requestSignal = submission.signal;
+			return response.promise;
+		});
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Focused question';
+		}
+		const submission = viewPrototype.submitPrompt.call(fixture.context);
+		await vi.waitFor(() => expect(fixture.requestChatCompletion).toHaveBeenCalledOnce());
+		expect(captureSelectionEditTarget).not.toHaveBeenCalled();
+		expect(requestSelectionEdit).not.toHaveBeenCalled();
+
+		fixture.setActivePath('B.md');
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		expect(requestSignal?.aborted).toBe(true);
+		response.resolve({ content: 'Late answer', reasoning: '' });
+		await submission;
+
+		expect(fixture.context).toMatchObject({
+			notePath: 'B.md',
+			chatTarget: 'note',
+			selectionContext: 'default',
+			editTargetChoice: 'auto',
+		});
+		expect(fixture.context.messages).toEqual([]);
+		expect(requestSelectionEdit).not.toHaveBeenCalled();
+	});
+});
 
 describe('EmendChatView draft capacity estimate', () => {
 	beforeEach(() => {
@@ -6353,6 +6637,84 @@ describe('EmendChatView draft capacity estimate', () => {
 		expect(fixture.captureChatContext).toHaveBeenCalled();
 	});
 
+	it('uses the full note and duplicate focus for Chat Selection estimates and pre-message blocking', async () => {
+		const sourceText = `Intro.\n${'Long paragraph. '.repeat(300)}\nbeta`;
+		const fixture = createCapacityView({
+			sourceText,
+			markdown: 'Window only.',
+			selectedText: 'beta',
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Question';
+		}
+		chooseWritingMenuItem(fixture.contentEl, 'Chat · Selection');
+
+		const focusedEstimate = fixture.chatSelectionEstimate('Question');
+		const ordinaryEstimate = fixture.askEstimate('Question');
+		expect(focusedEstimate.categories.estimatedInputTokens).toBeGreaterThan(
+			ordinaryEstimate.categories.estimatedInputTokens,
+		);
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedCapacitySummary(focusedEstimate),
+		);
+		fixture.provider.contextWindowTokens =
+			focusedEstimate.categories.estimatedInputTokens;
+		fixture.provider.outputReserveTokens = 1;
+		viewPrototype.refreshCapacityEstimate.call(fixture.context);
+		const blockedEstimate = fixture.chatSelectionEstimate('Question');
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(true);
+		expect(noticeMessages()).toContain(expectedBlockedNotice(blockedEstimate));
+		expect(fixture.context.messages).toEqual([]);
+		expect(fixture.savedSnapshots).toEqual([]);
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
+	});
+
+	it('uses the maintained full-note policy for Selection Edit and quick-action estimates', async () => {
+		const sourceText = `Intro.\n${'Long paragraph. '.repeat(300)}\nbeta`;
+		const fixture = createCapacityView({
+			mode: 'edit',
+			sourceText,
+			markdown: 'Window only.',
+			selectedText: 'beta',
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		chooseWritingMenuItem(fixture.contentEl, 'Edit · Selection · Full note');
+
+		const defaultEstimate = fixture.selectionEstimate('');
+		const fullContextEstimate = fixture.selectionEstimate('', 'full-note');
+		expect(fullContextEstimate.categories.estimatedInputTokens).toBeGreaterThan(
+			defaultEstimate.categories.estimatedInputTokens,
+		);
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedCapacitySummary(fullContextEstimate),
+		);
+		const fixEstimate = fixture.selectionEstimate(
+			QUICK_ACTIONS[0].prompt,
+			'full-note',
+		);
+		fixture.provider.contextWindowTokens =
+			fixEstimate.categories.estimatedInputTokens;
+		fixture.provider.outputReserveTokens = 1;
+		viewPrototype.refreshCapacityEstimate.call(fixture.context);
+		const blockedFixEstimate = fixture.selectionEstimate(
+			QUICK_ACTIONS[0].prompt,
+			'full-note',
+		);
+
+		findQuickActionButton(fixture.contentEl, 'fix-grammar')?.dispatch('click');
+
+		expect(findQuickActionButton(fixture.contentEl, 'fix-grammar')?.disabled).toBe(true);
+		expect(noticeMessages()).toContain(expectedBlockedNotice(blockedFixEstimate));
+		expect(fixture.context.messages).toEqual([]);
+		expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+	});
+
 	it('counts recent ready chat history in the estimate', async () => {
 		const fixture = createCapacityView({
 			capacity: { contextWindowTokens: 1000, outputReserveTokens: 100 },
@@ -6432,28 +6794,39 @@ describe('EmendChatView draft capacity estimate', () => {
 	for (const action of QUICK_ACTIONS) {
 		it.each([
 			{
-				name: 'explicit Selection',
+				name: 'explicit Selection with Default context',
 				selectedText: 'beta',
 				choice: 'Edit · Selection',
 				target: 'selection',
+				selectionContext: 'default',
+			},
+			{
+				name: 'explicit Selection with Full-note context',
+				selectedText: 'beta',
+				choice: 'Edit · Selection · Full note',
+				target: 'selection',
+				selectionContext: 'full-note',
 			},
 			{
 				name: 'explicit Full note',
 				selectedText: 'beta',
 				choice: 'Edit · Full note',
 				target: 'full-note',
+				selectionContext: 'default',
 			},
 			{
 				name: 'automatic Selection-first targeting',
 				selectedText: 'beta',
 				choice: null,
 				target: 'selection',
+				selectionContext: 'default',
 			},
 			{
 				name: 'automatic Full-note fallback',
 				selectedText: '',
 				choice: null,
 				target: 'full-note',
+				selectionContext: 'default',
 			},
 		] as const)(`${action.label} uses $name with Web Off and exactly one submission`, async (scenario) => {
 			const fixture = createCapacityView({
@@ -6479,6 +6852,9 @@ describe('EmendChatView draft capacity estimate', () => {
 			if (scenario.target === 'selection') {
 				expect(fixture.requestSelectionEdit).toHaveBeenCalledOnce();
 				expect(fixture.requestSelectionEdit.mock.calls[0]?.[1]).toBe(action.prompt);
+				expect(fixture.requestSelectionEdit.mock.calls[0]?.[7]).toBe(
+					scenario.selectionContext,
+				);
 				expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
 			} else {
 				expect(fixture.requestChatCompletion).toHaveBeenCalledOnce();
@@ -6848,6 +7224,35 @@ describe('EmendChatView capacity refresh sources', () => {
 			expectedCapacitySummary(fixture.askEstimate('')),
 		);
 		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+	});
+
+	it('refreshes Chat Selection estimates from selection changes without reads or requests', async () => {
+		const fixture = createWiredCapacityView({
+			sourceText: 'Alpha beta.',
+			markdown: 'Window only.',
+			selectedText: 'beta',
+			capacity: { contextWindowTokens: 1000, outputReserveTokens: 100 },
+		});
+		await viewPrototype.onOpen.call(fixture.context);
+		chooseWritingMenuItem(fixture.contentEl, 'Chat · Selection');
+		fixture.captureChatContext.mockClear();
+		fixture.captureChatSelectionContext.mockClear();
+		fixture.captureSelectionEditTarget.mockClear();
+		fixture.requestContext.sourceText = 'Alpha beta with a much larger complete note.';
+		fixture.requestContext.selection = { from: 0, to: 5 };
+
+		fixture.handlers.get('editor-selection-change')?.();
+		await waitForCapacityRefresh();
+
+		expect(fixture.captureChatSelectionContext).toHaveBeenCalledTimes(1);
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedCapacitySummary(fixture.chatSelectionEstimate('')),
+		);
+		expect(fixture.captureChatContext).not.toHaveBeenCalled();
+		expect(fixture.captureSelectionEditTarget).not.toHaveBeenCalled();
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
+		expect(fixture.read).not.toHaveBeenCalled();
 	});
 
 	it('refreshes the automatic Edit target when the selection appears', async () => {
