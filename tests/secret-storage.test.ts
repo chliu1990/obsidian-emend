@@ -196,6 +196,7 @@ describe('SecretStorage API keys', () => {
 		await harness.plugin.requestChatCompletion({
 			context,
 			mode: 'ask',
+			chatTarget: 'note',
 			prompt: 'Question',
 			history: [],
 			callbacks: { onContent: vi.fn(), onReasoning: vi.fn() },

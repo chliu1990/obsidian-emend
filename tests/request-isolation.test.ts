@@ -168,6 +168,7 @@ function makeReadOnlySubmission(
 	return {
 		context: fixture.makeContext(path),
 		mode: 'ask',
+		chatTarget: 'note',
 		prompt: 'Answer in chat.',
 		history,
 		additionalNotePaths,

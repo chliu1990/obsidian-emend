@@ -13,6 +13,7 @@ import {
 	accountRequestCharacters,
 } from '../src/context-accounting';
 import {
+	buildUserPrompt,
 	EditRequestCoordinator,
 	ReadOnlyRequestCoordinator,
 	type EditSubmission,
@@ -20,6 +21,7 @@ import {
 } from '../src/request-coordinator';
 import type { RequestContext } from '../src/context';
 import { operationEditStrategy } from '../src/operation-edit-strategy';
+import type { ChatTarget } from '../src/selection-focus';
 import type { NoteWriter } from '../src/note-writer';
 import type {
 	InstructionPromptParts,
@@ -109,6 +111,54 @@ function makeContext(overrides: Partial<RequestContext> = {}): RequestContext {
 	};
 }
 
+function makeFocusedContext() {
+	const selectedText = 'Focused first line.\nFocused second line with Unicode 🌱.';
+	const sourceText = [
+		'# Long note',
+		'Before the focus. '.repeat(120),
+		selectedText,
+		'After the focus. '.repeat(120),
+	].join('\n');
+	const from = sourceText.indexOf(selectedText);
+	const context = makeContext({
+		sourceText,
+		selection: { from, to: from + selectedText.length },
+		markdown: 'Bounded window only.',
+		notePath: 'Vault/folder/note.md',
+	});
+	return { context, selectedText };
+}
+
+function expectedFocusedPrompt(
+	context: RequestContext,
+	selectedText: string,
+	prompt: string,
+	additionalNotes = false,
+) {
+	const parts = [
+		'Active note path:',
+		'Vault/folder/note.md',
+		'',
+		'Active note Markdown:',
+		'```markdown',
+		`Full note (supporting context):\n${context.sourceText}\n\nSelected text (read-only conversational focus):\n${selectedText}`,
+		'```',
+	];
+	if (additionalNotes) {
+		parts.push(
+			'',
+			'## Additional note 1',
+			'Additional notes are read-only context and are not edit targets.',
+			'',
+			'```markdown',
+			'Additional only.',
+			'```',
+		);
+	}
+	parts.push('', 'User message:', prompt);
+	return parts.join('\n');
+}
+
 function makeAdditionalNote(
 	overrides: Partial<AdditionalNoteSnapshot> = {},
 ): AdditionalNoteSnapshot {
@@ -173,6 +223,7 @@ function makeSubmission(
 	return {
 		context: makeContext(),
 		mode: 'ask',
+		chatTarget: 'note',
 		prompt: 'What does this note say?',
 		history: [],
 		additionalNotePaths: [],
@@ -188,6 +239,7 @@ describe('ReadOnlyRequestCoordinator', () => {
 			typeof ReadOnlyRequestCoordinator
 		>[0];
 		type Mode = ReadOnlySubmission['mode'];
+		type Target = ReadOnlySubmission['chatTarget'];
 
 		expectTypeOf<Dependencies>().not.toHaveProperty('writer');
 		expectTypeOf<Dependencies>().not.toHaveProperty('noteWriter');
@@ -195,6 +247,7 @@ describe('ReadOnlyRequestCoordinator', () => {
 			Required<Dependencies>['loadAdditionalNotes']
 		>();
 		expectTypeOf<Mode>().toEqualTypeOf<'ask' | 'discuss' | 'brainstorm'>();
+		expectTypeOf<Target>().toEqualTypeOf<ChatTarget>();
 	});
 
 	it.each(['ask', 'discuss', 'brainstorm'] as const)(
@@ -362,6 +415,76 @@ describe('ReadOnlyRequestCoordinator', () => {
 
 		const userPrompt = request.mock.calls[0]?.[0].userPrompt ?? '';
 		expect(userPrompt).toContain('Vault/folder/note.md');
+	});
+
+	it('uses complete focused sections for Chat Selection and byte-for-byte bounded ordinary Chat', async () => {
+		const { context, selectedText } = makeFocusedContext();
+		const { coordinator, loadAdditionalNotes, request } = makeCoordinator();
+		loadAdditionalNotes.mockResolvedValue([makeAdditionalNote()]);
+		const history: ProviderHistoryMessage[] = [
+			{ role: 'user', content: 'Earlier question', mode: 'ask', origin: 'user' },
+			{ role: 'assistant', content: 'Earlier answer', mode: 'ask', origin: 'model' },
+		];
+		const prompt = 'Discuss only the focus.';
+		const expectedFocused = expectedFocusedPrompt(
+			context,
+			selectedText,
+			prompt,
+			true,
+		);
+
+		await coordinator.submit(makeSubmission({
+			context,
+			mode: 'ask',
+			chatTarget: 'selection',
+			prompt,
+			history,
+			additionalNotePaths: ['Reference.md'],
+		}));
+
+		const focusedRequest = requireRequest(request.mock.calls[0]?.[0]);
+		expect(focusedRequest.userPrompt).toBe(expectedFocused);
+		expect(focusedRequest.systemPrompt).toContain('Respond only in chat.');
+		expect(focusedRequest.history).toEqual(history);
+		expect(loadAdditionalNotes).toHaveBeenCalledExactlyOnceWith(
+			['Reference.md'],
+			'folder/note.md',
+			expect.any(AbortSignal),
+		);
+
+		await coordinator.submit(makeSubmission({
+			context,
+			chatTarget: 'note',
+			prompt,
+			history,
+			additionalNotePaths: ['Reference.md'],
+		}));
+
+		const ordinaryRequest = requireRequest(request.mock.calls[1]?.[0]);
+		const expectedOrdinary = [
+			'Active note path:',
+			'Vault/folder/note.md',
+			'',
+			'Active note Markdown:',
+			'```markdown',
+			'Bounded window only.',
+			'```',
+			'',
+			'## Additional note 1',
+			'Additional notes are read-only context and are not edit targets.',
+			'',
+			'```markdown',
+			'Additional only.',
+			'```',
+			'',
+			'User message:',
+			prompt,
+		].join('\n');
+		expect(buildUserPrompt(context, prompt, [makeAdditionalNote()])).toBe(
+			expectedOrdinary,
+		);
+		expect(ordinaryRequest.userPrompt).toBe(expectedOrdinary);
+		expect(ordinaryRequest.userPrompt).not.toContain(context.sourceText);
 	});
 
 	it('passes the caller AbortSignal to the provider', async () => {
@@ -1427,6 +1550,86 @@ describe('ReadOnlyRequestCoordinator web routing', () => {
 		expect(result.usage).toEqual({ promptTokens: 30, completionTokens: 7, totalTokens: 37, source: 'provider' });
 	});
 
+	it.each(['review', 'auto'] as const)(
+		'routes %s Chat Selection with the focused main request and isolated typed question',
+		async (mode) => {
+			const ordinaryRequest = successfulRequest();
+			const webSubmit = vi.fn(async (
+				request: AiProviderRequest,
+				_options: WebSearchRunOptions,
+			): Promise<WebToolLoopResult> => ({
+				content: 'Focused web answer',
+				reasoning: '',
+				sources: [],
+				activities: [],
+				failedExtractions: 0,
+				failedSearches: 0,
+				skippedWebCalls: 0,
+				omittedEvidence: false,
+				rounds: [{
+					request,
+					result: {
+						content: 'Focused web answer',
+						reasoning: '',
+						usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12 },
+					},
+				}],
+			}));
+			const loadAdditionalNotes = makeAdditionalNotesLoader();
+			loadAdditionalNotes.mockResolvedValue([makeAdditionalNote()]);
+			const coordinator = new ReadOnlyRequestCoordinator({
+				provider,
+				loadAdditionalNotes,
+				loadInstructions: async () => ({ skillTexts: new Map() }),
+				request: ordinaryRequest,
+				webSearch: { submit: webSubmit },
+			});
+			const { context, selectedText } = makeFocusedContext();
+			const history: ProviderHistoryMessage[] = [
+				{ role: 'user', content: 'Recent question', mode: 'ask', origin: 'user' },
+			];
+			const reviewCalls = vi.fn(async (
+				calls: Parameters<WebSearchRunOptions['reviewCalls']>[0],
+			) => calls);
+			const onActivity = vi.fn();
+
+			await coordinator.submit(makeSubmission({
+				context,
+				mode: 'ask',
+				chatTarget: 'selection',
+				prompt: 'Only this focused question',
+				history,
+				additionalNotePaths: ['Reference.md'],
+				webSearch: {
+					mode,
+					maxToolCalls: 7,
+					maxContentCharactersPerCall: 12345,
+					reviewCalls,
+					onActivity,
+				},
+			}));
+
+			expect(ordinaryRequest).not.toHaveBeenCalled();
+			expect(webSubmit).toHaveBeenCalledOnce();
+			const [webRequest, webOptions] = webSubmit.mock.calls[0] ?? [];
+			expect(webRequest?.userPrompt).toBe(expectedFocusedPrompt(
+				context,
+				selectedText,
+				'Only this focused question',
+				true,
+			));
+			expect(webRequest?.systemPrompt).toContain('Respond only in chat.');
+			expect(webRequest?.history).toEqual(history);
+			expect(webOptions).toMatchObject({
+				mode,
+				question: 'Only this focused question',
+				reviewCalls,
+				onActivity,
+			});
+			expect(webOptions?.question).not.toContain('Full note (supporting context):');
+		},
+	);
+
 	it('estimates every main and reader round independently when reader usage is missing', async () => {
 		const webSubmit = vi.fn(async (
 			request: AiProviderRequest,
@@ -1518,6 +1721,45 @@ describe('ReadOnlyRequestCoordinator web routing', () => {
 });
 
 describe('authoritative assembled-request capacity checks', () => {
+	it('rejects an oversized focused Chat request with read-only guidance before transport', async () => {
+		const { context, selectedText } = makeFocusedContext();
+		const submission = makeSubmission({
+			context,
+			chatTarget: 'selection',
+			prompt: 'Discuss the focus.',
+		});
+		const probe = makeCoordinator();
+		await probe.coordinator.submit(submission);
+		const focusedRequest = requireRequest(probe.request.mock.calls[0]?.[0]);
+		expect(focusedRequest.userPrompt).toBe(expectedFocusedPrompt(
+			context,
+			selectedText,
+			'Discuss the focus.',
+		));
+		const inputTokens = requestTokens(focusedRequest);
+		const capacity = capacityProviderForTokens(inputTokens);
+		const effectiveInputTokens = inputTokens - 1;
+		const { coordinator, loadAdditionalNotes, loadInstructions, request } =
+			makeCoordinator(successfulRequest(), { skillTexts: new Map() }, capacity);
+
+		const error = await coordinator
+			.submit(makeSubmission({
+				context,
+				chatTarget: 'selection',
+				prompt: 'Discuss the focus.',
+			}))
+			.catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(ContextCapacityError);
+		expect(error).toMatchObject({
+			code: 'context-capacity-exceeded',
+			details: { kind: 'read-only', inputTokens, effectiveInputTokens },
+		});
+		expect(loadAdditionalNotes).toHaveBeenCalledOnce();
+		expect(loadInstructions).toHaveBeenCalledOnce();
+		expect(request).not.toHaveBeenCalled();
+	});
+
 	it('rejects an oversized read-only request after fresh additional-note reads without calling the provider', async () => {
 		const largeNote = makeAdditionalNote({
 			markdown: 'Additional detail line.\n'.repeat(500),

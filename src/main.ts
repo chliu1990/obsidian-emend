@@ -369,6 +369,15 @@ export default class EmendPlugin extends Plugin {
 		});
 	}
 
+	captureChatSelectionContext(): RequestContext {
+		const context = this.captureChatContext();
+		const { from, to } = context.selection;
+		if (to <= from || !context.sourceText.slice(from, to).trim()) {
+			throw new Error('Select non-whitespace text first.');
+		}
+		return context;
+	}
+
 	async requestChatCompletion(
 		submission: ReadOnlyMainSubmission,
 	): Promise<ChatStreamResult>;

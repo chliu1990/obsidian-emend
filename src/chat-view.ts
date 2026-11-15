@@ -1629,6 +1629,7 @@ export class EmendChatView extends ItemView {
 				const result = await this.plugin.requestChatCompletion({
 					context: capturedTarget.context,
 					mode: capturedTarget.mode,
+					chatTarget: 'note',
 					prompt,
 					history,
 					additionalNotePaths,
@@ -1874,6 +1875,7 @@ function buildCapacityForTarget(
 				provider,
 				context: target.context,
 				mode: target.mode,
+				chatTarget: 'note',
 				prompt,
 				history,
 			});

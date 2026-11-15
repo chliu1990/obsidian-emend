@@ -814,6 +814,7 @@ describe('shared draft estimate builders', () => {
 			provider,
 			context,
 			mode,
+			chatTarget: 'note',
 			prompt: 'Question about the note.',
 			history,
 		});
@@ -837,6 +838,7 @@ describe('shared draft estimate builders', () => {
 			provider,
 			context,
 			mode: 'ask',
+			chatTarget: 'note',
 			prompt: 'Question',
 			history: [],
 		});
@@ -856,6 +858,70 @@ describe('shared draft estimate builders', () => {
 				history: [],
 			},
 		}));
+	});
+
+	it('matches focused Chat accounting with the path, full note, and duplicate selection', () => {
+		const selectedText = 'beta\nsecond focus 🌱';
+		const sourceText = `Alpha ${'word '.repeat(400)}${selectedText} ${'tail '.repeat(200)}`;
+		const from = sourceText.indexOf(selectedText);
+		const context = draftContext({
+			sourceText,
+			selection: { from, to: from + selectedText.length },
+			markdown: 'Window only.',
+			notePath: 'Vault/Note.md',
+		});
+		const history = draftHistory();
+
+		const focused = buildReadOnlyDraftEstimate({
+			provider,
+			context,
+			mode: 'ask',
+			chatTarget: 'selection',
+			prompt: 'Discuss the focus.',
+			history,
+		});
+		const ordinary = buildReadOnlyDraftEstimate({
+			provider,
+			context,
+			mode: 'ask',
+			chatTarget: 'note',
+			prompt: 'Discuss the focus.',
+			history,
+		});
+		const expectedUserPrompt = [
+			'Active note path:',
+			'Vault/Note.md',
+			'',
+			'Active note Markdown:',
+			'```markdown',
+			`Full note (supporting context):\n${sourceText}\n\nSelected text (read-only conversational focus):\n${selectedText}`,
+			'```',
+			'',
+			'User message:',
+			'Discuss the focus.',
+		].join('\n');
+
+		expect(focused).toEqual(buildDraftCapacityEstimate({
+			provider,
+			request: {
+				systemPrompt: getSystemPrompt('ask', undefined),
+				userPrompt: expectedUserPrompt,
+				history,
+			},
+		}));
+		expect(expectedUserPrompt).toContain('Active note path:\nVault/Note.md');
+		expect(expectedUserPrompt).toContain(
+			`Full note (supporting context):\n${sourceText}`,
+		);
+		expect(expectedUserPrompt).toContain(
+			`Selected text (read-only conversational focus):\n${selectedText}`,
+		);
+		expect(expectedUserPrompt).not.toContain('Window only.');
+		expect(focused.categories.user).toBe(expectedUserPrompt.length);
+		expect(focused.categories.user).toBeGreaterThan(
+			sourceText.length + selectedText.length,
+		);
+		expect(focused.categories.user).toBeGreaterThan(ordinary.categories.user);
 	});
 
 	it('matches the direct full-note assembly with the complete source', () => {
@@ -1004,6 +1070,7 @@ describe('shared draft estimate builders', () => {
 			provider,
 			context,
 			mode: 'ask',
+			chatTarget: 'note',
 			prompt: 'Question',
 			history: [],
 			notePath: 'Vault/Override-with-a-longer-path.md',
@@ -1012,6 +1079,7 @@ describe('shared draft estimate builders', () => {
 			provider,
 			context,
 			mode: 'ask',
+			chatTarget: 'note',
 			prompt: 'Question',
 			history: [],
 			notePath: undefined,
@@ -1046,6 +1114,7 @@ describe('shared draft estimate builders', () => {
 			provider: providerWith(),
 			context,
 			mode: 'ask',
+			chatTarget: 'note',
 			prompt: '',
 			history: [],
 		}).categories.estimatedInputTokens;
@@ -1058,6 +1127,7 @@ describe('shared draft estimate builders', () => {
 			provider: boundaryProvider,
 			context,
 			mode: 'ask',
+			chatTarget: 'note',
 			prompt: '',
 			history: [],
 		});

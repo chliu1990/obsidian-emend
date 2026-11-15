@@ -359,6 +359,83 @@ describe('EmendPlugin selection capture', () => {
 		return { file, fullText, from, to, view };
 	}
 
+	function makeChatSelectionView(selectedText: string) {
+		const file = new TFile();
+		file.path = 'Chat Selection.md';
+		const leading = 'Leading context line. '.repeat(80);
+		const trailing = 'Trailing context line. '.repeat(80);
+		const sourceText = `${leading}${selectedText}${trailing}`;
+		const from = leading.length;
+		const to = from + selectedText.length;
+		const getValue = vi.fn(() => sourceText);
+		const getCursor = vi.fn((which: 'from' | 'to') => ({
+			offset: which === 'from' ? from : to,
+		}));
+		const view = Object.assign(
+			Object.create(MarkdownView.prototype) as MarkdownView,
+			{
+				file,
+				app: { vault: { getName: () => 'TestVault' } },
+				editor: {
+					getValue,
+					getCursor,
+					posToOffset: (position: { offset: number }) => position.offset,
+				},
+			},
+		);
+		return { file, from, getCursor, getValue, sourceText, to, view };
+	}
+
+	it.each([true, false])(
+		'captures one complete Chat Selection context with path privacy=%s',
+		(includeNotePath) => {
+			const selectedText = 'Focused first line.\nFocused second line with Unicode 🌱.';
+			const { file, from, getCursor, getValue, sourceText, to, view } =
+				makeChatSelectionView(selectedText);
+			const settings = structuredClone(DEFAULT_SETTINGS);
+			settings.maxContextCharacters = 0;
+			settings.includeNotePathInContext = includeNotePath;
+			const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+			Object.assign(plugin, { getTargetMarkdownView: () => view, settings });
+
+			const context = plugin.captureChatSelectionContext();
+
+			expect(getValue).toHaveBeenCalledOnce();
+			expect(getCursor).toHaveBeenCalledTimes(2);
+			expect(context.file).toBe(file);
+			expect(context.sourceText).toBe(sourceText);
+			expect(context.selection).toEqual({ from, to });
+			expect(context.sourceText.slice(from, to)).toBe(selectedText);
+			expect(context.noteLabel).toBe('Chat Selection.md');
+			expect(context.notePath).toBe(
+				includeNotePath ? 'TestVault/Chat Selection.md' : undefined,
+			);
+			expect(context.markdown).not.toBe(sourceText);
+			expect(context.markdown).toContain(selectedText);
+			expect(context.markdown).toContain('[...]');
+		},
+	);
+
+	it.each([
+		{ selectedText: '', caseName: 'vanished' },
+		{ selectedText: ' \n\t', caseName: 'whitespace-only' },
+	])('rejects a $caseName Chat Selection before any provider request', ({ selectedText }) => {
+		const { getValue, view } = makeChatSelectionView(selectedText);
+		const requestChatCompletion = vi.fn();
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, {
+			getTargetMarkdownView: () => view,
+			settings: structuredClone(DEFAULT_SETTINGS),
+			requestChatCompletion,
+		});
+
+		expect(() => plugin.captureChatSelectionContext()).toThrow(
+			'Select non-whitespace text first.',
+		);
+		expect(getValue).toHaveBeenCalledOnce();
+		expect(requestChatCompletion).not.toHaveBeenCalled();
+	});
+
 	it('captures the last open Markdown view when chat has focus', () => {
 		const { file, fullText, from, to, view } = makeView('beta');
 		const otherView = makeView('other').view;
@@ -687,6 +764,7 @@ describe('EmendPlugin web provider guard', () => {
 		await expect(plugin.requestChatCompletion({
 			context: { file: { path: 'Note.md' } } as ReadOnlySubmission['context'],
 			mode: 'ask',
+			chatTarget: 'note',
 			prompt: 'Research this',
 			history: [],
 			callbacks: { onContent: vi.fn(), onReasoning: vi.fn() },

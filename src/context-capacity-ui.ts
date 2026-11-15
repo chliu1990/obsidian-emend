@@ -10,9 +10,12 @@ import {
 import type { RequestContext } from './context';
 import { getEditStrategy } from './edit-strategy';
 import { getSystemPrompt } from './mode';
-import { buildUserPrompt } from './request-coordinator';
+import {
+	buildChatSelectionUserPrompt,
+	buildUserPrompt,
+} from './request-coordinator';
 import { buildSelectionUserPrompt } from './selection-editor';
-import type { SelectionContextPolicy } from './selection-focus';
+import type { ChatTarget, SelectionContextPolicy } from './selection-focus';
 import type {
 	Mode,
 	ProviderConfig,
@@ -51,6 +54,7 @@ export function buildReadOnlyDraftEstimate(input: {
 	provider: ProviderConfig;
 	context: RequestContext;
 	mode: Exclude<Mode, 'edit'>;
+	chatTarget: ChatTarget;
 	prompt: string;
 	history: ProviderHistoryMessage[];
 	notePath?: string;
@@ -60,7 +64,9 @@ export function buildReadOnlyDraftEstimate(input: {
 		provider: input.provider,
 		request: {
 			systemPrompt: getSystemPrompt(input.mode, undefined),
-			userPrompt: buildUserPrompt(context, input.prompt, []),
+			userPrompt: input.chatTarget === 'selection'
+				? buildChatSelectionUserPrompt(context, input.prompt, [])
+				: buildUserPrompt(context, input.prompt, []),
 			history: input.history,
 		},
 	});
