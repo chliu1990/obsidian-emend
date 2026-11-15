@@ -20,6 +20,7 @@ export interface ChatModelSelection {
 export interface ChatModelControlState {
 	settings: EmendSettings;
 	disabled: boolean;
+	availableProviderIds: readonly ProviderId[];
 }
 
 export interface ChatModelControlCallbacks {
@@ -47,6 +48,7 @@ export class ChatModelControl {
 	private state: ChatModelControlState = {
 		settings: DEFAULT_SETTINGS,
 		disabled: false,
+		availableProviderIds: [],
 	};
 	private triggerEl: HTMLButtonElement | null = null;
 	private activeMenu: ActiveChatModelMenu | null = null;
@@ -90,8 +92,11 @@ export class ChatModelControl {
 		}
 	}
 
-	refresh(settings: EmendSettings): void {
-		this.update({ ...this.state, settings });
+	refresh(
+		settings: EmendSettings,
+		availableProviderIds: readonly ProviderId[],
+	): void {
+		this.update({ ...this.state, settings, availableProviderIds });
 		this.activeMenu?.menu.hide();
 	}
 
@@ -128,22 +133,29 @@ export class ChatModelControl {
 		this.activeMenu?.menu.hide();
 		const menu = new Menu();
 		const active: ActiveChatModelMenu = { menu, entries: [] };
-		for (const [providerIndex, provider] of AI_PROVIDERS.entries()) {
-			if (providerIndex > 0) {
-				menu.addSeparator();
-			}
-			this.addItem(menu, provider.name).setDisabled(true);
+		this.addItem(menu, 'Model').setDisabled(true);
+		let availableProviderCount = 0;
+		for (const provider of AI_PROVIDERS) {
 			const config = this.state.settings.providers[provider.id];
 			const options = getProviderModelOptions(provider.id, config);
-			if (options.length === 0) {
-				this.addItem(menu, 'No model configured').setDisabled(true);
+			if (
+				!this.state.availableProviderIds.includes(provider.id) ||
+				options.length === 0
+			) {
+				continue;
 			}
+			availableProviderCount++;
+			this.addItem(menu, provider.name).setDisabled(true);
 			for (const option of options) {
 				const item = this.addItem(menu, option.label, () => {
-					this.choose(active, false, () => this.callbacks.onSelect(
-						{ providerId: provider.id, modelId: option.id },
-						this.state.settings.providers[provider.id].reasoningEffort,
-					));
+					this.choose(
+						active,
+						!this.isModelAvailable(provider.id, option.id),
+						() => this.callbacks.onSelect(
+							{ providerId: provider.id, modelId: option.id },
+							this.state.settings.providers[provider.id].reasoningEffort,
+						),
+					);
 				});
 				active.entries.push({
 					item,
@@ -153,24 +165,30 @@ export class ChatModelControl {
 					disabled: false,
 				});
 			}
-			for (const effort of REASONING_EFFORTS) {
-				const item = this.addItem(menu, effortLabel(effort), () => {
-					this.choose(active, this.state.settings.providers[provider.id].model.trim() === '', () => this.callbacks.onSelect(
-						{
-							providerId: provider.id,
-							modelId: this.state.settings.providers[provider.id].model.trim(),
-						},
-						effort,
-					));
-				});
-				active.entries.push({
-					item,
-					providerId: provider.id,
-					kind: 'effort',
+		}
+		if (availableProviderCount === 0) {
+			this.addItem(menu, 'No available models').setDisabled(true);
+		}
+		menu.addSeparator();
+		this.addItem(menu, 'Reasoning effort').setDisabled(true);
+		const activeProviderId = this.state.settings.activeProvider;
+		for (const effort of REASONING_EFFORTS) {
+			const item = this.addItem(menu, effortLabel(effort), () => {
+				this.choose(active, this.isEffortDisabled(activeProviderId), () => this.callbacks.onSelect(
+					{
+						providerId: activeProviderId,
+						modelId: this.state.settings.providers[activeProviderId].model.trim(),
+					},
 					effort,
-					disabled: false,
-				});
-			}
+				));
+			});
+			active.entries.push({
+				item,
+				providerId: activeProviderId,
+				kind: 'effort',
+				effort,
+				disabled: false,
+			});
 		}
 		this.activeMenu = active;
 		this.updateMenu(active);
@@ -224,6 +242,19 @@ export class ChatModelControl {
 		void callback();
 	}
 
+	private isModelAvailable(providerId: ProviderId, modelId: string): boolean {
+		return this.state.availableProviderIds.includes(providerId) &&
+			getProviderModelOptions(
+				providerId,
+				this.state.settings.providers[providerId],
+			).some((option) => option.id === modelId);
+	}
+
+	private isEffortDisabled(providerId: ProviderId): boolean {
+		return this.state.settings.activeProvider !== providerId ||
+			this.state.settings.providers[providerId].model.trim() === '';
+	}
+
 	private updateMenu(active: ActiveChatModelMenu): void {
 		const { settings, disabled } = this.state;
 		for (const entry of active.entries) {
@@ -237,7 +268,9 @@ export class ChatModelControl {
 				.setDisabled(
 					disabled ||
 					entry.disabled ||
-					(entry.kind === 'effort' && config.model.trim() === ''),
+					(entry.kind === 'model'
+						? !this.isModelAvailable(entry.providerId, entry.modelId)
+						: this.isEffortDisabled(entry.providerId)),
 				);
 		}
 	}

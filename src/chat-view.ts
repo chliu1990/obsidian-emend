@@ -50,7 +50,7 @@ import {
 	type QuickAction,
 } from './quick-actions';
 import type { SelectionEditTarget } from './selection-editor';
-import { normalizeContextLimit } from './settings';
+import { AI_PROVIDERS, normalizeContextLimit } from './settings';
 import { formatTokenUsage } from './token-usage';
 import type {
 	ChatMessage,
@@ -302,8 +302,9 @@ export class EmendChatView extends ItemView {
 		if (this.closed || !this.modelControl) {
 			return;
 		}
-		this.modelControl.refresh(this.plugin.settings);
-		this.modelControl.update(this.modelControlState());
+		const state = this.modelControlState();
+		this.modelControl.refresh(state.settings, state.availableProviderIds);
+		this.modelControl.update(state);
 	}
 
 	private modelControlState() {
@@ -313,6 +314,9 @@ export class EmendChatView extends ItemView {
 				this.isSending ||
 				this.isThreadLoading ||
 				this.isSessionMutating,
+			availableProviderIds: AI_PROVIDERS
+				.filter((provider) => this.plugin.getApiKey(provider.id).trim() !== '')
+				.map((provider) => provider.id),
 		};
 	}
 

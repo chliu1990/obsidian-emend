@@ -44,6 +44,7 @@ import type {
 	Mode,
 	ProviderConfig,
 	ProviderHistoryMessage,
+	ProviderId,
 	SelectionSnapshot,
 } from '../src/types';
 import type { WebActivityRecord } from '../src/web-search';
@@ -162,6 +163,7 @@ const viewPrototype = EmendChatView.prototype as unknown as {
 	toProviderHistory(this: unknown): ProviderHistoryMessage[];
 	refreshDraftEstimate(this: unknown, prompt?: string): void;
 	refreshCapacityEstimate(this: unknown): void;
+	refreshModelControl(this: unknown): void;
 };
 
 function message(id: string, sourcePath: string): ChatMessage {
@@ -407,6 +409,7 @@ function createEditTargetView(options: {
 		app: { vault: { adapter: { read } } },
 		contentEl,
 		plugin: {
+			getApiKey: (_providerId: ProviderId) => 'test-key',
 			getActiveNotePath: () => activePath,
 			getActiveNoteLabel: () => activePath,
 			hasUsableSelection: () => Boolean(selectedText.trim()),
@@ -528,17 +531,27 @@ function createModelControlView() {
 	const plugin = fixture.context.plugin as unknown as {
 		settings: EmendSettings;
 		additionalNotesStore: AdditionalNotesStore;
+		getApiKey(providerId: ProviderId): string;
 		saveSettings(
 			update?: EmendSettings | ((current: EmendSettings) => EmendSettings),
 		): Promise<void>;
 	};
+	const apiKeys: Record<ProviderId, string> = {
+		deepseek: 'deepseek-secret-storage-key',
+		kimi: 'kimi-secret-storage-key',
+		custom: 'custom-secret-storage-key',
+	};
+	const getApiKey = vi.fn((providerId: ProviderId) => apiKeys[providerId]);
 	const saveSettings = vi.fn(async (
-		update: EmendSettings | ((current: EmendSettings) => EmendSettings) = settings,
+		update?: EmendSettings | ((current: EmendSettings) => EmendSettings),
 	) => {
-		plugin.settings = typeof update === 'function' ? update(plugin.settings) : update;
+		plugin.settings = typeof update === 'function'
+			? update(plugin.settings)
+			: update ?? plugin.settings;
+		viewPrototype.refreshModelControl.call(fixture.context);
 	});
-	Object.assign(plugin, { settings, saveSettings });
-	return { ...fixture, plugin, settings, saveSettings };
+	Object.assign(plugin, { settings, getApiKey, saveSettings });
+	return { ...fixture, plugin, settings, apiKeys, getApiKey, saveSettings };
 }
 
 type ChatViewMenu = Menu & {
@@ -634,12 +647,32 @@ function modelMenuItem(
 	throw new Error(`Missing ${provider} model menu item: ${title}`);
 }
 
+function reasoningMenuItem(menu: ChatViewMenu, title: string): ChatViewMenuItem {
+	const start = menu.items.findIndex(
+		(item) => item !== 'separator' && item.title === 'Reasoning effort',
+	);
+	const item = menu.items.slice(start + 1).find(
+		(candidate): candidate is ChatViewMenuItem =>
+			candidate instanceof MenuItem && candidate.title === title,
+	);
+	if (start < 0 || !item) {
+		throw new Error(`Missing reasoning effort item: ${title}`);
+	}
+	return item;
+}
+
 function chooseModelMenuItem(
 	contentEl: FakeElement,
 	provider: string,
 	title: string,
 ): ChatViewMenuItem {
 	const item = modelMenuItem(openModelMenu(contentEl), provider, title);
+	item.clickHandler({} as MouseEvent);
+	return item;
+}
+
+function chooseReasoningMenuItem(contentEl: FakeElement, title: string): ChatViewMenuItem {
+	const item = reasoningMenuItem(openModelMenu(contentEl), title);
 	item.clickHandler({} as MouseEvent);
 	return item;
 }
@@ -997,12 +1030,12 @@ describe('EmendChatView composer model selection', () => {
 		expect(fixture.render).not.toHaveBeenCalled();
 	});
 
-	it('selects effort with that provider’s current model and preserves unrelated settings', async () => {
+	it('selects effort only for the active provider and preserves its model and unrelated settings', async () => {
 		const fixture = createModelControlView();
 		await viewPrototype.refreshTargetNote.call(fixture.context);
 		const original = fixture.settings;
 
-		chooseModelMenuItem(fixture.contentEl, 'Kimi', 'Low reasoning');
+		chooseReasoningMenuItem(fixture.contentEl, 'Low reasoning');
 		await vi.waitFor(() => expect(fixture.saveSettings).toHaveBeenCalledOnce());
 
 		const update = fixture.saveSettings.mock.calls[0]?.[0];
@@ -1011,16 +1044,53 @@ describe('EmendChatView composer model selection', () => {
 		}
 		const candidate = update(original);
 		const expected = structuredClone(original);
-		expected.activeProvider = 'kimi';
-		expected.providers.kimi.reasoningEffort = 'low';
+		expected.activeProvider = 'custom';
+		expected.providers.custom.reasoningEffort = 'low';
 		expect(candidate).toEqual(expected);
-		expect(candidate?.providers.kimi.model).toBe('k3.1-pro');
-		expect(candidate?.providers.kimi.baseUrl).toBe('https://kimi.local/v1');
-		expect(candidate?.providers.kimi.apiKey).toBe('kimi-live-key');
-		expect(candidate?.providers.kimi.contextWindowTokens).toBe(6000);
-		expect(candidate?.providers.kimi.outputReserveTokens).toBe(600);
-		expect(candidate?.providers.deepseek).toBe(original.providers.deepseek);
-		expect(candidate?.providers.custom).toBe(original.providers.custom);
+		expect(candidate.activeProvider).toBe('custom');
+		expect(candidate.providers.custom.model).toBe('Test model');
+		expect(candidate.providers.custom.baseUrl).toBe('https://custom.local/v1');
+		expect(candidate.providers.custom.apiKey).toBe('custom-live-key');
+		expect(candidate.providers.custom.contextWindowTokens).toBe(4000);
+		expect(candidate.providers.custom.outputReserveTokens).toBe(400);
+		expect(candidate.providers.deepseek).toBe(original.providers.deepseek);
+		expect(candidate.providers.kimi).toBe(original.providers.kimi);
+	});
+
+	it('derives model availability from getApiKey and refreshes it after key and config saves', async () => {
+		const fixture = createModelControlView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+		const providerHeadings = () => openModelMenu(fixture.contentEl).items.flatMap((item) =>
+			item !== 'separator' && ['DeepSeek', 'Kimi', 'Custom'].includes(item.title)
+				? [item.title]
+				: []
+		);
+
+		expect(providerHeadings()).toEqual(['DeepSeek', 'Kimi', 'Custom']);
+		for (const providerId of ['deepseek', 'kimi', 'custom'] as const) {
+			expect(fixture.getApiKey).toHaveBeenCalledWith(providerId);
+		}
+
+		fixture.apiKeys.kimi = '';
+		await fixture.saveSettings();
+		expect(providerHeadings()).toEqual(['DeepSeek', 'Custom']);
+
+		await fixture.saveSettings((current) => ({
+			...current,
+			providers: {
+				...current.providers,
+				custom: {
+					...current.providers.custom,
+					model: '',
+					discoveredModels: [],
+				},
+			},
+		}));
+		expect(providerHeadings()).toEqual(['DeepSeek']);
+		expect(fixture.saveSettings).toHaveBeenCalledTimes(2);
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
 	it('blocks submissions and duplicate choices during a deferred save without rerendering', async () => {
@@ -3690,6 +3760,7 @@ describe('EmendChatView additional notes', () => {
 			app: {},
 			contentEl,
 			plugin: {
+				getApiKey: (_providerId: ProviderId) => 'test-key',
 				getActiveNotePath: () => activePath,
 				getActiveNoteLabel: () => activePath,
 				hasUsableSelection: () => false,
@@ -3792,6 +3863,7 @@ describe('EmendChatView additional notes', () => {
 			app: {},
 			contentEl,
 			plugin: {
+				getApiKey: (_providerId: ProviderId) => 'test-key',
 				getActiveNotePath: () => activePath,
 				getActiveNoteLabel: () => activePath,
 				hasUsableSelection: () => false,
@@ -5398,6 +5470,7 @@ describe('EmendChatView compact Web disclosure', () => {
 			app: {},
 			contentEl,
 			plugin: {
+				getApiKey: (_providerId: ProviderId) => 'test-key',
 				getActiveNotePath: () => 'Note.md',
 				getActiveNoteLabel: () => 'Note.md',
 				hasUsableSelection: () => false,
@@ -5475,6 +5548,7 @@ describe('EmendChatView render-end response alignment', () => {
 			app: {},
 			contentEl,
 			plugin: {
+				getApiKey: (_providerId: ProviderId) => 'test-key',
 				getActiveNotePath: () => 'Note.md',
 				getActiveNoteLabel: () => 'Note.md',
 				hasUsableSelection: () => false,
@@ -5661,6 +5735,7 @@ function createCapacityView(options: CapacityViewOptions = {}) {
 		app: { vault: { getName: () => 'Vault', adapter: { read } } },
 		contentEl,
 		plugin: {
+			getApiKey: (_providerId: ProviderId) => 'test-key',
 			getActiveNotePath: () => file.path,
 			getActiveNoteLabel: () => file.path,
 			hasUsableSelection: () => Boolean(selectedText.trim()),

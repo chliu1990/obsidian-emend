@@ -6,7 +6,7 @@ import {
 	type ChatModelControlState,
 } from '../src/chat-model-control';
 import { DEFAULT_SETTINGS } from '../src/settings';
-import type { EmendSettings } from '../src/types';
+import type { EmendSettings, ProviderId } from '../src/types';
 
 type TestMenuItem = MenuItem & {
 	title: string;
@@ -111,8 +111,9 @@ function createSettings(): EmendSettings {
 function createState(
 	settings = createSettings(),
 	disabled = false,
+	availableProviderIds: readonly ProviderId[] = ['deepseek', 'kimi', 'custom'],
 ): ChatModelControlState {
-	return { settings, disabled };
+	return { settings, disabled, availableProviderIds };
 }
 
 function modelCallbacks() {
@@ -124,13 +125,17 @@ function modelCallbacks() {
 function renderControl(
 	settings = createSettings(),
 	disabled = false,
+	availableProviderIds?: readonly ProviderId[],
 ) {
 	const ownerDocument = { name: 'popout-document' } as unknown as Document;
 	const container = new FakeElement('div', ownerDocument);
 	const writing = container.createEl('button', { text: 'Chat' });
 	const callbacks = modelCallbacks();
 	const control = new ChatModelControl(callbacks);
-	control.render(container as unknown as HTMLElement, createState(settings, disabled));
+	control.render(
+		container as unknown as HTMLElement,
+		createState(settings, disabled, availableProviderIds),
+	);
 	const send = container.createEl('button', { text: 'Send' });
 	const trigger = container.children[1];
 	if (!trigger) {
@@ -186,6 +191,26 @@ function menuItem(menu: TestMenu, provider: string, title: string): TestMenuItem
 	return item;
 }
 
+function reasoningItems(menu: TestMenu): TestMenuItem[] {
+	const start = menu.items.findIndex(
+		(item) => item !== 'separator' && item.title === 'Reasoning effort',
+	);
+	if (start < 0) {
+		throw new Error('Missing reasoning effort section.');
+	}
+	return menu.items.slice(start + 1).filter(
+		(item): item is TestMenuItem => item instanceof MenuItem,
+	);
+}
+
+function effortItem(menu: TestMenu, title: string): TestMenuItem {
+	const item = reasoningItems(menu).find((candidate) => candidate.title === title);
+	if (!item) {
+		throw new Error(`Missing reasoning effort item: ${title}`);
+	}
+	return item;
+}
+
 function choose(item: TestMenuItem) {
 	item.clickHandler({} as MouseEvent);
 }
@@ -218,7 +243,7 @@ describe('ChatModelControl', () => {
 		expect(container.children).toEqual([writing, trigger, send]);
 	});
 
-	it('builds exact provider groups, checks, and separators without network access', () => {
+	it('builds exactly one model section and one active-provider reasoning section', () => {
 		const fetchMock = vi.fn();
 		vi.stubGlobal('fetch', fetchMock);
 		const { trigger } = renderControl();
@@ -229,29 +254,60 @@ describe('ChatModelControl', () => {
 		expect(menu.items.map((item) => item === 'separator'
 			? 'separator'
 			: [item.title, item.checked, item.disabled])).toEqual([
+			['Model', null, true],
 			['DeepSeek', null, true],
 			['deepseek-flash', true, false],
 			['deepseek-v4-pro', false, false],
 			['Model A', false, false],
-			['Low reasoning', false, false],
-			['Medium reasoning', false, false],
-			['High reasoning', true, false],
-			'separator',
 			['Kimi', null, true],
 			['k3.1-pro', false, false],
 			['Kimi Cached', false, false],
-			['Low reasoning', false, false],
-			['Medium reasoning', false, false],
-			['High reasoning', false, false],
-			'separator',
 			['Custom', null, true],
 			['Discovered Custom', false, false],
 			['configured-only', false, false],
+			'separator',
+			['Reasoning effort', null, true],
 			['Low reasoning', false, false],
 			['Medium reasoning', false, false],
-			['High reasoning', false, false],
+			['High reasoning', true, false],
 		]);
 		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it('omits unavailable providers and available Custom without model options', () => {
+		const withoutKimiKey = renderControl(createSettings(), false, ['deepseek', 'custom']);
+		const keyFilteredMenu = openMenu(withoutKimiKey.trigger);
+
+		expect(menuItems(keyFilteredMenu).some((item) => item.title === 'Kimi')).toBe(false);
+		expect(menuItem(keyFilteredMenu, 'DeepSeek', 'deepseek-flash').disabled).toBe(false);
+		expect(menuItem(keyFilteredMenu, 'Custom', 'configured-only').disabled).toBe(false);
+		withoutKimiKey.control.destroy();
+
+		const withoutCustomOptions = structuredClone(DEFAULT_SETTINGS);
+		const emptyCustom = renderControl(withoutCustomOptions);
+		const optionsFilteredMenu = openMenu(emptyCustom.trigger);
+
+		expect(menuItems(optionsFilteredMenu).some((item) => item.title === 'Custom')).toBe(false);
+		expect(menuItems(optionsFilteredMenu).some((item) => item.title === 'No model configured')).toBe(false);
+		expect(menuItem(optionsFilteredMenu, 'Kimi', 'k3.1-pro').disabled).toBe(false);
+	});
+
+	it('shows only the no-available-models state when no provider qualifies', () => {
+		const { trigger } = renderControl(createSettings(), false, []);
+
+		const menu = openMenu(trigger);
+
+		expect(menu.items.map((item) => item === 'separator'
+			? 'separator'
+			: [item.title, item.disabled])).toEqual([
+			['Model', true],
+			['No available models', true],
+			'separator',
+			['Reasoning effort', true],
+			['Low reasoning', false],
+			['Medium reasoning', false],
+			['High reasoning', false],
+		]);
 	});
 
 	it('selects a model with that provider’s stored effort and hides first', async () => {
@@ -276,15 +332,17 @@ describe('ChatModelControl', () => {
 		expect(settings.providers.deepseek.reasoningEffort).toBe('high');
 	});
 
-	it('selects Kimi Medium reasoning with Kimi’s trimmed current model and hides first', async () => {
-		const { trigger, callbacks, settings } = renderControl();
+	it('selects Medium reasoning only for the active provider and its trimmed current model', async () => {
+		const settings = createSettings();
+		settings.activeProvider = 'kimi';
+		const { trigger, callbacks } = renderControl(settings);
 		const menu = openMenu(trigger);
 		callbacks.onSelect.mockImplementationOnce(async () => {
 			expect(menu.hideCalls).toBe(1);
 			expect(trigger.attributes['aria-expanded']).toBe('false');
 		});
 
-		choose(menuItem(menu, 'Kimi', 'Medium reasoning'));
+		choose(effortItem(menu, 'Medium reasoning'));
 		await Promise.resolve();
 
 		expect(callbacks.onSelect).toHaveBeenCalledExactlyOnceWith(
@@ -293,7 +351,8 @@ describe('ChatModelControl', () => {
 		);
 		expect(menu.hideCalls).toBe(1);
 		expect(trigger.attributes['aria-expanded']).toBe('false');
-		expect(settings.activeProvider).toBe('deepseek');
+		expect(settings.activeProvider).toBe('kimi');
+		expect(settings.providers.kimi.model).toBe('k3.1-pro');
 		expect(settings.providers.kimi.reasoningEffort).toBe('high');
 	});
 
@@ -308,7 +367,7 @@ describe('ChatModelControl', () => {
 		expect(menuItems(menu)).toEqual(originalItems);
 		expect(menuItems(menu).every((item) => item.disabled)).toBe(true);
 		choose(menuItem(menu, 'DeepSeek', 'deepseek-v4-pro'));
-		choose(menuItem(menu, 'Kimi', 'Medium reasoning'));
+		choose(effortItem(menu, 'Medium reasoning'));
 		expect(callbacks.onSelect).not.toHaveBeenCalled();
 		expect(menu.hideCalls).toBe(0);
 
@@ -328,7 +387,7 @@ describe('ChatModelControl', () => {
 		expect(TestMenu.instances).toHaveLength(0);
 	});
 
-	it('shows Custom · High and disables its empty-model placeholder and efforts', () => {
+	it('shows Custom · High, omits its empty model group, and disables blank-current efforts', () => {
 		const settings = structuredClone(DEFAULT_SETTINGS);
 		settings.activeProvider = 'custom';
 		const { trigger, callbacks } = renderControl(settings);
@@ -339,22 +398,20 @@ describe('ChatModelControl', () => {
 			'Provider, model, and reasoning: Custom · High',
 		);
 		const menu = openMenu(trigger);
-		expect(providerItems(menu, 'Custom').map((item) => [
+		expect(menuItems(menu).some((item) => item.title === 'Custom')).toBe(false);
+		expect(reasoningItems(menu).map((item) => [
 			item.title,
 			item.checked,
 			item.disabled,
 		])).toEqual([
-			['Custom', null, true],
-			['No model configured', null, true],
 			['Low reasoning', false, true],
 			['Medium reasoning', false, true],
 			['High reasoning', true, true],
 		]);
 
-		choose(menuItem(menu, 'Custom', 'No model configured'));
-		choose(menuItem(menu, 'Custom', 'Low reasoning'));
-		choose(menuItem(menu, 'Custom', 'Medium reasoning'));
-		choose(menuItem(menu, 'Custom', 'High reasoning'));
+		for (const item of reasoningItems(menu)) {
+			choose(item);
+		}
 		expect(callbacks.onSelect).not.toHaveBeenCalled();
 		expect(menu.hideCalls).toBe(0);
 	});
@@ -372,7 +429,7 @@ describe('ChatModelControl', () => {
 				: providerId === 'kimi' ? 'Kimi' : 'Custom';
 
 			for (const effort of ['Low reasoning', 'Medium reasoning', 'High reasoning']) {
-				const item = menuItem(menu, providerName, effort);
+				const item = effortItem(menu, effort);
 				expect(item.disabled).toBe(true);
 				choose(item);
 			}
@@ -386,10 +443,10 @@ describe('ChatModelControl', () => {
 			const validSettings = createSettings();
 			validSettings.activeProvider = providerId;
 			control.update(createState(validSettings));
-			expect(menuItem(menu, providerName, 'Low reasoning').disabled).toBe(false);
+			expect(effortItem(menu, 'Low reasoning').disabled).toBe(false);
 			validSettings.providers[providerId].model = '';
 			control.update(createState(validSettings));
-			const disabledEffort = menuItem(menu, providerName, 'Low reasoning');
+			const disabledEffort = effortItem(menu, 'Low reasoning');
 			expect(disabledEffort.disabled).toBe(true);
 			choose(disabledEffort);
 			expect(callbacks.onSelect).not.toHaveBeenCalled();
@@ -407,7 +464,7 @@ describe('ChatModelControl', () => {
 			{ id: 'new-discovery', displayName: 'New Discovery' },
 		];
 
-		control.refresh(settings);
+		control.refresh(settings, ['deepseek', 'kimi', 'custom']);
 
 		expect(trigger.textContent).toBe('Custom · new-current · High');
 		expect(trigger.title).toBe('Custom · new-current · High');
@@ -424,11 +481,40 @@ describe('ChatModelControl', () => {
 			['Custom', null],
 			['New Discovery', false],
 			['new-current', true],
+		]);
+		expect(reasoningItems(currentMenu).map((item) => [item.title, item.checked])).toEqual([
 			['Low reasoning', false],
 			['Medium reasoning', false],
 			['High reasoning', true],
 		]);
 		expect(menuItems(currentMenu).some((item) => item.title === 'Discovered Custom')).toBe(false);
+	});
+
+	it('disables newly unavailable open-model items and rejects their direct callbacks', () => {
+		const { trigger, callbacks, control, settings } = renderControl();
+		const menu = openMenu(trigger);
+		const kimiModel = menuItem(menu, 'Kimi', 'k3.1-pro');
+		const discoveredModel = menuItem(menu, 'DeepSeek', 'Model A');
+
+		control.update(createState(settings, false, ['deepseek', 'custom']));
+
+		expect(kimiModel.disabled).toBe(true);
+		choose(kimiModel);
+		expect(callbacks.onSelect).not.toHaveBeenCalled();
+		expect(menu.hideCalls).toBe(0);
+
+		const withoutDiscovery = createSettings();
+		withoutDiscovery.providers.deepseek.discoveredModels = [];
+		control.update(createState(withoutDiscovery, false, ['deepseek', 'custom']));
+		expect(discoveredModel.disabled).toBe(true);
+		choose(discoveredModel);
+		expect(callbacks.onSelect).not.toHaveBeenCalled();
+
+		control.refresh(withoutDiscovery, ['deepseek']);
+		expect(menu.hideCalls).toBe(1);
+		choose(kimiModel);
+		choose(discoveredModel);
+		expect(callbacks.onSelect).not.toHaveBeenCalled();
 	});
 
 	it('keeps only the newest menu active and ignores stale hide and item callbacks', () => {
@@ -474,7 +560,7 @@ describe('ChatModelControl', () => {
 		choose(item);
 		trigger.click();
 		control.update(createState());
-		control.refresh(createSettings());
+		control.refresh(createSettings(), ['deepseek', 'kimi', 'custom']);
 		control.render(container as unknown as HTMLElement, createState());
 		expect(callbacks.onSelect).not.toHaveBeenCalled();
 		expect(TestMenu.instances).toHaveLength(1);
