@@ -244,6 +244,22 @@ describe('ChatComposerControls', () => {
 		expect(callbacks.onWebSearchMode).not.toHaveBeenCalled();
 	});
 
+	it('accepts the current native menu item after its hide callback precedes the click', () => {
+		const { trigger, callbacks } = renderControls();
+		const menu = openMenu(trigger);
+		const item = menuItem(menu, 'Edit · Selection');
+
+		menu.hide();
+		choose(item);
+
+		expect(callbacks.onWritingChoice).toHaveBeenCalledExactlyOnceWith({
+			mode: 'edit',
+			editTarget: 'selection',
+			selectionContext: 'default',
+		});
+		expect(trigger.attributes['aria-expanded']).toBe('false');
+	});
+
 	it.each([
 		['off', 'Web Off'],
 		['review', 'Web Review'],
