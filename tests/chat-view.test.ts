@@ -4296,6 +4296,177 @@ describe('EmendChatView presentation', () => {
 	});
 });
 
+describe('EmendChatView terminal response continuity', () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it('shows a ready answer before Markdown rendering settles', () => {
+		const pendingMarkdown = deferred<void>();
+		const render = vi.spyOn(MarkdownRenderer, 'render').mockReturnValue(pendingMarkdown.promise);
+		const { body, context } = createMessageBodyHarness();
+		const content = 'The **full** answer is ready.';
+
+		viewPrototype.renderMessageBody.call(context, {
+			...message('answer', 'Note.md'),
+			content,
+		});
+
+		expect(textOf(body)).toContain(content);
+		expect(messageContentElements(body)).toHaveLength(1);
+		expect(render).toHaveBeenCalledOnce();
+	});
+
+	it('shows stopped partial text before Markdown rendering settles', () => {
+		const pendingMarkdown = deferred<void>();
+		const render = vi.spyOn(MarkdownRenderer, 'render').mockReturnValue(pendingMarkdown.promise);
+		const { body, context } = createMessageBodyHarness();
+		const content = 'Partial **answer** before the stop.';
+
+		viewPrototype.renderMessageBody.call(context, {
+			...message('answer', 'Note.md'),
+			status: 'stopped',
+			content,
+		});
+
+		expect(textOf(body)).toContain(content);
+		expect(messageContentElements(body)).toHaveLength(1);
+		expect(render).toHaveBeenCalledOnce();
+	});
+
+	it('keeps the plain answer when Markdown rendering fails', async () => {
+		const pendingMarkdown = deferred<void>();
+		vi.spyOn(MarkdownRenderer, 'render').mockReturnValue(pendingMarkdown.promise);
+		const { body, context } = createMessageBodyHarness();
+		const content = 'Plain **answer** that survives a render failure.';
+
+		viewPrototype.renderMessageBody.call(context, {
+			...message('answer', 'Note.md'),
+			content,
+		});
+		expect(textOf(body)).toContain(content);
+		expect(messageContentElements(body)).toHaveLength(1);
+
+		pendingMarkdown.reject(new Error('Markdown failed'));
+		await vi.waitFor(() => expect(context.settleMarkdownRender).toHaveBeenCalledOnce());
+
+		expect(textOf(body)).toContain(content);
+		expect(messageContentElements(body)).toHaveLength(1);
+	});
+
+	it('shows a web incompleteness warning before Markdown rendering settles', () => {
+		const pendingMarkdown = deferred<void>();
+		vi.spyOn(MarkdownRenderer, 'render').mockReturnValue(pendingMarkdown.promise);
+		const { body, context } = createMessageBodyHarness();
+		const warning = 'Emend could not read 1 requested page. The answer may be incomplete.';
+
+		viewPrototype.renderMessageBody.call(context, {
+			...message('answer', 'Note.md'),
+			content: `Answer with [S1].\n\n${warning}`,
+		});
+
+		expect(textOf(body)).toContain(warning);
+		expect(messageContentElements(body)).toHaveLength(1);
+	});
+
+	it('shows the web activity instead of the waiting placeholder for a loading message', () => {
+		const { body, context } = createMessageBodyHarness();
+
+		viewPrototype.renderMessageBody.call(context, {
+			...message('answer', 'Note.md'),
+			status: 'loading',
+			content: '',
+			webActivity: 'Researching the web...',
+		});
+
+		expect(textOf(body)).toContain('Researching the web...');
+		expect(textOf(body)).not.toContain('Waiting for a response...');
+	});
+
+	it('keeps the waiting placeholder for a loading message without activity or reasoning', () => {
+		const { body, context } = createMessageBodyHarness();
+
+		viewPrototype.renderMessageBody.call(context, {
+			...message('answer', 'Note.md'),
+			status: 'loading',
+			content: '',
+		});
+
+		expect(textOf(body)).toContain('Waiting for a response...');
+	});
+
+	it('keeps the streamed answer through the terminal Markdown transition', async () => {
+		const pendingMarkdown = deferred<void>();
+		const render = vi.spyOn(MarkdownRenderer, 'render').mockImplementation(
+			(_app, markdown, element) => {
+				(element as unknown as FakeElement).textContent = `Rendered:${markdown}`;
+				return pendingMarkdown.promise;
+			},
+		);
+		const fixture = createEditTargetView();
+		fixture.requestChatCompletion.mockImplementation(async ({ callbacks }) => {
+			callbacks.onContent('Streamed **full** answer');
+			return { content: 'Streamed **full** answer', reasoning: '' };
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Question';
+		}
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		const assistantId = fixture.context.messages[1]?.id;
+		if (!assistantId) {
+			throw new Error('Assistant message missing.');
+		}
+		const assistant = findMessageNode(fixture.contentEl, assistantId);
+		if (!assistant) {
+			throw new Error('Assistant element missing.');
+		}
+		expect(assistant.className).toContain('is-ready');
+		expect(render).toHaveBeenCalledOnce();
+		expect(textOf(assistant)).toContain('Streamed **full** answer');
+		expect(messageContentElements(assistant)).toHaveLength(1);
+
+		pendingMarkdown.resolve();
+		await vi.waitFor(() =>
+			expect(textOf(assistant)).toContain('Rendered:Streamed **full** answer')
+		);
+		expect(messageContentElements(assistant)).toHaveLength(1);
+	});
+
+	it('retains the answer when the final save fails without adding another answer', async () => {
+		const fixture = createEditTargetView();
+		fixture.requestChatCompletion.mockImplementation(async ({ callbacks }) => {
+			callbacks.onContent('Streamed **answer**');
+			return { content: 'Streamed **answer**', reasoning: '' };
+		});
+		fixture.conversationStore.appendReadyMessage.mockRejectedValue(
+			new Error('Vault write failed'),
+		);
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Question';
+		}
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		const assistants = fixture.context.messages.filter((entry) => entry.role === 'assistant');
+		expect(assistants).toHaveLength(1);
+		const assistantId = assistants[0]?.id;
+		if (!assistantId) {
+			throw new Error('Assistant message missing.');
+		}
+		const node = findMessageNode(fixture.contentEl, assistantId);
+		if (!node) {
+			throw new Error('Assistant element missing.');
+		}
+		expect(node.className).toContain('is-error');
+		expect(textOf(node)).toContain('Streamed **answer**');
+		expect(messageContentElements(node)).toHaveLength(1);
+	});
+});
+
 class FakeElement {
 	readonly children: FakeElement[] = [];
 	readonly attributes: Record<string, string> = {};
@@ -4425,6 +4596,16 @@ class FakeElement {
 
 	replaceWith(replacement: FakeElement) {
 		this.replacement = replacement;
+		const parent = this.parentElement;
+		if (parent) {
+			const index = parent.children.indexOf(this);
+			if (index >= 0) {
+				parent.children.splice(index, 1, replacement);
+			}
+		}
+		replacement.parentElement = parent;
+		this.parentElement = null;
+		this.isConnected = false;
 	}
 
 	replacement?: FakeElement;
@@ -4497,6 +4678,37 @@ function findElements(
 
 function textOf(root: FakeElement): string {
 	return [root.textContent, ...root.children.map(textOf)].join(' ');
+}
+
+function messageContentElements(root: FakeElement): FakeElement[] {
+	return findElements(
+		root,
+		(element) => element.className.split(' ').includes('emend-chat-message-content'),
+	);
+}
+
+function findMessageNode(root: FakeElement, messageId: string): FakeElement | undefined {
+	return findElements(
+		root,
+		(element) => element.attributes['data-message-id'] === messageId,
+	)[0];
+}
+
+function createMessageBodyHarness() {
+	const body = new FakeElement();
+	const context = {
+		app: {},
+		closed: false,
+		renderGeneration: 1,
+		pendingMarkdownRenders: 0,
+		followLatestMessages: false,
+		messageBodyEls: new Map<string, HTMLElement>([
+			['answer', body as unknown as HTMLElement],
+		]),
+		settleMarkdownRender: vi.fn(),
+		scrollMessagesToBottomIfFollowing: vi.fn(),
+	};
+	return { body, context };
 }
 
 function findUsageFooter(container: FakeElement): FakeElement | undefined {
@@ -5190,6 +5402,46 @@ describe('EmendChatView web research', () => {
 		expect(copied).toContain('https://example.test/source');
 		expect(copied).toContain('https://unverified.test');
 		expect(copied.match(/### Sources/g)).toHaveLength(1);
+	});
+
+	it('shows an initial research status before the first web activity callback', async () => {
+		const fixture = createEditTargetView();
+		let activityAtRequestEntry: string | undefined;
+		fixture.requestChatCompletion.mockImplementation(async (submission) => {
+			activityAtRequestEntry = fixture.context.messages[1]?.webActivity;
+			submission.webSearch?.onActivity({ status: 'pending', label: 'Searching: Emend' });
+			submission.callbacks.onContent('Answer [S1]');
+			return { content: 'Answer [S1]', reasoning: '' };
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		Object.assign(fixture.context, { webSearchMode: 'auto' });
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Research';
+		}
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(activityAtRequestEntry).toBe('Researching the web...');
+		expect(fixture.context.messages[1]?.webActivity).toBe('Searching: Emend');
+	});
+
+	it('leaves the loading activity unset for a Web Off submission', async () => {
+		const fixture = createEditTargetView();
+		let activityAtRequestEntry: string | undefined = 'unset';
+		fixture.requestChatCompletion.mockImplementation(async (submission) => {
+			activityAtRequestEntry = fixture.context.messages[1]?.webActivity;
+			submission.callbacks.onContent('Answer');
+			return { content: 'Answer', reasoning: '' };
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Question';
+		}
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(activityAtRequestEntry).toBeUndefined();
+		expect(fixture.context.messages[1]?.webActivity).toBeUndefined();
 	});
 });
 
