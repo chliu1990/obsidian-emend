@@ -96,7 +96,16 @@ Ignored, under `test_vault/emend-web-verify/`:
 
 ## Adjacent compact regression
 
-`node test_vault/emend-web-verify/verify.mjs --compact-ui` exited **0** with **1/1 scenario and 4/4 assertions** after the change: no large bottom Web-disclosure block under Web Auto, the Web tooltip keeps its note-context/direct-Auto/billing/local-activity disclosure, the 240 px composer keeps Web and Send visible without horizontal overflow, and removing the bottom disclosure still reclaims vertical space. Evidence is ignored `evidence-compact-ui/summary.json` (SHA-256 `27c1cbda0023ded1c4cd40e861bf048e37fd706db8cef3f0139b000f98548caf`) and `compact-ui-evidence.json` (`0e5df80ff2a4ec957e2e63e2e83e720822f8bdac2ad67755ab9c4b2e9e549a87`). This is the five-phase Web harness's compact mode, not the separate `emend-selection-chat-verify` `--compact` 28-assertion matrix recorded by earlier stages.
+The ignored `--compact-ui` scenario predates the Stage 44 compact composer: it locates the removed `select[aria-label="Web search mode"]`, so against the committed HEAD bundle it fails immediately with `Error: Web mode selector is missing.` It reports 4/4 only against the stale Nov 9 plugin copy still present in the harness fixture, which is not this branch's bundle and was rejected as non-evidence. The ignored scenario was updated to probe the current `.emend-chat-writing-trigger` and `.emend-chat-active-model` controls, to read `webSearchMode` from the live view, to accept the current `Chat · Auto search` summary, and to preserve the old no-disclosure-height intent as an equality check between Web Off and Web Auto composer heights at 240 px; the two disclosure checks are unchanged in substance, and the layout check now also requires the model button. Nothing under `src/` or `tests/` changed.
+
+`node test_vault/emend-web-verify/verify.mjs --compact-ui` then exited **0** with **1/1 scenario and 4/4 assertions** on the same root/loaded bundle `cc17e0ce…`:
+
+- Web Auto (`Chat · Auto search`) renders no `.emend-chat-web-disclosure` block.
+- The Writing/Web trigger title keeps the note-context/direct-Auto/billing/local-activity disclosure.
+- The 240 px composer keeps Web, model, and Send visible without horizontal overflow.
+- Composer height is identical for Web Off and Web Auto (219.5 px), so Web mode adds no bottom-disclosure height.
+
+Evidence is ignored `evidence-compact-ui/summary.json` (SHA-256 `40d0f8aabf3b4db4b8b1cd37d112c054e35def084a42eccb5fbd0b7f70820b7f`) and `compact-ui-evidence.json` (`159558bb9d37b5427ebe26a73b2f58b32ab26c0f66dacf73741a9786fe2b184f`), with the inspected `compact-ui-240.png` (`71c54597d721683f2c681f82af96e03902fb0e550055bf62983efd07eea95dde`). This is the Web harness's compact mode, not the separate `emend-selection-chat-verify` `--compact` 28-assertion matrix recorded by earlier stages.
 
 ## Unchanged boundaries
 
