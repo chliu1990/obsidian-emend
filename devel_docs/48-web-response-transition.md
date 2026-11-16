@@ -33,6 +33,8 @@ Three hunks in `src/chat-view.ts`:
 
 Web Off keeps its previous placeholder and streaming behavior; that path is an asserted regression control. No message field gained persistence: `webActivity` remains transient and is never serialized.
 
+One consequence is inherent in "never blank": a full `render()` re-seeds every ready and stopped message with its raw Markdown before each detached render settles, so a mode or session re-render can briefly show raw Markdown in place of a blank body. That matches how streaming already presents in-progress text and is accepted rather than scheduled around.
+
 ## Rejected alternatives
 
 - **Buffer the answer text until Markdown is ready.** Rejected: the requirement is that terminal text become visible as plain text no later than the next frame, so buffering would widen the invisible interval it was meant to remove, delay stopped partials, and add a second buffering/scheduling surface beside the intentional Web-level buffering.
@@ -96,16 +98,20 @@ Ignored, under `test_vault/emend-web-verify/`:
 
 ## Adjacent compact regression
 
-The ignored `--compact-ui` scenario predates the Stage 44 compact composer: it locates the removed `select[aria-label="Web search mode"]`, so against the committed HEAD bundle it fails immediately with `Error: Web mode selector is missing.` It reports 4/4 only against the stale Nov 9 plugin copy still present in the harness fixture, which is not this branch's bundle and was rejected as non-evidence. The ignored scenario was updated to probe the current `.emend-chat-writing-trigger` and `.emend-chat-active-model` controls, to read `webSearchMode` from the live view, to accept the current `Chat · Auto search` summary, and to preserve the old no-disclosure-height intent as an equality check between Web Off and Web Auto composer heights at 240 px; the two disclosure checks are unchanged in substance, and the layout check now also requires the model button. Nothing under `src/` or `tests/` changed.
+The ignored `--compact-ui` scenario predates the Stage 44 compact composer: it locates the removed `select[aria-label="Web search mode"]`, so against the committed HEAD bundle it fails immediately with `Error: Web mode selector is missing.` It reports 4/4 only against the stale Nov 9 plugin copy still present in the harness fixture, which is not this branch's bundle. The ignored scenario was updated to probe the current `.emend-chat-writing-trigger` and `.emend-chat-active-model` controls, to read `webSearchMode` from the live view, to accept the current `Chat · Auto search` summary, and to preserve the old no-disclosure-height intent as an equality check between Web Off and Web Auto composer heights at 240 px; the two disclosure checks are unchanged in substance, and the layout check now also requires the model button. Nothing under `src/` or `tests/` changed.
 
-`node test_vault/emend-web-verify/verify.mjs --compact-ui` then exited **0** with **1/1 scenario and 4/4 assertions** on the same root/loaded bundle `cc17e0ce…`:
+The earlier zero-exit 4/4 run was not yet evidence of this branch's bundle: `prepare()` copied the repository build into the fixture plugin folder only for the reader and `--web-transition` modes, so `--compact-ui` ran whatever plugin copy the fixture happened to hold. The harness now applies the same copy for `--compact-ui`, and its evidence records `bundleSha256`, `rootBundleMatches`, and the probed Obsidian version (the `app.appVersion` probe first, then the `tools/obsidian` `app.asar` package version as fallback).
+
+`node test_vault/emend-web-verify/verify.mjs --compact-ui` then exited **0** with **1/1 scenario and 4/4 assertions** on the loaded bundle `cc17e0ce…`, equal to the root build (`rootBundleMatches: true`) under Obsidian **1.15.0**:
 
 - Web Auto (`Chat · Auto search`) renders no `.emend-chat-web-disclosure` block.
 - The Writing/Web trigger title keeps the note-context/direct-Auto/billing/local-activity disclosure.
 - The 240 px composer keeps Web, model, and Send visible without horizontal overflow.
 - Composer height is identical for Web Off and Web Auto (219.5 px), so Web mode adds no bottom-disclosure height.
 
-Evidence is ignored `evidence-compact-ui/summary.json` (SHA-256 `40d0f8aabf3b4db4b8b1cd37d112c054e35def084a42eccb5fbd0b7f70820b7f`) and `compact-ui-evidence.json` (`159558bb9d37b5427ebe26a73b2f58b32ab26c0f66dacf73741a9786fe2b184f`), with the inspected `compact-ui-240.png` (`71c54597d721683f2c681f82af96e03902fb0e550055bf62983efd07eea95dde`). This is the Web harness's compact mode, not the separate `emend-selection-chat-verify` `--compact` 28-assertion matrix recorded by earlier stages.
+The bundle embeds the short commit as its build identity, so reproducing `cc17e0ce…` means building the same product source at `34b4f2f`; the later commits on this branch change only tests and documentation.
+
+Evidence is ignored `evidence-compact-ui/summary.json` (SHA-256 `e2b3a4cfb5cd46088f0be52260eb8c22caf127dc308b0cf94d113643988c2453`) and `compact-ui-evidence.json` (`6f967e849ecf5bc08d560a1c5934f757d3ec2c1d78b04400a1ac73b50946a6fa`), with the inspected `compact-ui-240.png` (`71c54597d721683f2c681f82af96e03902fb0e550055bf62983efd07eea95dde`); its header shows build `34b4f2f` beside the 240 px composer with Web, model, and Send visible. This is the Web harness's compact mode, not the separate `emend-selection-chat-verify` `--compact` 28-assertion matrix recorded by earlier stages.
 
 ## Unchanged boundaries
 
