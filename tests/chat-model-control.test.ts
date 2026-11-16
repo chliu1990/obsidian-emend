@@ -332,6 +332,22 @@ describe('ChatModelControl', () => {
 		expect(settings.providers.deepseek.reasoningEffort).toBe('high');
 	});
 
+	it('accepts the current native menu item after its hide callback precedes the click', async () => {
+		const { trigger, callbacks } = renderControl();
+		const menu = openMenu(trigger);
+		const item = menuItem(menu, 'DeepSeek', 'deepseek-v4-pro');
+
+		menu.hide();
+		choose(item);
+		await Promise.resolve();
+
+		expect(callbacks.onSelect).toHaveBeenCalledExactlyOnceWith(
+			{ providerId: 'deepseek', modelId: 'deepseek-v4-pro' },
+			'high',
+		);
+		expect(trigger.attributes['aria-expanded']).toBe('false');
+	});
+
 	it('selects Medium reasoning only for the active provider and its trimmed current model', async () => {
 		const settings = createSettings();
 		settings.activeProvider = 'kimi';

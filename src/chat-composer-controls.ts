@@ -204,7 +204,6 @@ export class ChatComposerControls {
 		this.updateMenu(active);
 		menu.onHide(() => {
 			if (this.activeMenu === active) {
-				this.activeMenu = null;
 				this.triggerEl?.setAttribute('aria-expanded', 'false');
 			}
 		});

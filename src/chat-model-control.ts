@@ -98,6 +98,7 @@ export class ChatModelControl {
 	): void {
 		this.update({ ...this.state, settings, availableProviderIds });
 		this.activeMenu?.menu.hide();
+		this.activeMenu = null;
 	}
 
 	destroy(): void {
@@ -194,7 +195,6 @@ export class ChatModelControl {
 		this.updateMenu(active);
 		menu.onHide(() => {
 			if (this.activeMenu === active) {
-				this.activeMenu = null;
 				this.triggerEl?.setAttribute('aria-expanded', 'false');
 			}
 		});
