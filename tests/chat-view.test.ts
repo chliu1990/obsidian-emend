@@ -4356,7 +4356,7 @@ describe('EmendChatView terminal response continuity', () => {
 
 	it('shows a web incompleteness warning before Markdown rendering settles', () => {
 		const pendingMarkdown = deferred<void>();
-		vi.spyOn(MarkdownRenderer, 'render').mockReturnValue(pendingMarkdown.promise);
+		const render = vi.spyOn(MarkdownRenderer, 'render').mockReturnValue(pendingMarkdown.promise);
 		const { body, context } = createMessageBodyHarness();
 		const warning = 'Emend could not read 1 requested page. The answer may be incomplete.';
 
@@ -4367,6 +4367,7 @@ describe('EmendChatView terminal response continuity', () => {
 
 		expect(textOf(body)).toContain(warning);
 		expect(messageContentElements(body)).toHaveLength(1);
+		expect(render).toHaveBeenCalledOnce();
 	});
 
 	it('shows the web activity instead of the waiting placeholder for a loading message', () => {
@@ -4393,6 +4394,9 @@ describe('EmendChatView terminal response continuity', () => {
 		});
 
 		expect(textOf(body)).toContain('Waiting for a response...');
+		expect(
+			findElements(body, (element) => element.className.split(' ').includes('emend-chat-web-activity')),
+		).toHaveLength(0);
 	});
 
 	it('keeps the streamed answer through the terminal Markdown transition', async () => {
