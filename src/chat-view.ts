@@ -1320,7 +1320,7 @@ export class EmendChatView extends ItemView {
 			if (message.status === 'loading') {
 				bodyEl.createDiv({
 					cls: 'emend-chat-message-content',
-					text: message.reasoning ? '' : 'Waiting for a response...',
+					text: message.reasoning || message.webActivity ? '' : 'Waiting for a response...',
 				});
 			}
 			return;
@@ -1334,7 +1334,10 @@ export class EmendChatView extends ItemView {
 			return;
 		}
 
-		const currentContentEl = bodyEl.createDiv('emend-chat-message-content');
+		const currentContentEl = bodyEl.createDiv({
+			cls: 'emend-chat-message-content',
+			text: message.content,
+		});
 		const renderedEl = bodyEl.ownerDocument.createElement('div');
 		renderedEl.className = 'emend-chat-message-content';
 		const generation = this.renderGeneration;
@@ -1610,6 +1613,7 @@ export class EmendChatView extends ItemView {
 			sourcePath,
 			status: 'loading',
 			timestamp: Date.now(),
+			...(webSearchMode !== 'off' ? { webActivity: 'Researching the web...' } : {}),
 		};
 		const controller = new AbortController();
 		const request: ActiveRequest = { identity, controller, loadingMessage };
