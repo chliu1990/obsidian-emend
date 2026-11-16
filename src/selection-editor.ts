@@ -14,6 +14,10 @@ import type { EditResult } from './note-writer';
 import { canWriteToNote } from './permissions';
 import type { requestAiResponse } from './provider-stream';
 import { buildSmartSelectionContext } from './selection-context';
+import {
+	buildFullNoteSelectionSections,
+	type SelectionContextPolicy,
+} from './selection-focus';
 import type { TokenUsage } from './token-usage';
 import type {
 	InstructionPromptParts,
@@ -64,6 +68,7 @@ export interface SelectionEditSubmission {
 	prompt: string;
 	maxContextCharacters: number;
 	smartSelectionContext: boolean;
+	selectionContext: SelectionContextPolicy;
 	additionalNotePaths: readonly string[];
 	history: ProviderHistoryMessage[];
 	notePath?: string;
@@ -230,6 +235,7 @@ export class SelectionEditRequestCoordinator {
 				prompt: submission.prompt,
 				maxContextCharacters: submission.maxContextCharacters,
 				smartSelectionContext: submission.smartSelectionContext,
+				selectionContext: submission.selectionContext,
 				additionalNotes,
 				notePath: submission.notePath,
 			}),
@@ -269,6 +275,7 @@ export interface SelectionPromptInput {
 	prompt: string;
 	maxContextCharacters: number;
 	smartSelectionContext: boolean;
+	selectionContext: SelectionContextPolicy;
 	additionalNotes: readonly AdditionalNoteSnapshot[];
 	notePath?: string;
 }
@@ -280,26 +287,30 @@ export function buildSelectionUserPrompt(input: SelectionPromptInput): string {
 	if (notePath) {
 		parts.push('Active note path:', notePath, '');
 	}
-	parts.push(`Selected text:\n${snapshot.selectedText}`, '');
-	if (input.smartSelectionContext) {
-		const context = buildSmartSelectionContext(
-			snapshot.fullText,
-			snapshot.from,
-			snapshot.to,
-			input.maxContextCharacters,
-		);
-		parts.push(`Context:\n${context.contextText}`, '');
+	if (input.selectionContext === 'full-note') {
+		parts.push(buildFullNoteSelectionSections(snapshot, 'edit-target'), '');
 	} else {
-		const context = getSelectionContext(
-			snapshot,
-			input.maxContextCharacters,
-		);
-		parts.push(
-			`Context before:\n${context.before}`,
-			'',
-			`Context after:\n${context.after}`,
-			'',
-		);
+		parts.push(`Selected text:\n${snapshot.selectedText}`, '');
+		if (input.smartSelectionContext) {
+			const context = buildSmartSelectionContext(
+				snapshot.fullText,
+				snapshot.from,
+				snapshot.to,
+				input.maxContextCharacters,
+			);
+			parts.push(`Context:\n${context.contextText}`, '');
+		} else {
+			const context = getSelectionContext(
+				snapshot,
+				input.maxContextCharacters,
+			);
+			parts.push(
+				`Context before:\n${context.before}`,
+				'',
+				`Context after:\n${context.after}`,
+				'',
+			);
+		}
 	}
 	const additionalNotesPrompt = formatAdditionalNotesPrompt(input.additionalNotes);
 	if (additionalNotesPrompt) {

@@ -21,6 +21,10 @@ import {
 	requestAiResponse,
 	type StreamResult,
 } from './provider-stream';
+import {
+	buildFullNoteSelectionSections,
+	type ChatTarget,
+} from './selection-focus';
 import { resolveRoundTokenUsage, resolveTokenUsage } from './token-usage';
 import type { TokenUsage } from './token-usage';
 import type {
@@ -46,6 +50,7 @@ export type ReadOnlyWebSearchOptions = Omit<
 export interface ReadOnlySubmission {
 	context: RequestContext;
 	mode: ReadOnlyMode;
+	chatTarget: ChatTarget;
 	prompt: string;
 	history: ProviderHistoryMessage[];
 	additionalNotePaths: readonly string[];
@@ -114,11 +119,17 @@ export class ReadOnlyRequestCoordinator {
 		const request = {
 			provider: this.dependencies.provider,
 			systemPrompt: getSystemPrompt(submission.mode, instructions),
-			userPrompt: buildUserPrompt(
-				submission.context,
-				submission.prompt,
-				additionalNotes,
-			),
+			userPrompt: submission.chatTarget === 'selection'
+				? buildChatSelectionUserPrompt(
+					submission.context,
+					submission.prompt,
+					additionalNotes,
+				)
+				: buildUserPrompt(
+					submission.context,
+					submission.prompt,
+					additionalNotes,
+				),
 			history: submission.history,
 		};
 		submission.signal.throwIfAborted();
@@ -223,6 +234,26 @@ export class EditRequestCoordinator {
 		);
 		return { ...editResult, usage };
 	}
+}
+
+export function buildChatSelectionUserPrompt(
+	context: RequestContext,
+	prompt: string,
+	additionalNotes: readonly AdditionalNoteSnapshot[],
+): string {
+	const selectedText = context.sourceText.slice(
+		context.selection.from,
+		context.selection.to,
+	);
+	return buildUserPrompt(
+		context,
+		prompt,
+		additionalNotes,
+		buildFullNoteSelectionSections(
+			{ fullText: context.sourceText, selectedText },
+			'chat-focus',
+		),
+	);
 }
 
 export function buildUserPrompt(

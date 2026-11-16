@@ -1,29 +1,22 @@
 # Future edit and chat workflows
 
-Status: deferred design register recorded on 2026-11-12. These are not current behavior or approval to implement without focused designs and PRs.
+Status: issue #51's approved behavior shipped in Stage 49; issue #48 remains a deferred design register. Deferred items are not current behavior or approval to implement without focused designs and PRs.
 
-## Selection-focused read-only chat — issue #51
+## Selection-focused read-only chat — shipped in Stage 49
 
 Track: https://github.com/chliu1990/obsidian-emend/issues/51
 
-### Problem
+The issue remains linked for history. Its approved Selection-focus behavior is implemented and verified in [Stage 49](49-selection-focus-and-context.md); the GitHub issue was not closed or mutated by the documentation change.
 
-In Emend 2.8.0, selecting text and asking Ask/Discuss/Brainstorm to focus on it does not reliably communicate that intent to the model. Read-only requests currently receive bounded note context centered on the selection or caret, but the prompt does not explicitly identify a selected region as the conversation's focus.
+### Shipped behavior
 
-### Deferred behavior
+- [x] Explicit **Chat · Selection** captures the exact usable selection synchronously and sends the complete note plus a separate complete read-only focus section; ordinary Chat remains bounded and selection alone never changes its target.
+- [x] Empty, whitespace-only, or vanished focused selections require reselection with no message, save, request, retrieval, write, or ordinary-Chat fallback. Multiline, Unicode, and over-budget selections remain complete.
+- [x] Chat Selection retains writer-free `ask` requests, originating-session history, additional-note privacy, capacity checks, and the existing DeepSeek Review/Auto protocol. Full-note/focus capacity includes the intentionally duplicated selection.
+- [x] **Edit · Selection · Full note** and Modify Selection's per-open **Full note** choice share complete-note/target prompting while Default preserves Smart/Symmetric behavior and Operations/native replacement remain confined to the selection.
+- [x] Structured request-body and real-Obsidian verification covers prompts, history/privacy/capacity, Web, fail-closed paths, native undo, exact Track Changes bytes, lifecycle races, popouts, and 240 px layouts.
 
-- [ ] Capture the exact usable selection synchronously for read-only submissions and label it as the user's current focus in the prompt.
-- [ ] Preserve complete selected text even when it exceeds the ordinary context budget; use the existing smart or symmetric selection-context builders for surrounding text rather than silently truncating the target.
-- [ ] Keep Ask/Discuss/Brainstorm writer-free. A selection in these modes changes conversational focus only and must not route to either edit writer.
-- [ ] Define behavior for empty, whitespace-only, vanished, multiline, and over-budget selections, including whether the visible control falls back to the full note or asks the user to reselect.
-- [ ] Preserve current note switching, per-session history, additional-note privacy, capacity checks, and selection editing semantics. Do not reuse the model's answer as permission to edit.
-- [ ] Add prompt-assembly and real-Obsidian tests that inspect actual provider messages and prove the model receives an explicit focus label, complete selection, bounded surroundings, and no unintended note write.
-
-### Open design questions
-
-- Whether selection focus is automatic whenever usable text exists or needs an explicit read-only target control.
-- How much surrounding context is useful for discussion without making the answer revert to the whole note.
-- Whether the selected region is shown in the composer before submission.
+No automatic Chat Selection, selection-preview/focus widget, new persisted mode/schema field, global Selection-context setting, or full-note target expansion was added.
 
 ## Edit-failure feedback and bounded retry — issue #48
 
@@ -50,6 +43,6 @@ Structural Markdown safeguards intentionally reject unreviewable Operations, esp
 
 ## Delivery boundaries
 
-- Keep #51 and #48 in separate focused PRs with independent review and real-Obsidian verification.
+- #51 shipped in its own focused PR with real-Obsidian verification; keep any #48 work in a separate focused PR with independent review and real-Obsidian verification.
 - Do not weaken current fail-closed Operations validation, add silent retries, add another writer, or bypass capacity guards.
 - Disclose provider usage/cost implications before increasing model-call counts.

@@ -4,6 +4,7 @@ import EmendPlugin from '../src/main';
 import { formatProviderHistory } from '../src/provider-history';
 import { requestAiResponse } from '../src/provider-stream';
 import type { StreamResult } from '../src/provider-stream';
+import type { SelectionContextPolicy } from '../src/selection-focus';
 import { DEFAULT_SETTINGS } from '../src/settings';
 import type { SelectionSnapshot } from '../src/types';
 
@@ -22,7 +23,12 @@ vi.mock('../src/selection-modal', () => ({
 
 		constructor(
 			_app: unknown,
-			private readonly submit: (prompt: string, signal: AbortSignal) => Promise<unknown>,
+			private readonly submit: (
+				prompt: string,
+				signal: AbortSignal,
+				additionalNotePaths: readonly string[],
+				selectionContext: SelectionContextPolicy,
+			) => Promise<unknown>,
 		) {
 			modalState.instances.push(this);
 		}
@@ -30,7 +36,7 @@ vi.mock('../src/selection-modal', () => ({
 		open() {
 			this.controller = new AbortController();
 			this.signal = this.controller.signal;
-			this.completion = this.submit('Change selection.', this.signal);
+			this.completion = this.submit('Change selection.', this.signal, [], 'default');
 			this.completion.catch(() => undefined);
 		}
 
@@ -128,8 +134,10 @@ describe('selection request plugin unload', () => {
 		expect(execute(false, editor, view)).toBe(true);
 		await vi.waitFor(() => expect(requestAiResponse).toHaveBeenCalledOnce());
 		expect(requestSelectionEdit).toHaveBeenCalledOnce();
-		expect(requestSelectionEdit.mock.calls[0]).toHaveLength(5);
-		expect(requestSelectionEdit.mock.calls[0]?.[5]).toBeUndefined();
+		expect(requestSelectionEdit.mock.calls[0]).toHaveLength(8);
+		expect(requestSelectionEdit.mock.calls[0]?.[5]).toEqual([]);
+		expect(requestSelectionEdit.mock.calls[0]?.[6]).toBeUndefined();
+		expect(requestSelectionEdit.mock.calls[0]?.[7]).toBe('default');
 		const modalRequest = vi.mocked(requestAiResponse).mock.calls[0]?.[0];
 		expect(modalRequest?.history).toEqual([]);
 		expect(formatProviderHistory(modalRequest?.history ?? [])).toEqual([]);

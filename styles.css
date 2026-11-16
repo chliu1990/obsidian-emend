@@ -764,6 +764,25 @@
 	line-height: 1.4;
 }
 
+.emend-selection-context {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 8px;
+	margin: 8px 0;
+}
+
+.emend-selection-context-select {
+	max-width: 100%;
+}
+
+.emend-selection-context-description {
+	flex: 1 1 260px;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	line-height: 1.4;
+}
+
 @media (max-width: 400px) {
 	.emend-chat-session-select {
 		flex-basis: 100%;

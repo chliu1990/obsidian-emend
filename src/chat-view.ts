@@ -50,6 +50,7 @@ import {
 	type QuickAction,
 } from './quick-actions';
 import type { SelectionEditTarget } from './selection-editor';
+import type { ChatTarget, SelectionContextPolicy } from './selection-focus';
 import { AI_PROVIDERS, normalizeContextLimit } from './settings';
 import { formatTokenUsage } from './token-usage';
 import type {
@@ -103,13 +104,25 @@ interface UntypedWorkspaceEvents {
 
 type DraftCapacityTarget =
 	| { type: 'read-only'; mode: Exclude<Mode, 'edit'>; context: RequestContext }
+	| { type: 'read-only-selection'; mode: 'ask'; context: RequestContext }
 	| { type: 'full-note'; mode: 'edit'; context: RequestContext }
-	| { type: 'selection'; mode: 'edit'; snapshot: SelectionSnapshot };
+	| {
+		type: 'selection';
+		mode: 'edit';
+		snapshot: SelectionSnapshot;
+		selectionContext: SelectionContextPolicy;
+	};
 
 type CapturedDraftTarget =
 	| { type: 'full-note'; mode: 'edit'; context: RequestContext }
-	| { type: 'selection'; mode: 'edit'; target: SelectionEditTarget }
-	| { type: 'read-only'; mode: Exclude<Mode, 'edit'>; context: RequestContext };
+	| {
+		type: 'selection';
+		mode: 'edit';
+		target: SelectionEditTarget;
+		selectionContext: SelectionContextPolicy;
+	}
+	| { type: 'read-only'; mode: Exclude<Mode, 'edit'>; context: RequestContext }
+	| { type: 'read-only-selection'; mode: 'ask'; context: RequestContext };
 
 interface ComposerRestoreState {
 	draft: string;
@@ -157,6 +170,8 @@ export class EmendChatView extends ItemView {
 	private isStopping = false;
 	private isThreadLoading = false;
 	private selectedMode: SelectableMode;
+	private chatTarget: ChatTarget = 'note';
+	private selectionContext: SelectionContextPolicy = 'default';
 	private webSearchMode: WebSearchMode = 'off';
 	private editTargetChoice: EditTargetChoice = 'auto';
 	private displayedEditTarget: ResolvedEditTarget = 'full-note';
@@ -384,8 +399,13 @@ export class EmendChatView extends ItemView {
 		}
 		this.renderComposerChange(() => {
 			this.selectedMode = choice.mode;
-			if (choice.mode === 'edit') {
+			if (choice.mode === 'ask') {
+				this.chatTarget = choice.chatTarget;
+			} else {
 				this.editTargetChoice = choice.editTarget;
+				if (choice.editTarget === 'selection') {
+					this.selectionContext = choice.selectionContext;
+				}
 			}
 		}, true);
 	}
@@ -430,7 +450,9 @@ export class EmendChatView extends ItemView {
 	private composerState(): ComposerPermissionState {
 		return {
 			mode: this.selectedMode,
+			chatTarget: this.chatTarget,
 			editTarget: this.displayedEditTarget,
+			selectionContext: this.selectionContext,
 			webSearchMode: this.webSearchMode,
 			disabled: this.isModelSelectionSaving ||
 				this.isSending ||
@@ -465,6 +487,8 @@ export class EmendChatView extends ItemView {
 		this.messages = [];
 		this.isSessionMutating = false;
 		this.abortActiveRequest();
+		this.chatTarget = 'note';
+		this.selectionContext = 'default';
 		this.editTargetChoice = 'auto';
 		this.followLatestMessages = true;
 		this.responseStartMessageId = null;
@@ -897,12 +921,23 @@ export class EmendChatView extends ItemView {
 			if (this.displayedEditTarget === 'selection') {
 				const snapshot = this.captureSelectionSnapshot();
 				return snapshot
-					? { type: 'selection', mode: 'edit', snapshot }
+					? {
+						type: 'selection',
+						mode: 'edit',
+						snapshot,
+						selectionContext: this.selectionContext ?? 'default',
+					}
 					: undefined;
 			}
 			const context = this.captureComposerContext();
 			return context
 				? { type: 'full-note', mode: 'edit', context }
+				: undefined;
+		}
+		if (mode === 'ask' && this.chatTarget === 'selection') {
+			const context = this.captureComposerSelectionContext();
+			return context
+				? { type: 'read-only-selection', mode: 'ask', context }
 				: undefined;
 		}
 		const context = this.captureComposerContext();
@@ -925,15 +960,29 @@ export class EmendChatView extends ItemView {
 		}
 	}
 
+	private captureComposerSelectionContext(): RequestContext | undefined {
+		try {
+			return this.plugin.captureChatSelectionContext();
+		} catch {
+			return undefined;
+		}
+	}
+
 	private captureActionCapacityTarget(
 		draftTarget: DraftCapacityTarget | undefined,
 	): DraftCapacityTarget | undefined {
+		if (this.selectedMode === 'ask' && this.chatTarget === 'selection') {
+			return undefined;
+		}
 		if (this.displayedEditTarget === 'selection') {
 			return this.selectedMode === 'edit'
 				? draftTarget
 				: this.captureDraftCapacityTarget('edit');
 		}
-		if (draftTarget?.type === 'read-only') {
+		if (
+			draftTarget?.type === 'read-only' ||
+			draftTarget?.type === 'read-only-selection'
+		) {
 			return {
 				type: 'full-note',
 				mode: 'edit',
@@ -1468,12 +1517,19 @@ export class EmendChatView extends ItemView {
 						type: 'selection',
 						mode: requestedMode,
 						target: this.plugin.captureSelectionEditTarget(),
+						selectionContext: this.selectionContext ?? 'default',
 					}
 					: {
 						type: 'full-note',
 						mode: requestedMode,
 						context: this.plugin.captureChatContext(),
 					};
+			} else if (requestedMode === 'ask' && this.chatTarget === 'selection') {
+				capturedTarget = {
+					type: 'read-only-selection',
+					mode: requestedMode,
+					context: this.plugin.captureChatSelectionContext(),
+				};
 			} else {
 				capturedTarget = {
 					type: 'read-only',
@@ -1576,7 +1632,7 @@ export class EmendChatView extends ItemView {
 			);
 			this.requireActiveRequest(request);
 			this.applyPersistedMetadata(session, persistedUser);
-			if (capturedTarget.type !== 'read-only') {
+			if (capturedTarget.mode === 'edit') {
 				const callbacks = {
 					onReasoning: (text: string) => {
 						loadingMessage.reasoning += text;
@@ -1596,6 +1652,7 @@ export class EmendChatView extends ItemView {
 						additionalNotePaths,
 						history,
 						callbacks,
+						capturedTarget.selectionContext,
 					)
 					: await this.plugin.requestChatCompletion({
 						context: capturedTarget.context,
@@ -1629,6 +1686,9 @@ export class EmendChatView extends ItemView {
 				const result = await this.plugin.requestChatCompletion({
 					context: capturedTarget.context,
 					mode: capturedTarget.mode,
+					chatTarget: capturedTarget.type === 'read-only-selection'
+						? 'selection'
+						: 'note',
 					prompt,
 					history,
 					additionalNotePaths,
@@ -1842,10 +1902,18 @@ function toDraftCapacityTarget(
 			type: 'selection',
 			mode: 'edit',
 			snapshot: capturedTarget.target.snapshot,
+			selectionContext: capturedTarget.selectionContext,
 		};
 	}
 	if (capturedTarget.type === 'full-note') {
 		return { type: 'full-note', mode: 'edit', context: capturedTarget.context };
+	}
+	if (capturedTarget.type === 'read-only-selection') {
+		return {
+			type: 'read-only-selection',
+			mode: 'ask',
+			context: capturedTarget.context,
+		};
 	}
 	return {
 		type: 'read-only',
@@ -1874,6 +1942,16 @@ function buildCapacityForTarget(
 				provider,
 				context: target.context,
 				mode: target.mode,
+				chatTarget: 'note',
+				prompt,
+				history,
+			});
+		case 'read-only-selection':
+			return buildReadOnlyDraftEstimate({
+				provider,
+				context: target.context,
+				mode: target.mode,
+				chatTarget: 'selection',
 				prompt,
 				history,
 			});
@@ -1893,6 +1971,7 @@ function buildCapacityForTarget(
 					settings.maxContextCharacters,
 				),
 				smartSelectionContext: settings.smartSelectionContext,
+				selectionContext: target.selectionContext,
 				notePath: settings.includeNotePathInContext
 					? formatVaultQualifiedPath(
 						app.vault.getName(),

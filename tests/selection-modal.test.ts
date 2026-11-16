@@ -21,6 +21,7 @@ import {
 	SelectionEditRequestCoordinator,
 	type SelectionEditorAdapter,
 } from '../src/selection-editor';
+import type { SelectionContextPolicy } from '../src/selection-focus';
 import { SelectionModal } from '../src/selection-modal';
 import type { ProviderConfig, SelectionSnapshot } from '../src/types';
 
@@ -133,10 +134,15 @@ function openModal(
 		prompt: string,
 		signal: AbortSignal,
 		additionalNotePaths: readonly string[],
+		selectionContext: SelectionContextPolicy,
 	) => Promise<EditResult>,
 	store = new AdditionalNotesStore(),
 	targetPath = 'note.md',
-	estimateDraft: (prompt: string) => DraftCapacityEstimate = defaultEstimateDraft,
+	estimateDraft: (
+		prompt: string,
+		selectionContext: SelectionContextPolicy,
+	) => DraftCapacityEstimate = defaultEstimateDraft,
+	smartSelectionContext = true,
 ) {
 	const contentEl = new FakeElement();
 	const targetFile = new TFile();
@@ -155,6 +161,7 @@ function openModal(
 		store,
 		targetPath,
 		estimateDraft,
+		smartSelectionContext,
 	);
 	Object.assign(modal, {
 		contentEl,
@@ -168,6 +175,7 @@ function openModal(
 		targetFile,
 		contentEl,
 		input: findElements(contentEl, (element) => element.tagName === 'textarea')[0],
+		contextSelect: findContextSelect(contentEl),
 		quickActions: findElements(contentEl, (element) =>
 			element.className.split(' ').includes('emend-chat-quick-action')
 		),
@@ -187,6 +195,15 @@ function findElements(
 		...(predicate(root) ? [root] : []),
 		...root.children.flatMap((child) => findElements(child, predicate)),
 	];
+}
+
+function findContextSelect(contentEl: FakeElement) {
+	return findElements(
+		contentEl,
+		(element) =>
+			element.tagName === 'select' &&
+			element.attributes['aria-label'] === 'Selection context',
+	)[0];
 }
 
 function findAction(contentEl: FakeElement, actionId: string) {
@@ -230,7 +247,10 @@ function estimateForPrompt(
 	});
 }
 
-function defaultEstimateDraft(prompt: string): DraftCapacityEstimate {
+function defaultEstimateDraft(
+	prompt: string,
+	_selectionContext: SelectionContextPolicy,
+): DraftCapacityEstimate {
 	return estimateForPrompt(prompt);
 }
 
@@ -285,6 +305,7 @@ describe('SelectionModal quick actions', () => {
 				action.prompt,
 				expect.any(AbortSignal),
 				['Context.md'],
+				'default',
 			);
 			expect(quickActions).toHaveLength(QUICK_ACTIONS.length);
 			expect(quickActions.every((item) => item.disabled)).toBe(true);
@@ -334,6 +355,7 @@ describe('SelectionModal quick actions', () => {
 			'Clarify this selection.',
 			expect.any(AbortSignal),
 			['First.md', 'Second.md'],
+			'default',
 		);
 		store.clear('note.md');
 		expect(submitSelection.mock.calls[0]?.[2]).toEqual(['First.md', 'Second.md']);
@@ -406,6 +428,7 @@ describe('SelectionModal quick actions', () => {
 			'Clarify this selection.',
 			expect.any(AbortSignal),
 			['Context.md'],
+			'default',
 		));
 	});
 
@@ -429,6 +452,7 @@ describe('SelectionModal quick actions', () => {
 				action.prompt,
 				expect.any(AbortSignal),
 				['Context.md'],
+				'default',
 			));
 		},
 	);
@@ -436,7 +460,7 @@ describe('SelectionModal quick actions', () => {
 	it('restores Cancel after a stopped quick-action request settles', async () => {
 		const response = deferred<EditResult>();
 		const submitSelection = vi.fn((_prompt: string, _signal: AbortSignal) => response.promise);
-		const { contentEl, input, quickActions } = openModal(submitSelection);
+		const { contentEl, input, contextSelect, quickActions } = openModal(submitSelection);
 		const cancelButton = findElements(contentEl, (element) =>
 			element.className.split(' ').includes('emend-chat-secondary-button')
 		)[0];
@@ -448,6 +472,7 @@ describe('SelectionModal quick actions', () => {
 		expect(submitSelection.mock.calls[0]?.[1].aborted).toBe(true);
 		expect(cancelButton?.disabled).toBe(true);
 		expect(cancelButton?.textContent).toBe('Stopping...');
+		expect(contextSelect?.disabled).toBe(true);
 
 		response.resolve({ applied: false, changeCount: 0, summaryItems: [] });
 
@@ -455,6 +480,7 @@ describe('SelectionModal quick actions', () => {
 			expect(cancelButton?.disabled).toBe(false);
 			expect(quickActions.every((item) => !item.disabled)).toBe(true);
 			expect(input?.disabled).toBe(false);
+			expect(contextSelect?.disabled).toBe(false);
 		});
 		expect(cancelButton?.textContent).toBe('Cancel');
 	});
@@ -496,6 +522,7 @@ describe('SelectionModal quick actions', () => {
 					prompt,
 					maxContextCharacters: 1000,
 					smartSelectionContext: true,
+					selectionContext: 'default',
 					additionalNotePaths: [],
 					history: [],
 					signal,
@@ -557,6 +584,7 @@ describe('SelectionModal quick actions', () => {
 				prompt,
 				maxContextCharacters: 1000,
 				smartSelectionContext: true,
+				selectionContext: 'default',
 				additionalNotePaths: [],
 				history: [],
 				signal,
@@ -585,6 +613,232 @@ describe('SelectionModal quick actions', () => {
 	});
 });
 
+describe('SelectionModal selection context', () => {
+	it.each([
+		{ smartSelectionContext: true, defaultLabel: 'Default (Smart)' },
+		{ smartSelectionContext: false, defaultLabel: 'Default (Symmetric)' },
+	])(
+		'labels the Default policy $defaultLabel and discloses Full-note scope',
+		({ smartSelectionContext, defaultLabel }) => {
+			const { contentEl, contextSelect } = openModal(
+				vi.fn(async () => ({ applied: false, changeCount: 0, summaryItems: [] })),
+				new AdditionalNotesStore(),
+				'note.md',
+				defaultEstimateDraft,
+				smartSelectionContext,
+			);
+
+			expect(contextSelect).toBeDefined();
+			expect(contextSelect?.value).toBe('default');
+			expect(contextSelect?.children.map((option) => ({
+				value: option.attributes.value,
+				label: option.textContent,
+			}))).toEqual([
+				{ value: 'default', label: defaultLabel },
+				{ value: 'full-note', label: 'Full note' },
+			]);
+			expect(textOf(contentEl)).toContain(
+				'Full note sends the complete note; only the selection is edited.',
+			);
+		},
+	);
+
+	it('resets to Default on every open', () => {
+		const { modal, contentEl, contextSelect } = openModal(
+			vi.fn(async () => ({ applied: false, changeCount: 0, summaryItems: [] })),
+		);
+		if (!contextSelect) {
+			throw new Error('Selection context selector missing.');
+		}
+		contextSelect.value = 'full-note';
+		contextSelect.dispatch('change');
+
+		modal.onClose();
+		modal.onOpen();
+
+		expect(findContextSelect(contentEl)?.value).toBe('default');
+	});
+
+	it('refreshes typed and every quick-action estimate without reads or requests', () => {
+		const estimateDraft = vi.fn(defaultEstimateDraft);
+		const submitSelection = vi.fn(async () => ({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+		}));
+		const store = new AdditionalNotesStore();
+		store.add('note.md', 'Context.md');
+		const listSpy = vi.spyOn(store, 'list');
+		const { input, contextSelect } = openModal(
+			submitSelection,
+			store,
+			'note.md',
+			estimateDraft,
+		);
+		if (!input || !contextSelect) {
+			throw new Error('Selection controls missing.');
+		}
+		input.value = 'Polish this selection.';
+		input.dispatch('input');
+		estimateDraft.mockClear();
+		listSpy.mockClear();
+
+		contextSelect.value = 'full-note';
+		contextSelect.dispatch('change');
+
+		expect(estimateDraft.mock.calls).toEqual([
+			['Polish this selection.', 'full-note'],
+			...QUICK_ACTIONS.map((action) => [action.prompt, 'full-note']),
+		]);
+		expect(listSpy).not.toHaveBeenCalled();
+		expect(submitSelection).not.toHaveBeenCalled();
+	});
+
+	it('submits typed input once with the matching Full-note estimate and policy', async () => {
+		const response = deferred<EditResult>();
+		const estimateDraft = vi.fn(defaultEstimateDraft);
+		const submitSelection = vi.fn(() => response.promise);
+		const { contentEl, input, contextSelect } = openModal(
+			submitSelection,
+			new AdditionalNotesStore(),
+			'note.md',
+			estimateDraft,
+		);
+		if (!input || !contextSelect) {
+			throw new Error('Selection controls missing.');
+		}
+		input.value = 'Polish this selection.';
+		contextSelect.value = 'full-note';
+		contextSelect.dispatch('change');
+		estimateDraft.mockClear();
+
+		findButtonByClass(contentEl, 'emend-chat-primary-button')?.click();
+
+		expect(estimateDraft).toHaveBeenCalledWith('Polish this selection.', 'full-note');
+		expect(submitSelection).toHaveBeenCalledTimes(1);
+		expect(submitSelection).toHaveBeenCalledWith(
+			'Polish this selection.',
+			expect.any(AbortSignal),
+			[],
+			'full-note',
+		);
+		expect(contextSelect.disabled).toBe(true);
+
+		response.reject(new Error('Provider unavailable'));
+		await vi.waitFor(() => expect(contextSelect.disabled).toBe(false));
+	});
+
+	it.each(QUICK_ACTIONS)(
+		'$id submits exactly once with the selected Full-note policy',
+		async (action) => {
+			const estimateDraft = vi.fn(defaultEstimateDraft);
+			const submitSelection = vi.fn(async () => ({
+				applied: false,
+				changeCount: 0,
+				summaryItems: [],
+			}));
+			const { contentEl, contextSelect } = openModal(
+				submitSelection,
+				new AdditionalNotesStore(),
+				'note.md',
+				estimateDraft,
+			);
+			if (!contextSelect) {
+				throw new Error('Selection context selector missing.');
+			}
+			contextSelect.value = 'full-note';
+			contextSelect.dispatch('change');
+			estimateDraft.mockClear();
+
+			findAction(contentEl, action.id)?.click();
+
+			await vi.waitFor(() => expect(submitSelection).toHaveBeenCalledTimes(1));
+			expect(estimateDraft).toHaveBeenCalledWith(action.prompt, 'full-note');
+			expect(submitSelection).toHaveBeenCalledWith(
+				action.prompt,
+				expect.any(AbortSignal),
+				[],
+				'full-note',
+			);
+		},
+	);
+
+	it('keeps Full-note submissions history-free and uses only the native selection writer', async () => {
+		const file = new TFile();
+		file.path = 'note.md';
+		const fullText = 'Outside only\nAlpha beta gamma.';
+		const from = fullText.indexOf('beta');
+		const snapshot: SelectionSnapshot = {
+			file,
+			fullText,
+			selectedText: 'beta',
+			from,
+			to: from + 4,
+		};
+		const editor: SelectionEditorAdapter = {
+			readCurrentText: vi.fn(() => fullText),
+			isTargetCurrent: vi.fn(() => true),
+			replaceRange: vi.fn(),
+		};
+		const request = vi.fn(async (_request: AiProviderRequest) => ({
+			content: JSON.stringify([
+				{ type: 'replace', target: 'beta', replacement: 'BETA' },
+			]),
+			reasoning: '',
+		}));
+		const coordinator = new SelectionEditRequestCoordinator({
+			provider,
+			loadAdditionalNotes: async () => [],
+			loadInstructions: async () => ({ skillTexts: new Map() }),
+			request,
+			editor,
+			editStrategy: operationEditStrategy,
+		});
+		const submitSelection = vi.fn((
+			prompt: string,
+			signal: AbortSignal,
+			additionalNotePaths: readonly string[],
+			selectionContext: SelectionContextPolicy,
+		) => coordinator.submit({
+			snapshot,
+			prompt,
+			maxContextCharacters: 20,
+			smartSelectionContext: true,
+			selectionContext,
+			additionalNotePaths,
+			history: [],
+			signal,
+		}));
+		const { contentEl, input, contextSelect } = openModal(submitSelection);
+		if (!input || !contextSelect) {
+			throw new Error('Selection controls missing.');
+		}
+		input.value = 'Uppercase beta.';
+		contextSelect.value = 'full-note';
+		contextSelect.dispatch('change');
+		const noticeMessages = (Notice as unknown as { readonly messages: string[] }).messages;
+		const noticeCount = noticeMessages.length;
+
+		findButtonByClass(contentEl, 'emend-chat-primary-button')?.click();
+
+		await vi.waitFor(() => expect(editor.replaceRange).toHaveBeenCalledTimes(1));
+		await vi.waitFor(() => expect(noticeMessages.length).toBe(noticeCount + 1));
+		expect(editor.replaceRange).toHaveBeenCalledWith(
+			expect.stringContaining('BETA'),
+			from,
+			from + 4,
+		);
+		expect(request).toHaveBeenCalledTimes(1);
+		expect(request.mock.calls[0]?.[0].history).toEqual([]);
+		expect(request.mock.calls[0]?.[0].userPrompt).toContain(
+			`Full note (supporting context):\n${fullText}\n\nSelected text (the only edit target):\nbeta`,
+		);
+		expect(noticeMessages.slice(noticeCount)).toEqual([
+			'Selection updated — 1 changes tracked. Review in Track Changes.',
+		]);
+	});
+});
+
 describe('SelectionModal draft capacity estimate', () => {
 	it('shows the shared estimate above quick actions and refreshes on input without re-rendering', () => {
 		const estimateDraft = vi.fn(defaultEstimateDraft);
@@ -599,9 +853,9 @@ describe('SelectionModal draft capacity estimate', () => {
 		}
 		const root = findCapacityRoot(contentEl);
 		const summary = findCapacitySummary(contentEl);
-		expect(estimateDraft).toHaveBeenCalledWith('');
+		expect(estimateDraft).toHaveBeenCalledWith('', 'default');
 		expect(summary?.textContent).toBe(
-			formatDraftCapacitySummary(defaultEstimateDraft('')),
+			formatDraftCapacitySummary(defaultEstimateDraft('', 'default')),
 		);
 		expect(root?.attributes.role).toBeUndefined();
 		expect(summary?.attributes.role).toBe('status');
@@ -613,9 +867,9 @@ describe('SelectionModal draft capacity estimate', () => {
 		input.value = 'A longer typed draft';
 		input.dispatch('input');
 
-		expect(estimateDraft).toHaveBeenCalledWith('A longer typed draft');
+		expect(estimateDraft).toHaveBeenCalledWith('A longer typed draft', 'default');
 		expect(findCapacitySummary(contentEl)?.textContent).toBe(
-			formatDraftCapacitySummary(defaultEstimateDraft('A longer typed draft')),
+			formatDraftCapacitySummary(defaultEstimateDraft('A longer typed draft', 'default')),
 		);
 		expect(contentEl.children.length).toBe(childCount);
 		expect(input.focusCalls).toBe(focusCalls);
@@ -739,9 +993,9 @@ describe('SelectionModal draft capacity estimate', () => {
 			estimateDraft,
 		);
 
-		expect(estimateDraft).toHaveBeenCalledWith(QUICK_ACTIONS[0].prompt);
-		expect(estimateDraft).toHaveBeenCalledWith(QUICK_ACTIONS[1].prompt);
-		expect(estimateDraft).toHaveBeenCalledWith(QUICK_ACTIONS[2].prompt);
+		expect(estimateDraft).toHaveBeenCalledWith(QUICK_ACTIONS[0].prompt, 'default');
+		expect(estimateDraft).toHaveBeenCalledWith(QUICK_ACTIONS[1].prompt, 'default');
+		expect(estimateDraft).toHaveBeenCalledWith(QUICK_ACTIONS[2].prompt, 'default');
 		expect(findAction(contentEl, 'fix-grammar')?.disabled).toBe(true);
 		expect(findAction(contentEl, 'add-examples')?.disabled).toBe(true);
 		expect(findAction(contentEl, 'make-concise')?.disabled).toBe(false);
@@ -758,6 +1012,7 @@ describe('SelectionModal draft capacity estimate', () => {
 				QUICK_ACTIONS[1].prompt,
 				expect.any(AbortSignal),
 				[],
+				'default',
 			)
 		);
 	});
@@ -898,10 +1153,11 @@ describe('SelectionModal draft capacity estimate', () => {
 				'Clarify this selection.',
 				expect.any(AbortSignal),
 				['Context.md'],
+				'default',
 			)
 		);
-		expect(estimateDraft).toHaveBeenCalledWith('Clarify this selection.');
-		expect(submitSelection.mock.calls[0]).toHaveLength(3);
+		expect(estimateDraft).toHaveBeenCalledWith('Clarify this selection.', 'default');
+		expect(submitSelection.mock.calls[0]).toHaveLength(4);
 		expect(textOf(contentEl)).toContain(CAPACITY_EXCLUSION_NOTE);
 	});
 

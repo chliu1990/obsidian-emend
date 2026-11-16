@@ -10,6 +10,7 @@ import {
 } from '../src/context-capacity-ui';
 import EmendPlugin from '../src/main';
 import type { ReadOnlySubmission } from '../src/request-coordinator';
+import type { SelectionContextPolicy } from '../src/selection-focus';
 import { SelectionModal } from '../src/selection-modal';
 import { createSelectionPresentation } from '../src/selection-presentation';
 import {
@@ -359,6 +360,83 @@ describe('EmendPlugin selection capture', () => {
 		return { file, fullText, from, to, view };
 	}
 
+	function makeChatSelectionView(selectedText: string) {
+		const file = new TFile();
+		file.path = 'Chat Selection.md';
+		const leading = 'Leading context line. '.repeat(80);
+		const trailing = 'Trailing context line. '.repeat(80);
+		const sourceText = `${leading}${selectedText}${trailing}`;
+		const from = leading.length;
+		const to = from + selectedText.length;
+		const getValue = vi.fn(() => sourceText);
+		const getCursor = vi.fn((which: 'from' | 'to') => ({
+			offset: which === 'from' ? from : to,
+		}));
+		const view = Object.assign(
+			Object.create(MarkdownView.prototype) as MarkdownView,
+			{
+				file,
+				app: { vault: { getName: () => 'TestVault' } },
+				editor: {
+					getValue,
+					getCursor,
+					posToOffset: (position: { offset: number }) => position.offset,
+				},
+			},
+		);
+		return { file, from, getCursor, getValue, sourceText, to, view };
+	}
+
+	it.each([true, false])(
+		'captures one complete Chat Selection context with path privacy=%s',
+		(includeNotePath) => {
+			const selectedText = 'Focused first line.\nFocused second line with Unicode 🌱.';
+			const { file, from, getCursor, getValue, sourceText, to, view } =
+				makeChatSelectionView(selectedText);
+			const settings = structuredClone(DEFAULT_SETTINGS);
+			settings.maxContextCharacters = 0;
+			settings.includeNotePathInContext = includeNotePath;
+			const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+			Object.assign(plugin, { getTargetMarkdownView: () => view, settings });
+
+			const context = plugin.captureChatSelectionContext();
+
+			expect(getValue).toHaveBeenCalledOnce();
+			expect(getCursor).toHaveBeenCalledTimes(2);
+			expect(context.file).toBe(file);
+			expect(context.sourceText).toBe(sourceText);
+			expect(context.selection).toEqual({ from, to });
+			expect(context.sourceText.slice(from, to)).toBe(selectedText);
+			expect(context.noteLabel).toBe('Chat Selection.md');
+			expect(context.notePath).toBe(
+				includeNotePath ? 'TestVault/Chat Selection.md' : undefined,
+			);
+			expect(context.markdown).not.toBe(sourceText);
+			expect(context.markdown).toContain(selectedText);
+			expect(context.markdown).toContain('[...]');
+		},
+	);
+
+	it.each([
+		{ selectedText: '', caseName: 'vanished' },
+		{ selectedText: ' \n\t', caseName: 'whitespace-only' },
+	])('rejects a $caseName Chat Selection before any provider request', ({ selectedText }) => {
+		const { getValue, view } = makeChatSelectionView(selectedText);
+		const requestChatCompletion = vi.fn();
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, {
+			getTargetMarkdownView: () => view,
+			settings: structuredClone(DEFAULT_SETTINGS),
+			requestChatCompletion,
+		});
+
+		expect(() => plugin.captureChatSelectionContext()).toThrow(
+			'Select non-whitespace text first.',
+		);
+		expect(getValue).toHaveBeenCalledOnce();
+		expect(requestChatCompletion).not.toHaveBeenCalled();
+	});
+
 	it('captures the last open Markdown view when chat has focus', () => {
 		const { file, fullText, from, to, view } = makeView('beta');
 		const otherView = makeView('other').view;
@@ -687,6 +765,7 @@ describe('EmendPlugin web provider guard', () => {
 		await expect(plugin.requestChatCompletion({
 			context: { file: { path: 'Note.md' } } as ReadOnlySubmission['context'],
 			mode: 'ask',
+			chatTarget: 'note',
 			prompt: 'Research this',
 			history: [],
 			callbacks: { onContent: vi.fn(), onReasoning: vi.fn() },
@@ -779,6 +858,76 @@ describe('EmendPlugin Selection history', () => {
 		const current = body.messages.at(-1);
 		expect(current?.role).toBe('user');
 		expect(current?.content).toContain('User message:');
+	});
+
+	it('keeps Full-note-context Operations confined with zero native or vault writes', async () => {
+		const response = JSON.stringify([
+			{ type: 'replace', target: 'Outside only', replacement: 'Changed' },
+		]);
+		const event = JSON.stringify({ choices: [{ delta: { content: response } }] });
+		const encoder = new TextEncoder();
+		const fetchMock = vi.fn().mockImplementation(async () => {
+			const stream = new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(encoder.encode(`data: ${event}\n\n`));
+					controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+					controller.close();
+				},
+			});
+			return new Response(stream);
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		const file = new TFile();
+		file.path = 'Selection.md';
+		const fullText = 'Outside only\nAlpha beta gamma.';
+		const from = fullText.indexOf('beta');
+		const snapshot: SelectionSnapshot = {
+			file,
+			fullText,
+			selectedText: 'beta',
+			from,
+			to: from + 4,
+		};
+		const editor: SelectionEditorAdapter = {
+			readCurrentText: () => fullText,
+			isTargetCurrent: () => true,
+			replaceRange: vi.fn(),
+		};
+		const vaultModify = vi.fn();
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, {
+			settings: structuredClone(DEFAULT_SETTINGS),
+			app: {
+				vault: {
+					getAbstractFileByPath: () => null,
+					modify: vaultModify,
+				},
+			},
+			getApiKey: () => 'dummy-key',
+		});
+
+		await expect(plugin.requestSelectionEdit(
+			snapshot,
+			'Improve this selection.',
+			new AbortController().signal,
+			editor,
+			[],
+			[],
+			undefined,
+			'full-note',
+		)).rejects.toThrow(/not found|match/i);
+
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+		const body = JSON.parse(init.body as string) as {
+			messages: Array<{ content: string }>;
+		};
+		expect(body.messages.at(-1)?.content).toContain(
+			`Full note (supporting context):\n${fullText}\n\nSelected text (the only edit target):\nbeta`,
+		);
+		expect(editor.replaceRange).not.toHaveBeenCalled();
+		expect(vaultModify).not.toHaveBeenCalled();
+		expect(snapshot.fullText).toBe(fullText);
 	});
 });
 
@@ -1117,6 +1266,7 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 			prompt: 'Tighten this.',
 			maxContextCharacters: normalizeContextLimit(0),
 			smartSelectionContext: false,
+			selectionContext: 'default',
 			notePath: formatVaultQualifiedPath('Vault', file.path),
 			history: [],
 		}));
@@ -1129,6 +1279,7 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 				prompt: 'Tighten this.',
 				maxContextCharacters: 12000,
 				smartSelectionContext: false,
+				selectionContext: 'default',
 				notePath: formatVaultQualifiedPath('Vault', file.path),
 				history: [],
 			}).categories.user,
@@ -1142,7 +1293,7 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 		);
 	});
 
-	it('uses the same Selection request options for submission and the draft estimate', async () => {
+	it('forwards trailing Full-note policy to both Selection submission and draft estimation', async () => {
 		const settings = selectionSettings();
 		const file = new TFile();
 		file.path = 'Selection.md';
@@ -1164,6 +1315,7 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 			| {
 				maxContextCharacters: number;
 				smartSelectionContext: boolean;
+				selectionContext: 'default' | 'full-note';
 				notePath?: string;
 			}
 			| undefined;
@@ -1197,21 +1349,29 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 				editor,
 				[],
 				[],
+				undefined,
+				'full-note',
 			);
 
 			expect(captured).toBeDefined();
 			expect(captured).toMatchObject({
 				maxContextCharacters: 1000,
 				smartSelectionContext: false,
+				selectionContext: 'full-note',
 				notePath: 'Vault/Selection.md',
 			});
-			const estimate = plugin.estimateSelectionDraft(snapshot, 'Tighten this.');
+			const estimate = plugin.estimateSelectionDraft(
+				snapshot,
+				'Tighten this.',
+				'full-note',
+			);
 			expect(estimate).toEqual(buildSelectionDraftEstimate({
 				provider: settings.providers[settings.activeProvider],
 				snapshot,
 				prompt: 'Tighten this.',
 				maxContextCharacters: captured?.maxContextCharacters ?? 0,
 				smartSelectionContext: captured?.smartSelectionContext ?? true,
+				selectionContext: 'full-note',
 				notePath: captured?.notePath,
 				history: [],
 			}));
@@ -1221,7 +1381,7 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 		}
 	});
 
-	it('passes the plugin estimate callback to the command selection modal', async () => {
+	it('forwards identical modal policies after capturing the selection once', async () => {
 		interface RegisteredCommand {
 			id: string;
 			editorCheckCallback?: (
@@ -1234,6 +1394,8 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 		const commands: RegisteredCommand[] = [];
 		const settings = selectionSettings();
 		const { view, editor } = makeSelectionView('beta');
+		const getValue = vi.fn(editor.getValue);
+		editor.getValue = getValue;
 		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
 		Object.assign(plugin, {
 			app: {
@@ -1263,6 +1425,31 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 			getTargetMarkdownView: () => view,
 		});
 		await plugin.onload();
+		const snapshot: SelectionSnapshot = {
+			file: view.file,
+			fullText: 'BeforebetaAfter',
+			selectedText: 'beta',
+			from: 6,
+			to: 10,
+		};
+		const estimateResult = plugin.estimateSelectionDraft(
+			snapshot,
+			'Tighten this.',
+			'default',
+		);
+		const estimateSelectionDraft = vi.fn(() => estimateResult);
+		const requestSelectionEdit = vi.fn(async () => ({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+			usage: {
+				promptTokens: 1,
+				completionTokens: 1,
+				totalTokens: 2,
+				source: 'provider' as const,
+			},
+		}));
+		Object.assign(plugin, { estimateSelectionDraft, requestSelectionEdit });
 
 		const opened: SelectionModal[] = [];
 		const prototype = SelectionModal.prototype as unknown as {
@@ -1278,29 +1465,55 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 			);
 			expect(modifyCommand).toBeDefined();
 			expect(modifyCommand?.editorCheckCallback?.(false, editor, view)).toBe(true);
+			expect(getValue).toHaveBeenCalledTimes(1);
 			const modal = opened[0];
 			if (!modal) {
 				throw new Error('Selection modal was not opened.');
 			}
-			const estimateDraft = (
-				modal as unknown as {
-					estimateDraft: (prompt: string) => DraftCapacityEstimate;
-				}
-			).estimateDraft;
-			const snapshot: SelectionSnapshot = {
-				file: view.file,
-				fullText: editor.getValue(),
-				selectedText: 'beta',
-				from: 6,
-				to: 10,
+			const callbacks = modal as unknown as {
+				smartSelectionContext: boolean;
+				submitSelection: (
+					prompt: string,
+					signal: AbortSignal,
+					additionalNotePaths: readonly string[],
+					selectionContext: SelectionContextPolicy,
+				) => Promise<unknown>;
+				estimateDraft: (
+					prompt: string,
+					selectionContext: SelectionContextPolicy,
+				) => DraftCapacityEstimate;
 			};
+			const signal = new AbortController().signal;
 
-			const estimate = estimateDraft('Tighten this.');
-
-			expect(estimate).toEqual(
-				plugin.estimateSelectionDraft(snapshot, 'Tighten this.'),
+			await callbacks.submitSelection(
+				'Tighten this.',
+				signal,
+				['Context.md'],
+				'full-note',
 			);
-			expect(estimate.categories.history).toBe(0);
+			const estimate = callbacks.estimateDraft('Tighten this.', 'full-note');
+
+			expect(callbacks.smartSelectionContext).toBe(false);
+			expect(requestSelectionEdit).toHaveBeenCalledOnce();
+			expect(requestSelectionEdit).toHaveBeenCalledWith(
+				snapshot,
+				'Tighten this.',
+				signal,
+				expect.any(Object),
+				['Context.md'],
+				[],
+				undefined,
+				'full-note',
+			);
+			expect(requestSelectionEdit.mock.calls[0]).toHaveLength(8);
+			expect(estimateSelectionDraft).toHaveBeenCalledOnce();
+			expect(estimateSelectionDraft).toHaveBeenCalledWith(
+				snapshot,
+				'Tighten this.',
+				'full-note',
+			);
+			expect(estimate).toBe(estimateResult);
+			expect(getValue).toHaveBeenCalledTimes(1);
 		} finally {
 			if (originalOpen) {
 				prototype.open = originalOpen;

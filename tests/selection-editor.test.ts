@@ -13,6 +13,7 @@ import type {
 import { QUICK_ACTIONS } from '../src/quick-actions';
 import {
 	applyPreparedSelectionEdit,
+	buildSelectionUserPrompt,
 	captureSelectionEditTarget,
 	captureSelectionSnapshot,
 	createSelectionEditorAdapter,
@@ -535,6 +536,67 @@ describe('createSelectionEditorAdapter', () => {
 	});
 });
 
+describe('buildSelectionUserPrompt', () => {
+	it('keeps explicit Default Smart output byte-for-byte unchanged', () => {
+		const fullText = '# Note\n\nAlpha beta gamma.\n\nEnd';
+		const snapshot = makeSnapshot(fullText);
+
+		expect(buildSelectionUserPrompt({
+			snapshot,
+			prompt: 'Improve this selection.',
+			maxContextCharacters: 1000,
+			smartSelectionContext: true,
+			selectionContext: 'default',
+			additionalNotes: [],
+		})).toBe(
+			`Selected text:\nbeta\n\nContext:\n${fullText}\n\nUser message:\nImprove this selection.`,
+		);
+	});
+
+	it('keeps explicit Default Symmetric output byte-for-byte unchanged', () => {
+		const fullText = '# Note\n\nAlpha beta gamma.\n\nEnd';
+		const snapshot = makeSnapshot(fullText);
+
+		expect(buildSelectionUserPrompt({
+			snapshot,
+			prompt: 'Improve this selection.',
+			maxContextCharacters: 1000,
+			smartSelectionContext: false,
+			selectionContext: 'default',
+			additionalNotes: [],
+		})).toBe(
+			'Selected text:\nbeta\n\nContext before:\n# Note\n\nAlpha \n\nContext after:\n gamma.\n\nEnd\n\nUser message:\nImprove this selection.',
+		);
+	});
+
+	it.each([true, false])(
+		'uses the complete long note and duplicate selection for Full note (smart=%s)',
+		(smartSelectionContext) => {
+			const selectedText = 'Target 选择 😀';
+			const fullText = `Intro π\n\n${'Before 😀 '.repeat(30)}\n${selectedText}\n${'After λ\n'.repeat(30)}End`;
+			const snapshot = makeSnapshot(fullText, selectedText);
+
+			const prompt = buildSelectionUserPrompt({
+				snapshot,
+				prompt: 'Improve this selection.',
+				maxContextCharacters: 40,
+				smartSelectionContext,
+				selectionContext: 'full-note',
+				additionalNotes: [],
+			});
+
+			expect(fullText.length).toBeGreaterThan(40);
+			expect(prompt).toBe(
+				`Full note (supporting context):\n${fullText}\n\nSelected text (the only edit target):\n${selectedText}\n\nUser message:\nImprove this selection.`,
+			);
+			expect(prompt.match(/Target 选择 😀/g)).toHaveLength(2);
+			expect(prompt).not.toContain('[...]');
+			expect(prompt).not.toContain('Context before:');
+			expect(prompt).not.toContain('Context after:');
+		},
+	);
+});
+
 function selectionRequest(response: string) {
 	return vi.fn(
 		async (
@@ -593,6 +655,7 @@ function makeSelectionSubmission(
 		prompt: 'Improve this selection.',
 		maxContextCharacters: 20,
 		smartSelectionContext: true,
+		selectionContext: 'default',
 		additionalNotePaths: [],
 		history: [],
 		signal: new AbortController().signal,
@@ -827,6 +890,28 @@ describe('SelectionEditRequestCoordinator', () => {
 		const userPrompt = request.mock.calls[0]?.[0].userPrompt ?? '';
 		expect(userPrompt).toContain(`Selected text:\n${selectedText}`);
 		expect(userPrompt).toContain('Context before:\n\n\nContext after:');
+	});
+
+	it('rejects Full-note-context Operations anchored only outside the selection without native replacement', async () => {
+		const snapshot = makeSnapshot('Outside only\nAlpha beta gamma.', 'beta');
+		const { adapter, coordinator, request } = makeSelectionCoordinator(
+			selectionRequest(JSON.stringify([
+				{ type: 'replace', target: 'Outside only', replacement: 'Changed' },
+			])),
+			snapshot,
+		);
+
+		await expect(coordinator.submit(makeSelectionSubmission(snapshot, {
+			selectionContext: 'full-note',
+		}))).rejects.toThrow(/not found|match/i);
+
+		expect(request).toHaveBeenCalledTimes(2);
+		expect(request.mock.calls[0]?.[0].userPrompt).toContain(
+			`Full note (supporting context):\n${snapshot.fullText}`,
+		);
+		expect(adapter.readCurrentText).not.toHaveBeenCalled();
+		expect(adapter.replaceRange).not.toHaveBeenCalled();
+		expect(snapshot.fullText).toBe('Outside only\nAlpha beta gamma.');
 	});
 
 	it('validates and applies only the returned annotated selection', async () => {
