@@ -631,3 +631,76 @@ git diff --check clean
 ```
 
 The review round was 1,861 tests, so the follow-up adds 2 (the parametrized configuration case and the activity-label row). Retry policy, transport-error classification, Search/Fetch degradation, payload shape apart from the reason value, and every other behavior are unchanged.
+
+## PR F — Round 3 cross-cutting fixes
+
+Branch `fix/2.10-concurrency`, based at `a285d98` (53 files / 1,863 tests). The first pass ships F1–F3; a second pass owns F4–F8. Every task followed the same discipline: focused failing test, captured RED, smallest fix, GREEN, one commit with the brief's message.
+
+### Findings and fixes
+
+1. **F1 (High, write safety) — the editor reader failed open.** `NoteWriter.readEditorText(file)` returned exactly one string. `main.ts` built it by taking the maintained target view's text as a reference and then returning the first *other* open pane whose text differed from that reference. When the target pane itself was the dirty one and a second pane still held the captured source, the differing entry was the clean one, so `applyPreparedEdit` compared the clean text against the snapshot, passed, and `vault.modify` overwrote the unsaved typing in the target pane. The reader contract is now `readEditorTexts(file): readonly string[] | undefined`, and the writer requires **every** returned entry to equal `snapshot.sourceText`; `undefined` or an empty result still means no open editor and keeps the disk-only path. `main.ts` collects the target view's text plus every open Markdown view whose `file` is the captured file, without a new vault read. A dirty pane can no longer be masked by a clean sibling, and the guard is strictly wider than before: no write path was relaxed.
+2. **F2 (High, common path) — a rename stranded every chat view.** The vault `rename` handler updated only the additional-notes store. The chat view kept its old `notePath`, so `captureChatContext()` returned the renamed file's new path, `sourcePath !== notePath` failed, and every submission was rejected with `The active note changed before the request started.` until the user switched notes. The handler now calls the same `refreshChatTargetNotes()` callback that `active-leaf-change` and `file-open` already use, after the store update, so every open `EmendChatView` re-points at the new path (and reloads that path's aggregate) in one place. `refreshTargetNote` still early-returns for views whose active note did not change, so an unrelated rename only refreshes their edit-target control and draft estimate. Conversation aggregates are still not migrated across a rename, per the existing deferred item.
+3. **F3 (High, record loss) — an applied edit's result was buried behind a save error.** When another chat view deleted the session during an in-flight request, `appendReadyMessage` rejected with `Chat session does not exist.` The note write had already happened, yet the message was marked `error` and the only explanation was `Emend: Could not save this chat. Chat session does not exist.` `conversation-store.ts` now exports `isMissingSessionSaveError`, and `chat-view.ts` checks it for an already-applied edit whose final save was attempted: the concise applied summary stays in the message as ready content and one distinct `Emend: Edit applied, but this chat could not be saved.` Notice is shown. The save is attempted exactly once — no re-append, no second write, and the pending lock is still released in `finally`.
+
+### Regression evidence
+
+New tests (+7; base `a285d98` was 53 files / 1,863 tests):
+
+- `tests/note-writer.test.ts`: `rejects an edit when the target pane is dirty and another pane matches the snapshot`, `rejects an edit when any open pane differs from the captured source`, `applies when every open editor matches the captured source`; the existing differing-text, both-match, and disk-only cases now drive `readEditorTexts`.
+- `tests/main.test.ts`: `rejects an edit when the target pane is dirty and another pane matches the snapshot` (plugin wiring), `rejects an edit when any open pane differs from the captured source`, `refreshes open chat views when the active note is renamed`.
+- `tests/chat-view.test.ts`: `keeps an applied edit summary when its session was deleted during the request`.
+
+RED before each fix:
+
+```text
+# F1 — writer contract
+FAIL tests/note-writer.test.ts > applyPreparedEdit > rejects an edit when the target pane is dirty and another pane matches the snapshot
+  (the edit resolved and wrote the annotated note instead of rejecting)
+FAIL tests/note-writer.test.ts > applyPreparedEdit > rejects an edit when the open editor text differs from the captured source
+AssertionError: expected "vi.fn()" to be called exactly once, but got 0 times   (readEditorTexts)
+Tests  5 failed | 13 passed (18)
+
+# F1 — plugin wiring, reproduced by restoring the old reference-and-find-differing reader
+FAIL tests/main.test.ts > EmendPlugin edit freshness > rejects an edit when the target pane is dirty and another pane matches the snapshot
+  (the edit applied and vault.modify ran instead of rejecting)
+
+# F2
+FAIL tests/main.test.ts > EmendPlugin note rename refresh > refreshes open chat views when the active note is renamed
+Error: Condition did not become true.   (the view's notePath never left Old.md)
+
+# F3
+FAIL tests/chat-view.test.ts > EmendChatView committed edit persistence > keeps an applied edit summary when its session was deleted during the request
+- "Emend: Edit applied, but this chat could not be saved.",
++ "Emend: Could not save this chat. Chat session does not exist.",
+```
+
+Every focused suite and the full gate are green at the final code head.
+
+### Commits
+
+| Task | Commit | Message |
+| --- | --- | --- |
+| F1 | `a602803` | `fix: require every open editor to match the captured source` |
+| F2 | `48fca85` | `fix: refresh chat state when a note is renamed` |
+| F3 | `06895a2` | `fix: keep applied results when the session disappears` |
+
+### Local gate
+
+At code head `06895a2`, with `main.js` rebuilt from that tree and SHA-256 `71ffa80e20bba0da91d37a1dd15857bcaeb0f06eef11c84b3d59d9666f4ffed7`:
+
+```text
+npm test        53 files / 1,870 tests passed
+npm run lint    clean
+npm run build   clean (tsc -noEmit -skipLibCheck + esbuild production)
+git diff --check clean
+```
+
+The docs commit changes the esbuild build identity, so a rebuild at the docs head will not reproduce the hash above.
+
+### Limits
+
+- Everything here is unit- and source-verified. No real-Obsidian run confirms multi-pane staleness rejection, the rename re-point in a live workspace, or the deleted-session Notice; the PR E exploratory matrix owns those runs, and no macOS, Windows, real-provider, or assistive-technology claim is made.
+- F1 widens freshness only. A pane that is *clean* still passes, the disk read and one `vault.modify` are unchanged, and no new vault read is added — the reader reuses the already-open editors' text.
+- F2 re-points a view but does not migrate the aggregate: after a rename the chat starts a fresh thread for the new path while the old aggregate stays under the old path's hash. Note-rename history migration remains deferred.
+- F3 covers the missing-session rejection for an applied edit only. A save rejection for any other reason, and the aborted branch, keep their existing handling; the surface-what-happened generalization for those paths is F4 in the second pass.
+- F4–F8 are not implemented in this pass.
