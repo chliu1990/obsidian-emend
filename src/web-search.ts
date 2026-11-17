@@ -28,7 +28,7 @@ export interface WebSearchRunOptions {
 	signal: AbortSignal;
 }
 
-export type WebFailureReason = 'network' | 'http' | 'format' | 'empty' | 'reader';
+export type WebFailureReason = 'network' | 'http' | 'format' | 'configuration' | 'empty' | 'reader';
 export type WebReaderFailureKind = 'format' | 'provider' | 'limit';
 
 export interface WebActivityRecord {

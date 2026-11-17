@@ -355,7 +355,7 @@ export class DeepSeekWebSearchCoordinator {
 				return { ok: false, reason: 'format', retryable: false };
 			}
 			if (error instanceof DeepSeekConfigurationError) {
-				return { ok: false, reason: 'format', retryable: false };
+				return { ok: false, reason: 'configuration', retryable: false };
 			}
 			const status = isRecord(error) &&
 				typeof error.status === 'number' &&
