@@ -75,3 +75,83 @@ PR A is unit- and source-verified. Real-Obsidian confirmation of the composed-ma
 ## Remaining sections
 
 PRs B–E append their findings, fixes, RED→GREEN evidence, gates, and the final exploratory matrix below. Stage 51 is not complete until PR E records the whole-round gate and every deferral link.
+
+## PR B — session, persistence, and instruction resilience
+
+### Fixes
+
+1. **H4 — failed thread load.** `EmendChatView.refreshTargetNote` keeps showing the existing `Emend: Could not load this chat. <reason>` Notice, but when the load is still current it first installs `getTransientSession(notePath)` as the only session and points `activeSessionId`/`messages` at it. Send, Enter, New, Rename, and Delete work again and the next submission materializes the transient session through the normal persistence path. Stale loads still return without touching newer state, and the `finally` still clears loading and renders.
+2. **H5 — invalid stored messages.** `validateChatConversation` now returns `{ conversation, droppedMessages }`. `inspectThread` carries the count, `loadConversation` warns once through the existing warning callback, and `inspectForMutation` passes the original bytes as `malformedContents` whenever the count is positive, so the first rewrite of a thread that contained an unreadable message writes the pre-rewrite aggregate to the reusable `.corrupt` file while the readable messages survive. Unsupported-version refusal and whole-file malformed handling are unchanged.
+3. **H7 — failed legacy-key migration.** `loadSettings` reads and writes the SecretStorage secret first, then awaits `saveSettings()` inside `try/catch`. A rejected save shows one Notice (`Emend: Could not save migrated API keys. <reason>`) and returns; the in-memory legacy key is cleared only after a successful save, and `onload` continues to register the view, commands, ribbon, and settings tab. The shared save queue continues after the rejection.
+4. **H6 — quick-action drafts.** `submitQuickAction` calls `saveCurrentDraft()` before submitting and `submitPrompt` skips the per-session draft deletion when `fromQuickAction` is set, so the render seeding restores the typed text after the edit result instead of clearing the composer.
+5. **Stop race on a committed edit.** The submission tracks whether the edit result reported `applied`. A committed edit skips the post-result abort check and persists its concise summary with `allowAbortedSave`, so `appendReadyMessage` does not receive an already-aborted signal; the assistant renders ready and the summary survives. No-op, chat, and unwritten responses keep the existing stopped branch and persist nothing.
+6. **Instruction loading bounds.** `loadAllInstructions` wraps each skill `vault.read` in `try/catch`, skips that skill with one Notice, and keeps loading the rest. It caps total instruction characters at `MAX_INSTRUCTION_CHARACTERS = 20000`, spending the budget in prompt order (skills in reference order, then `AGENTS.md`) and ending any truncated text with the `[...]` marker, with one truncation Notice. The `AGENTS.md` read itself is unchanged.
+7. **Selection modal disposables.** One `activeSelectionModal` field replaces the per-invocation `register(() => modal.close())`; a repeated command invocation closes the previous modal, and the override closes the retained modal on `onunload`. Repeated invocations no longer grow the plugin disposer list.
+8. **Deleted related-note targets.** `AdditionalNotesStore.removeInvalid` drops a target key equal to the deleted path or inside the deleted folder, using the same path-segment predicate as entry removal, so a recreated note starts with no related notes.
+
+### Regression evidence
+
+New tests:
+
+- `tests/chat-view.test.ts`: `recovers a usable transient session when the thread load fails`, `shows New chat as usable after a failed thread load`, `preserves the typed draft after a successful quick action`, `persists an applied edit result when Stop races the ready snapshot`.
+- `tests/conversation-store.test.ts`: `backs up the aggregate before rewriting a thread that contains an invalid message`, `reports dropped messages without deleting the readable thread`.
+- `tests/chat-sessions.test.ts`: the round-trip and filtered-message cases now assert `{ conversation, droppedMessages }`, including `droppedMessages === 3` for filtered entries.
+- `tests/main.test.ts`: `registers commands when the legacy key migration save rejects`, `retains at most one selection modal across repeated command invocations`.
+- `tests/instructions-loader.test.ts`: `skips a skill whose read rejects and keeps the rest`, `bounds total instruction characters`.
+- `tests/additional-notes-store.test.ts`: `drops the deleted target note's own selections`, plus updated expectations for `removes deleted paths and drops their own target state`, `removes deleted file paths and invalid Links provenance without cross-target leakage`, the descendant/descriptor folder case retargeted to a note outside the deleted folder, and the root-folder delete case where every target disappears.
+- Fixture updates: `tests/quick-actions.test.ts` stubs and asserts `saveCurrentDraft`; `tests/selection-unload.test.ts` aborts the retained modal through `plugin.onunload()` instead of a registered disposer.
+
+RED excerpts (each captured before its fix):
+
+```text
+# B1
+FAIL tests/chat-view.test.ts > EmendChatView thread-load recovery > recovers a usable transient session when the thread load fails
+AssertionError: expected [] to have a length of 1 but got +0
+
+# B2
+FAIL tests/conversation-store.test.ts > ConversationStore corruption recovery > backs up the aggregate before rewriting a thread that contains an invalid message
+AssertionError: expected undefined to be '{"version":3,"lastActiveSessionId":"s…' // Object.is equality
+FAIL tests/conversation-store.test.ts > … > reports dropped messages without deleting the readable thread
+AssertionError: expected "vi.fn()" to be called once, but got 0 times
+
+# B3
+FAIL tests/main.test.ts > EmendPlugin settings migration > registers commands when the legacy key migration save rejects
+AssertionError: promise rejected "Error: Disk is full" instead of resolving
+
+# B4
+FAIL tests/chat-view.test.ts > EmendChatView quick action drafts > preserves the typed draft after a successful quick action
+AssertionError: expected '' to be 'Keep this' // Object.is equality
+
+# B5
+FAIL tests/chat-view.test.ts > EmendChatView committed edit persistence > persists an applied edit result when Stop races the ready snapshot
+AssertionError: expected 'stopped' to be 'ready' // Object.is equality
+
+# B6
+FAIL tests/instructions-loader.test.ts > loadAllInstructions > skips a skill whose read rejects and keeps the rest
+Error: Unreadable file: skills/broken/SKILL.md
+FAIL tests/instructions-loader.test.ts > loadAllInstructions > bounds total instruction characters
+AssertionError: expected '`skills/large`\nAAAAAAAAAAAAAAAAAAAAA…' to have a length of NaN but got 15015
+FAIL tests/main.test.ts > EmendPlugin Selection modal lifecycle > retains at most one selection modal across repeated command invocations
+AssertionError: expected [] to deeply equal [ SelectionModal{ …(18) } ]
+
+# B7
+FAIL tests/additional-notes-store.test.ts > AdditionalNotesStore > drops the deleted target note's own selections
+AssertionError: expected [ 'B.md', 'C.md' ] to deeply equal []
+```
+
+### Local gate
+
+At the PR B head (`27e4df3`) with bundle SHA-256 `6ff678615004fc64d6bda473072851f1120d8d0ecb32599fae638c4bb91248d2`:
+
+```text
+npm test        53 files / 1,816 tests passed
+npm run lint    clean
+npm run build   clean (tsc -noEmit + esbuild production)
+git diff --check clean
+```
+
+The PR B branch adds 11 tests to the 1,805 counted after PR A. Each task was committed separately (`7abf6cb`, `4d93c39`, `410e248`, `d5d3f69`, `98b8f15`, `a410cf1`, `27e4df3`) with its focused suites green before the next task started; two test-fixture alignments were folded back into the commits that made them necessary instead of leaving red commits in the history.
+
+### Limits
+
+PR B is unit- and source-verified only. No real-Obsidian run confirms the load-failure recovery, the `.corrupt` backup of a partially valid thread, the quick-action draft restoration in a real textarea, the committed-edit Stop race, the instruction truncation Notice, the single retained modal across real command invocations, or the deleted-target related-note cleanup; that evidence belongs to PR E's exploratory matrix. No macOS, Windows, or real-provider evidence is claimed. The 20,000-character instruction cap is a local character budget, not tokenization.
