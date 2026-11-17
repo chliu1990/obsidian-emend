@@ -555,7 +555,7 @@ Base `40c264e` was 53 files / 1,849 tests, so the second pass adds 7. `main.js` 
 Six review findings closed on the same branch, code commit `829d638`:
 
 1. **Persisted inconsistent usage is dropped at load.** `normalizeLoadedMessage` now removes a stored usage triplet whose `totalTokens` is not `promptTokens + completionTokens`, so a reloaded thread shows no usage footer instead of a **Provider** footer built from impossible numbers. The message itself is still a valid ready message: `validateChatConversation` keeps it and reports `droppedMessages: 0`. The rule reuses `isConsistentTokenUsage`, which now lives in `token-usage.ts` and is imported by `provider-stream.ts`, so the transport, the resolvers, and the conversation schema share one predicate. A consistent triplet still normalizes a missing source to `provider`, and an explicitly `estimated` one is left alone.
-2. **The tool-client credential guard is non-retryable and self-contained.** `requestDeepSeekTool` performs its local configuration guards (missing key, invalid/non-HTTP base URL, credential-bearing base URL) before any `fetch` and now throws `DeepSeekConfigurationError`. `attempt` classifies that error as `{ ok: false, reason: 'format', retryable: false }`, so a credential-bearing base URL costs exactly one attempt, is never retried, and is no longer reported as `network`. The message still never includes the URL. Because the failure-reason vocabulary is closed, the activity row reads `Failed (format)`; no request leaves the machine and the failure payload carries no message or credential. The same guard now covers the missing-key and invalid-URL cases, which previously were also retried once as transport failures.
+2. **The tool-client credential guard is non-retryable and self-contained.** `requestDeepSeekTool` performs its local configuration guards (missing key, invalid/non-HTTP base URL, credential-bearing base URL) before any `fetch` and now throws `DeepSeekConfigurationError`. `attempt` classifies that error as `{ ok: false, reason: 'configuration', retryable: false }`, so a credential-bearing base URL costs exactly one attempt, is never retried, and is no longer reported as `network`. The message still never includes the URL. `WebFailureReason` gained the `configuration` reason and the activity label map renders it as `Search · Failed (configuration) · …`, keeping a local configuration problem distinct from a schema-drift `format` failure; no request leaves the machine and the failure payload carries no message or credential. The same guard covers the missing-key and invalid-URL cases, which previously were also retried once as transport failures.
 3. **Duplicate search hits fill only empty fields.** `buildSearchExtractionDocuments` keeps the first hit's position, temporary ID, and nonempty fields, and fills an empty `title`, `snippet`, `summary`, or `content` from later hits for the same normalized URL before building the canonical document. A first hit with no content and a later hit with content now yields one document carrying the content instead of one document whose `Content:` line is empty.
 4. **The canonical write-back only runs when it changes the field.** Both settings inputs compare the live field value with the stored canonical string and call `setValue` only when they differ, matching `commitCapacity`. Pressing Enter on an unchanged or already-canonical value no longer rewrites the field, so the caret and selection stay where the user left them.
 5. **The reader's correction round is flagged too.** `allowToolOnlyResponse` is now set on the one format-correction request as well as the forced limit round, so a text-less tool-only correction reply reaches `ReaderFailure('format', 'The web extraction correction reply must be bare JSON without tool calls.')` instead of the transport's generic `No text was found in the provider response.` failure.
@@ -568,6 +568,7 @@ FAIL tests/chat-sessions.test.ts > shared message serialization > loads a stored
 AssertionError: expected { promptTokens: 10, …(3) } to be undefined
 
 FAIL tests/deepseek-web.test.ts > DeepSeek web transport retry and search degradation > does not retry a credential-bearing base URL and reports it as non-network
+  (later consolidated into the parametrized `reports $reason as a non-retryable failure with one attempt`)
 - { attempts: 1, failureReason: 'format', status: 'failed', … }
 + { attempts: 2, failureReason: 'network', status: 'failed', … }
 
@@ -587,7 +588,7 @@ The D4 `maxToolCalls` assertion passed on the existing implementation; it was ad
 
 ### PR D review-round gate
 
-At code head `829d638`, with `main.js` rebuilt from that tree and SHA-256 `55555a2707339fefe5adb2bfe003c736c97c070bcbd65cce160c7fb48cb8897e`:
+At code head `829d638`, with `main.js` rebuilt from that tree and SHA-256 `a65791f113cff88c60360b1f8145e9182b5cbe8ce3f7c318189613c1e4554227`:
 
 ```text
 npm test        53 files / 1,861 tests passed
@@ -603,12 +604,30 @@ git diff --check clean
 | Task | Commit | Message |
 | --- | --- | --- |
 | Review fixes | `829d638` | `fix: close PR D review findings` |
+| Review follow-up | `651eb06` | `fix: separate configuration failures from format` |
 | Review docs | this docs commit | `docs: record PR D review round` |
 
 ### PR D review-round limits
 
 - Unit- and source-verified only; no real Obsidian, loopback harness, or real provider run. The PR E matrix still owns live verification of the settings blur behavior, the reader correction path, and the credential-URL rejection.
 - **Gateways and providers whose `total_tokens` includes cached prompt tokens now show Estimated.** A provider that reports `total = prompt + completion + cached` (or otherwise counts cache reads inside the total) produces a triplet that fails the `total === prompt + completion` check, so its footer is labeled **Estimated** even though the numbers are genuine provider data, and a stored thread carrying such a triplet loads with no usage footer. This is the deliberate cost of a provider-agnostic consistency rule: Emend has no provider metadata or tokenizer to separate cached tokens, and showing an inconsistent Provider total would be worse. Self-consistent but wrong triplets are still trusted as Provider.
-- **A configuration failure is reported as `format`.** The failure-reason union stays closed, so a missing key or a credential-bearing base URL renders `Failed (format)` with `attempts: 1` and a `reason: "format"` payload. No request is made, no credential or URL is echoed, and the Search degrades non-fatally exactly like a schema failure.
+- **Configuration failures have their own reason and label.** A missing key, an invalid base URL, or a credential-bearing base URL renders `Failed (configuration)` with `attempts: 1` and a `reason: "configuration"` payload, while a schema-drift or non-JSON 200 response stays `Failed (format)`. Both are non-retryable, neither makes a request for the configuration case, no credential or URL is echoed, and the Search still degrades non-fatally. The reason remains transient: only the activity outcome is persisted.
 - **Duplicate merging is fill-only and first-wins.** A later duplicate with a richer nonempty summary or content does not replace an already nonempty field; only empty fields are filled, so citation order and temporary IDs remain the first hit's.
 - **The write-back guard reads the live field, not a draft.** `text.inputEl.value` is compared with the stored canonical string, so a value that already matches is never rewritten; a differing value is still replaced on `change` as before.
+
+### PR D review follow-up — configuration reason
+
+The review round initially folded the local configuration guards into the `format` reason. The follow-up (`651eb06`) keeps all retry and transport behavior identical and only makes the copy honest: `WebFailureReason` gained `'configuration'`, `attempt` maps `DeepSeekConfigurationError` to `{ reason: 'configuration', retryable: false }`, and the chat activity label map renders `Search · Failed (configuration) · …`. `DeepSeekResponseFormatError` is still `{ reason: 'format', retryable: false }`, so a schema-drift or non-JSON 200 payload keeps `Failed (format)`.
+
+Test coverage was consolidated into one parametrized test, `reports $reason as a non-retryable failure with one attempt`, with a `configuration` case (credential-bearing base URL: one attempt, no `fetch`, `{"error":{"kind":"search_failed","reason":"configuration","attempts":1}}`) and a `format` case (malformed search payload: one attempt, `reason: "format"`). The chat-view activity-label table gained a `configuration` row asserting `Search · Failed (configuration) · unconfigured provider`. The earlier RED was `+ "failureReason": "format"` against the expected `"configuration"`.
+
+At code head `651eb06`, with `main.js` rebuilt from that tree and SHA-256 `9c328527569f932150f2ab96cc1addf1f3df5181747673e03e8e54c7c724e968`:
+
+```text
+npm test        53 files / 1,863 tests passed
+npm run lint    clean
+npm run build   clean (tsc -noEmit -skipLibCheck + esbuild production)
+git diff --check clean
+```
+
+The review round was 1,861 tests, so the follow-up adds 2 (the parametrized configuration case and the activity-label row). Retry policy, transport-error classification, Search/Fetch degradation, payload shape apart from the reason value, and every other behavior are unchanged.
