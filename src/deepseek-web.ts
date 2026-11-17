@@ -659,16 +659,20 @@ async function requestDeepSeekTool(
 		throw new Error(`${provider.name} API key is missing.`);
 	}
 	let endpoint: string;
+	let parsedBaseUrl: URL;
 	try {
-		const baseUrl = new URL(provider.baseUrl.trim().replace(/\/+$/, ''));
-		if (baseUrl.protocol !== 'http:' && baseUrl.protocol !== 'https:') {
-			throw new Error();
-		}
-		const base = provider.baseUrl.trim().replace(/\/+$/, '');
-		endpoint = `${base}${base.endsWith('/v1') ? '' : '/v1'}/tools/${tool}`;
+		parsedBaseUrl = new URL(provider.baseUrl.trim().replace(/\/+$/, ''));
 	} catch {
 		throw new Error(`${provider.name} base URL must be a valid HTTP(S) URL.`);
 	}
+	if (parsedBaseUrl.protocol !== 'http:' && parsedBaseUrl.protocol !== 'https:') {
+		throw new Error(`${provider.name} base URL must be a valid HTTP(S) URL.`);
+	}
+	if (parsedBaseUrl.username || parsedBaseUrl.password) {
+		throw new Error(`${provider.name} base URL must not contain credentials.`);
+	}
+	const base = provider.baseUrl.trim().replace(/\/+$/, '');
+	endpoint = `${base}${base.endsWith('/v1') ? '' : '/v1'}/tools/${tool}`;
 
 	try {
 		// eslint-disable-next-line no-restricted-globals -- DeepSeek tool APIs use ordinary JSON fetch responses.

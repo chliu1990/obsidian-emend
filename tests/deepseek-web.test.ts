@@ -63,6 +63,15 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 });
 
+async function getError(promise: Promise<unknown>) {
+	try {
+		await promise;
+		throw new Error('Expected the request to reject.');
+	} catch (error) {
+		return error instanceof Error ? error : new Error(String(error));
+	}
+}
+
 describe('DeepSeek retrieval clients', () => {
 	it('posts the exact bounded search request and parses structured results', async () => {
 		const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [searchResult] })));
@@ -146,6 +155,22 @@ describe('DeepSeek retrieval clients', () => {
 			status: 401,
 			message: 'API request failed with HTTP 401.\nUnauthorized [redacted]',
 		});
+	});
+
+	it('rejects a base URL with embedded credentials without echoing it', async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+
+		const error = await getError(fetchDeepSeekPage(
+			{ id: 'call-2', name: 'web_fetch', url: 'https://example.test/docs', extractionGoal: 'Extract the documentation facts.' },
+			{ ...provider, baseUrl: 'https://token-user:token-secret@api.deepseek.com' },
+			new AbortController().signal,
+		));
+
+		expect(error.message).toMatch(/base URL/i);
+		expect(error.message).not.toContain('token-user');
+		expect(error.message).not.toContain('token-secret');
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
 	it('propagates aborts without wrapping them', async () => {

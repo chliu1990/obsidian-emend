@@ -86,6 +86,9 @@ export async function requestAiResponse(
 	if (parsedBaseUrl.protocol !== 'http:' && parsedBaseUrl.protocol !== 'https:') {
 		throw new Error(`${provider.name} base URL must use HTTP or HTTPS.`);
 	}
+	if (parsedBaseUrl.username || parsedBaseUrl.password) {
+		throw new Error(`${provider.name} base URL must not contain credentials.`);
+	}
 
 	signal.throwIfAborted();
 	assertRequestWithinCapacity(
@@ -249,6 +252,7 @@ export function sanitizeProviderError(error: unknown, apiKey: string) {
 		'[credential redacted]',
 	);
 	message = message.replace(/bearer\s+\S+/gi, '[credential redacted]');
+	message = message.replace(/\/\/[^\s/@]+@/g, '//***@');
 	if (message.length > MAX_PROVIDER_ERROR_CHARACTERS) {
 		message = `${message.slice(0, MAX_PROVIDER_ERROR_CHARACTERS - 12)}…[truncated]`;
 	}

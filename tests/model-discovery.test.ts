@@ -127,6 +127,20 @@ describe('discoverProviderModels', () => {
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
+	it('rejects a base URL with embedded credentials without echoing it', async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+
+		const error = await getError(discoverProviderModels({
+			...provider,
+			baseUrl: 'https://token-user:token-secret@provider.example.test/v1',
+		}));
+		expect(error.message).toMatch(/base URL/i);
+		expect(error.message).not.toContain('token-user');
+		expect(error.message).not.toContain('token-secret');
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
 	it('returns concise HTTP errors without exposing response bodies or retrying', async () => {
 		const sensitiveBody = 'sensitive-provider-response-body';
 		const fetchMock = vi.fn().mockResolvedValue(new Response(

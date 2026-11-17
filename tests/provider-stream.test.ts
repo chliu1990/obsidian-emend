@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
 	createSseParser,
 	requestAiResponse,
+	sanitizeProviderError,
 	type AiProviderRequest,
 	type StreamEvent,
 } from '../src/provider-stream';
@@ -628,6 +629,35 @@ describe('requestAiResponse', () => {
 			),
 		).rejects.toThrow(/base URL/i);
 		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it('rejects a base URL with embedded credentials without echoing it', async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+
+		const error = await getError(
+			requestAiResponse(
+				makeRequest({
+					provider: {
+						...provider,
+						baseUrl: 'https://token-user:token-secret@provider.example.test/v1',
+					},
+				}),
+				{ onEvent: vi.fn() },
+				new AbortController().signal,
+			),
+		);
+		expect(error.message).toMatch(/base URL/i);
+		expect(error.message).not.toContain('token-user');
+		expect(error.message).not.toContain('token-secret');
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it('redacts a userinfo segment from a provider error', () => {
+		expect(sanitizeProviderError(
+			new Error('connect failed for https://token-user:token-secret@provider.example.test/v1'),
+			'unused-key',
+		)).toBe('connect failed for https://***@provider.example.test/v1');
 	});
 
 	it.each([
