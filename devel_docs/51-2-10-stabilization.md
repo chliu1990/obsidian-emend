@@ -783,3 +783,47 @@ Base `24dc9ed` was 53 files / 1,870 tests, so the finished round adds 3 net (F4 
 - F6 keeps exactly one `.corrupt` file per chat and never overwrites it. A user who wants a newer snapshot must remove the old file; no rotation or timestamped variant is added.
 - F7 removes the `configuration` failure reason from the type and the labels. It is unreachable after the change, and no persisted data carries it (failure reasons are transient), but any external consumer of the label map would no longer see that key.
 - F8 classifies a zero-result search as a failure rather than an empty success and does not retry it. That avoids a second paid Search for a deterministic empty parse, and it means such a call now contributes to the search warning count instead of silently returning no evidence.
+
+## PR F review round
+
+Four findings closed on the same branch, code commit `5fbaef4` and docs commit below.
+
+1. **Search attempt count was hard-coded.** A Search whose first attempt was retried and whose second attempt returned no usable result reported `attempts: 1`, contradicting the documented rule that `attempts` is 1 without a retry or 2 after it. `attemptWithRetry` now carries the attempt count on its success result too, and the zero-result `search_failed` outcome uses `outcome.attempts`, so the activity and the tool payload both report 2 for a retried-then-empty Search.
+2. **A discarded transient left its draft behind.** `discardTransientSession` removed the cached transient session and its ID but not the `{notePath, sessionId}` draft entry, so a later render could restore text into a session that no longer exists. It now also deletes that transient ID's draft entry.
+3. **Unrelated-rename behavior was untested.** A rename of a different file runs `refreshTargetNote`, finds the active path unchanged, and takes the cheap same-path branch. A new test pins that it does not abort an in-flight request's signal, does not reload the conversation, and does not issue a second provider request, and that the answer still persists afterwards.
+4. **Stop-cancelled saves were only implied.** A new test drives an `AbortError` rejection out of `appendReadyMessage` after Stop and asserts the assistant save is attempted exactly once, no save-failure Notice appears, the partial answer stays as stopped content, and the view leaves the sending state — pinning the F4 cancellation classification so a future re-wrap of abort errors cannot silently turn a deliberate Stop into a reported failure.
+
+### Tests and gate
+
+New tests (+4; base `27bfe19` was 53 files / 1,873 tests):
+
+- `tests/deepseek-web.test.ts`: `reports a retried zero-result search with two attempts`.
+- `tests/chat-view.test.ts`: `drops a discarded transient session draft with it`, `stays silent when Stop cancels the final save`.
+- `tests/main.test.ts`: `leaves an in-flight request running when a different note is renamed`.
+
+RED before the two code fixes:
+
+```text
+FAIL tests/deepseek-web.test.ts > DeepSeekWebSearchCoordinator > reports a retried zero-result search with two attempts
+- "attempts": 2,
++ "attempts": 1,
+
+FAIL tests/chat-view.test.ts > EmendChatView thread-load recovery > drops a discarded transient session draft with it
+AssertionError: expected true to be false // Object.is equality
+```
+
+The two behavior tests (3 and 4) passed on the fixed code as guards rather than as fixes; both target classifications the review asked to pin.
+
+At review code head `5fbaef4`, with `main.js` rebuilt from that tree and SHA-256 `f00e42e23ef64f0fd4ebb01b24ca40a66554b5219be49755e551c6916a0e1ddc`:
+
+```text
+npm test        53 files / 1,877 tests passed
+npm run lint    clean
+npm run build   clean (tsc -noEmit -skipLibCheck + esbuild production)
+git diff --check clean
+```
+
+### Remaining limits
+
+- The optional `readEditorTexts` reader stays optional: a writer without it (disk-only usage outside the composer path) skips the live-editor comparison entirely, which is the documented contract but leaves that seam unreachable in chat. No test or type change was made here.
+- Popout and reading-mode behavior is still unverified: the reader iterates `workspace.iterateAllLeaves`, so a popout window's Markdown view is covered only if the host reports it through the same workspace; reading-mode (preview, no editor) panes expose no editor text and therefore contribute nothing to the comparison. Real-Obsidian confirmation remains with the PR E matrix, together with the rest of the round's live runs.
