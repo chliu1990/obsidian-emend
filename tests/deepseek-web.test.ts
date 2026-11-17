@@ -1203,7 +1203,8 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		expect(result.sources).toEqual([]);
 		expect(result.content).not.toContain('[S');
 		expect(search).toHaveBeenCalledOnce();
-		expect(reader.extract).toHaveBeenCalledOnce();
+		expect(reader.extract).not.toHaveBeenCalled();
+		expect(result.failedSearches).toBe(1);
 		expect(request).toHaveBeenCalledTimes(2);
 	});
 
@@ -1955,6 +1956,35 @@ describe('DeepSeek web transport retry and search degradation', () => {
 		const content = toolMessage?.role === 'tool' ? toolMessage.content : '';
 		expect(content).toBe('{"error":{"kind":"search_failed","reason":"format","attempts":1}}');
 		expect(content).not.toContain('token-secret');
+	});
+
+	it('reports a zero-result search as empty', async () => {
+		const search = vi.fn(async (): Promise<DeepSeekSearchResult[]> => []);
+		const reader = successfulReader();
+		const { coordinator, request } = coordinatorWith([
+			toolRound([searchCall('call-1', 'nothing found')]),
+			finalRound('No evidence available.'),
+		], search, vi.fn(), reader);
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(search).toHaveBeenCalledOnce();
+		expect(reader.extract).not.toHaveBeenCalled();
+		expect(result.failedSearches).toBe(1);
+		expect(result.sources).toEqual([]);
+		expect(result.activities).toEqual([{
+			type: 'search',
+			target: 'nothing found',
+			status: 'failed',
+			failureReason: 'empty',
+			attempts: 1,
+		}]);
+		const toolMessage = request.mock.calls[1]?.[0].continuation?.find(
+			(message) => message.role === 'tool',
+		);
+		expect(toolMessage?.role === 'tool' && toolMessage.content).toBe(
+			'{"error":{"kind":"search_failed","reason":"empty","attempts":1}}',
+		);
 	});
 
 	it('aborts the web loop on a configuration error', async () => {

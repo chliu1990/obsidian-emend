@@ -271,9 +271,17 @@ export class DeepSeekWebSearchCoordinator {
 			if (!outcome.ok) {
 				return searchFailedOutcome(call.query, outcome, options);
 			}
+			const documents = buildSearchExtractionDocuments(outcome.value);
+			if (documents.length === 0) {
+				return searchFailedOutcome(
+					call.query,
+					{ reason: 'empty', attempts: 1 },
+					options,
+				);
+			}
 			return this.extractDocuments(
 				call,
-				buildSearchExtractionDocuments(outcome.value),
+				documents,
 				sources,
 				options,
 			);
