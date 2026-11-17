@@ -7889,3 +7889,33 @@ describe('EmendChatView capacity refresh sources', () => {
 		expect(fixture.read).not.toHaveBeenCalled();
 	});
 });
+
+describe('EmendChatView quick action drafts', () => {
+	beforeEach(() => {
+		noticeMessages().length = 0;
+	});
+
+	it('preserves the typed draft after a successful quick action', async () => {
+		const fixture = createCapacityView({ mode: 'edit' });
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Keep this';
+		}
+
+		findQuickActionButton(fixture.contentEl, 'fix-grammar')?.dispatch('click');
+		await vi.waitFor(() => expect(fixture.requestChatCompletion).toHaveBeenCalledOnce());
+		await vi.waitFor(() => expect(fixture.context.isSending).toBe(false));
+
+		expect(fixture.requestChatCompletion.mock.calls[0]?.[0]).toMatchObject({
+			mode: 'edit',
+			prompt: QUICK_ACTIONS[0].prompt,
+		});
+		expect(fixture.context.messages[1]?.status).toBe('ready');
+		expect(fixture.context.inputEl?.value).toBe('Keep this');
+		expect(
+			fixture.context.drafts
+				.get('Note.md')
+				?.get(fixture.context.activeSessionId ?? ''),
+		).toBe('Keep this');
+	});
+});

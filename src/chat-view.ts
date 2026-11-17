@@ -1500,6 +1500,7 @@ export class EmendChatView extends ItemView {
 			return;
 		}
 		this.selectedMode = action.mode;
+		this.saveCurrentDraft();
 		await this.submitPrompt(action.prompt, { fromQuickAction: true });
 	}
 
@@ -1631,7 +1632,9 @@ export class EmendChatView extends ItemView {
 		const request: ActiveRequest = { identity, controller, loadingMessage };
 		let finalSaveAttempted = false;
 
-		this.drafts.get(notePath)?.delete(sessionId);
+		if (!options?.fromQuickAction) {
+			this.drafts.get(notePath)?.delete(sessionId);
+		}
 		session.messages.push(userMessage, loadingMessage);
 		this.activeRequest = request;
 		this.activeController = controller;
