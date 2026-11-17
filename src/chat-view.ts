@@ -199,6 +199,7 @@ export class EmendChatView extends ItemView {
 	private messagesEl: HTMLElement | null = null;
 	private followLatestMessages = true;
 	private responseStartMessageId: string | null = null;
+	private responseStartRenderGeneration: number | null = null;
 	private inputEl: HTMLTextAreaElement | null = null;
 	private modelControl: ChatModelControl | null = null;
 	private composerControls: ChatComposerControls | null = null;
@@ -1220,7 +1221,7 @@ export class EmendChatView extends ItemView {
 				'placeholder',
 				getComposerPlaceholder(this.selectedMode, currentDraft),
 			);
-			this.refreshDraftEstimate(currentDraft);
+			this.scheduleCapacityRefresh();
 		});
 
 		const actionsEl = composerEl.createDiv('emend-chat-composer-actions');
@@ -1493,8 +1494,16 @@ export class EmendChatView extends ItemView {
 		if (this.pendingMarkdownRenders > 0) {
 			return;
 		}
-		const responseStartMessageId = this.responseStartMessageId;
+		// Only the render generation created for this completion may align to the
+		// completed answer; any later render supersedes it and keeps its own restore.
+		const boundGeneration = this.responseStartRenderGeneration;
+		const isCompletionRender = typeof boundGeneration !== 'number' ||
+			boundGeneration === generation;
+		const responseStartMessageId = isCompletionRender
+			? this.responseStartMessageId
+			: null;
 		this.responseStartMessageId = null;
+		this.responseStartRenderGeneration = null;
 		const restore = this.pendingScrollRestore;
 		this.pendingScrollRestore = null;
 		if (responseStartMessageId) {
@@ -1906,6 +1915,7 @@ export class EmendChatView extends ItemView {
 				if (this.isCurrent(identity)) {
 					if (loadingMessage.status === 'ready') {
 						this.responseStartMessageId = loadingMessage.id;
+						this.responseStartRenderGeneration = this.renderGeneration + 1;
 						this.followLatestMessages = false;
 					}
 					this.render();

@@ -127,6 +127,14 @@ describe('EmendChatView compact composer styles', () => {
 	});
 });
 
+beforeEach(() => {
+	vi.stubGlobal('window', { setTimeout, clearTimeout });
+});
+
+afterEach(() => {
+	vi.unstubAllGlobals();
+});
+
 // eslint-disable-next-line @typescript-eslint/unbound-method -- The test wrapper supplies an explicit receiver.
 const productionSubmitPrompt = (EmendChatView.prototype as unknown as {
 	submitPrompt(
@@ -6111,6 +6119,42 @@ describe('EmendChatView latest-message scrolling', () => {
 		expect(renderTargetStates).toEqual([null, context.messages[1]?.id]);
 	});
 
+	it('restores the reader position when an unrelated render follows a completion', () => {
+		const messagesEl = renderForFooter(message('answer', 'Note.md'));
+		const responseEl = messagesEl.children[0];
+		if (!responseEl) {
+			throw new Error('Response element missing.');
+		}
+		Object.assign(messagesEl, {
+			scrollTop: 40,
+			getBoundingClientRect: () => ({ top: 100 }),
+			querySelector: () => findElements(
+				messagesEl,
+				(element) => element.attributes['data-message-id'] === 'answer',
+			)[0] ?? null,
+		});
+		Object.assign(responseEl, {
+			getBoundingClientRect: () => ({ top: 260 }),
+		});
+		const context = {
+			closed: false,
+			renderGeneration: 6,
+			pendingMarkdownRenders: 0,
+			pendingScrollRestore: { previousScrollTop: 275, wasFollowing: false },
+			responseStartMessageId: 'answer' as string | null,
+			responseStartRenderGeneration: 5 as number | null,
+			followLatestMessages: false,
+			messagesEl,
+			restoreMessageScroll: (previousScrollTop: number, wasFollowing: boolean) =>
+				viewPrototype.restoreMessageScroll.call(context, previousScrollTop, wasFollowing),
+		};
+
+		viewPrototype.settleMarkdownRender.call(context, 6);
+
+		expect(messagesEl.scrollTop).toBe(275);
+		expect(context.responseStartMessageId).toBeNull();
+	});
+
 	it('aligns the targeted response after Markdown layouts and clears the target', () => {
 		const messagesEl = renderForFooter(message('answer', 'Note.md'));
 		const responseEl = messagesEl.children[0];
@@ -6902,9 +6946,11 @@ describe('EmendChatView Chat Selection submission', () => {
 describe('EmendChatView draft capacity estimate', () => {
 	beforeEach(() => {
 		noticeMessages().length = 0;
+		vi.stubGlobal('window', { setTimeout, clearTimeout });
 	});
 
 	afterEach(() => {
+		vi.unstubAllGlobals();
 		vi.restoreAllMocks();
 	});
 
@@ -6982,6 +7028,7 @@ describe('EmendChatView draft capacity estimate', () => {
 
 		input.value = 'A longer typed draft';
 		input.dispatch('input');
+		await waitForCapacityRefresh();
 
 		const estimate = fixture.askEstimate('A longer typed draft');
 		const after = findCapacitySummary(fixture.contentEl)?.textContent;
@@ -7006,6 +7053,7 @@ describe('EmendChatView draft capacity estimate', () => {
 		}
 		input.value = 'Question';
 		input.dispatch('input');
+		await waitForCapacityRefresh();
 
 		const estimate = fixture.askEstimate('Question');
 		expect(estimate.overCapacity).toBe(true);
@@ -7075,6 +7123,32 @@ describe('EmendChatView draft capacity estimate', () => {
 		expect(fixture.context.messages).toEqual([]);
 		expect(fixture.savedSnapshots).toEqual([]);
 		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+	});
+
+	it('debounces the draft estimate during composer typing', async () => {
+		const fixture = createCapacityView({
+			capacity: { contextWindowTokens: 1000, outputReserveTokens: 100 },
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const input = fixture.context.inputEl;
+		if (!input) {
+			throw new Error('Composer missing.');
+		}
+		const before = findCapacitySummary(fixture.contentEl)?.textContent;
+		fixture.captureChatContext.mockClear();
+
+		input.value = 'A longer typed draft';
+		input.dispatch('input');
+
+		expect(fixture.captureChatContext).not.toHaveBeenCalled();
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(before);
+
+		await waitForCapacityRefresh();
+
+		expect(fixture.captureChatContext).toHaveBeenCalled();
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedCapacitySummary(fixture.askEstimate('A longer typed draft')),
+		);
 	});
 
 	it('refreshes the visible meter when a stale typed submission is blocked', async () => {
@@ -7148,6 +7222,7 @@ describe('EmendChatView draft capacity estimate', () => {
 		}
 		input.value = 'Question';
 		input.dispatch('input');
+		await waitForCapacityRefresh();
 
 		const estimate = fixture.askEstimate('Question');
 		expect(estimate.blocked).toBe(false);
@@ -7550,6 +7625,7 @@ describe('EmendChatView draft capacity estimate', () => {
 		const draft = `Draft ${'x'.repeat(400)}`;
 		fixture.context.inputEl.value = draft;
 		fixture.context.inputEl.dispatch('input');
+		await waitForCapacityRefresh();
 		expect(fixture.askEstimate(draft).overCapacity).toBe(true);
 		expect(findSendButton(fixture.contentEl)?.disabled).toBe(true);
 
@@ -8148,6 +8224,7 @@ describe('EmendChatView composer fail-closed state', () => {
 		expect(fixture.askEstimate(draft).overCapacity).toBe(true);
 		input.value = draft;
 		input.dispatch('input');
+		await waitForCapacityRefresh();
 		expect(fixture.context.draftCapacityBlocked).toBe(true);
 		fixture.captureChatContext.mockImplementationOnce(() => {
 			throw new Error('The active note is no longer available.');
