@@ -135,13 +135,15 @@ export class DeepSeekWebSearchCoordinator {
 				...(forceTerminal ? {} : { tools: WEB_TOOL_DEFINITIONS }),
 				continuation,
 			};
+			let contentEmitted = false;
 			const result = await this.dependencies.request(
 				roundRequest,
 				{
 					onEvent: (event) => {
-						if (event.type === 'reasoning') {
-							options.callbacks.onEvent(event);
+						if (event.type === 'content') {
+							contentEmitted = true;
 						}
+						options.callbacks.onEvent(event);
 					},
 				},
 				options.signal,
@@ -150,11 +152,14 @@ export class DeepSeekWebSearchCoordinator {
 			rounds.push({ request: roundRequest, result });
 			reasoning += result.reasoning;
 			const rawCalls = result.toolCalls ?? [];
+			if (rawCalls.length > 0) {
+				options.callbacks.onContentReset?.();
+			}
 			if (forceTerminal && rawCalls.length > 0) {
 				throw new Error('The model returned tool calls after the web call limit was reached.');
 			}
 			if (rawCalls.length === 0) {
-				if (result.content) {
+				if (result.content && !contentEmitted) {
 					options.callbacks.onEvent({ type: 'content', text: result.content });
 				}
 				return {
