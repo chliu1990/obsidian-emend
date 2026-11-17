@@ -631,3 +631,70 @@ git diff --check clean
 ```
 
 The review round was 1,861 tests, so the follow-up adds 2 (the parametrized configuration case and the activity-label row). Retry policy, transport-error classification, Search/Fetch degradation, payload shape apart from the reason value, and every other behavior are unchanged.
+
+## PR E — real-Obsidian matrix
+
+### Environment
+
+- Branch `chore/2.10-stabilization-evidence` at `a285d98` (merged PR D). Production code was not touched in this pass; only this record and the ignored `test_vault/` harnesses changed.
+- `npm run build` (`tsc -noEmit -skipLibCheck` plus the production esbuild step) produced `main.js` with SHA-256 `e108c6ee8d2a295b35429d76957addb504bfc722798934cf0def2587640b1e1e`. Every harness copies that root bundle into its own vault and each run reports loaded-versus-root equality: the selection suite asserts it in `prepare()` and records `loadedBundleMatchedRoot: true`, and the Web evidence files record `bundle.equal` / `rootBundleMatches` as `true`.
+- Linux with isolated Xvfb displays and CDP ports per suite (`:101`/`19224` selection, `:99`/`19222` Web, `:100`/`19223` minimal edit), the extracted official Obsidian AppImage under `test_vault/emend-web-verify/tools/obsidian`, loopback OpenAI-compatible SSE mocks, and dummy SecretStorage credentials. Track Changes 2.3.0 is installed for the selection suite. No real account, key, provider, or external network was used, and no two harnesses ran concurrently.
+- Obsidian version: the bundled app's `resources/obsidian.asar` and `resources/app.asar` package metadata both report **1.15.0**, which is the version exercised here. `app.appVersion` is unavailable in this renderer, so the suites fall back to probes; one transition evidence file's fallback printed `1.15.1` from a cached `obsidian-1.15.1.asar` filename inside the harness profile. That value is a probe artifact of the profile cache, not a second application build.
+
+### Harness state and first run
+
+The on-disk harnesses predate several shipped UI changes, so the first unmodified run of the selection/chat matrix reported **9 passed / 19 failed / 198 assertions**, the first unmodified Web draft run **0 passed / 5 failed**, and the first unmodified minimal-edit run **1 passed / 8 failed** — in every case on harness assumptions rather than product behavior. The applied edits, note bytes, rendered summaries, and capacity values in the captured screenshots and logs were correct throughout.
+
+| Failure class | Scenarios affected | Cause |
+| --- | --- | --- |
+| Ready-body selector | 01, 02, 03, 07, 13, 14, 15, 17, 22, 23, 24, 26 | The harness read `.emend-chat-message-content` for ready bodies. Stage 48 replaces that seeded element with `emend-chat-message-markdown` after the asynchronous Markdown render, so the harness timed out or read `''` while the screenshot showed the correct summary. |
+| Six-item Writing/Web menu | 00 (chat menu and popout menu) | Stage 49 added `Chat · Selection` and `Edit · Selection · Full note`; the current menu has eight items. |
+| Retired Additional-notes modal picker | 06, 21 | Stage 45 replaced chat's modal picker with the Related notes explorer; the harness still waited for the modal input. |
+| Deferred capacity summary announcement | 19, 20, 21, 25 | PR C defers the summary live-region text by 500 ms for typing renders while the bar and ARIA values stay immediate. First-match reads compared a mid-flight estimate with the settled one (a consistent `+6` tokens) and produced mismatched notice/estimate pairs. |
+| Document Escape expectation | 18 | The assertion still required `defaultPrevented` on the document fallback; PR C made that fallback close the pinned panel *without* swallowing the host shortcut. |
+
+Scenarios share one Obsidian session, so a scenario that aborts on a stale assumption leaves state for the next one. The second run was stopped after scenario 00 hit the stale popout item count, because the following scenarios then failed on the left-open popout rather than on their own subject; it is not counted.
+
+Repairs were limited to the ignored harnesses (`test_vault/emend-selection-chat-verify/`, `test_vault/emend-web-verify/`, and `test_vault/emend-minimal-edit-verify/`): ready-body reads now accept `.emend-chat-message-markdown`, the menu expectations list the eight current items, scenarios 06 and 21 drive the Related notes explorer, the four capacity scenarios read a settled summary (stable for 700 ms), the document-Escape assertion now requires dismissal *without* `preventDefault`, the Web probes accept both the streaming and rendered content containers, and the minimal-edit suite drives the current mode menu and accessible Send/Stop labels, recognizes the current correction instruction, and flattens schema-3 sessions in its persistence audit. Three full selection runs were counted: the stale baseline, a middle run that still carried the two capacity-timing defects and the Escape expectation (23 passed / 5 failed, 477 assertions), and the final green run quoted below. After the middle run the four Web suites were still unadapted; their first Web draft run failed on the same ready-body selector and passed after the probe repair.
+
+### Suite results
+
+All numbers below come from runs against bundle `e108c6ee…` on this tree.
+
+| Suite | Command | Scenarios | Assertions |
+| --- | --- | --- | --- |
+| Selection/chat matrix | `node test_vault/emend-selection-chat-verify/verify.mjs` | 28 passed, 0 failed | 589 |
+| Focused stabilization scenarios | `node test_vault/emend-selection-chat-verify/verify.mjs --stabilization` | 4 passed, 0 failed | 37 |
+| Web draft streaming | `node test_vault/emend-web-verify/verify.mjs --web-draft` | 5 passed, 0 failed | 57 |
+| Web response transition | `node test_vault/emend-web-verify/verify.mjs --web-transition` | 7 passed, 0 failed | 40 |
+| Compact composer 240 px | `node test_vault/emend-web-verify/verify.mjs --compact-ui` | 1 passed, 0 failed | 4 |
+| Minimal-edit matrix | `node test_vault/emend-minimal-edit-verify/verify.mjs` | 9 passed, 0 failed | 54 |
+
+Across the six suites: **54 scenarios / 781 assertions**, all green on bundle `e108c6ee…`.
+
+The minimal-edit suite is a Stage 37-era harness, so its first unmodified run passed 1 of 9 scenarios: it drives the retired `.emend-chat-mode-button` controls and text-labelled Send/Stop buttons, reads ready bodies from `.emend-chat-message-content`, detects the correction round by the pre-Stage-41 prompt sentence, and asserts schema-2 persistence. Four test-only repairs brought it to 9/9 on the same bundle without changing production code: the Writing/Web menu replaces the retired mode buttons, Send/Stop are driven by accessible label, ready-body reads accept `emend-chat-message-markdown`, the mock recognizes the current `Return only a new complete JSON array of operations, or an envelope object …` correction instruction (and the assertion now expects that instruction), and the persistence audit flattens schema-3 sessions. With those in place the suite again confirms the invalid-to-valid full-note correction with all-round usage and successful-attempt reasoning (`01`, 11 assertions), broad-replacement minimization with two Track Changes cards (`07`, 6), the typed ambiguity diagnostic and terminal second candidate (`02`, 4), provider-failure and stale-source terminals after a correction (`04`, `05`, 3 each), Stop/retry (`03`, 3), native selection undo (`08`, 5), the modal's invalid-to-valid correction (`06`, 4), and sanitized schema-3 persistence of concise Edit results with all-round usage (`09`, 15). Assertion text inside the suite is still Stage 37-era copy; it was updated only where the current product intentionally changed the wording.
+
+The on-disk selection harness exposes 28 scenarios (00–27). It does not contain the Stage 47–49 modes (`--selection-highlight`, `--selection-focus`, `--stale-only`, `--picker-regressions`) or those stages' appended scenarios 28–37, so today's 589 assertions are not comparable to the 724 recorded in Stages 49–50, and the live-selection highlight, stale-source-only, and picker-regression matrices were not re-run in this pass.
+
+### New stabilization scenarios (`--stabilization`)
+
+Added to the existing selection harness and mock without renumbering historical evidence.
+
+- **H1 `01-selection-edit-inside-existing-token`** (12 assertions). The note holds `Keep {++inner text++} tail.`; the mock answers with a replace of `inner text`, which would compile to nested markup. Both rounds were rejected — the chat error and the Notice both read `Compiled operations produce invalid CriticMarkup in the complete note. Preserve existing CriticMarkup tokens and do not nest markup.`, exactly two provider requests (one same-provider correction) were made, `vault.modify` and `editor.replaceRange` were never called, and the note bytes were unchanged. A later edit whose selection enclosed the whole pending token (targeting `tail.`) then succeeded: bytes became `Keep {++inner text++} {~~tail~>trailer~~}.`, the existing insertion token survived byte-for-byte, one native replacement was recorded, and native undo/redo restored the original and annotated text.
+- **H2 `02-typing-during-full-note-request`** (6 assertions). With a held full-note Edit streaming, the harness typed `USER_TYPED_DURING_REQUEST ` into the live editor and released the response. The disk file still equalled the captured source at that moment (recorded as `refusalWasEditorOnly: true`), so the refusal came from the live-editor freshness check added in PR A. The result was the exact `The note changed while Emend was responding. No edits were applied.` error, every keystroke survived in the editor, no `{~~` markup reached the editor or the file, the plugin writer never called `vault.modify`, and exactly one provider request was made.
+- **H3 `03-unbalanced-fence-payload`** (9 assertions). The mock inserted a payload containing an unclosed fence. Both rounds were rejected with `Operation 1 payload introduces unbalanced fenced code or backtick runs at line 4; keep every fence and backtick run paired inside the operation payload. No edits were applied.`, two provider requests were made (one correction), no `vault.modify` reached the note, and the bytes were unchanged. A later ordinary replacement on the next line applied once through the guarded writer: `Second line {~~beta~>gamma~~}.`, with no fence left in the note.
+- **M1 `04-reasoning-panel-across-deltas`** (10 assertions). A Web Off answer streamed part of its reasoning, held, then finished the reasoning and the answer. While the panel was open and scrolled, further reasoning and answer deltas updated the same content element in place (`sameNode: true`), the panel stayed open, the scroll offset was unchanged (`scrollTop` 15 of a 63 px scroll range), and both texts kept growing (477 reasoning characters, 126 answer characters). The completed message kept all reasoning and the terminal answer, made exactly one provider request, advertised no Web tools, and the final ready body rendered its reasoning closed as usual.
+
+Screenshots inspected: `01-selection-edit-inside-existing-token.png` (Notice banner, preserved `{++inner text++}`, new substitution, applied Selection summary), `02-typing-during-full-note-request.png` (stale error in chat and Notice), `03-unbalanced-fence-payload.png` (payload rejection Notice and the applied follow-up), `04-reasoning-panel-across-deltas.png` (terminal answer after the panel checks), `web-draft-auto-streaming.png` (muted `Draft answer — research may continue` label over live draft text plus a completed answer with `Sources (1)`), `web-transition-auto.png` (rendered Markdown answer with table and list), and `compact-ui-240.png` (Web/model/Send controls visible without horizontal overflow at 240 px).
+
+### Limits
+
+- Linux on Xvfb with loopback mocks only. macOS, Windows, physical keyboards, screen readers, other Obsidian versions, and real provider accounts were not exercised, and no pixel comparison was made.
+- `app.appVersion` is unavailable in this renderer, so the Obsidian version comes from bundled package metadata (1.15.0); one evidence file's cached-asar fallback printed 1.15.1, as described above.
+- H1's successful follow-up covers an edit whose *selection* encloses the whole pending token; editing strictly inside an existing tracked change remains rejected by design, and its notice is still the generic `compiled-markup-rejected` copy (deferral item 13).
+- M1 injects a harness-only `max-height`/`overflow-y` rule on `.emend-chat-reasoning-content`, because the shipped stylesheet does not make that container scrollable at the Xvfb viewport. The injected rule changes presentation only; the streaming update path, element identity, `open` state, and scroll preservation are the product code under test.
+- H2 observes a single timing sample: the disk file still matched the captured source when the response was released. On a slower run the autosave could land first, in which case either freshness check would reject identically; the harness records the observed value in its evidence.
+- The selection suite exercises one 1440×1000 Xvfb screen with the default theme; 240 px behavior is covered by the dedicated layout scenarios rather than by every new scenario.
+- The minimal-edit suite was adapted in the ignored harness only (menus, accessible labels, ready-body selector, correction-instruction wording, schema-3 audit); its assertions still come from the Stage 37 record and were not expanded with Stage 51 coverage. Its evidence file does not recompute a bundle hash: like the other suites it copies the root `main.js` shown above into its vault during `prepare()`, and no separate bundle was built for it.
+
+The tree that produced these runs also passes the local gates unchanged: `npm test` **53 files / 1,863 tests**, `npm run lint` clean, `git diff --check` clean, and the bundle hash above.
