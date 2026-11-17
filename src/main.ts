@@ -211,20 +211,29 @@ export default class EmendPlugin extends Plugin {
 	async loadSettings() {
 		this.settings = normalizeSettings(await this.loadData());
 		const storage = this.getApiKeyStorage();
-		let migrated = false;
+		const migratedProviders: ProviderId[] = [];
 		for (const providerId of ['deepseek', 'kimi', 'custom'] as const) {
 			const provider = this.settings.providers[providerId];
-			if (provider.apiKey) {
-				const legacyApiKey = provider.apiKey.trim();
-				if (legacyApiKey) {
-					storage.setApiKey(providerId, legacyApiKey);
-				}
-				provider.apiKey = '';
-				migrated = true;
+			if (!provider.apiKey) {
+				continue;
 			}
+			const legacyApiKey = provider.apiKey.trim();
+			if (legacyApiKey) {
+				storage.setApiKey(providerId, legacyApiKey);
+			}
+			migratedProviders.push(providerId);
 		}
-		if (migrated) {
+		if (migratedProviders.length === 0) {
+			return;
+		}
+		try {
 			await this.saveSettings();
+		} catch (error) {
+			new Notice(`Emend: Could not save migrated API keys. ${getErrorMessage(error)}`);
+			return;
+		}
+		for (const providerId of migratedProviders) {
+			this.settings.providers[providerId].apiKey = '';
 		}
 	}
 

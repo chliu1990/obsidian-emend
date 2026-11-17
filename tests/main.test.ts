@@ -1,7 +1,7 @@
-import { MarkdownView, TFile, TFolder } from 'obsidian';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { MarkdownView, Notice, TFile, TFolder } from 'obsidian';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolveActiveSession } from '../src/chat-sessions';
-import { EmendChatView } from '../src/chat-view';
+import { EMEND_CHAT_VIEW_TYPE, EmendChatView } from '../src/chat-view';
 import type { ConversationDataAdapter } from '../src/conversation-store';
 import { formatVaultQualifiedPath } from '../src/context';
 import {
@@ -592,6 +592,62 @@ describe('EmendPlugin mode keyboard commands', () => {
 		expect(modify).not.toHaveBeenCalled();
 	});
 });
+
+describe('EmendPlugin settings migration', () => {
+	beforeEach(() => {
+		noticeMessages().length = 0;
+	});
+
+	it('registers commands when the legacy key migration save rejects', async () => {
+		const commands: Array<{ id: string }> = [];
+		const registerView = vi.fn();
+		const saveData = vi.fn().mockRejectedValueOnce(new Error('Disk is full'));
+		const setSecret = vi.fn();
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, {
+			app: {
+				vault: {
+					adapter: new MemoryAdapter(),
+					configDir: '.test-config',
+					on: () => ({}),
+				},
+				workspace: { on: () => ({}), getLeavesOfType: () => [] },
+				secretStorage: { setSecret, getSecret: () => null },
+			},
+			loadData: vi.fn().mockResolvedValue({
+				providers: { deepseek: { apiKey: 'legacy-deepseek-key' } },
+			}),
+			saveData,
+			registerView,
+			registerEditorExtension: vi.fn(),
+			registerEvent: vi.fn(),
+			rememberActiveMarkdownView: vi.fn(),
+			addRibbonIcon: vi.fn(),
+			addCommand: vi.fn((command: { id: string }) => commands.push(command)),
+			addSettingTab: vi.fn(),
+		});
+
+		await expect(plugin.onload()).resolves.toBeUndefined();
+
+		expect(setSecret).toHaveBeenCalledOnce();
+		expect(registerView).toHaveBeenCalledWith(EMEND_CHAT_VIEW_TYPE, expect.any(Function));
+		expect(commands.map((command) => command.id)).toEqual(expect.arrayContaining([
+			'emend:switch-to-ask-mode',
+			'emend:switch-to-edit-mode',
+		]));
+		expect(noticeMessages()).toContain(
+			'Emend: Could not save migrated API keys. Disk is full',
+		);
+		expect(plugin.settings.providers.deepseek.apiKey).toBe('legacy-deepseek-key');
+
+		saveData.mockResolvedValueOnce(undefined);
+		await expect(plugin.saveSettings()).resolves.toBeUndefined();
+	});
+});
+
+function noticeMessages(): string[] {
+	return (Notice as unknown as { messages: string[] }).messages;
+}
 
 describe('EmendPlugin additional-note lifecycle', () => {
 	it('routes file and folder rename/delete events without discovery, refresh, reads, or requests', async () => {
