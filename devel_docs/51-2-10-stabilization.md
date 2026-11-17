@@ -204,3 +204,67 @@ git diff --check clean
 ```
 
 The review round adds 5 tests (1,816 → 1,821). `src/selection-modal.ts` is the only module whose constructor contract changed, and only by one optional trailing callback, so the Stage 45/49 modal behavior and its tests are unchanged.
+
+## PR C — interaction, streaming, and accessibility
+
+This section records the first implementer pass on branch `fix/2.10-interaction`, based at `9a79f40` (PR B merged). Tasks C4–C7 are handled by a second pass and are not claimed here.
+
+### Fixes
+
+1. **C1 — streaming DOM identity.** `renderMessageBody` previously called `bodyEl.empty()` on every scheduled streaming frame, recreating the reasoning `<details>` closed and the answer element underneath it. Loading messages now build their structure once per message body and update only the reasoning/activity/content text. The structure is reused while the message shape is unchanged: role, `webActivity` presence, reasoning presence, and the provisional Web draft label. A shape change rebuilds once and carries the previous `details.open` and reasoning scroll position forward. Text updates reuse the existing text node's `nodeValue`, so an in-answer selection is not replaced; only a shape change rebuilds the content element. Terminal messages delete the cached structure and use the unchanged plain-text-then-Markdown path.
+2. **C2 — composer disabled and fail-closed state.** `composerState().sendDisabled` now includes `!this.notePath`, so Send is disabled when no Markdown note is open. The generic target-capture `catch` in `submitPrompt` captures the draft, caret, and focus state before re-rendering and passes them through the existing `ComposerRestoreState`, so the restored text drives the estimate, `draftCapacityBlocked`, quick-action capacity, and the caret/focus position instead of leaving a stale estimate for the previous draft.
+3. **C3 — session switch guard.** `switchActiveSession` now refuses a switch when `isSending`, `isThreadLoading`, or `isSessionMutating`, mirroring `beginSessionMutation`. The request is therefore not aborted and no loading message is abandoned by a session-selector race; the session controls already disable themselves while sending.
+
+### Regression evidence
+
+- `tests/chat-view.test.ts` (new `describe('EmendChatView streaming DOM identity')`): `keeps an opened reasoning panel and its scroll while streaming`, `keeps the opened reasoning panel when the first answer content arrives`.
+- `tests/chat-view.test.ts` (new `describe('EmendChatView composer fail-closed state')`): `disables Send when no Markdown note is open`, `restores draft estimate and capacity blocking after a fail-closed capture`.
+- `tests/chat-view.test.ts` (new `describe('EmendChatView session switch guard')`): `refuses a session switch while a request is in flight`.
+- `tests/request-isolation.test.ts`: `keeps the same-note pending lock while a session switch is refused` (previously `… across a session switch until the aborted request settles`), because a session switch no longer aborts an in-flight request.
+
+RED before each fix:
+
+```text
+FAIL tests/chat-view.test.ts > EmendChatView streaming DOM identity > keeps an opened reasoning panel and its scroll while streaming
+AssertionError: expected FakeElement { … } to be FakeElement { … } // Object.is equality
+FAIL tests/chat-view.test.ts > EmendChatView streaming DOM identity > keeps the opened reasoning panel when the first answer content arrives
+AssertionError: expected FakeElement { … } to be FakeElement { … } // Object.is equality
+Tests  2 failed | 261 skipped (263)
+
+FAIL tests/chat-view.test.ts > EmendChatView composer fail-closed state > disables Send when no Markdown note is open
+AssertionError: expected false to be true
+FAIL tests/chat-view.test.ts > EmendChatView composer fail-closed state > restores draft estimate and capacity blocking after a fail-closed capture
+AssertionError: expected +0 to be 10
+Tests  2 failed | 263 skipped (265)
+
+FAIL tests/chat-view.test.ts > EmendChatView session switch guard > refuses a session switch while a request is in flight
+AssertionError: expected 'a2' to be 'a1'
+Tests  1 failed | 265 skipped (266)
+```
+
+Three existing session-runtime tests (`isolates stale stream callbacks and finally cleanup from a newer request after A1 → A2 → B → A1`, `suppresses a stale final-save Notice after a session transition`, `does not apply stale initial-save metadata after a session transition`) used a session switch to abort an in-flight request. They now release the request explicitly with `abortActiveRequest()` before the switch, so they keep exercising the same stale-callback, stale-save-notice, and stale-metadata guards without relying on the removed path. Test harnesses that call the split rendering methods received matching `renderStreamingMessageBody`/`renderFinalMessageBody` stubs.
+
+### Local gate
+
+At `3ae7e4c` with bundle SHA-256 `ef944dc21dd8f2899c272d6c239c01110504b297d6ff9149bb3ac52208b320ca`:
+
+```text
+npm test        53 files / 1,826 tests passed
+npm run lint    clean
+npm run build   clean (tsc -noEmit -skipLibCheck + esbuild production)
+git diff --check clean
+```
+
+Baseline `9a79f40` was 53 files / 1,821 tests, so this pass adds 5 tests.
+
+### Commits
+
+| Task | Commit | Message |
+| --- | --- | --- |
+| C1 | `a77b0aa` | `fix: preserve streaming message DOM state` |
+| C2 | `7ab40e6` | `fix: synchronize composer disabled and capacity state` |
+| C3 | `3ae7e4c` | `fix: guard session switches during requests` |
+
+### Limits
+
+Everything here is unit- and source-verified. Real-Obsidian confirmation of reasoning-panel state and text selection across streaming frames, a disabled Send with no note open, the restored caret, and a refused session-selector race belongs to the PR E exploratory matrix. No macOS, Windows, real-provider, or screen-reader evidence is claimed, and C4–C7 remain open.
