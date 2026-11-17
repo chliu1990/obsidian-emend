@@ -391,3 +391,82 @@ The C4–C7 pass ended at 1,837 tests; this round adds one test (the real-comple
 | --- | --- | --- |
 | Review fixes | `ded5f5d` | `fix: close PR C review findings` |
 | Review docs | this docs commit | `docs: record PR C review round` |
+
+## PR D — provider, privacy, and settings correctness
+
+Branch `fix/2.10-provider-correctness`, based at `5576d4e` (PR C merged, 53 files / 1,838 tests). The first pass ships D1–D3 below; D4–D6 are recorded by the second pass.
+
+### Fixes (D1–D3)
+
+1. **D1 — credential-bearing base URLs and error redaction.** `requestAiResponse`, `discoverProviderModels`, and the `requestDeepSeekTool` base-URL validator now reject a parsed URL whose `username` or `password` is nonempty with `<provider> base URL must not contain credentials.` (M2). The message never repeats the URL, so the credential cannot be echoed. `sanitizeProviderError` and `sanitizeDiscoveryError` additionally replace a `//user:pass@` userinfo segment with `//***@`, so a host or transport error that quotes the configured URL cannot leak it. Failing before `fetch` also means the `user:pass@host` value never reaches the chat transport, the Search/Fetch JSON clients, or model discovery. Base-URL trimming, HTTP(S) enforcement, and the missing-key/model errors are unchanged.
+2. **D2 — schema failures are `format`, not `network`.** Parser throws now use an exported `DeepSeekResponseFormatError`, and a successful Search/Fetch response whose body is not JSON is tagged the same way before sanitization. `WebFailureReason` gained `'format'`; the coordinator classifies that error as `reason: 'format'` with `retryable: false` before the transport status rules, so a 200 response with a drifted schema performs exactly one call instead of a second paid retry and no longer reports a false cause (M3). Transport failures keep `network`/`http` and their existing retry matrix, and the failure payload keeps the closed `kind`/`reason`/`httpStatus`/`attempts` shape. A Search format failure still degrades non-fatally to `search_failed`; a Fetch format failure stays an unread `fetch_failed`. Activity rows render `Search · Failed (format) · …` / `Fetch · Failed (format) · …` through the `format` label added to `WEB_FAILURE_REASON_LABELS`. The aggregate unread-page, extraction, search, omission, and skipped-call warnings are unchanged: they already report incompleteness, and the reason itself stays transient in the activity row and tool result.
+3. **D3 — optional search metadata and duplicate URLs.** `parseDeepSeekSearchResponse` accepts an omitted (or `null`) `site_name`, `date`, and `snippet` instead of failing the whole search, and keeps `snippet` absent when it is absent (M4). Required `title`, `url`, `summary`, and `content` strings and the malformed-response rejection are unchanged, and an entry whose URL is not a credentialess HTTP(S) URL is still skipped. `buildSearchExtractionDocuments` now deduplicates by `normalizeWebUrl(result.url)` before assigning `R<n>` temporary IDs, so two hits for one URL produce one reader document, one tool-payload entry, and one stable `S` citation instead of duplicate IDs in the same payload (M18). First occurrence wins; the reader and citation order follow the surviving retrieval order.
+
+`AGENTS.md` records the credential-URL rule and userinfo redaction, the `format` reason and its non-retryable classification, the optional-metadata tolerance, and the normalized-URL deduplication in the module table, Providers and settings, DeepSeek online search item 6, the Web verification checklist, and Security and privacy.
+
+### Regression evidence
+
+New tests (+11):
+
+- `tests/provider-stream.test.ts`: `rejects a base URL with embedded credentials without echoing it`, `redacts a userinfo segment from a provider error`.
+- `tests/model-discovery.test.ts`: `rejects a base URL with embedded credentials without echoing it`.
+- `tests/deepseek-web.test.ts`: `rejects a base URL with embedded credentials without echoing it`, `reports a malformed search payload as a format failure without retrying`, `reports a malformed fetch payload as a format failure`, `does not retry a 200 retrieval response whose body is not JSON`, `parses search results that omit optional site_name and date`, `merges search results that share a normalized URL into one cited source`.
+- `tests/chat-view.test.ts`: the failed-activity label table gained a `format` row asserting `Search · Failed (format) · drifted query`.
+- `tests/web-extraction.test.ts`: `assigns one temporary ID per normalized URL and drops duplicate hits`.
+
+RED before each fix:
+
+```text
+FAIL tests/provider-stream.test.ts > requestAiResponse > rejects a base URL with embedded credentials without echoing it
+AssertionError: expected 'Cannot read properties of undefined (…' to match /base URL/i
+FAIL tests/model-discovery.test.ts > discoverProviderModels > rejects a base URL with embedded credentials without echoing it
+AssertionError: expected 'Cannot read properties of undefined (…' to match /base URL/i
+Tests  3 failed (3)
+
+FAIL tests/provider-stream.test.ts > requestAiResponse > redacts a userinfo segment from a provider error
+Expected: "connect failed for https://***@provider.example.test/v1"
+Received: "connect failed for https://token-user:token-secret@provider.example.test/v1"
+
+FAIL tests/deepseek-web.test.ts > DeepSeek web transport retry and search degradation > reports a malformed search payload as a format failure without retrying
+AssertionError: expected "vi.fn()" to be called once, but got 2 times
+FAIL tests/deepseek-web.test.ts > DeepSeek web transport retry and search degradation > reports a malformed fetch payload as a format failure
+AssertionError: expected "vi.fn()" to be called once, but got 2 times
+Tests  2 failed | 1 passed | 87 skipped (90)
+
+FAIL tests/deepseek-web.test.ts > DeepSeek retrieval clients > parses search results that omit optional site_name and date
+DeepSeekResponseFormatError: DeepSeek returned a malformed search response.
+FAIL tests/deepseek-web.test.ts > DeepSeekWebSearchCoordinator > merges search results that share a normalized URL into one cited source
+AssertionError: expected [ { sourceId: 'R1', …(4) }, …(1) ] to have a length of 1 but got 2
+FAIL tests/web-extraction.test.ts > canonical extraction documents > assigns one temporary ID per normalized URL and drops duplicate hits
+AssertionError: expected [ { sourceId: 'R1', …(4) }, …(2) ] to deeply equal [ { sourceId: 'R1', …(4) }, …(1) ]
+Tests  2 failed | 148 skipped (150)
+```
+
+The three credential tests failed because the URL was accepted and `fetch` ran with an `undefined` mock response; the format tests failed because the parser throw was classified `network` and retried once; the optional-metadata test failed because the parser required the three optional fields; and the duplicate-URL tests failed because two documents were built for one URL.
+
+### Local gate
+
+At code head `225037e`, with `main.js` rebuilt from that tree and SHA-256 `ece95287f033a1b7eef3993d9f684768ad144f59b3cb6b7c7df11255c83fe77d`:
+
+```text
+npm test        53 files / 1,849 tests passed
+npm run lint    clean
+npm run build   clean (tsc -noEmit -skipLibCheck + esbuild production)
+git diff --check clean
+```
+
+Base `5576d4e` was 53 files / 1,838 tests, so this pass adds 11. `main.js` is gitignored; the docs commit changes the esbuild build identity (`git rev-parse --short HEAD`), so a rebuild at the docs head will not reproduce the hash above.
+
+### Commits
+
+| Task | Commit | Message |
+| --- | --- | --- |
+| D1 | `feb64d9` | `fix: reject credential-bearing provider URLs` |
+| D2 | `05ca241` | `fix: classify schema failures as format errors` |
+| D3 | `225037e` | `fix: tolerate optional search metadata and merge duplicate URLs` |
+
+### Limits
+
+- Everything here is unit- and source-verified. No real Obsidian, loopback SSE/Search/Fetch harness, or real provider was exercised in this pass; the PR E exploratory matrix owns the live runs, and no macOS, Windows, provider, or assistive-technology claim is made.
+- Rejecting credentials at request time does not rewrite an already-persisted `user:pass@host` value in `data.json`; Settings still stores whatever the user typed, and the next request fails closed with the new message. A settings-level rejection or one-time rewrite was not added because it would change persisted data outside this fix's boundary.
+- The `format` label is a top-level failure reason beside the existing reader failure kind `format`; rows read `Failed (format)` for a schema-drift failure and `Failed (reader format)` for an extractor output failure.
