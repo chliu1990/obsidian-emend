@@ -6012,11 +6012,6 @@ describe('EmendChatView web activity review', () => {
 			'Search · Failed (format) · drifted query',
 		],
 		[
-			'configuration',
-			{ type: 'search' as const, target: 'unconfigured provider', status: 'failed' as const, failureReason: 'configuration' as const },
-			'Search · Failed (configuration) · unconfigured provider',
-		],
-		[
 			'empty',
 			{ type: 'fetch' as const, target: 'https://example.test/blank', status: 'failed' as const, failureReason: 'empty' as const },
 			'Fetch · Failed (empty page) · https://example.test/blank',

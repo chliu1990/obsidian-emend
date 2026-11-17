@@ -2225,7 +2225,6 @@ const WEB_FAILURE_REASON_LABELS: Record<string, string | undefined> = {
 	network: 'network',
 	http: 'HTTP',
 	format: 'format',
-	configuration: 'configuration',
 	empty: 'empty page',
 	reader: 'reader',
 };
