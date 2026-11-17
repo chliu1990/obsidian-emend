@@ -96,6 +96,7 @@ export interface ChatStreamResult extends Omit<StreamResult, 'usage'> {
 	activities?: WebActivityRecord[];
 	failedExtractions: number;
 	failedSearches: number;
+	maxToolCalls: number;
 	skippedWebCalls: number;
 	omittedEvidence: boolean;
 }
@@ -168,6 +169,7 @@ export class ReadOnlyRequestCoordinator {
 				activities: result.activities,
 				failedExtractions: result.failedExtractions,
 				failedSearches: result.failedSearches,
+				maxToolCalls: result.maxToolCalls,
 				skippedWebCalls: result.skippedWebCalls,
 				omittedEvidence: result.omittedEvidence,
 				usage: resolveRoundTokenUsage(result.rounds),
@@ -183,6 +185,7 @@ export class ReadOnlyRequestCoordinator {
 			...result,
 			failedExtractions: 0,
 			failedSearches: 0,
+			maxToolCalls: 0,
 			skippedWebCalls: 0,
 			omittedEvidence: false,
 			usage: resolveTokenUsage(request, result),

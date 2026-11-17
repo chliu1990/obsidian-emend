@@ -112,6 +112,7 @@ describe('createSseParser', () => {
 		['non-numeric', { prompt_tokens: '12', completion_tokens: 5, total_tokens: 17 }],
 		['negative', { prompt_tokens: -1, completion_tokens: 5, total_tokens: 4 }],
 		['fractional', { prompt_tokens: 12.5, completion_tokens: 5, total_tokens: 17.5 }],
+		['inconsistent', { prompt_tokens: 12, completion_tokens: 5, total_tokens: 20 }],
 	])('ignores %s usage', (_label, usage) => {
 		const parser = createSseParser();
 		const payload = JSON.stringify({ choices: [], usage });

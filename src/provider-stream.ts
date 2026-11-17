@@ -53,6 +53,10 @@ export interface StreamResult {
 	toolCalls?: ProviderToolCall[];
 }
 
+export function isConsistentTokenUsage(usage: ProviderTokenUsage) {
+	return usage.totalTokens === usage.promptTokens + usage.completionTokens;
+}
+
 interface ProviderRoundState {
 	finishReason?: string;
 	toolCalls: ProviderToolCall[];
@@ -451,7 +455,8 @@ function parseTokenUsage(value: unknown): ProviderTokenUsage | undefined {
 		return undefined;
 	}
 
-	return { promptTokens, completionTokens, totalTokens };
+	const usage = { promptTokens, completionTokens, totalTokens };
+	return isConsistentTokenUsage(usage) ? usage : undefined;
 }
 
 function isTokenCount(value: unknown): value is number {

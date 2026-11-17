@@ -176,6 +176,7 @@ export class DeepSeekWebSearchCoordinator {
 					activities,
 					failedExtractions,
 					failedSearches,
+					maxToolCalls: options.maxToolCalls,
 					skippedWebCalls,
 					omittedEvidence,
 					rounds,

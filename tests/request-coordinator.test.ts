@@ -1473,6 +1473,7 @@ describe('ReadOnlyRequestCoordinator web routing', () => {
 				sources: [{ id: 'S1', title: 'Source', url: 'https://example.test/source' }],
 				activities: [],
 				failedExtractions: 2,
+				maxToolCalls: 7,
 				skippedWebCalls: 3,
 				failedSearches: 4,
 				omittedEvidence: true,
@@ -1543,6 +1544,7 @@ describe('ReadOnlyRequestCoordinator web routing', () => {
 		expect(result.content).toBe('Web answer');
 		expect(result.reasoning).toBe('Main reasoning');
 		expect(result.failedExtractions).toBe(2);
+		expect(result.maxToolCalls).toBe(7);
 		expect(result.skippedWebCalls).toBe(3);
 		expect(result.failedSearches).toBe(4);
 		expect(result.omittedEvidence).toBe(true);
@@ -1566,6 +1568,7 @@ describe('ReadOnlyRequestCoordinator web routing', () => {
 					activities: [],
 					failedExtractions: 0,
 					failedSearches: 0,
+					maxToolCalls: 7,
 					skippedWebCalls: 0,
 					omittedEvidence: false,
 					rounds: [{
@@ -1646,6 +1649,7 @@ describe('ReadOnlyRequestCoordinator web routing', () => {
 				activities: [],
 				failedExtractions: 0,
 				failedSearches: 0,
+				maxToolCalls: 7,
 				skippedWebCalls: 0,
 				omittedEvidence: false,
 				rounds: [{
@@ -1723,6 +1727,7 @@ describe('ReadOnlyRequestCoordinator web routing', () => {
 			activities: [],
 			failedExtractions: 0,
 			failedSearches: 0,
+			maxToolCalls: 7,
 			skippedWebCalls: 0,
 			omittedEvidence: false,
 			rounds: [

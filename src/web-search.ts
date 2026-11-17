@@ -49,6 +49,7 @@ export interface WebToolLoopResult {
 	activities: WebActivityRecord[];
 	failedExtractions: number;
 	failedSearches: number;
+	maxToolCalls: number;
 	skippedWebCalls: number;
 	omittedEvidence: boolean;
 	rounds: Array<{ request: AiProviderRequest; result: StreamResult }>;
