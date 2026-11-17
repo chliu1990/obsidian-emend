@@ -102,7 +102,7 @@ describe('AdditionalNotesStore', () => {
 		expect(store.list('C.md')).toEqual(['shared.md', 'A-only.md', 'C-only.md']);
 	});
 
-	it('removes deleted paths while retaining their own target state', () => {
+	it('removes deleted paths and drops their own target state', () => {
 		const store = new AdditionalNotesStore();
 		store.add('A.md', 'B.md');
 		store.add('A.md', 'C.md');
@@ -111,7 +111,27 @@ describe('AdditionalNotesStore', () => {
 		store.removeDeleted('B.md');
 
 		expect(store.list('A.md')).toEqual(['C.md']);
-		expect(store.list('B.md')).toEqual(['C.md']);
+		expect(store.list('B.md')).toEqual([]);
+	});
+
+	it('drops the deleted target note\'s own selections', () => {
+		const store = new AdditionalNotesStore();
+		store.add('A.md', 'B.md');
+		store.add('A.md', 'C.md');
+		store.add('Folder/Target.md', 'C.md');
+
+		store.removeDeleted('A.md');
+
+		expect(store.list('A.md')).toEqual([]);
+
+		store.add('A.md', 'C.md');
+
+		expect(store.list('A.md')).toEqual(['C.md']);
+
+		store.removeDeletedFolder('Folder');
+
+		expect(store.list('Folder/Target.md')).toEqual([]);
+		expect(store.list('Folder/Target-other.md')).toEqual([]);
 	});
 
 	it('notifies subscribers for mutations and stops after unsubscription', () => {
@@ -577,7 +597,7 @@ describe('AdditionalNotesStore provenance and refresh', () => {
 		]);
 	});
 
-	it('removes deleted file paths and invalid Links provenance while retaining target state', () => {
+	it('removes deleted file paths and invalid Links provenance without cross-target leakage', () => {
 		const store = new AdditionalNotesStore();
 		const invalidLinks: AdditionalNoteHelper = { type: 'links', targetPath: 'B.md' };
 		const validLinks: AdditionalNoteHelper = { type: 'links', targetPath: 'Other.md' };
@@ -606,7 +626,7 @@ describe('AdditionalNotesStore provenance and refresh', () => {
 
 		expect(store.list('A.md')).toEqual(['C.md', 'link-valid.md', 'folder-valid.md']);
 		expect(store.listHelpers('A.md')).toEqual([validLinks, validFolder]);
-		expect(store.list('B.md')).toEqual(['C.md']);
+		expect(store.list('B.md')).toEqual([]);
 		expect(store.listHelpers('B.md')).toEqual([]);
 		expect(listener).toHaveBeenCalledTimes(1);
 		store.removeDeleted('B.md');
@@ -636,15 +656,15 @@ describe('AdditionalNotesStore provenance and refresh', () => {
 			targetPath: 'Folder/Link.md',
 		};
 		const validLinks: AdditionalNoteHelper = { type: 'links', targetPath: 'Outside.md' };
-		store.add('Folder/Target.md', 'Folder/A.md');
-		store.add('Folder/Target.md', 'Folder-other/Keep.md');
-		store.add('Folder/Target.md', 'Outside.md');
-		store.addHelper('Folder/Target.md', all, ['all.md']);
-		store.addHelper('Folder/Target.md', deletedFolder, ['deleted-helper.md']);
-		store.addHelper('Folder/Target.md', retainedFolder, ['retained-helper.md']);
-		store.addHelper('Folder/Target.md', invalidScopedFolder, ['invalid-scope.md']);
-		store.addHelper('Folder/Target.md', invalidLinks, ['invalid-link.md']);
-		store.addHelper('Folder/Target.md', validLinks, ['valid-link.md']);
+		store.add('Target.md', 'Folder/A.md');
+		store.add('Target.md', 'Folder-other/Keep.md');
+		store.add('Target.md', 'Outside.md');
+		store.addHelper('Target.md', all, ['all.md']);
+		store.addHelper('Target.md', deletedFolder, ['deleted-helper.md']);
+		store.addHelper('Target.md', retainedFolder, ['retained-helper.md']);
+		store.addHelper('Target.md', invalidScopedFolder, ['invalid-scope.md']);
+		store.addHelper('Target.md', invalidLinks, ['invalid-link.md']);
+		store.addHelper('Target.md', validLinks, ['valid-link.md']);
 		store.add('Outside.md', 'Folder/B.md');
 		store.add('Outside.md', 'Folder-other/Safe.md');
 		const listener = vi.fn();
@@ -652,14 +672,14 @@ describe('AdditionalNotesStore provenance and refresh', () => {
 
 		store.removeDeletedFolder('Folder');
 
-		expect(store.list('Folder/Target.md')).toEqual([
+		expect(store.list('Target.md')).toEqual([
 			'Folder-other/Keep.md',
 			'Outside.md',
 			'all.md',
 			'retained-helper.md',
 			'valid-link.md',
 		]);
-		expect(store.listHelpers('Folder/Target.md')).toEqual([all, retainedFolder, validLinks]);
+		expect(store.listHelpers('Target.md')).toEqual([all, retainedFolder, validLinks]);
 		expect(store.list('Outside.md')).toEqual(['Folder-other/Safe.md']);
 		expect(listener).toHaveBeenCalledTimes(1);
 		store.removeDeletedFolder('Folder');
@@ -730,9 +750,9 @@ describe('AdditionalNotesStore provenance and refresh', () => {
 		store.removeDeletedFolder('/');
 
 		expect(store.list('Target.md')).toEqual([]);
-		expect(store.listHelpers('Target.md')).toEqual([all]);
+		expect(store.listHelpers('Target.md')).toEqual([]);
 		expect(store.list('Folder/Target.md')).toEqual([]);
-		expect(store.listHelpers('Folder/Target.md')).toEqual([all]);
+		expect(store.listHelpers('Folder/Target.md')).toEqual([]);
 		expect(listener).toHaveBeenCalledTimes(1);
 		store.removeDeletedFolder('/');
 		expect(listener).toHaveBeenCalledTimes(1);
