@@ -138,6 +138,10 @@ class FakeElement {
 		this.attributes[name] = value;
 	}
 
+	removeAttribute(name: string): void {
+		delete this.attributes[name];
+	}
+
 	click(): void {
 		if (this.disabled) {
 			return;
@@ -1149,6 +1153,41 @@ describe('RelatedNotesControl', () => {
 		document.dispatch('pointerdown', document.body);
 		expect(panel.removed).toBe(true);
 		expect(trigger.focused).toBe(true);
+		expect(document.listenerCount('keydown')).toBe(0);
+		expect(document.listenerCount('pointerdown')).toBe(0);
+	});
+
+	it('clears aria-controls when the explorer closes', () => {
+		const fixture = createControl();
+		const { container, control, document } = fixture;
+		control.render(container as unknown as HTMLElement, false);
+		const panel = openExplorer(fixture);
+		const trigger = findTrigger(container);
+
+		expect(trigger.attributes['aria-controls']).toBe(panel.attributes.id);
+
+		document.dispatch('pointerdown', document.body);
+
+		expect(panel.removed).toBe(true);
+		expect(trigger.attributes['aria-controls']).toBeUndefined();
+		expect(trigger.attributes['aria-expanded']).toBe('false');
+	});
+
+	it('does not focus a detached trigger when controls are destroyed', () => {
+		const fixture = createControl();
+		const { container, control, document } = fixture;
+		control.render(container as unknown as HTMLElement, false);
+		const panel = openExplorer(fixture);
+		const trigger = findTrigger(container);
+		const focusedInsidePanel = searchInput(panel);
+
+		trigger.remove();
+		control.destroy();
+
+		expect(panel.removed).toBe(true);
+		expect(trigger.focused).toBe(false);
+		expect(trigger.isConnected).toBe(false);
+		expect(document.activeElement).toBe(focusedInsidePanel);
 		expect(document.listenerCount('keydown')).toBe(0);
 		expect(document.listenerCount('pointerdown')).toBe(0);
 	});

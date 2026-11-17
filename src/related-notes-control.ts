@@ -177,8 +177,9 @@ class RelatedNotesExplorer {
 		document.removeEventListener('pointerdown', this.onDocumentPointerDown);
 		this.panelEl.remove();
 		this.trigger.setAttribute('aria-expanded', 'false');
+		this.trigger.removeAttribute('aria-controls');
 		this.onClose(this);
-		if (restoreFocus) {
+		if (restoreFocus && this.trigger.isConnected !== false) {
 			this.trigger.focus();
 		}
 	}
@@ -767,7 +768,7 @@ export class RelatedNotesControl {
 
 	destroy(): void {
 		this.generation += 1;
-		this.closeExplorer();
+		this.closeExplorer(false);
 		this.unsubscribe?.();
 		this.unsubscribe = null;
 		this.triggerButton = null;
@@ -780,10 +781,10 @@ export class RelatedNotesControl {
 		this.pendingFocus = null;
 	}
 
-	private closeExplorer(): void {
+	private closeExplorer(restoreFocus = true): void {
 		const explorer = this.activeExplorer;
 		this.activeExplorer = null;
-		explorer?.close();
+		explorer?.close(restoreFocus);
 	}
 
 	private renderPaths(generation: number): void {

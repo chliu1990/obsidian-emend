@@ -410,6 +410,26 @@ describe('ChatComposerControls', () => {
 		expect(menu.shownDocument).toBe(ownerDocument);
 	});
 
+	it('does not mutate a menu after it is hidden', () => {
+		const { trigger, controls } = renderControls();
+		const menu = openMenu(trigger);
+		const chatItem = menuItem(menu, 'Chat');
+		const fullNoteItem = menuItem(menu, 'Edit · Full note');
+		const webReviewItem = menuItem(menu, 'Web Review');
+
+		menu.hide();
+		controls.update(composerState({
+			mode: 'edit',
+			editTarget: 'full-note',
+			webSearchMode: 'review',
+		}));
+
+		expect(chatItem.checked).toBe(true);
+		expect(fullNoteItem.checked).toBe(false);
+		expect(webReviewItem.checked).toBe(false);
+		expect(trigger.attributes['aria-expanded']).toBe('false');
+	});
+
 	it('ignores stale menu items and stale onHide callbacks', () => {
 		const { trigger, callbacks } = renderControls();
 		const staleMenu = openMenu(trigger);

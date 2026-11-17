@@ -4844,6 +4844,10 @@ class FakeElement {
 		this.attributes[name] = value;
 	}
 
+	removeAttribute(name: string) {
+		delete this.attributes[name];
+	}
+
 	setSelectionRange(start: number, end: number) {
 		this.selectionStart = start;
 		this.selectionEnd = end;

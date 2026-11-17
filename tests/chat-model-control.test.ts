@@ -561,6 +561,23 @@ describe('ChatModelControl', () => {
 		expect(menu.shownDocument).toBe(ownerDocument);
 	});
 
+	it('does not mutate a menu after it is hidden', () => {
+		const settings = createSettings();
+		const { trigger, control } = renderControl(settings);
+		const menu = openMenu(trigger);
+		const deepSeekModel = menuItem(menu, 'DeepSeek', 'deepseek-flash');
+		const kimiModel = menuItem(menu, 'Kimi', 'Kimi Cached');
+
+		menu.hide();
+		const nextSettings = createSettings();
+		nextSettings.activeProvider = 'kimi';
+		control.update(createState(nextSettings));
+
+		expect(deepSeekModel.checked).toBe(true);
+		expect(kimiModel.checked).toBe(false);
+		expect(trigger.attributes['aria-expanded']).toBe('false');
+	});
+
 	it('destroys idempotently and rejects stale selection and trigger callbacks', () => {
 		const { container, writing, trigger, send, callbacks, control } = renderControl();
 		const menu = openMenu(trigger);

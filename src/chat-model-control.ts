@@ -52,6 +52,7 @@ export class ChatModelControl {
 	};
 	private triggerEl: HTMLButtonElement | null = null;
 	private activeMenu: ActiveChatModelMenu | null = null;
+	private recentlyHiddenMenu: Menu | null = null;
 	private destroyed = false;
 
 	constructor(private readonly callbacks: ChatModelControlCallbacks) {}
@@ -99,6 +100,7 @@ export class ChatModelControl {
 		this.update({ ...this.state, settings, availableProviderIds });
 		this.activeMenu?.menu.hide();
 		this.activeMenu = null;
+		this.recentlyHiddenMenu = null;
 	}
 
 	destroy(): void {
@@ -108,6 +110,7 @@ export class ChatModelControl {
 		this.destroyed = true;
 		this.activeMenu?.menu.hide();
 		this.activeMenu = null;
+		this.recentlyHiddenMenu = null;
 		this.triggerEl?.remove();
 		this.triggerEl = null;
 	}
@@ -132,6 +135,7 @@ export class ChatModelControl {
 			return;
 		}
 		this.activeMenu?.menu.hide();
+		this.recentlyHiddenMenu = null;
 		const menu = new Menu();
 		const active: ActiveChatModelMenu = { menu, entries: [] };
 		this.addItem(menu, 'Model').setDisabled(true);
@@ -195,6 +199,8 @@ export class ChatModelControl {
 		this.updateMenu(active);
 		menu.onHide(() => {
 			if (this.activeMenu === active) {
+				this.activeMenu = null;
+				this.recentlyHiddenMenu = menu;
 				this.triggerEl?.setAttribute('aria-expanded', 'false');
 			}
 		});
@@ -232,14 +238,21 @@ export class ChatModelControl {
 	): void {
 		if (
 			this.destroyed ||
-			this.activeMenu !== active ||
+			!this.isCurrentMenu(active) ||
 			this.state.disabled ||
 			itemDisabled
 		) {
 			return;
 		}
 		active.menu.hide();
+		this.recentlyHiddenMenu = null;
 		void callback();
+	}
+
+	private isCurrentMenu(active: ActiveChatModelMenu): boolean {
+		// The host hides a native menu before running the selected item's click,
+		// so the menu that was just hidden still owns one pending activation.
+		return this.activeMenu === active || this.recentlyHiddenMenu === active.menu;
 	}
 
 	private isModelAvailable(providerId: ProviderId, modelId: string): boolean {
