@@ -292,7 +292,10 @@ export class ConversationStore {
 	) {
 		await this.ensureDirectory(this.chatDirectory);
 		if (malformedContents !== undefined) {
-			await this.adapter.write(`${path}.corrupt`, malformedContents);
+			const corruptPath = `${path}.corrupt`;
+			if (!(await this.adapter.exists(corruptPath))) {
+				await this.adapter.write(corruptPath, malformedContents);
+			}
 		}
 
 		const tempPath = `${path}.${Date.now()}-${Math.random()

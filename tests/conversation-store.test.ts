@@ -597,7 +597,7 @@ describe('ConversationStore corruption recovery', () => {
 		expect(adapter.operations.filter((operation) => operation.includes('.corrupt'))).toHaveLength(1);
 	});
 
-	it('reuses the single corrupt backup for later corruption', async () => {
+	it('keeps the first corrupt backup across later corruption events', async () => {
 		const adapter = new MemoryAdapter();
 		const { store } = makeStore(adapter);
 		await saveMessages(store, 'Note.md', [readyMessage()]);
@@ -610,7 +610,7 @@ describe('ConversationStore corruption recovery', () => {
 
 		await saveMessages(store, 'Note.md', [readyMessage({ content: 'Recovered again' })]);
 
-		expect(adapter.files.get(`${path}.corrupt`)).toBe('second malformed');
+		expect(adapter.files.get(`${path}.corrupt`)).toBe('first malformed');
 		expect(
 			Array.from(adapter.files.keys()).filter((key) => key.includes('.corrupt')),
 		).toEqual([`${path}.corrupt`]);
