@@ -1,4 +1,5 @@
 import type { ChatMessage } from './types';
+import { isConsistentTokenUsage } from './token-usage';
 import { normalizeWebUrl, type WebActivityRecord, type WebSource } from './web-search';
 
 export const CHAT_SESSION_TITLE_MAX_CODE_POINTS = 80;
@@ -348,12 +349,21 @@ function sanitizeWebActivities(value: unknown): WebActivityRecord[] {
 }
 
 function normalizeUsageSource(message: ChatMessage): ChatMessage {
-	if (!message.usage || message.usage.source) {
+	const usage = message.usage;
+	if (!usage) {
+		return message;
+	}
+	if (!isConsistentTokenUsage(usage)) {
+		const withoutUsage: ChatMessage = { ...message };
+		delete withoutUsage.usage;
+		return withoutUsage;
+	}
+	if (usage.source) {
 		return message;
 	}
 	return {
 		...message,
-		usage: { ...message.usage, source: 'provider' },
+		usage: { ...usage, source: 'provider' },
 	};
 }
 

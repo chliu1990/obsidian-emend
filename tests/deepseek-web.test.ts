@@ -1167,6 +1167,7 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		}));
 
 		expect(result.content).toBe('Answer after twenty calls [S1]');
+		expect(result.maxToolCalls).toBe(20);
 		expect(result.skippedWebCalls).toBe(1);
 		expect(result.sources).toHaveLength(1);
 		expect(result.rounds).toHaveLength(23);
@@ -1915,6 +1916,44 @@ describe('DeepSeek web transport retry and search degradation', () => {
 		expect(reader.extract).toHaveBeenCalledOnce();
 		expect(result.activities).toEqual([{ type: 'fetch', target, status: 'completed' }]);
 		expect(result.failedSearches).toBe(0);
+	});
+
+	it('does not retry a credential-bearing base URL and reports it as non-network', async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+		const rounds = [
+			toolRound([searchCall('call-1', 'secret search')]),
+			finalRound('No evidence available.'),
+		];
+		const request = vi.fn(async (
+			_request: AiProviderRequest,
+			_callbacks: { onEvent(event: StreamEvent): void },
+			_signal: AbortSignal,
+		) => {
+			const result = rounds[request.mock.calls.length - 1];
+			if (!result) throw new Error('Unexpected model round');
+			return result;
+		});
+		const coordinator = new DeepSeekWebSearchCoordinator({
+			provider: { ...provider, baseUrl: 'https://token-user:token-secret@api.deepseek.com' },
+			request,
+		});
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(fetchMock).not.toHaveBeenCalled();
+		expect(result.failedSearches).toBe(1);
+		expect(result.activities).toEqual([{
+			type: 'search',
+			target: 'secret search',
+			status: 'failed',
+			failureReason: 'format',
+			attempts: 1,
+		}]);
+		const toolMessage = request.mock.calls[1]?.[0].continuation?.find((message) => message.role === 'tool');
+		const content = toolMessage?.role === 'tool' ? toolMessage.content : '';
+		expect(content).toBe('{"error":{"kind":"search_failed","reason":"format","attempts":1}}');
+		expect(content).not.toContain('token-secret');
 	});
 
 	it('reports an http failure after the single Fetch retry is exhausted', async () => {

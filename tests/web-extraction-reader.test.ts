@@ -634,6 +634,7 @@ describe('WebExtractionReader extraction and verification', () => {
 		expect(correction.continuation).toBeUndefined();
 		expect(correction.history).toEqual([]);
 		expect(correction.responseFormat).toBe('json_object');
+		expect(correction.allowToolOnlyResponse).toBe(true);
 		expect(correction.userPrompt).toContain('parseable JSON object');
 		expect(correction.userPrompt).toContain('Previous reply');
 		expect(correction.userPrompt).toContain('bare JSON');

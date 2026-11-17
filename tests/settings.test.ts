@@ -1061,6 +1061,23 @@ describe('EmendSettingTab canonical input values', () => {
 		expect(text.value).toBe(String(DEFAULT_SETTINGS.maxWebToolCalls));
 		expect(plugin.settings.maxWebToolCalls).toBe(DEFAULT_SETTINGS.maxWebToolCalls);
 	});
+
+	it.each(['Context character limit', 'Web tool call limit'])(
+		'does not rewrite an already-canonical %s value on change',
+		async (name) => {
+			const { tab } = createModelSettingsTab();
+			displaySettings(tab);
+			const text = inputFor(name);
+			const setValue = vi.spyOn(text, 'setValue');
+			const displayed = text.inputEl.value;
+
+			text.inputEl.dispatchEvent({ type: 'change' });
+			await Promise.resolve();
+
+			expect(setValue).not.toHaveBeenCalled();
+			expect(text.inputEl.value).toBe(displayed);
+		},
+	);
 });
 
 describe('EmendSettingTab model discovery', () => {

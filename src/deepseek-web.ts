@@ -94,6 +94,13 @@ export class DeepSeekResponseFormatError extends Error {
 	}
 }
 
+export class DeepSeekConfigurationError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'DeepSeekConfigurationError';
+	}
+}
+
 interface DeepSeekWebSearchDependencies {
 	provider: ProviderConfig;
 	request: typeof requestAiResponse;
@@ -345,6 +352,9 @@ export class DeepSeekWebSearchCoordinator {
 				throw error;
 			}
 			if (error instanceof DeepSeekResponseFormatError) {
+				return { ok: false, reason: 'format', retryable: false };
+			}
+			if (error instanceof DeepSeekConfigurationError) {
 				return { ok: false, reason: 'format', retryable: false };
 			}
 			const status = isRecord(error) &&
@@ -675,20 +685,26 @@ async function requestDeepSeekTool(
 ): Promise<unknown> {
 	const apiKey = provider.apiKey.trim();
 	if (!apiKey) {
-		throw new Error(`${provider.name} API key is missing.`);
+		throw new DeepSeekConfigurationError(`${provider.name} API key is missing.`);
 	}
 	let endpoint: string;
 	let parsedBaseUrl: URL;
 	try {
 		parsedBaseUrl = new URL(provider.baseUrl.trim().replace(/\/+$/, ''));
 	} catch {
-		throw new Error(`${provider.name} base URL must be a valid HTTP(S) URL.`);
+		throw new DeepSeekConfigurationError(
+			`${provider.name} base URL must be a valid HTTP(S) URL.`,
+		);
 	}
 	if (parsedBaseUrl.protocol !== 'http:' && parsedBaseUrl.protocol !== 'https:') {
-		throw new Error(`${provider.name} base URL must be a valid HTTP(S) URL.`);
+		throw new DeepSeekConfigurationError(
+			`${provider.name} base URL must be a valid HTTP(S) URL.`,
+		);
 	}
 	if (parsedBaseUrl.username || parsedBaseUrl.password) {
-		throw new Error(`${provider.name} base URL must not contain credentials.`);
+		throw new DeepSeekConfigurationError(
+			`${provider.name} base URL must not contain credentials.`,
+		);
 	}
 	const base = provider.baseUrl.trim().replace(/\/+$/, '');
 	endpoint = `${base}${base.endsWith('/v1') ? '' : '/v1'}/tools/${tool}`;

@@ -2,7 +2,6 @@ import {
 	countRequestCharacters,
 	estimateTokensForCharacters,
 } from './context-accounting';
-import { isConsistentTokenUsage } from './provider-stream';
 import type {
 	AiProviderRequest,
 	ProviderTokenUsage,
@@ -11,6 +10,10 @@ import type {
 
 export interface TokenUsage extends ProviderTokenUsage {
 	source: 'provider' | 'estimated';
+}
+
+export function isConsistentTokenUsage(usage: ProviderTokenUsage) {
+	return usage.totalTokens === usage.promptTokens + usage.completionTokens;
 }
 
 type RequestText = Pick<

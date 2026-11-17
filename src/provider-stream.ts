@@ -1,5 +1,6 @@
 import { assertRequestWithinCapacity, resolveContextCapacity } from './context-accounting';
 import { formatProviderHistory } from './provider-history';
+import { isConsistentTokenUsage } from './token-usage';
 import type { ProviderConfig, ProviderHistoryMessage } from './types';
 
 const MAX_PROVIDER_ERROR_CHARACTERS = 2000;
@@ -52,10 +53,6 @@ export interface StreamResult {
 	usage?: ProviderTokenUsage;
 	finishReason?: string;
 	toolCalls?: ProviderToolCall[];
-}
-
-export function isConsistentTokenUsage(usage: ProviderTokenUsage) {
-	return usage.totalTokens === usage.promptTokens + usage.completionTokens;
 }
 
 interface ProviderRoundState {

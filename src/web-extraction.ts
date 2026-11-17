@@ -82,26 +82,50 @@ const MAX_TOTAL_CLAIMS = 24;
 export function buildSearchExtractionDocuments(
 	results: readonly SearchExtractionResult[],
 ): WebExtractionDocument[] {
-	const documents: WebExtractionDocument[] = [];
-	const seen = new Set<string>();
+	const merged: SearchExtractionResult[] = [];
+	const indexByUrl = new Map<string, number>();
 	for (const result of results) {
 		const url = normalizeWebUrl(result.url) ?? result.url;
-		if (seen.has(url)) {
+		const index = indexByUrl.get(url);
+		if (index === undefined) {
+			indexByUrl.set(url, merged.length);
+			merged.push({ ...result, url });
 			continue;
 		}
-		seen.add(url);
+		const entry = merged[index];
+		if (!entry) {
+			continue;
+		}
+		if (!entry.title) {
+			entry.title = result.title;
+		}
+		if (!entry.snippet && result.snippet) {
+			entry.snippet = result.snippet;
+		}
+		if (!entry.summary) {
+			entry.summary = result.summary;
+		}
+		if (!entry.content) {
+			entry.content = result.content;
+		}
+	}
+	return merged.map((result, index) => {
 		const document: WebExtractionDocument = {
-			sourceId: `R${documents.length + 1}`,
+			sourceId: `R${index + 1}`,
 			title: result.title,
-			url,
-			canonicalText: canonicalText(result.title, result.snippet ?? '', result.summary, result.content),
+			url: result.url,
+			canonicalText: canonicalText(
+				result.title,
+				result.snippet ?? '',
+				result.summary,
+				result.content,
+			),
 		};
 		if (result.snippet !== undefined) {
 			document.snippet = result.snippet;
 		}
-		documents.push(document);
-	}
-	return documents;
+		return document;
+	});
 }
 
 export function buildFetchExtractionDocument(

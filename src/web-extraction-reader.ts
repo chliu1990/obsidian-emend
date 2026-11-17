@@ -291,6 +291,7 @@ export class WebExtractionReader {
 				userPrompt: buildCorrectionPrompt(options, content, error.message),
 				history: [],
 				responseFormat: 'json_object',
+				allowToolOnlyResponse: true,
 			};
 			const corrected = await this.request(correctionRequest, options, rounds);
 			if ((corrected.toolCalls ?? []).length > 0) {

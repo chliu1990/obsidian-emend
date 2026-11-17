@@ -92,6 +92,32 @@ describe('canonical extraction documents', () => {
 		]);
 	});
 
+	it('fills only empty fields from a later duplicate hit', () => {
+		expect(buildSearchExtractionDocuments([
+			{
+				title: 'First',
+				url: 'https://example.test/one',
+				summary: '',
+				content: '',
+			},
+			{
+				title: 'Later title',
+				url: 'https://example.test/one',
+				snippet: 'Later snippet',
+				summary: 'Later summary',
+				content: 'Later content',
+			},
+		])).toEqual([
+			{
+				sourceId: 'R1',
+				title: 'First',
+				url: 'https://example.test/one',
+				snippet: 'Later snippet',
+				canonicalText: 'Title: First\nSnippet: Later snippet\nSummary: Later summary\nContent: Later content',
+			},
+		]);
+	});
+
 	it('assigns one temporary ID per normalized URL and drops duplicate hits', () => {
 		expect(buildSearchExtractionDocuments([
 			{
