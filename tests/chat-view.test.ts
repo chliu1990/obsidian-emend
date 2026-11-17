@@ -127,6 +127,14 @@ describe('EmendChatView compact composer styles', () => {
 	});
 });
 
+beforeEach(() => {
+	vi.stubGlobal('window', { setTimeout, clearTimeout });
+});
+
+afterEach(() => {
+	vi.unstubAllGlobals();
+});
+
 // eslint-disable-next-line @typescript-eslint/unbound-method -- The test wrapper supplies an explicit receiver.
 const productionSubmitPrompt = (EmendChatView.prototype as unknown as {
 	submitPrompt(
@@ -183,12 +191,19 @@ const viewPrototype = EmendChatView.prototype as unknown as {
 	render(this: unknown, composerRestore?: ComposerRestoreTestState): void;
 	renderMessage(this: unknown, containerEl: HTMLElement, message: ChatMessage): void;
 	renderMessageBody(this: unknown, message: ChatMessage): void;
+	renderStreamingMessageBody(
+		this: unknown,
+		bodyEl: HTMLElement,
+		message: ChatMessage,
+	): void;
+	renderFinalMessageBody(this: unknown, bodyEl: HTMLElement, message: ChatMessage): void;
 	scrollMessagesToBottom(this: unknown): void;
 	scrollMessagesToBottomIfFollowing(this: unknown): void;
 	restoreMessageScroll(this: unknown, previousScrollTop: number, wasFollowing: boolean): void;
 	settleMarkdownRender(this: unknown, generation: number): void;
 	scheduleMessageRender(this: unknown, message: ChatMessage): void;
 	getDisplayText(this: unknown): string;
+	abortActiveRequest(this: unknown): void;
 	onClose(this: unknown): Promise<void>;
 	toProviderHistory(this: unknown): ProviderHistoryMessage[];
 	refreshDraftEstimate(this: unknown, prompt?: string): void;
@@ -504,6 +519,7 @@ function createEditTargetView(options: {
 		pendingMarkdownRenders: 0,
 		pendingScrollRestore: null,
 		responseStartMessageId: null,
+		responseStartRenderGeneration: null as number | null,
 		followLatestMessages: true,
 		renderGeneration: 0,
 		cancelPendingRender: vi.fn(),
@@ -2512,6 +2528,7 @@ describe('EmendChatView session runtime', () => {
 		await vi.waitFor(() => expect(fixture.requestChatCompletion).toHaveBeenCalledOnce());
 		const oldRequest = fixture.context.activeRequest as ActiveRequest | null;
 
+		viewPrototype.abortActiveRequest.call(fixture.context);
 		await viewPrototype.switchActiveSession.call(fixture.context, 'a2');
 		fixture.setActivePath('B.md');
 		await viewPrototype.refreshTargetNote.call(fixture.context);
@@ -2571,6 +2588,7 @@ describe('EmendChatView session runtime', () => {
 		const submission = viewPrototype.submitPrompt.call(fixture.context);
 		await vi.waitFor(() => expect(fixture.conversationStore.appendReadyMessage).toHaveBeenCalledTimes(2));
 
+		viewPrototype.abortActiveRequest.call(fixture.context);
 		await viewPrototype.switchActiveSession.call(fixture.context, 'a2');
 		const noticeStart = noticeMessages().length;
 		finalSave.reject(new Error('Disk full'));
@@ -2780,6 +2798,7 @@ describe('EmendChatView session runtime', () => {
 		const submission = viewPrototype.submitPrompt.call(fixture.context);
 		await vi.waitFor(() => expect(fixture.conversationStore.appendReadyMessage).toHaveBeenCalledOnce());
 
+		viewPrototype.abortActiveRequest.call(fixture.context);
 		await viewPrototype.switchActiveSession.call(fixture.context, 'a2');
 		initialSave.resolve();
 		await submission;
@@ -4370,6 +4389,10 @@ describe('EmendChatView presentation', () => {
 			messageBodyEls: new Map<string, HTMLElement>([
 				['streaming', body as unknown as HTMLElement],
 			]),
+			renderStreamingMessageBody: (bodyEl: HTMLElement, pending: ChatMessage) =>
+				viewPrototype.renderStreamingMessageBody.call(context, bodyEl, pending),
+			renderFinalMessageBody: (bodyEl: HTMLElement, pending: ChatMessage) =>
+				viewPrototype.renderFinalMessageBody.call(context, bodyEl, pending),
 		};
 
 		viewPrototype.renderMessageBody.call(context, {
@@ -4528,6 +4551,30 @@ describe('EmendChatView terminal response continuity', () => {
 		expect(messageContentElements(assistant)).toHaveLength(1);
 	});
 
+	it('renders a finalized answer without the streaming pre-wrap class', async () => {
+		vi.spyOn(MarkdownRenderer, 'render').mockResolvedValue(undefined);
+		const { body, context } = createMessageBodyHarness();
+		const content = 'Line one\nLine two';
+
+		viewPrototype.renderMessageBody.call(context, {
+			...message('answer', 'Note.md'),
+			content,
+		});
+
+		expect(messageContentElements(body)).toHaveLength(1);
+
+		await vi.waitFor(() => expect(markdownContentElements(body)).toHaveLength(1));
+
+		const rendered = markdownContentElements(body)[0];
+		if (!rendered) {
+			throw new Error('Rendered answer missing.');
+		}
+		expect(rendered.className.split(' ')).toContain('emend-chat-message-markdown');
+		expect(rendered.className.split(' ')).not.toContain('emend-chat-message-content');
+		expect(getCssRule('.emend-chat-message-content')).toContain('white-space: pre-wrap;');
+		expect(getCssRule('.emend-chat-message-markdown')).toContain('white-space: normal;');
+	});
+
 	it('retains the answer when the final save fails without adding another answer', async () => {
 		const fixture = createEditTargetView();
 		fixture.requestChatCompletion.mockImplementation(async ({ callbacks }) => {
@@ -4623,6 +4670,100 @@ describe('EmendChatView web draft rendering', () => {
 
 			expect(webDraftLabelElements(body)).toHaveLength(0);
 		}
+	});
+});
+
+describe('EmendChatView streaming DOM identity', () => {
+	function streamingFrames() {
+		const { body, context } = createMessageBodyHarness();
+		let nextFrame: (() => void) | null = null;
+		const frames = {
+			...context,
+			pendingMessages: new Set<ChatMessage>(),
+			pendingRenderFrame: null as number | null,
+			contentEl: {
+				ownerDocument: {
+					defaultView: {
+						requestAnimationFrame: (callback: () => void) => {
+							nextFrame = callback;
+							return 1;
+						},
+					},
+				},
+			},
+			scrollMessagesToBottomIfFollowing: vi.fn(),
+			renderMessageBody: (pending: ChatMessage) =>
+				viewPrototype.renderMessageBody.call(frames, pending),
+		};
+		const flushFrame = () => {
+			const callback = nextFrame;
+			nextFrame = null;
+			callback?.();
+		};
+		return { body, frames, flushFrame };
+	}
+
+	function reasoningParts(body: FakeElement) {
+		const details = findElements(body, (element) => element.tagName === 'details')[0];
+		const content = findElements(
+			body,
+			(element) => element.className.split(' ').includes('emend-chat-reasoning-content'),
+		)[0];
+		if (!details || !content) {
+			throw new Error('Reasoning panel missing.');
+		}
+		return { details, content };
+	}
+
+	it('keeps an opened reasoning panel and its scroll while streaming', () => {
+		const { body, frames, flushFrame } = streamingFrames();
+		const loading = {
+			...message('answer', 'Note.md'),
+			status: 'loading' as const,
+			reasoning: 'First thought',
+			content: 'First delta',
+		};
+
+		viewPrototype.renderMessageBody.call(frames, loading);
+		const { details, content } = reasoningParts(body);
+		details.open = true;
+		content.scrollTop = 120;
+
+		loading.content = 'First delta and second';
+		viewPrototype.scheduleMessageRender.call(frames, loading);
+		flushFrame();
+		loading.content = 'First delta and second and third';
+		viewPrototype.scheduleMessageRender.call(frames, loading);
+		flushFrame();
+
+		expect(reasoningParts(body).details).toBe(details);
+		expect(details.open).toBe(true);
+		expect(content.scrollTop).toBe(120);
+		expect(textOf(body)).toContain('First delta and second and third');
+	});
+
+	it('keeps the opened reasoning panel when the first answer content arrives', () => {
+		const { body, frames, flushFrame } = streamingFrames();
+		const loading = {
+			...message('answer', 'Note.md'),
+			status: 'loading' as const,
+			reasoning: 'Thinking',
+			content: '',
+		};
+
+		viewPrototype.renderMessageBody.call(frames, loading);
+		const { details, content } = reasoningParts(body);
+		details.open = true;
+		content.scrollTop = 64;
+
+		loading.content = 'The answer starts here.';
+		viewPrototype.scheduleMessageRender.call(frames, loading);
+		flushFrame();
+
+		expect(reasoningParts(body).details).toBe(details);
+		expect(details.open).toBe(true);
+		expect(content.scrollTop).toBe(64);
+		expect(textOf(body)).toContain('The answer starts here.');
 	});
 });
 
@@ -4736,6 +4877,10 @@ class FakeElement {
 		this.attributes[name] = value;
 	}
 
+	removeAttribute(name: string) {
+		delete this.attributes[name];
+	}
+
 	setSelectionRange(start: number, end: number) {
 		this.selectionStart = start;
 		this.selectionEnd = end;
@@ -4842,7 +4987,16 @@ function textOf(root: FakeElement): string {
 function messageContentElements(root: FakeElement): FakeElement[] {
 	return findElements(
 		root,
-		(element) => element.className.split(' ').includes('emend-chat-message-content'),
+		(element) => element.className.split(' ')
+			.some((name) => name === 'emend-chat-message-content'
+				|| name === 'emend-chat-message-markdown'),
+	);
+}
+
+function markdownContentElements(root: FakeElement): FakeElement[] {
+	return findElements(
+		root,
+		(element) => element.className.split(' ').includes('emend-chat-message-markdown'),
 	);
 }
 
@@ -4873,6 +5027,10 @@ function createMessageBodyHarness() {
 		]),
 		settleMarkdownRender: vi.fn(),
 		scrollMessagesToBottomIfFollowing: vi.fn(),
+		renderStreamingMessageBody: (bodyEl: HTMLElement, pending: ChatMessage) =>
+			viewPrototype.renderStreamingMessageBody.call(context, bodyEl, pending),
+		renderFinalMessageBody: (bodyEl: HTMLElement, pending: ChatMessage) =>
+			viewPrototype.renderFinalMessageBody.call(context, bodyEl, pending),
 	};
 	return { body, context };
 }
@@ -5935,6 +6093,10 @@ describe('EmendChatView latest-message scrolling', () => {
 			scrollMessagesToBottomIfFollowing,
 			settleMarkdownRender: (generation: number) =>
 				viewPrototype.settleMarkdownRender.call(context, generation),
+			renderStreamingMessageBody: (bodyEl: HTMLElement, pending: ChatMessage) =>
+				viewPrototype.renderStreamingMessageBody.call(context, bodyEl, pending),
+			renderFinalMessageBody: (bodyEl: HTMLElement, pending: ChatMessage) =>
+				viewPrototype.renderFinalMessageBody.call(context, bodyEl, pending),
 		};
 
 		viewPrototype.renderMessageBody.call(context, message('answer', 'Note.md'));
@@ -5991,6 +6153,42 @@ describe('EmendChatView latest-message scrolling', () => {
 		expect(renderTargetStates).toEqual([null, context.messages[1]?.id]);
 	});
 
+	it('restores the reader position when an unrelated render follows a completion', () => {
+		const messagesEl = renderForFooter(message('answer', 'Note.md'));
+		const responseEl = messagesEl.children[0];
+		if (!responseEl) {
+			throw new Error('Response element missing.');
+		}
+		Object.assign(messagesEl, {
+			scrollTop: 40,
+			getBoundingClientRect: () => ({ top: 100 }),
+			querySelector: () => findElements(
+				messagesEl,
+				(element) => element.attributes['data-message-id'] === 'answer',
+			)[0] ?? null,
+		});
+		Object.assign(responseEl, {
+			getBoundingClientRect: () => ({ top: 260 }),
+		});
+		const context = {
+			closed: false,
+			renderGeneration: 6,
+			pendingMarkdownRenders: 0,
+			pendingScrollRestore: { previousScrollTop: 275, wasFollowing: false },
+			responseStartMessageId: 'answer' as string | null,
+			responseStartRenderGeneration: 5 as number | null,
+			followLatestMessages: false,
+			messagesEl,
+			restoreMessageScroll: (previousScrollTop: number, wasFollowing: boolean) =>
+				viewPrototype.restoreMessageScroll.call(context, previousScrollTop, wasFollowing),
+		};
+
+		viewPrototype.settleMarkdownRender.call(context, 6);
+
+		expect(messagesEl.scrollTop).toBe(275);
+		expect(context.responseStartMessageId).toBeNull();
+	});
+
 	it('aligns the targeted response after Markdown layouts and clears the target', () => {
 		const messagesEl = renderForFooter(message('answer', 'Note.md'));
 		const responseEl = messagesEl.children[0];
@@ -6025,6 +6223,52 @@ describe('EmendChatView latest-message scrolling', () => {
 		expect(messagesEl.scrollTop).toBe(200);
 		expect(context.responseStartMessageId).toBeNull();
 	});
+
+	it('wires a real completion to its own render generation before aligning', async () => {
+		const fixture = createEditTargetView();
+		const pendingMarkdown = deferred<void>();
+		vi.spyOn(MarkdownRenderer, 'render').mockReturnValue(pendingMarkdown.promise);
+		fixture.requestChatCompletion.mockImplementation(async ({ callbacks }) => {
+			callbacks.onContent('Streamed **answer**');
+			return { content: 'Streamed **answer**', reasoning: '' };
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Question';
+		}
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		const generation = fixture.context.renderGeneration;
+		expect(fixture.context.responseStartMessageId).not.toBeNull();
+		expect(fixture.context.responseStartRenderGeneration).toBe(generation);
+		expect(fixture.context.pendingScrollRestore).not.toBeNull();
+
+		const messagesEl = (fixture.context as unknown as { messagesEl: FakeElement }).messagesEl;
+		const assistantId = fixture.context.messages[1]?.id;
+		if (!messagesEl || !assistantId) {
+			throw new Error('Completed answer missing.');
+		}
+		const responseEl = findMessageNode(messagesEl, assistantId);
+		if (!responseEl) {
+			throw new Error('Completed answer element missing.');
+		}
+		Object.assign(messagesEl, {
+			scrollTop: 40,
+			getBoundingClientRect: () => ({ top: 100 }),
+			querySelector: () => responseEl,
+		});
+		Object.assign(responseEl, {
+			getBoundingClientRect: () => ({ top: 260 }),
+		});
+
+		viewPrototype.settleMarkdownRender.call(fixture.context, generation);
+
+		expect(messagesEl.scrollTop).toBe(200);
+		expect(fixture.context.responseStartMessageId).toBeNull();
+		expect(fixture.context.responseStartRenderGeneration).toBeNull();
+		expect(fixture.context.pendingScrollRestore).not.toBeNull();
+	});
 });
 
 
@@ -6049,6 +6293,10 @@ describe('EmendChatView completion relayout and unread pages', () => {
 				viewPrototype.settleMarkdownRender.call(context, generation),
 			restoreMessageScroll: (previousScrollTop: number, wasFollowing: boolean) =>
 				viewPrototype.restoreMessageScroll.call(context, previousScrollTop, wasFollowing),
+			renderStreamingMessageBody: (bodyEl: HTMLElement, pending: ChatMessage) =>
+				viewPrototype.renderStreamingMessageBody.call(context, bodyEl, pending),
+			renderFinalMessageBody: (bodyEl: HTMLElement, pending: ChatMessage) =>
+				viewPrototype.renderFinalMessageBody.call(context, bodyEl, pending),
 		};
 		for (const id of ['first', 'second']) {
 			const body = new FakeElement();
@@ -6778,9 +7026,11 @@ describe('EmendChatView Chat Selection submission', () => {
 describe('EmendChatView draft capacity estimate', () => {
 	beforeEach(() => {
 		noticeMessages().length = 0;
+		vi.stubGlobal('window', { setTimeout, clearTimeout });
 	});
 
 	afterEach(() => {
+		vi.unstubAllGlobals();
 		vi.restoreAllMocks();
 	});
 
@@ -6858,6 +7108,7 @@ describe('EmendChatView draft capacity estimate', () => {
 
 		input.value = 'A longer typed draft';
 		input.dispatch('input');
+		await waitForCapacityRefresh();
 
 		const estimate = fixture.askEstimate('A longer typed draft');
 		const after = findCapacitySummary(fixture.contentEl)?.textContent;
@@ -6882,6 +7133,7 @@ describe('EmendChatView draft capacity estimate', () => {
 		}
 		input.value = 'Question';
 		input.dispatch('input');
+		await waitForCapacityRefresh();
 
 		const estimate = fixture.askEstimate('Question');
 		expect(estimate.overCapacity).toBe(true);
@@ -6951,6 +7203,32 @@ describe('EmendChatView draft capacity estimate', () => {
 		expect(fixture.context.messages).toEqual([]);
 		expect(fixture.savedSnapshots).toEqual([]);
 		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+	});
+
+	it('debounces the draft estimate during composer typing', async () => {
+		const fixture = createCapacityView({
+			capacity: { contextWindowTokens: 1000, outputReserveTokens: 100 },
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const input = fixture.context.inputEl;
+		if (!input) {
+			throw new Error('Composer missing.');
+		}
+		const before = findCapacitySummary(fixture.contentEl)?.textContent;
+		fixture.captureChatContext.mockClear();
+
+		input.value = 'A longer typed draft';
+		input.dispatch('input');
+
+		expect(fixture.captureChatContext).not.toHaveBeenCalled();
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(before);
+
+		await waitForCapacityRefresh();
+
+		expect(fixture.captureChatContext).toHaveBeenCalled();
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedCapacitySummary(fixture.askEstimate('A longer typed draft')),
+		);
 	});
 
 	it('refreshes the visible meter when a stale typed submission is blocked', async () => {
@@ -7024,6 +7302,7 @@ describe('EmendChatView draft capacity estimate', () => {
 		}
 		input.value = 'Question';
 		input.dispatch('input');
+		await waitForCapacityRefresh();
 
 		const estimate = fixture.askEstimate('Question');
 		expect(estimate.blocked).toBe(false);
@@ -7426,6 +7705,7 @@ describe('EmendChatView draft capacity estimate', () => {
 		const draft = `Draft ${'x'.repeat(400)}`;
 		fixture.context.inputEl.value = draft;
 		fixture.context.inputEl.dispatch('input');
+		await waitForCapacityRefresh();
 		expect(fixture.askEstimate(draft).overCapacity).toBe(true);
 		expect(findSendButton(fixture.contentEl)?.disabled).toBe(true);
 
@@ -7990,5 +8270,117 @@ describe('EmendChatView committed edit persistence', () => {
 		]);
 		expect(saved[1]?.content).toContain('Tightened the wording.');
 		expect(context.isSending).toBe(false);
+	});
+});
+
+describe('EmendChatView composer fail-closed state', () => {
+	beforeEach(() => {
+		noticeMessages().length = 0;
+	});
+
+	it('disables Send when no Markdown note is open', async () => {
+		const fixture = createCapacityView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(false);
+
+		Object.assign(fixture.context.plugin, { getActiveNotePath: () => null });
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+
+		expect(fixture.context.notePath).toBeNull();
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(true);
+	});
+
+	it('restores draft estimate and capacity blocking after a fail-closed capture', async () => {
+		const fixture = createCapacityView({
+			capacity: { contextWindowTokens: 1000, outputReserveTokens: 100 },
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const input = fixture.context.inputEl;
+		if (!input) {
+			throw new Error('Composer missing.');
+		}
+		const draft = 'Question '.repeat(600).trim();
+		expect(fixture.askEstimate('').overCapacity).toBe(false);
+		expect(fixture.askEstimate(draft).overCapacity).toBe(true);
+		input.value = draft;
+		input.dispatch('input');
+		await waitForCapacityRefresh();
+		expect(fixture.context.draftCapacityBlocked).toBe(true);
+		fixture.captureChatContext.mockImplementationOnce(() => {
+			throw new Error('The active note is no longer available.');
+		});
+		input.setSelectionRange(10, 20);
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(noticeMessages()).toContain('Emend: The active note is no longer available.');
+		expect(fixture.context.inputEl?.value).toBe(draft);
+		expect(fixture.context.inputEl?.selectionStart).toBe(10);
+		expect(fixture.context.inputEl?.selectionEnd).toBe(20);
+		expect(fixture.context.draftCapacityBlocked).toBe(true);
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedCapacitySummary(fixture.askEstimate(draft)),
+		);
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(true);
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(fixture.savedSnapshots).toEqual([]);
+		expect(fixture.context.messages).toEqual([]);
+	});
+});
+
+describe('EmendChatView session switch guard', () => {
+	beforeEach(() => {
+		noticeMessages().length = 0;
+	});
+
+	it('refuses a session switch while a request is in flight', async () => {
+		const fixture = createEditTargetView();
+		const first = makeSession('a1');
+		const second = makeSession('a2');
+		fixture.conversationStore.loadConversation.mockResolvedValue(
+			loadedConversation([first, second], 'a1'),
+		);
+		const response = deferred<SessionChatResult>();
+		let requestSignal: AbortSignal | undefined;
+		let streamContent: ((text: string) => void) | undefined;
+		fixture.requestChatCompletion.mockImplementationOnce(async (submission) => {
+			requestSignal = submission.signal;
+			streamContent = submission.callbacks.onContent;
+			return response.promise;
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Streaming question';
+		}
+		const submission = viewPrototype.submitPrompt.call(fixture.context);
+		await vi.waitFor(() => expect(fixture.requestChatCompletion).toHaveBeenCalledOnce());
+
+		const sessionSelect = findSessionSelect(fixture.contentEl);
+		if (!sessionSelect) {
+			throw new Error('Chat session selector missing.');
+		}
+		expect(sessionSelect.value).toBe('a1');
+		sessionSelect.value = 'a2';
+
+		await viewPrototype.switchActiveSession.call(fixture.context, 'a2');
+
+		expect(fixture.context.activeSessionId).toBe('a1');
+		expect(fixture.context.messages).toBe(first.messages);
+		expect(fixture.context.messages[1]?.status).toBe('loading');
+		expect(fixture.context.isSending).toBe(true);
+		expect(requestSignal?.aborted).toBe(false);
+		expect(fixture.conversationStore.setActiveSession).not.toHaveBeenCalled();
+		expect(sessionSelect.value).toBe('a1');
+		expect(sessionSelect.disabled).toBe(true);
+		expect(fixture.conversationStore.setActiveSession).not.toHaveBeenCalled();
+
+		streamContent?.('Streamed answer');
+		response.resolve({ content: 'Streamed answer', reasoning: '' });
+		await submission;
+
+		expect(fixture.context.messages[1]).toMatchObject({
+			status: 'ready',
+			content: 'Streamed answer',
+		});
 	});
 });

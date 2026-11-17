@@ -204,3 +204,190 @@ git diff --check clean
 ```
 
 The review round adds 5 tests (1,816 → 1,821). `src/selection-modal.ts` is the only module whose constructor contract changed, and only by one optional trailing callback, so the Stage 45/49 modal behavior and its tests are unchanged.
+
+## PR C — interaction, streaming, and accessibility
+
+This section records PR C on branch `fix/2.10-interaction`, based at `9a79f40` (PR B merged). The first pass shipped C1–C3; the second pass below adds C4–C7.
+
+### Fixes
+
+1. **C1 — streaming DOM identity.** `renderMessageBody` previously called `bodyEl.empty()` on every scheduled streaming frame, recreating the reasoning `<details>` closed and the answer element underneath it. Loading messages now build their structure once per message body and update only the reasoning/activity/content text. The structure is reused while the message shape is unchanged: role, `webActivity` presence, reasoning presence, and the provisional Web draft label. A shape change rebuilds once and carries the previous `details.open` and reasoning scroll position forward. Text updates reuse the existing text node's `nodeValue`, so an in-answer selection is not replaced; only a shape change rebuilds the content element. Terminal messages delete the cached structure and use the unchanged plain-text-then-Markdown path.
+2. **C2 — composer disabled and fail-closed state.** `composerState().sendDisabled` now includes `!this.notePath`, so Send is disabled when no Markdown note is open. The generic target-capture `catch` in `submitPrompt` captures the draft, caret, and focus state before re-rendering and passes them through the existing `ComposerRestoreState`, so the restored text drives the estimate, `draftCapacityBlocked`, quick-action capacity, and the caret/focus position instead of leaving a stale estimate for the previous draft.
+3. **C3 — session switch guard.** `switchActiveSession` now refuses a switch when `isSending`, `isThreadLoading`, or `isSessionMutating`, mirroring `beginSessionMutation`. The request is therefore not aborted and no loading message is abandoned by a session-selector race; the session controls already disable themselves while sending.
+
+### Regression evidence
+
+- `tests/chat-view.test.ts` (new `describe('EmendChatView streaming DOM identity')`): `keeps an opened reasoning panel and its scroll while streaming`, `keeps the opened reasoning panel when the first answer content arrives`.
+- `tests/chat-view.test.ts` (new `describe('EmendChatView composer fail-closed state')`): `disables Send when no Markdown note is open`, `restores draft estimate and capacity blocking after a fail-closed capture`.
+- `tests/chat-view.test.ts` (new `describe('EmendChatView session switch guard')`): `refuses a session switch while a request is in flight`.
+- `tests/request-isolation.test.ts`: `keeps the same-note pending lock while a session switch is refused` (previously `… across a session switch until the aborted request settles`), because a session switch no longer aborts an in-flight request.
+
+RED before each fix:
+
+```text
+FAIL tests/chat-view.test.ts > EmendChatView streaming DOM identity > keeps an opened reasoning panel and its scroll while streaming
+AssertionError: expected FakeElement { … } to be FakeElement { … } // Object.is equality
+FAIL tests/chat-view.test.ts > EmendChatView streaming DOM identity > keeps the opened reasoning panel when the first answer content arrives
+AssertionError: expected FakeElement { … } to be FakeElement { … } // Object.is equality
+Tests  2 failed | 261 skipped (263)
+
+FAIL tests/chat-view.test.ts > EmendChatView composer fail-closed state > disables Send when no Markdown note is open
+AssertionError: expected false to be true
+FAIL tests/chat-view.test.ts > EmendChatView composer fail-closed state > restores draft estimate and capacity blocking after a fail-closed capture
+AssertionError: expected +0 to be 10
+Tests  2 failed | 263 skipped (265)
+
+FAIL tests/chat-view.test.ts > EmendChatView session switch guard > refuses a session switch while a request is in flight
+AssertionError: expected 'a2' to be 'a1'
+Tests  1 failed | 265 skipped (266)
+```
+
+Three existing session-runtime tests (`isolates stale stream callbacks and finally cleanup from a newer request after A1 → A2 → B → A1`, `suppresses a stale final-save Notice after a session transition`, `does not apply stale initial-save metadata after a session transition`) used a session switch to abort an in-flight request. They now release the request explicitly with `abortActiveRequest()` before the switch, so they keep exercising the same stale-callback, stale-save-notice, and stale-metadata guards without relying on the removed path. Test harnesses that call the split rendering methods received matching `renderStreamingMessageBody`/`renderFinalMessageBody` stubs.
+
+### Local gate
+
+At `3ae7e4c` with bundle SHA-256 `ef944dc21dd8f2899c272d6c239c01110504b297d6ff9149bb3ac52208b320ca`:
+
+```text
+npm test        53 files / 1,826 tests passed
+npm run lint    clean
+npm run build   clean (tsc -noEmit -skipLibCheck + esbuild production)
+git diff --check clean
+```
+
+Baseline `9a79f40` was 53 files / 1,821 tests, so this pass adds 5 tests.
+
+### Commits
+
+| Task | Commit | Message |
+| --- | --- | --- |
+| C1 | `a77b0aa` | `fix: preserve streaming message DOM state` |
+| C2 | `7ab40e6` | `fix: synchronize composer disabled and capacity state` |
+| C3 | `3ae7e4c` | `fix: guard session switches during requests` |
+
+### Limits
+
+Everything here is unit- and source-verified. Real-Obsidian confirmation of reasoning-panel state and text selection across streaming frames, a disabled Send with no note open, the restored caret, and a refused session-selector race belongs to the PR E exploratory matrix. No macOS, Windows, real-provider, or screen-reader evidence is claimed, and C4–C7 remain open.
+
+### Second pass — C4–C7
+
+The second pass extends the same branch and follows the same RED → GREEN discipline for each task.
+
+#### Fixes
+
+4. **C4 — stale menu and popover state.** `ChatComposerControls` and `ChatModelControl` now clear `activeMenu` inside their `onHide` handler, so a capacity refresh or any other `update()` after a dismissal no longer writes checked/disabled state into a menu the host already hid (M10). Clearing the active menu would have broken the Stage 50 hide-before-click ordering, so each control remembers the single menu it just hid: that menu may still deliver exactly one selected-item callback, and the reference is dropped on activation, on the next open, on a settings refresh, and on destroy. `RelatedNotesExplorer.close()` removes the trigger's `aria-controls` (M11 dangling reference), and `RelatedNotesControl.destroy()` closes the explorer with `restoreFocus = false` so a rerender/destroy cannot focus a trigger element that is leaving the DOM; focus restoration additionally skips a trigger whose `isConnected` is `false`.
+5. **C5 — focus, naming, Escape, and announcements.** Removing an additional note now restores focus to the Remove button that took the removed path's place, then `Clear all`, then `Add notes` when the list empties (M11 focus loss). The capacity bar handles Escape on its own focusable root — preventing default and stopping propagation only for a key press inside the bar — while the document listener remains for a pinned panel that lost focus, dismissing without `preventDefault`/`stopPropagation` so host Escape shortcuts are no longer swallowed (M11). The Modify Selection textarea is named `Selection instruction` via `aria-label="Selection edit instruction"` (M11). `ContextCapacityDisplay.render()` accepts an optional `debounceAnnouncement` flag that defers only the `role="status"` summary text by 500 ms while bar widths, `aria-valuenow`, `aria-valuetext`, and blocked controls update immediately; the Modify Selection textarea input uses it, so rapid typing produces one settled announcement instead of one per keystroke (M8).
+6. **C6 — completion alignment and estimate debounce.** Completion scroll alignment is now bound to the render generation the completion created. The ready path records `responseStartRenderGeneration = renderGeneration + 1` beside `responseStartMessageId`, and `settleMarkdownRender` consumes the target only when its generation matches; an unrelated render clears the stale target and applies its own `pendingScrollRestore`, so an upward reader is no longer jumped to the completed answer's header and left without a restore (M12). The composer `input` handler now routes through the existing `scheduleCapacityRefresh()` 150 ms debounce instead of calling `refreshDraftEstimate` synchronously, so typing no longer snapshots the whole note and re-renders the bar per keystroke (M21); the placeholder update stays synchronous and submissions still re-estimate before creating a message.
+7. **C7 — streaming versus rendered whitespace.** The detached `MarkdownRenderer` output now carries `emend-chat-message-markdown` with `white-space: normal`, while streaming, user, error, and provisional draft text keep `emend-chat-message-content` with `white-space: pre-wrap`. Soft line breaks in a finalized answer therefore render as Markdown line breaks instead of hard breaks (M22). Shared typography, wrapping, and first/last-child margins are declared for both classes.
+
+#### Regression evidence
+
+- `tests/chat-composer-controls.test.ts`: `does not mutate a menu after it is hidden`; the existing `accepts the current native menu item after its hide callback precedes the click`, `ignores stale menu items and stale onHide callbacks`, and destroy tests still pass.
+- `tests/chat-model-control.test.ts`: `does not mutate a menu after it is hidden`; the existing hide-before-click, stale hide/item, `refreshes the summary and options, closes the old menu, and rejects stale items`, and destroy tests still pass. `refresh()` explicitly drops the just-hidden menu so a settings refresh still invalidates detached callbacks.
+- `tests/related-notes-control.test.ts`: `clears aria-controls when the explorer closes`, `does not focus a detached trigger when controls are destroyed`.
+- `tests/additional-notes-ui.test.ts`: `restores focus to the next remove button after removing a path` (next Remove → Clear all → Add notes).
+- `tests/context-capacity-ui.test.ts`: `does not stop Escape propagation outside the capacity bar`, plus the adapted `dismisses a pinned tooltip on document Escape after focus loss` (inside-Escape now asserted on the bar).
+- `tests/selection-modal.test.ts`: `names the selection instruction textarea`, `does not announce the capacity summary on every keystroke`, plus `shows the shared estimate above quick actions and refreshes on input without re-rendering` and `keeps the typed draft estimate and Modify state after a blocked stale-enabled quick action`, which now await the settled announcement instead of assuming a synchronous summary.
+- `tests/chat-view.test.ts`: `restores the reader position when an unrelated render follows a completion`, `debounces the draft estimate during composer typing`, `renders a finalized answer without the streaming pre-wrap class`. The four existing capacity tests that typed and then asserted synchronously (`updates the estimate while typing …`, `blocks Send, Enter, Mod+Enter, …`, `keeps Send enabled and submits below capacity`, `recomputes with the restored draft after a Web control change`) and the C2 fail-closed test now await the 150 ms capacity debounce, matching the new contract.
+
+RED before each fix:
+
+```text
+FAIL tests/chat-composer-controls.test.ts > ChatComposerControls > does not mutate a menu after it is hidden
+AssertionError: expected false to be true // Object.is equality
+FAIL tests/chat-model-control.test.ts > ChatModelControl > does not mutate a menu after it is hidden
+AssertionError: expected false to be true // Object.is equality
+FAIL tests/related-notes-control.test.ts > RelatedNotesControl > clears aria-controls when the explorer closes
+AssertionError: expected 'emend-chat-related-notes-explorer-30' to be undefined
+FAIL tests/related-notes-control.test.ts > RelatedNotesControl > does not focus a detached trigger when controls are destroyed
+AssertionError: expected true to be false // Object.is equality
+Tests  4 failed | 76 passed (80)
+
+FAIL tests/additional-notes-ui.test.ts > AdditionalNotesControl > restores focus to the next remove button after removing a path
+AssertionError: expected [] to deeply equal [ 'Remove Three.md' ]
+FAIL tests/context-capacity-ui.test.ts > ContextCapacityDisplay > does not stop Escape propagation outside the capacity bar
+AssertionError: expected true to be false // Object.is equality
+FAIL tests/selection-modal.test.ts > SelectionModal draft capacity estimate > names the selection instruction textarea
+AssertionError: expected undefined to be 'Selection edit instruction'
+FAIL tests/selection-modal.test.ts > SelectionModal draft capacity estimate > does not announce the capacity summary on every keystroke
+AssertionError: expected 'Estimated input: 6 tokens of 900 effe…' to be 'Estimated input: 1 tokens of 900 effe…'
+Tests  4 failed | 77 passed (81)
+
+FAIL tests/chat-view.test.ts > … > restores the reader position when an unrelated render follows a completion
+AssertionError: expected 200 to be 275 // Object.is equality
+FAIL tests/chat-view.test.ts > EmendChatView draft capacity estimate > debounces the draft estimate during composer typing
+AssertionError: expected "vi.fn()" to not be called at all, but actually been called 1 times
+Tests  2 failed | 266 skipped (268)
+
+FAIL tests/chat-view.test.ts > EmendChatView terminal response continuity > renders a finalized answer without the streaming pre-wrap class
+AssertionError: expected [] to have a length of 1 but got +0
+Tests  1 failed | 268 skipped (269)
+```
+
+Both menu RED cases are the same mutation assertion: `update()` after `menu.hide()` flipped the checked item of a dismissed menu.
+
+#### Commits
+
+| Task | Commit | Message |
+| --- | --- | --- |
+| C4 | `7f1956e` | `fix: clear stale menu and popover state` |
+| C5 | `55cf253` | `fix: restore focus and contain keyboard handling` |
+| C6 | `4bea061` | `fix: scope completion alignment and debounce estimates` |
+| C7 | `f6e6dc0` | `fix: separate streaming and rendered whitespace` |
+
+#### Local gate
+
+At `f6e6dc0`, with `main.js` rebuilt from a clean `f6e6dc0` tree and SHA-256 `5202e34e04c1478da971c950dc433bb9926c3172eca7e29c42f4cf1a4f75edd2`:
+
+```text
+npm test        53 files / 1,837 tests passed
+npm run lint    clean
+npm run build   clean (tsc -noEmit -skipLibCheck + esbuild production)
+git diff --check clean
+```
+
+C1–C3 ended at 1,826 tests, so this pass adds 11 (C4 4, C5 4, C6 2, C7 1). `main.js` is gitignored; the docs-only commit changes the build identity, so a rebuild at the docs head will not reproduce the hash above.
+
+#### Limitations and deviations
+
+- All C4–C7 evidence is unit/source level. Native menu dismissal races, screen-reader announcement cadence, real Escape propagation in Obsidian, the completion alignment in a live scroller, and the rendered soft-break behaviour require the PR E real-Obsidian matrix; no macOS, Windows, provider, or assistive-technology claim is made.
+- C4 keeps a single "just hidden" menu reference per control. That is the narrowest way to preserve Stage 50's hide-before-click acceptance after clearing the active menu; it is dropped on activation, next open, settings refresh, and destroy, so a dismissed menu cannot be mutated or activated twice.
+- C5's announcement deferral is opt-in per render. Chat's composer already debounces the estimate at its source (C6), so the display default stays synchronous and the deferral is used by the Modify Selection textarea, whose input is not otherwise debounced. Reviewers should confirm that split is preferable to a silently lagging visible summary in chat.
+- C6 binds alignment with one extra integer field rather than a render-generation token object; `settleMarkdownRender` treats a missing field as the legacy unbound case, which keeps the direct-call unit harnesses meaningful.
+- C7 changes the rendered element's class name. `messageContentElements` in `tests/chat-view.test.ts` now matches either class because both are the single message body text element; nothing else keys on the old class.
+
+### PR C review round — cheap fixes
+
+The PR C review round raised six findings. Three were cheap and are fixed here; findings 3, 4, and 6 remain deferred and are listed below.
+
+#### Fixes
+
+1. **Finding 1 — completion generation wiring was untested.** The C6 fix recorded `responseStartRenderGeneration = renderGeneration + 1` beside `responseStartMessageId`, but every unit test drove `settleMarkdownRender` with a hand-written context, so removing the `+1` would still have passed. `wires a real completion to its own render generation before aligning` now submits through the real `submitPrompt`/completion path, asserts `responseStartRenderGeneration === renderGeneration` on the post-completion render, then settles that generation with stubbed scroll geometry and asserts the completed header alignment (`scrollTop` 40 → 200), the cleared target fields, and an unconsumed `pendingScrollRestore`. Removing the `+1` fails the first assertion (`expected 3 to be 4`).
+2. **Finding 2 — a refused switch left the selector on the rejected option.** `switchActiveSession` returned before touching the view, so the native `<select>` kept the option the user had just picked while the active session stayed unchanged. The refusal now calls a new `syncSessionControl()` (built from the same `sessionControlState()` the render path uses), which rewrites the option list, the active value, and the pending disabled state. The C3 test extends to set the selector to `a2`, refuse the switch, and assert the value snaps back to `a1` and the control becomes disabled. Removing the resync fails with `expected 'a2' to be 'a1'`.
+3. **Finding 5 — doc wording.** `AGENTS.md` described the capacity summary deferral as "deferred for one render"; it is a 500 ms trailing delay, so the contract now says "deferred to a 500 ms typing pause".
+
+The settle reorder also makes the alignment path leave `pendingScrollRestore` unconsumed instead of clearing a restore it never applied; that is what the new wiring test asserts, and `AGENTS.md` records it.
+
+#### Deferred review findings
+
+- **Finding 3 — capacity announcement deferral is opt-in per render.** Chat keeps a synchronous visible summary while the Modify Selection textarea defers its announcement, so the two surfaces have different announcement timing by design. No user-visible defect was proven, and a uniform policy needs a real screen-reader session; deferred to the PR E matrix.
+- **Finding 4 — the just-hidden menu grace window is a host-ordering assumption.** Clearing `activeMenu` in `onHide` while keeping one menu eligible for a single activation is the narrowest way to preserve Stage 50, but only real Obsidian can prove that a dismissed menu never delivers a late click for that window; deferred to the PR E real-Obsidian menu matrix.
+- **Finding 6 — rendered-answer class rename and the unverified soft-break rendering.** Rendered answers moved from `emend-chat-message-content` to `emend-chat-message-markdown`; any user CSS snippet that targeted the old class on finalized answers no longer applies, and the underlying soft-line-break defect was never reproduced in a real vault. Deferred to PR E, which owns the visual confirmation and any release note about the class name.
+
+#### Review-round gate
+
+At `ded5f5d`, with `main.js` rebuilt from a clean `ded5f5d` tree and SHA-256 `9ff09c3da6406917b57fdaa42f650742ee149f37383398e9c55516d8075bc4ab`:
+
+```text
+npm test        53 files / 1,838 tests passed
+npm run lint    clean
+npm run build   clean (tsc -noEmit -skipLibCheck + esbuild production)
+git diff --check clean
+```
+
+The C4–C7 pass ended at 1,837 tests; this round adds one test (the real-completion wiring assertion) and extends the existing C3 test.
+
+| Task | Commit | Message |
+| --- | --- | --- |
+| Review fixes | `ded5f5d` | `fix: close PR C review findings` |
+| Review docs | this docs commit | `docs: record PR C review round` |

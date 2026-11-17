@@ -632,7 +632,7 @@ describe('shared per-note request isolation', () => {
 		expect(fixture.writes).toEqual([]);
 	});
 
-	it('keeps the same-note pending lock across a session switch until the aborted request settles', async () => {
+	it('keeps the same-note pending lock while a session switch is refused', async () => {
 		const fixture = makePluginFixture({ 'Note.md': 'Alpha beta.' });
 		const first = {
 			id: 'first', title: 'First', titleSource: 'auto' as const,
@@ -683,6 +683,11 @@ describe('shared per-note request isolation', () => {
 		await pendingResponse.started;
 
 		await state.switchActiveSession('second');
+		expect(view as unknown as { activeSessionId: string }).toHaveProperty(
+			'activeSessionId',
+			'first',
+		);
+		expect(view as unknown as { isSending: boolean }).toHaveProperty('isSending', true);
 		await expect(
 			fixture.plugin.requestChatCompletion(makeReadOnlySubmission(fixture, 'Note.md')),
 		).rejects.toEqual(new Error(PENDING_ERROR));
@@ -690,7 +695,7 @@ describe('shared per-note request isolation', () => {
 
 		pendingResponse.finish();
 		await pending;
-		expect(view as unknown as { activeSessionId: string }).toHaveProperty('activeSessionId', 'second');
+		expect(view as unknown as { activeSessionId: string }).toHaveProperty('activeSessionId', 'first');
 		respondWith('Retry answer');
 		await expect(
 			fixture.plugin.requestChatCompletion(makeReadOnlySubmission(fixture, 'Note.md')),

@@ -19,7 +19,10 @@ import {
 	resolveActiveSession,
 	type ChatSession,
 } from './chat-sessions';
-import { ChatSessionControls } from './chat-session-controls';
+import {
+	ChatSessionControls,
+	type ChatSessionControlsState,
+} from './chat-session-controls';
 import {
 	ChatComposerControls,
 	type ComposerPermissionState,
@@ -98,6 +101,42 @@ function getComposerPlaceholder(mode: SelectableMode, draft: string): string {
 
 const CAPACITY_REFRESH_DEBOUNCE_MS = 150;
 
+interface StreamingMessageParts {
+	shape: string;
+	activityEl?: HTMLElement;
+	reasoningEl?: HTMLDetailsElement;
+	reasoningContentEl?: HTMLElement;
+	contentEl: HTMLElement;
+}
+
+const streamingMessageParts = new WeakMap<HTMLElement, StreamingMessageParts>();
+const TEXT_NODE_TYPE = 3;
+
+function getStreamingShape(message: ChatMessage): string {
+	return [
+		message.role,
+		message.webActivity ? 'activity' : '',
+		message.reasoning ? 'reasoning' : '',
+		message.webDraft && message.content ? 'draft' : '',
+	].join('|');
+}
+
+function getStreamingContentText(message: ChatMessage): string {
+	if (message.content) {
+		return message.content;
+	}
+	return message.reasoning || message.webActivity ? '' : 'Waiting for a response...';
+}
+
+function setStreamingText(element: HTMLElement, text: string): void {
+	const textNode = element.firstChild;
+	if (textNode && textNode.nodeType === TEXT_NODE_TYPE) {
+		textNode.nodeValue = text;
+		return;
+	}
+	element.textContent = text;
+}
+
 interface UntypedWorkspaceEvents {
 	on(name: string, callback: (...data: unknown[]) => unknown): EventRef;
 }
@@ -163,6 +202,7 @@ export class EmendChatView extends ItemView {
 	private messagesEl: HTMLElement | null = null;
 	private followLatestMessages = true;
 	private responseStartMessageId: string | null = null;
+	private responseStartRenderGeneration: number | null = null;
 	private inputEl: HTMLTextAreaElement | null = null;
 	private modelControl: ChatModelControl | null = null;
 	private composerControls: ChatComposerControls | null = null;
@@ -260,6 +300,19 @@ export class EmendChatView extends ItemView {
 		this.draftCapacityBlocked = false;
 		this.inputEl = null;
 		this.contentEl.empty();
+	}
+
+	private sessionControlState(): ChatSessionControlsState {
+		return {
+			sessions: this.sessions,
+			activeSessionId: this.activeSessionId,
+			disabled: this.isSending || this.isThreadLoading || this.isSessionMutating,
+		};
+	}
+
+	private syncSessionControl() {
+		// A refused switch must not leave the native selector on the rejected option.
+		this.sessionControls?.render(this.sessionControlState());
 	}
 
 	refreshCapacityEstimate() {
@@ -459,7 +512,8 @@ export class EmendChatView extends ItemView {
 				this.isSending ||
 				this.isThreadLoading ||
 				this.isSessionMutating,
-			sendDisabled: this.isModelSelectionSaving ||
+			sendDisabled: !this.notePath ||
+				this.isModelSelectionSaving ||
 				this.isThreadLoading ||
 				this.isSessionMutating ||
 				this.draftCapacityBlocked,
@@ -534,13 +588,16 @@ export class EmendChatView extends ItemView {
 	async switchActiveSession(sessionId: string): Promise<void> {
 		const notePath = this.notePath;
 		const currentSessionId = this.activeSessionId;
+		const isPending = this.isSending || this.isThreadLoading || this.isSessionMutating;
 		if (
 			!notePath ||
 			!currentSessionId ||
 			sessionId === currentSessionId ||
-			this.isThreadLoading ||
-			this.isSessionMutating
+			isPending
 		) {
+			if (isPending) {
+				this.syncSessionControl();
+			}
 			return;
 		}
 		const target = this.sessions.find((session) => session.id === sessionId);
@@ -1105,11 +1162,7 @@ export class EmendChatView extends ItemView {
 				void this.deleteActiveSession();
 			},
 		}, this.app);
-		this.sessionControls.render({
-			sessions: this.sessions,
-			activeSessionId: this.activeSessionId,
-			disabled: this.isSending || this.isThreadLoading || this.isSessionMutating,
-		});
+		this.sessionControls.render(this.sessionControlState());
 
 		const messagesEl = contentEl.createDiv('emend-chat-messages');
 		this.messagesEl = messagesEl;
@@ -1182,7 +1235,7 @@ export class EmendChatView extends ItemView {
 				'placeholder',
 				getComposerPlaceholder(this.selectedMode, currentDraft),
 			);
-			this.refreshDraftEstimate(currentDraft);
+			this.scheduleCapacityRefresh();
 		});
 
 		const actionsEl = composerEl.createDiv('emend-chat-composer-actions');
@@ -1300,14 +1353,74 @@ export class EmendChatView extends ItemView {
 		if (!bodyEl || this.closed) {
 			return;
 		}
-		bodyEl.empty();
+		if (message.status === 'loading') {
+			this.renderStreamingMessageBody(bodyEl, message);
+			return;
+		}
+		streamingMessageParts.delete(bodyEl);
+		this.renderFinalMessageBody(bodyEl, message);
+	}
 
-		if (message.status === 'loading' && message.webActivity) {
-			bodyEl.createDiv({
+	private renderStreamingMessageBody(bodyEl: HTMLElement, message: ChatMessage) {
+		const shape = getStreamingShape(message);
+		const cached = streamingMessageParts.get(bodyEl);
+		if (cached && cached.shape === shape) {
+			if (cached.activityEl) {
+				setStreamingText(cached.activityEl, message.webActivity ?? '');
+			}
+			if (cached.reasoningContentEl) {
+				setStreamingText(cached.reasoningContentEl, message.reasoning);
+			}
+			setStreamingText(cached.contentEl, getStreamingContentText(message));
+			return;
+		}
+
+		const previous = cached;
+		bodyEl.empty();
+		const activityEl = message.webActivity
+			? bodyEl.createDiv({
 				cls: 'emend-chat-web-activity',
 				text: message.webActivity,
+			})
+			: undefined;
+		let reasoningEl: HTMLDetailsElement | undefined;
+		let reasoningContentEl: HTMLElement | undefined;
+		if (message.reasoning) {
+			const detailsEl = bodyEl.createEl('details', {
+				cls: 'emend-chat-reasoning',
+			});
+			detailsEl.open = previous?.reasoningEl?.open ?? false;
+			detailsEl.createEl('summary', { text: 'Reasoning' });
+			reasoningContentEl = detailsEl.createDiv({
+				cls: 'emend-chat-reasoning-content',
+				text: message.reasoning,
+			});
+			reasoningContentEl.scrollTop = previous?.reasoningContentEl?.scrollTop ?? 0;
+			reasoningEl = detailsEl;
+		}
+		if (message.content && message.webDraft) {
+			bodyEl.createDiv({
+				cls: 'emend-chat-web-draft-label',
+				text: 'Draft answer — research may continue',
 			});
 		}
+		const contentEl = bodyEl.createDiv({
+			cls: message.content && message.webDraft
+				? 'emend-chat-message-content is-web-draft'
+				: 'emend-chat-message-content',
+			text: getStreamingContentText(message),
+		});
+		streamingMessageParts.set(bodyEl, {
+			shape,
+			activityEl,
+			reasoningEl,
+			reasoningContentEl,
+			contentEl,
+		});
+	}
+
+	private renderFinalMessageBody(bodyEl: HTMLElement, message: ChatMessage) {
+		bodyEl.empty();
 
 		if (message.reasoning) {
 			const detailsEl = bodyEl.createEl('details', {
@@ -1322,26 +1435,12 @@ export class EmendChatView extends ItemView {
 		}
 
 		if (!message.content) {
-			if (message.status === 'loading') {
-				bodyEl.createDiv({
-					cls: 'emend-chat-message-content',
-					text: message.reasoning || message.webActivity ? '' : 'Waiting for a response...',
-				});
-			}
 			return;
 		}
 
-		if (message.role === 'user' || message.status === 'error' || message.status === 'loading') {
-			if (message.status === 'loading' && message.webDraft) {
-				bodyEl.createDiv({
-					cls: 'emend-chat-web-draft-label',
-					text: 'Draft answer — research may continue',
-				});
-			}
+		if (message.role === 'user' || message.status === 'error') {
 			bodyEl.createDiv({
-				cls: message.status === 'loading' && message.webDraft
-					? 'emend-chat-message-content is-web-draft'
-					: 'emend-chat-message-content',
+				cls: 'emend-chat-message-content',
 				text: message.content,
 			});
 			return;
@@ -1352,7 +1451,7 @@ export class EmendChatView extends ItemView {
 			text: message.content,
 		});
 		const renderedEl = bodyEl.ownerDocument.createElement('div');
-		renderedEl.className = 'emend-chat-message-content';
+		renderedEl.className = 'emend-chat-message-markdown';
 		const generation = this.renderGeneration;
 		this.pendingMarkdownRenders = (this.pendingMarkdownRenders ?? 0) + 1;
 		void MarkdownRenderer.render(
@@ -1409,10 +1508,16 @@ export class EmendChatView extends ItemView {
 		if (this.pendingMarkdownRenders > 0) {
 			return;
 		}
-		const responseStartMessageId = this.responseStartMessageId;
+		// Only the render generation created for this completion may align to the
+		// completed answer; any later render supersedes it and keeps its own restore.
+		const boundGeneration = this.responseStartRenderGeneration;
+		const isCompletionRender = typeof boundGeneration !== 'number' ||
+			boundGeneration === generation;
+		const responseStartMessageId = isCompletionRender
+			? this.responseStartMessageId
+			: null;
 		this.responseStartMessageId = null;
-		const restore = this.pendingScrollRestore;
-		this.pendingScrollRestore = null;
+		this.responseStartRenderGeneration = null;
 		if (responseStartMessageId) {
 			const messageEl = this.messagesEl?.querySelector<HTMLElement>(
 				`[data-message-id="${responseStartMessageId}"]`,
@@ -1424,6 +1529,8 @@ export class EmendChatView extends ItemView {
 			}
 			return;
 		}
+		const restore = this.pendingScrollRestore;
+		this.pendingScrollRestore = null;
 		if (restore) {
 			this.restoreMessageScroll(restore.previousScrollTop, restore.wasFollowing);
 		}
@@ -1556,11 +1663,13 @@ export class EmendChatView extends ItemView {
 			}
 		} catch (error) {
 			new Notice(`Emend: ${getErrorMessage(error)}`);
-			const draft = this.inputEl?.value ?? '';
-			this.render();
-			if (this.inputEl) {
-				this.inputEl.value = draft;
-			}
+			const input = this.inputEl;
+			this.render({
+				draft: input?.value ?? '',
+				selectionStart: input?.selectionStart ?? input?.value.length ?? 0,
+				selectionEnd: input?.selectionEnd ?? input?.value.length ?? 0,
+				focus: Boolean(input) && input?.ownerDocument?.activeElement === input,
+			});
 			return;
 		}
 
@@ -1820,6 +1929,7 @@ export class EmendChatView extends ItemView {
 				if (this.isCurrent(identity)) {
 					if (loadingMessage.status === 'ready') {
 						this.responseStartMessageId = loadingMessage.id;
+						this.responseStartRenderGeneration = this.renderGeneration + 1;
 						this.followLatestMessages = false;
 					}
 					this.render();

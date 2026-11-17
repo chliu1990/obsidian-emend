@@ -33,6 +33,7 @@ export interface DraftCapacityEstimate {
 export const CAPACITY_EXCLUSION_NOTE =
 	'Excluded from this estimate: instructions and skills, additional-note contents, the first Web round\'s system prompt and tool declarations, and later Web or correction rounds; the exact submission check remains authoritative.';
 export const CAPACITY_UNAVAILABLE = 'Draft estimate unavailable.';
+export const CAPACITY_SUMMARY_ANNOUNCEMENT_DELAY_MS = 500;
 
 export function buildDraftCapacityEstimate(input: {
 	provider: ProviderConfig;
@@ -235,6 +236,8 @@ export class ContextCapacityDisplay {
 	private detailsVisible = false;
 	private detailsPinned = false;
 	private hasDetails = false;
+	private announcedSummary = '';
+	private summaryTimer: number | null = null;
 	private readonly summaryId: string;
 	private readonly onOutsidePointerDown: (event: PointerEvent) => void;
 	private readonly onDocumentKeyDown: (event: KeyboardEvent) => void;
@@ -295,12 +298,24 @@ export class ContextCapacityDisplay {
 			this.detailsPinned = !this.detailsPinned;
 			this.setDetailsVisible(this.detailsPinned);
 		});
-		this.onDocumentKeyDown = (event) => {
+		// Escape belongs to whatever owns focus: the bar stops propagation only
+		// for key presses inside itself, and a detached pinned panel still closes
+		// when the document sees Escape without swallowing the host's shortcut.
+		rootEl.addEventListener('keydown', (event) => {
 			if (event.key !== 'Escape' || !this.detailsVisible) {
 				return;
 			}
 			event.preventDefault();
 			event.stopPropagation();
+			this.dismissDetails();
+		});
+		this.onDocumentKeyDown = (event) => {
+			if (event.key !== 'Escape' || !this.detailsVisible) {
+				return;
+			}
+			if (event.target && rootEl.contains(event.target as Node)) {
+				return;
+			}
 			this.dismissDetails();
 		};
 		this.onOutsidePointerDown = (event) => {
@@ -316,7 +331,10 @@ export class ContextCapacityDisplay {
 		rootEl.ownerDocument.addEventListener('keydown', this.onDocumentKeyDown);
 	}
 
-	render(estimate: DraftCapacityEstimate | undefined): void {
+	render(
+		estimate: DraftCapacityEstimate | undefined,
+		options: { debounceAnnouncement?: boolean } = {},
+	): void {
 		const rootEl = this.rootEl;
 		const summaryEl = this.summaryEl;
 		const bodyEl = this.bodyEl;
@@ -325,7 +343,10 @@ export class ContextCapacityDisplay {
 			return;
 		}
 		rootEl.className = `emend-context-capacity ${getStateClass(estimate)}`;
-		summaryEl.textContent = formatDraftCapacitySummary(estimate);
+		this.updateSummary(
+			formatDraftCapacitySummary(estimate),
+			options.debounceAnnouncement === true,
+		);
 		bodyEl.empty();
 		detailsEl.empty();
 		this.hasDetails = estimate !== undefined;
@@ -363,6 +384,7 @@ export class ContextCapacityDisplay {
 	}
 
 	destroy(): void {
+		this.cancelSummaryTimer();
 		if (this.rootEl) {
 			this.rootEl.ownerDocument.removeEventListener(
 				'pointerdown',
@@ -381,6 +403,38 @@ export class ContextCapacityDisplay {
 		this.detailsVisible = false;
 		this.detailsPinned = false;
 		this.hasDetails = false;
+	}
+
+	private updateSummary(text: string, debounceAnnouncement: boolean): void {
+		if (!this.summaryEl || text === this.announcedSummary) {
+			this.cancelSummaryTimer();
+			return;
+		}
+		const firstSummary = this.announcedSummary === '';
+		this.cancelSummaryTimer();
+		if (!debounceAnnouncement || firstSummary) {
+			this.setSummaryText(text);
+			return;
+		}
+		this.summaryTimer = window.setTimeout(() => {
+			this.summaryTimer = null;
+			this.setSummaryText(text);
+		}, CAPACITY_SUMMARY_ANNOUNCEMENT_DELAY_MS);
+	}
+
+	private setSummaryText(text: string): void {
+		this.announcedSummary = text;
+		if (this.summaryEl) {
+			this.summaryEl.textContent = text;
+		}
+	}
+
+	private cancelSummaryTimer(): void {
+		if (this.summaryTimer === null) {
+			return;
+		}
+		window.clearTimeout(this.summaryTimer);
+		this.summaryTimer = null;
 	}
 
 	private setDetailsVisible(visible: boolean): void {

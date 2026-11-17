@@ -56,6 +56,7 @@ export class ChatComposerControls {
 	private triggerEl: HTMLButtonElement | null = null;
 	private submissionButtonEl: HTMLButtonElement | null = null;
 	private activeMenu: ActiveComposerMenu | null = null;
+	private recentlyHiddenMenu: Menu | null = null;
 	private destroyed = false;
 
 	constructor(private readonly callbacks: ComposerPermissionCallbacks) {}
@@ -139,6 +140,7 @@ export class ChatComposerControls {
 		this.destroyed = true;
 		this.activeMenu?.menu.hide();
 		this.activeMenu = null;
+		this.recentlyHiddenMenu = null;
 		this.triggerEl?.remove();
 		this.submissionButtonEl?.remove();
 		this.triggerEl = null;
@@ -151,6 +153,7 @@ export class ChatComposerControls {
 			return;
 		}
 		this.activeMenu?.menu.hide();
+		this.recentlyHiddenMenu = null;
 		const menu = new Menu();
 		const active: ActiveComposerMenu = {
 			menu,
@@ -204,6 +207,8 @@ export class ChatComposerControls {
 		this.updateMenu(active);
 		menu.onHide(() => {
 			if (this.activeMenu === active) {
+				this.activeMenu = null;
+				this.recentlyHiddenMenu = menu;
 				this.triggerEl?.setAttribute('aria-expanded', 'false');
 			}
 		});
@@ -234,13 +239,20 @@ export class ChatComposerControls {
 	private choose(menu: Menu, callback: () => void): void {
 		if (
 			this.destroyed ||
-			this.activeMenu?.menu !== menu ||
+			!this.isCurrentMenu(menu) ||
 			this.state.disabled
 		) {
 			return;
 		}
 		menu.hide();
+		this.recentlyHiddenMenu = null;
 		callback();
+	}
+
+	private isCurrentMenu(menu: Menu): boolean {
+		// The host hides a native menu before running the selected item's click,
+		// so the menu that was just hidden still owns one pending activation.
+		return this.activeMenu?.menu === menu || this.recentlyHiddenMenu === menu;
 	}
 
 	private chooseWebMode(menu: Menu, mode: WebSearchMode): void {
