@@ -5,6 +5,8 @@ import {
 	parseDeepSeekFetchResponse,
 	parseDeepSeekSearchResponse,
 	searchDeepSeek,
+	type DeepSeekFetchPage,
+	type DeepSeekSearchResult,
 } from '../src/deepseek-web';
 import type {
 	AiProviderRequest,
@@ -258,8 +260,8 @@ function successfulReader() {
 
 function coordinatorWith(
 	rounds: StreamResult[],
-	search = vi.fn(async (_call: Extract<WebToolCall, { name: 'web_search' }>) => [parsedSearchResult]),
-	fetchPage = vi.fn(async () => ({ title: 'Fetched page', content: 'Fetched content' })),
+	search = vi.fn(async (_call: Extract<WebToolCall, { name: 'web_search' }>): Promise<DeepSeekSearchResult[]> => [parsedSearchResult]),
+	fetchPage = vi.fn(async (): Promise<DeepSeekFetchPage> => ({ title: 'Fetched page', content: 'Fetched content' })),
 	reader: Pick<WebExtractionReader, 'extract'> = successfulReader(),
 ) {
 	const request = vi.fn(async (
@@ -1964,6 +1966,92 @@ describe('DeepSeek web transport retry and search degradation', () => {
 			: [])).toEqual([
 			['call-1', '{"error":{"kind":"search_failed","reason":"network","attempts":2}}'],
 		]);
+	});
+
+	it('reports a malformed search payload as a format failure without retrying', async () => {
+		const search = vi.fn(async () => parseDeepSeekSearchResponse({
+			results: [{ title: 'Schema drifted' }],
+		}));
+		const reader = successfulReader();
+		const { coordinator, request } = coordinatorWith([
+			toolRound([searchCall('call-1', 'schema drift')]),
+			finalRound('Answer without that search'),
+		], search, undefined, reader);
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(search).toHaveBeenCalledOnce();
+		expect(reader.extract).not.toHaveBeenCalled();
+		expect(result.content).toBe('Answer without that search');
+		expect(result.failedSearches).toBe(1);
+		expect(result.failedExtractions).toBe(0);
+		expect(result.activities).toEqual([{
+			type: 'search',
+			target: 'schema drift',
+			status: 'failed',
+			failureReason: 'format',
+			attempts: 1,
+		}]);
+		const toolMessages = request.mock.calls[1]?.[0].continuation?.filter(
+			(message) => message.role === 'tool',
+		) ?? [];
+		expect(toolMessages.map((message) => message.role === 'tool'
+			? [message.toolCallId, message.content]
+			: [])).toEqual([
+			['call-1', '{"error":{"kind":"search_failed","reason":"format","attempts":1}}'],
+		]);
+	});
+
+	it('reports a malformed fetch payload as a format failure', async () => {
+		const target = 'https://example.test/drifted';
+		const fetchPage = vi.fn(async () => parseDeepSeekFetchResponse({ title: 'No content field' }));
+		const reader = successfulReader();
+		const { coordinator, request } = coordinatorWith([
+			toolRound([fetchCall('call-fetch', target)]),
+			finalRound('Answer without that page'),
+		], vi.fn(async () => []), fetchPage, reader);
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(fetchPage).toHaveBeenCalledOnce();
+		expect(reader.extract).not.toHaveBeenCalled();
+		expect(result.activities).toEqual([{
+			type: 'fetch',
+			target,
+			status: 'failed',
+			failureReason: 'format',
+			attempts: 1,
+		}]);
+		const toolMessage = request.mock.calls[1]?.[0].continuation?.find((message) => message.role === 'tool');
+		expect(toolMessage?.role === 'tool' && toolMessage.content).toBe(
+			'{"error":{"kind":"fetch_failed","reason":"format","attempts":1}}',
+		);
+	});
+
+	it('does not retry a 200 retrieval response whose body is not JSON', async () => {
+		const fetchMock = vi.fn().mockResolvedValue(new Response('not json', { status: 200 }));
+		vi.stubGlobal('fetch', fetchMock);
+		const search = vi.fn(() => searchDeepSeek(
+			{ id: 'call-1', name: 'web_search', query: 'opaque body', extractionGoal: 'Find evidence.' },
+			provider,
+			new AbortController().signal,
+		));
+		const reader = successfulReader();
+		const { coordinator } = coordinatorWith([
+			toolRound([searchCall('call-1', 'opaque body')]),
+			finalRound('Answer without that search'),
+		], search, undefined, reader);
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(fetchMock).toHaveBeenCalledOnce();
+		expect(result.activities).toEqual([{
+			type: 'search',
+			target: 'opaque body',
+			status: 'failed',
+			failureReason: 'format',
+			attempts: 1,
+		}]);
 	});
 
 	it('does not retry a Search HTTP 403 failure and degrades it', async () => {

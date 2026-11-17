@@ -5888,6 +5888,11 @@ describe('EmendChatView web activity review', () => {
 			'Search · Failed (HTTP) · example query',
 		],
 		[
+			'format',
+			{ type: 'search' as const, target: 'drifted query', status: 'failed' as const, failureReason: 'format' as const },
+			'Search · Failed (format) · drifted query',
+		],
+		[
 			'empty',
 			{ type: 'fetch' as const, target: 'https://example.test/blank', status: 'failed' as const, failureReason: 'empty' as const },
 			'Fetch · Failed (empty page) · https://example.test/blank',

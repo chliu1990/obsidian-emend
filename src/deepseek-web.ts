@@ -87,6 +87,13 @@ export interface DeepSeekFetchPage {
 	content: string;
 }
 
+export class DeepSeekResponseFormatError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'DeepSeekResponseFormatError';
+	}
+}
+
 interface DeepSeekWebSearchDependencies {
 	provider: ProviderConfig;
 	request: typeof requestAiResponse;
@@ -335,6 +342,9 @@ export class DeepSeekWebSearchCoordinator {
 			if (isRecord(error) && error.name === 'AbortError') {
 				throw error;
 			}
+			if (error instanceof DeepSeekResponseFormatError) {
+				return { ok: false, reason: 'format', retryable: false };
+			}
 			const status = isRecord(error) &&
 				typeof error.status === 'number' &&
 				Number.isInteger(error.status)
@@ -540,7 +550,7 @@ export async function fetchDeepSeekPage(
 
 export function parseDeepSeekSearchResponse(value: unknown): DeepSeekSearchResult[] {
 	if (!isRecord(value) || !Array.isArray(value.results)) {
-		throw new Error('DeepSeek returned a malformed search response.');
+		throw new DeepSeekResponseFormatError('DeepSeek returned a malformed search response.');
 	}
 	const results: DeepSeekSearchResult[] = [];
 	for (const entry of value.results) {
@@ -554,7 +564,7 @@ export function parseDeepSeekSearchResponse(value: unknown): DeepSeekSearchResul
 			(typeof entry.site_name !== 'string' && entry.site_name !== null) ||
 			(typeof entry.date !== 'string' && entry.date !== null)
 		) {
-			throw new Error('DeepSeek returned a malformed search response.');
+			throw new DeepSeekResponseFormatError('DeepSeek returned a malformed search response.');
 		}
 		const url = normalizeWebUrl(entry.url);
 		if (!url) {
@@ -575,7 +585,7 @@ export function parseDeepSeekSearchResponse(value: unknown): DeepSeekSearchResul
 
 export function parseDeepSeekFetchResponse(value: unknown): DeepSeekFetchPage {
 	if (!isRecord(value) || typeof value.title !== 'string' || typeof value.content !== 'string') {
-		throw new Error('DeepSeek returned a malformed fetch response.');
+		throw new DeepSeekResponseFormatError('DeepSeek returned a malformed fetch response.');
 	}
 	return { title: value.title, content: value.content };
 }
@@ -694,13 +704,15 @@ async function requestDeepSeekTool(
 		try {
 			return await response.json();
 		} catch {
-			throw new Error(`DeepSeek returned malformed ${tool} JSON.`);
+			throw new DeepSeekResponseFormatError(`DeepSeek returned malformed ${tool} JSON.`);
 		}
 	} catch (error) {
 		if (signal.aborted || (isRecord(error) && error.name === 'AbortError')) {
 			throw error;
 		}
-		const sanitized = new Error(sanitizeProviderError(error, apiKey));
+		const sanitized = error instanceof DeepSeekResponseFormatError
+			? new DeepSeekResponseFormatError(sanitizeProviderError(error, apiKey))
+			: new Error(sanitizeProviderError(error, apiKey));
 		if (isRecord(error) && typeof error.status === 'number') {
 			Object.assign(sanitized, { status: error.status });
 		}
