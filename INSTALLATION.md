@@ -29,7 +29,7 @@ For updates, use BRAT’s update check and review the release notes before updat
 
 ## Install from the release ZIP
 
-1. Open the [GitHub releases page](https://github.com/chliu1990/obsidian-emend/releases) and download `emend-2.8.0.zip`.
+1. Open the [GitHub releases page](https://github.com/chliu1990/obsidian-emend/releases) and download the ZIP for the current version (named `emend-<version>.zip`).
 2. Extract the ZIP into `<Vault>/.obsidian/plugins/`. The archive already contains a top-level `emend/` folder.
 3. Confirm that `main.js`, `manifest.json`, and `styles.css` are directly inside `<Vault>/.obsidian/plugins/emend/`.
 4. Continue with **Enable the plugins** below.
