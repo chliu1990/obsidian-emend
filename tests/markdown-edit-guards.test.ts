@@ -596,7 +596,7 @@ describe('payload structure guards', () => {
 				text: '\n```\ncode\n```\n',
 			}),
 			insertionOperation(fullText, 'beta', 'before', {
-				text: '~~~\ncode\n~~~\n',
+				text: '\n~~~\ncode\n~~~\n',
 				operation: 2,
 			}),
 		])).toBeUndefined();
@@ -617,13 +617,70 @@ describe('payload structure guards', () => {
 		])).toBeUndefined();
 	});
 
-	it('ignores payloads on removal and comment operations', () => {
+	it('allows a nested backtick span inside the payload', () => {
+		const fullText = 'Alpha beta.';
+
+		expect(findPayloadStructureViolation(fullText, [
+			insertionOperation(fullText, 'Alpha', 'after', {
+				text: '``code with `nested` ticks``',
+			}),
+			insertionOperation(fullText, 'Alpha', 'after', {
+				text: '``a`b``',
+				operation: 2,
+			}),
+		])).toBeUndefined();
+	});
+
+	it('rejects an insertion payload whose fence closer shares the wrapper line', () => {
+		const fullText = 'Alpha beta.';
+
+		expect(findPayloadStructureViolation(fullText, [
+			insertionOperation(fullText, 'beta.', 'after', {
+				text: '\n```\ncode\n```',
+			}),
+		])).toEqual({
+			code: 'fenced-code-edit',
+			operation: 1,
+			operationType: 'insert',
+			field: 'text',
+			line: 1,
+		});
+	});
+
+	it('allows a balanced code block followed by a newline inside the payload', () => {
+		const fullText = 'Alpha beta.';
+
+		expect(findPayloadStructureViolation(fullText, [
+			insertionOperation(fullText, 'beta.', 'after', {
+				text: '\n```\ncode\n```\n',
+			}),
+		])).toBeUndefined();
+	});
+
+	it('rejects a comment payload that opens a fence', () => {
+		const fullText = 'Alpha beta.';
+
+		expect(findPayloadStructureViolation(fullText, [
+			targetOperation(fullText, 'beta', {
+				operationType: 'comment',
+				comment: '\n```\ncode\n',
+			}),
+		])).toEqual({
+			code: 'fenced-code-edit',
+			operation: 1,
+			operationType: 'comment',
+			field: 'comment',
+			line: 1,
+		});
+	});
+
+	it('ignores removal payloads and balanced comment payloads', () => {
 		const fullText = 'Alpha `beta` gamma';
 
 		expect(findPayloadStructureViolation(fullText, [
 			targetOperation(fullText, '`beta`', {
 				operationType: 'comment',
-				comment: 'Unbalanced ` note',
+				comment: 'See `code`.',
 			}),
 			targetOperation(fullText, 'gamma', { operation: 2 }),
 		])).toBeUndefined();

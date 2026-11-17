@@ -347,8 +347,9 @@ function markdownEditValidationError(
 		return new EditResponseValidationError(violation.code, message, details);
 	}
 	if (violation.code === 'fenced-code-edit') {
-		const message = field === 'text' || field === 'replacement'
-			? `Operation ${operation} payload introduces unbalanced fenced code or backtick runs at line ${line}; keep every fence and backtick run paired inside the inserted text. No edits were applied.`
+		const isPayloadField = field === 'text' || field === 'replacement' || field === 'comment';
+		const message = isPayloadField
+			? `Operation ${operation} payload introduces unbalanced fenced code or backtick runs at line ${line}; keep every fence and backtick run paired inside the operation payload. No edits were applied.`
 			: `Operation ${operation} edits fenced code at line ${line}; Track Changes cannot review fenced-code edits. Choose text outside the fenced block. No edits were applied.`;
 		return new EditResponseValidationError(violation.code, message, details);
 	}

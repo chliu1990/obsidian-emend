@@ -1013,6 +1013,77 @@ describe('EmendPlugin edit freshness', () => {
 			'# Note\nAlpha {~~beta~>delta~~}.',
 		);
 	});
+
+	it('rejects an edit when another open view of the target file has different text', async () => {
+		const response = JSON.stringify([
+			{ type: 'replace', target: 'beta', replacement: 'delta' },
+		]);
+		const event = JSON.stringify({ choices: [{ delta: { content: response } }] });
+		const encoder = new TextEncoder();
+		const fetchMock = vi.fn().mockImplementation(async () => {
+			const stream = new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(encoder.encode(`data: ${event}\n\n`));
+					controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+					controller.close();
+				},
+			});
+			return new Response(stream);
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		const sourceText = '# Note\nAlpha beta.';
+		const file = new TFile();
+		file.path = 'Note.md';
+		const targetView = Object.assign(
+			Object.create(MarkdownView.prototype) as MarkdownView,
+			{ file, editor: { getValue: vi.fn(() => sourceText) } },
+		);
+		const otherView = Object.assign(
+			Object.create(MarkdownView.prototype) as MarkdownView,
+			{ file, editor: { getValue: vi.fn(() => `${sourceText} Unsaved typing.`) } },
+		);
+		const vaultModify = vi.fn(async () => undefined);
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, {
+			settings: structuredClone(DEFAULT_SETTINGS),
+			getTargetMarkdownView: () => targetView,
+			app: {
+				vault: {
+					getAbstractFileByPath: () => null,
+					read: async () => sourceText,
+					modify: vaultModify,
+				},
+				workspace: {
+					iterateAllLeaves: (
+						callback: (leaf: { view: MarkdownView }) => void,
+					) => {
+						callback({ view: targetView });
+						callback({ view: otherView });
+					},
+				},
+			},
+			getApiKey: () => 'dummy-key',
+		});
+
+		await expect(plugin.requestChatCompletion({
+			context: {
+				file,
+				sourceText,
+				selection: { from: 0, to: 0 },
+				noteLabel: file.path,
+				markdown: sourceText,
+			},
+			mode: 'edit',
+			prompt: 'Replace beta with delta.',
+			history: [],
+			callbacks: { onReasoning: vi.fn() },
+			signal: new AbortController().signal,
+		})).rejects.toThrow(
+			'The note changed while Emend was responding. No edits were applied.',
+		);
+
+		expect(vaultModify).not.toHaveBeenCalled();
+	});
 });
 
 describe('EmendPlugin settings capacity refresh', () => {

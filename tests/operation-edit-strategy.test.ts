@@ -894,8 +894,8 @@ describe('Markdown structural edit safeguards', () => {
 
 	it('compiles a balanced code-block insertion', () => {
 		expect(prepare('Alpha beta.', [
-			{ type: 'insert', anchor: 'beta.', position: 'after', text: '\n```\ncode\n```' },
-		]).annotatedMarkdown).toBe('Alpha beta.{++\n```\ncode\n```++}');
+			{ type: 'insert', anchor: 'beta.', position: 'after', text: '\n```\ncode\n```\n' },
+		]).annotatedMarkdown).toBe('Alpha beta.{++\n```\ncode\n```\n++}');
 		expect(prepare('Alpha beta.', [
 			{ type: 'replace', target: 'beta.', replacement: 'see `code`.' },
 		]).annotatedMarkdown).toBe('Alpha {~~beta.~>see `code`.~~}');
@@ -1566,6 +1566,59 @@ describe('operation strategy coordinator integration', () => {
 			expect(writer.write).not.toHaveBeenCalled();
 		},
 	);
+
+	it('routes an unbalanced fence insertion through the single correction round', async () => {
+		const file = new TFile();
+		file.path = 'note.md';
+		const sourceText = 'Alpha beta.';
+		const context: RequestContext = {
+			file,
+			sourceText,
+			markdown: sourceText,
+			selection: { from: 0, to: 0 },
+			noteLabel: 'note.md',
+		};
+		const writer: NoteWriter = {
+			readCurrentText: vi.fn(async () => sourceText),
+			write: vi.fn(async () => undefined),
+			isTargetCurrent: vi.fn(() => true),
+		};
+		const invalid = JSON.stringify([
+			{ type: 'insert', anchor: 'beta.', position: 'after', text: '\n```\ncode\n```' },
+		]);
+		const request = operationRequest(invalid);
+		const onRetry = vi.fn();
+		const coordinator = new EditRequestCoordinator({
+			provider,
+			loadAdditionalNotes: async () => [],
+			loadInstructions: async () => ({ skillTexts: new Map() }),
+			request,
+			writer,
+			editStrategy: operationEditStrategy,
+		});
+
+		await expect(coordinator.submit({
+			context,
+			mode: 'edit',
+			prompt: 'Insert a code block.',
+			history: [],
+			additionalNotePaths: [],
+			callbacks: { onReasoning: vi.fn(), onRetry },
+			signal: new AbortController().signal,
+		})).rejects.toMatchObject({
+			name: 'EditResponseValidationError',
+			code: 'fenced-code-edit',
+			field: 'text',
+		});
+
+		expect(request).toHaveBeenCalledTimes(2);
+		expect(request.mock.calls[1]?.[0].continuation?.[1]?.content).toContain(
+			'"code":"fenced-code-edit"',
+		);
+		expect(onRetry).toHaveBeenCalledOnce();
+		expect(writer.readCurrentText).not.toHaveBeenCalled();
+		expect(writer.write).not.toHaveBeenCalled();
+	});
 
 	it('uses the selected strategy prompt and guarded full-note writer', async () => {
 		const file = new TFile();

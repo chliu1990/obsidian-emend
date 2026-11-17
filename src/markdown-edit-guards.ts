@@ -179,18 +179,18 @@ export function findPayloadStructureViolation(
 	operations: readonly GuardedMarkdownOperation[],
 ): MarkdownEditViolation | undefined {
 	for (const operation of operations) {
-		if (operation.operationType !== 'insert' && operation.operationType !== 'replace') {
+		const wrapped = wrapOperationPayload(fullText, operation);
+		if (!wrapped) {
 			continue;
 		}
-		const field = operation.operationType === 'insert' ? 'text' : 'replacement';
-		if (isPayloadStructureBalanced(operation[field] ?? '')) {
+		if (isPayloadStructureBalanced(wrapped)) {
 			continue;
 		}
 		return {
 			code: 'fenced-code-edit',
 			operation: operation.operation,
 			operationType: operation.operationType,
-			field,
+			field: wrapped.field,
 			line: sourceLineAt(
 				fullText,
 				operation.operationType === 'insert'
@@ -202,8 +202,48 @@ export function findPayloadStructureViolation(
 	return undefined;
 }
 
-function isPayloadStructureBalanced(payload: string): boolean {
-	const lines = scanLines(payload);
+interface WrappedOperationPayload {
+	text: string;
+	payloadStart: number;
+	field: 'text' | 'replacement' | 'comment';
+}
+
+function wrapOperationPayload(
+	fullText: string,
+	operation: GuardedMarkdownOperation,
+): WrappedOperationPayload | undefined {
+	switch (operation.operationType) {
+		case 'insert': {
+			const prefix = '{++';
+			return {
+				text: `${prefix}${operation.text ?? ''}++}`,
+				payloadStart: prefix.length,
+				field: 'text',
+			};
+		}
+		case 'replace': {
+			const prefix = `{~~${fullText.slice(operation.start, operation.end)}~>`;
+			return {
+				text: `${prefix}${operation.replacement ?? ''}~~}`,
+				payloadStart: prefix.length,
+				field: 'replacement',
+			};
+		}
+		case 'comment': {
+			const prefix = '{>>';
+			return {
+				text: `${prefix}${operation.comment ?? ''}<<}`,
+				payloadStart: prefix.length,
+				field: 'comment',
+			};
+		}
+		case 'remove':
+			return undefined;
+	}
+}
+
+function isPayloadStructureBalanced(wrapped: WrappedOperationPayload): boolean {
+	const lines = scanLines(wrapped.text);
 	const fences: SourceRange[] = [];
 	for (let index = 0; index < lines.length; index += 1) {
 		const line = lines[index];
@@ -216,7 +256,9 @@ function isPayloadStructureBalanced(payload: string): boolean {
 			continue;
 		}
 		const closing = lines.findIndex((candidate, candidateIndex) =>
-			candidateIndex > index && isFenceClose(candidate.text, run[0] ?? '', run.length)
+			candidateIndex > index &&
+			candidate.end > candidate.contentEnd &&
+			isFenceClose(candidate.text, run[0] ?? '', run.length)
 		);
 		if (closing === -1) {
 			return false;
@@ -228,12 +270,13 @@ function isPayloadStructureBalanced(payload: string): boolean {
 		fences.push({ start: line.start, end: closingLine.end });
 		index = closing;
 	}
-	return hasPairedBacktickRuns(payload, fences);
+	return hasPairedBacktickRuns(wrapped.text, fences, wrapped.payloadStart);
 }
 
 function hasPairedBacktickRuns(
 	payload: string,
 	fences: readonly SourceRange[],
+	payloadStart: number,
 ): boolean {
 	const runs: Array<{ start: number; length: number }> = [];
 	let index = 0;
@@ -248,7 +291,9 @@ function hasPairedBacktickRuns(
 			continue;
 		}
 		const end = backtickRunEnd(payload, index);
-		runs.push({ start: index, length: end - index });
+		if (index >= payloadStart) {
+			runs.push({ start: index, length: end - index });
+		}
 		index = end;
 	}
 
@@ -269,8 +314,9 @@ function hasPairedBacktickRuns(
 		if (partner === -1) {
 			return false;
 		}
-		paired.add(runIndex);
-		paired.add(partner);
+		for (let between = runIndex; between <= partner; between += 1) {
+			paired.add(between);
+		}
 	}
 	return true;
 }
