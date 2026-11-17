@@ -29,7 +29,7 @@ The public-launch path remains independent content PRs plus the normal separate 
 
 ## Later
 
-- **Edit-failure feedback and bounded retry ([#48](https://github.com/chliu1990/obsidian-emend/issues/48)):** design a user-visible, conservative retry policy for candidate-validation failures with bounded diagnostics, explicit cost/latency implications, and no silent retries. Partial application is not assumed compatible with atomic fail-closed editing and needs a separate safety design. See [future edit and chat workflows](devel_docs/future-edit-and-chat-workflows.md).
+- **Edit-failure feedback and bounded retry ([#48](https://github.com/chliu1990/obsidian-emend/issues/48)):** the shipped baseline already makes exactly one automatic same-provider correction request for a candidate-validation failure, with the unchanged original request, the invalid candidate, and bounded diagnostic feedback, and a second invalid candidate is terminal ([Stage 37](devel_docs/37-minimal-edit-ranges.md)). Still deferred: a configurable retry count beyond that single correction, an explicit user-driven retry with different feedback, and partial application when independent positions fail. Any change needs visible cost/latency disclosure, no silent retries, and a separate safety design because partial application conflicts with atomic fail-closed editing. See [future edit and chat workflows](devel_docs/future-edit-and-chat-workflows.md).
 - **Vision inputs:** embedded vault images with strict provider, file-type, size, and capability checks, starting with one provider/model family.
 - **Automatic context compression:** separate, default-off behavior built on the Stage 42 accounting, with an explicit configurable threshold (proposed 75%), privacy/cost disclosure for the extra provider request, and safe full-note/selection fallbacks. Not included in Stage 42, which adds accounting, visibility, and hard safeguards only.
 - **File structures and automatic TOCs:** an explicit mode or action for bounded, read-only file-structure/title discovery and TOC generation, without background vault scans or writes to discovered files.
@@ -48,6 +48,27 @@ The public-launch path remains independent content PRs plus the normal separate 
 - **Toolchain maintenance:** adopt TypeScript 7 when typescript-eslint peer support exists, migrate to eslint-plugin-obsidianmd 0.4 scanner rules, align Vite 8/Vitest 5 with esbuild and the Node engine floor in one tested upgrade, and upgrade checkout/setup-node/release actions through a workflow-authorized PR. These migrations are not launch blockers unless they become security- or release-breaking, and they must not be bundled with launch features.
 - Additional multimodal file types and provider-specific capabilities.
 - Broader community and contributor workflows when maintenance capacity allows.
+
+### Deferred from the 2.10 stabilization round
+
+The 2.10 bug hunt closed every release blocker but deliberately deferred the following items. Each is recorded in [Stage 51](devel_docs/51-2-10-stabilization.md) with its evidence and risk; none is a shipping blocker, and none changes current behavior.
+
+- **`chat-view.ts` decomposition:** the class owns rendering, sessions, capture, capacity, Web, persistence, and request state (about 2,150 lines and six state machines), and its tests re-implement private contexts to exercise it. A split is a broad behavior-preserving refactor that would collide with a release branch.
+- **One edit-freshness model:** `note-writer.ts` checks disk bytes plus every open editor while `selection-editor.ts` checks only its captured editor. Unifying them behind one `EditFreshness` view must preserve the Stage 51 fail-closed checks.
+- **One edit-target representation:** `edit-target.ts` choices, `displayedEditTarget`, per-submission draft-capture conversions, and a mutating `getTargetMarkdownView()` encode the same target three ways.
+- **One Markdown structure scanner:** `selection-context.ts` and `markdown-edit-guards.ts` implement divergent frontmatter, fence, and table scans; any consolidation must preserve the Stage 38 conservative boundaries and exact diagnostics.
+- **`provider-stream.ts` split:** transport, SSE parsing, tool assembly, the per-fetch capacity guard, and caller-kind flags such as `allowToolOnlyResponse` share one module.
+- **`deepseek-web.ts` split:** Search/Fetch clients, retry policy, loop orchestration, citation registration, and cap fitting share one module.
+- **Related-notes explorer layout cost:** the floating panel uses fixed body positioning with no resize/scroll tracking, and an All/Links refresh performs O(vault) metadata probes. The explicit manual Refresh keeps current behavior correct and cheap at ordinary vault sizes.
+- **Aggregate lifecycle on note rename or delete:** a rename re-points the open view but does not migrate the chat aggregate, and deleting a note leaves its saved conversation behind.
+- **Instruction caching:** `instructions-loader.ts` re-reads vault instructions and skills on every request with no cross-request cache; only the 20,000-character cap bounds the work.
+- **`saveSettings` double invocation:** a function updater is invoked twice, which is safe only while every updater stays pure.
+- **Dead CSS:** `styles.css` still carries rules for removed header controls (mode buttons, the shortcut list, and the retired refresh-model icon).
+- **Public chat-view test surface:** tests assert private prototypes and hand-built contexts rather than a public view contract, which is why several 2.10 defects stayed green.
+- **Actionable in-token selection rejection:** a selection edit strictly inside an existing pending tracked change is intentionally rejected, but the notice is still the generic compiled-markup message and the request still spends its one correction round; a terminal, actionable notice (accept or reject first, or select the whole change) needs its own copy and UX review.
+- **Uniform capacity announcement policy:** chat updates the capacity summary live region synchronously while the Modify Selection textarea defers it by 500 ms; choosing one policy needs a real screen-reader session.
+- **Tool-client configuration degradation:** a `DeepSeekConfigurationError` aborts the submission through the chat transport guard, leaving the Search/Fetch client's non-fatal failure path unreachable from current UI; removing or documenting it needs a deliberate decision.
+- **Platform and provider verification gaps:** macOS, Windows, physical keyboards, screen readers, popout edge cases, other Obsidian versions, and real DeepSeek/Kimi accounts remain unverified; current evidence is Linux/Xvfb with loopback mocks and dummy credentials.
 
 ## Non-goals
 
