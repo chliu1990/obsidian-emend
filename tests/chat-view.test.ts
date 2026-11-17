@@ -2560,7 +2560,7 @@ describe('EmendChatView session runtime', () => {
 		await newSubmission;
 	});
 
-	it('suppresses a stale final-save Notice after a session transition', async () => {
+	it('reports a stale final-save failure without touching the new session', async () => {
 		const fixture = createEditTargetView();
 		const first = makeSession('a1');
 		const second = makeSession('a2');
@@ -2596,7 +2596,9 @@ describe('EmendChatView session runtime', () => {
 
 		expect(fixture.context.activeSessionId).toBe('a2');
 		expect(fixture.context.messages).toEqual([]);
-		expect(noticeMessages().slice(noticeStart)).toEqual([]);
+		expect(noticeMessages().slice(noticeStart)).toEqual([
+			'Emend: Could not save this chat. Disk full',
+		]);
 	});
 
 	it.each(['note-switch', 'close', 'stop'] as const)(
@@ -8393,6 +8395,62 @@ describe('EmendChatView committed edit persistence', () => {
 		expect(context.messages[1]?.status).toBe('ready');
 		expect(context.messages[1]?.content).toContain('Edit applied');
 		expect(context.messages[1]?.content).toContain('Target: Selection.');
+		expect(context.messages[1]?.content).toContain('Tightened the wording.');
+		expect(context.isSending).toBe(false);
+	});
+
+	it('reports a failed save after a committed edit when Stop raced completion', async () => {
+		const fixture = createSelectionEditSubmission();
+		const session = makeSession('session-1');
+		const context = fixture.context as typeof fixture.context & {
+			sessions: ChatSession[];
+			activeSessionId: string | null;
+			transientSessionIds: Set<string>;
+		};
+		context.sessions = [session];
+		context.activeSessionId = session.id;
+		context.messages = session.messages;
+		context.transientSessionIds = new Set();
+		const appendReadyMessage = vi.fn(async (
+			_notePath: string,
+			_sessionId: string,
+			appended: ChatMessage,
+			options?: { signal?: AbortSignal },
+		) => {
+			options?.signal?.throwIfAborted();
+			if (appended.role === 'assistant') {
+				throw new Error('Disk is full.');
+			}
+			return { ...session, messages: [...session.messages, appended] };
+		});
+		(
+			context.plugin.conversationStore as unknown as Record<string, unknown>
+		).appendReadyMessage = appendReadyMessage;
+		context.persistMessages = productionPersistMessages as unknown as
+			typeof context.persistMessages;
+		fixture.requestSelectionEdit.mockImplementationOnce(async () => {
+			queueMicrotask(() => context.activeController?.abort());
+			return {
+				applied: true,
+				changeCount: 1,
+				summaryItems: [{ type: 'replace', start: 0, end: 4 }],
+				summary: 'Tightened the wording.',
+				usage: {
+					promptTokens: 4,
+					completionTokens: 2,
+					totalTokens: 6,
+					source: 'provider' as const,
+				},
+			};
+		});
+
+		await viewPrototype.submitPrompt.call(context);
+
+		expect(noticeMessages()).toEqual([
+			'Emend: Could not save this chat. Disk is full.',
+		]);
+		expect(context.messages[1]?.status).toBe('ready');
+		expect(context.messages[1]?.content).toContain('Edit applied');
 		expect(context.messages[1]?.content).toContain('Tightened the wording.');
 		expect(context.isSending).toBe(false);
 	});

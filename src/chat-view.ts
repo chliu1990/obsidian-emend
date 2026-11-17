@@ -1904,25 +1904,34 @@ export class EmendChatView extends ItemView {
 			this.applyPersistedMetadata(session, persistedAssistant);
 		} catch (error) {
 			delete loadingMessage.webDraft;
-			if (
-				committedEdit &&
-				finalSaveAttempted &&
-				isMissingSessionSaveError(error)
-			) {
+			const cancelled = isAbortError(error);
+			const saveFailed = finalSaveAttempted && !cancelled;
+			if (committedEdit && finalSaveAttempted) {
 				loadingMessage.status = 'ready';
-				new Notice('Emend: Edit applied, but this chat could not be saved.');
-			} else if (controller.signal.aborted || isAbortError(error)) {
+				if (saveFailed) {
+					new Notice(
+						isMissingSessionSaveError(error)
+							? 'Emend: Edit applied, but this chat could not be saved.'
+							: `Emend: ${getErrorMessage(error)}`,
+					);
+				}
+			} else if (controller.signal.aborted || cancelled) {
 				loadingMessage.status = 'stopped';
 				if (!loadingMessage.content && !loadingMessage.reasoning) {
 					loadingMessage.content = 'Response stopped.';
+				}
+				if (saveFailed) {
+					new Notice(`Emend: ${getErrorMessage(error)}`);
 				}
 			} else {
 				if (!finalSaveAttempted) {
 					loadingMessage.content = getErrorMessage(error);
 				}
 				loadingMessage.status = 'error';
-				if (this.isActiveRequest(request)) {
-					new Notice(`Emend: ${finalSaveAttempted ? getErrorMessage(error) : loadingMessage.content}`);
+				if (saveFailed) {
+					new Notice(`Emend: ${getErrorMessage(error)}`);
+				} else if (this.isActiveRequest(request)) {
+					new Notice(`Emend: ${loadingMessage.content}`);
 				}
 			}
 		} finally {
@@ -2010,6 +2019,9 @@ export class EmendChatView extends ItemView {
 					},
 			);
 		} catch (error) {
+			if (isAbortError(error)) {
+				throw error;
+			}
 			throw new Error(`Could not save this chat. ${getErrorMessage(error)}`);
 		}
 	}
