@@ -1,11 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { App, Notice, TFile } from 'obsidian';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AdditionalNotesStore } from '../src/additional-notes-store';
 import {
 	buildDraftCapacityEstimate,
 	CAPACITY_EXCLUSION_NOTE,
 	formatDraftCapacityBlockMessage,
+	CAPACITY_SUMMARY_ANNOUNCEMENT_DELAY_MS,
 	formatDraftCapacitySummary,
 	type DraftCapacityEstimate,
 } from '../src/context-capacity-ui';
@@ -24,6 +25,14 @@ import {
 import type { SelectionContextPolicy } from '../src/selection-focus';
 import { SelectionModal } from '../src/selection-modal';
 import type { ProviderConfig, SelectionSnapshot } from '../src/types';
+
+beforeEach(() => {
+	vi.stubGlobal('window', { setTimeout, clearTimeout });
+});
+
+afterEach(() => {
+	vi.unstubAllGlobals();
+});
 
 class FakeElement {
 	readonly children: FakeElement[] = [];
@@ -244,6 +253,12 @@ function estimateForPrompt(
 	return buildDraftCapacityEstimate({
 		provider: candidate,
 		request: { systemPrompt: 'sys', userPrompt: prompt, history: [] },
+	});
+}
+
+async function waitForSummaryAnnouncement(): Promise<void> {
+	await new Promise<void>((resolve) => {
+		window.setTimeout(resolve, CAPACITY_SUMMARY_ANNOUNCEMENT_DELAY_MS + 50);
 	});
 }
 
@@ -840,7 +855,7 @@ describe('SelectionModal selection context', () => {
 });
 
 describe('SelectionModal draft capacity estimate', () => {
-	it('shows the shared estimate above quick actions and refreshes on input without re-rendering', () => {
+	it('shows the shared estimate above quick actions and refreshes on input without re-rendering', async () => {
 		const estimateDraft = vi.fn(defaultEstimateDraft);
 		const { contentEl, input } = openModal(
 			vi.fn(async () => ({ applied: false, changeCount: 0, summaryItems: [] })),
@@ -868,12 +883,66 @@ describe('SelectionModal draft capacity estimate', () => {
 		input.dispatch('input');
 
 		expect(estimateDraft).toHaveBeenCalledWith('A longer typed draft', 'default');
+		await waitForSummaryAnnouncement();
 		expect(findCapacitySummary(contentEl)?.textContent).toBe(
 			formatDraftCapacitySummary(defaultEstimateDraft('A longer typed draft', 'default')),
 		);
 		expect(contentEl.children.length).toBe(childCount);
 		expect(input.focusCalls).toBe(focusCalls);
 		expect(findCapacityRoot(contentEl)).toBe(root);
+	});
+
+	it('names the selection instruction textarea', () => {
+		const { input } = openModal(vi.fn(async () => ({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+		})));
+
+		expect(input?.attributes['aria-label']).toBe('Selection edit instruction');
+	});
+
+	it('does not announce the capacity summary on every keystroke', async () => {
+		const candidate = providerWith({
+			contextWindowTokens: 1000,
+			outputReserveTokens: 100,
+		});
+		const { contentEl, input } = openModal(
+			vi.fn(async () => ({
+				applied: false,
+				changeCount: 0,
+				summaryItems: [],
+			})),
+			new AdditionalNotesStore(),
+			'note.md',
+			(prompt) => estimateForPrompt(prompt, candidate),
+		);
+		if (!input) {
+			throw new Error('Selection input missing.');
+		}
+		const summary = findCapacitySummary(contentEl);
+		const initialSummary = summary?.textContent;
+
+		for (const draft of ['A', 'A longer', 'A longer typed draft']) {
+			input.value = draft;
+			input.dispatch('input');
+		}
+
+		const finalEstimate = estimateForPrompt('A longer typed draft', candidate);
+		const meter = findElements(
+			contentEl,
+			(element) => element.className.split(' ').includes('emend-context-capacity-bar'),
+		)[0];
+		expect(findCapacitySummary(contentEl)?.textContent).toBe(initialSummary);
+		expect(meter?.attributes['aria-valuetext']).toBe(
+			formatDraftCapacitySummary(finalEstimate),
+		);
+
+		await waitForSummaryAnnouncement();
+
+		expect(findCapacitySummary(contentEl)?.textContent).toBe(
+			formatDraftCapacitySummary(finalEstimate),
+		);
 	});
 
 	it('places the compact bar below the title and before quick actions and the input', () => {
@@ -1103,7 +1172,7 @@ describe('SelectionModal draft capacity estimate', () => {
 		const draft = 'Polish this.';
 		input.value = draft;
 		input.dispatch('input');
-		const typedSummary = findCapacitySummary(contentEl)?.textContent;
+		const typedSummary = formatDraftCapacitySummary(estimateForPrompt(draft, candidate));
 		actionCapacityChanged = true;
 		const blockedAction = estimateForPrompt(action.prompt, blockedCandidate);
 		expect(estimateForPrompt(draft, candidate).blocked).toBe(false);

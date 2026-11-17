@@ -114,6 +114,7 @@ export class SelectionModal extends Modal {
 			attr: {
 				rows: '4',
 				placeholder: 'Describe the change...',
+				'aria-label': 'Selection edit instruction',
 			},
 		});
 		this.inputEl.addEventListener('keydown', (event) => {
@@ -123,7 +124,7 @@ export class SelectionModal extends Modal {
 			}
 		});
 		this.inputEl.addEventListener('input', () => {
-			this.refreshCapacityEstimate();
+			this.refreshCapacityEstimate(undefined, { debounceAnnouncement: true });
 		});
 
 		const actionsEl = this.contentEl.createDiv('emend-chat-composer-actions');
@@ -174,10 +175,13 @@ export class SelectionModal extends Modal {
 		return this.targetFile?.path ?? this.targetPath;
 	}
 
-	private refreshCapacityEstimate(prompt = this.inputEl?.value ?? '') {
+	private refreshCapacityEstimate(
+		prompt = this.inputEl?.value ?? '',
+		options: { debounceAnnouncement?: boolean } = {},
+	) {
 		const estimate = this.safeEstimateDraft(prompt);
 		this.draftCapacityBlocked = estimate?.blocked ?? false;
-		this.capacityDisplay?.render(estimate);
+		this.capacityDisplay?.render(estimate, options);
 		if (this.activeController) {
 			return;
 		}

@@ -29,6 +29,9 @@ export class AdditionalNotesPicker extends FuzzySuggestModal<TFile> {
 
 export class AdditionalNotesControl {
 	private listEl: HTMLElement | null = null;
+	private addButton: HTMLButtonElement | null = null;
+	private clearButton: HTMLButtonElement | null = null;
+	private pendingFocusIndex: number | null = null;
 	private readonly buttons = new Set<HTMLButtonElement>();
 	private readonly removeButtons = new Set<HTMLButtonElement>();
 	private unsubscribe: (() => void) | null = null;
@@ -57,6 +60,7 @@ export class AdditionalNotesControl {
 			'Add notes',
 			'Add notes',
 		);
+		this.addButton = addButton;
 		addButton.addEventListener('click', () => {
 			const targetPath = this.getTargetPath();
 			const targetFile = !this.disabled && targetPath
@@ -74,6 +78,7 @@ export class AdditionalNotesControl {
 			'Clear all',
 			'Clear all additional notes',
 		);
+		this.clearButton = clearButton;
 		clearButton.addEventListener('click', () => {
 			const targetPath = this.getTargetPath();
 			if (!this.disabled && targetPath) {
@@ -100,6 +105,9 @@ export class AdditionalNotesControl {
 		this.unsubscribe?.();
 		this.unsubscribe = null;
 		this.listEl = null;
+		this.addButton = null;
+		this.clearButton = null;
+		this.pendingFocusIndex = null;
 		this.buttons.clear();
 		this.removeButtons.clear();
 	}
@@ -121,10 +129,11 @@ export class AdditionalNotesControl {
 				text: 'No additional notes selected.',
 			});
 			this.updateDisabled();
+			this.restoreRemovalFocus();
 			return;
 		}
 
-		for (const path of paths) {
+		for (const [index, path] of paths.entries()) {
 			const itemEl = this.listEl.createDiv('emend-additional-notes-item');
 			itemEl.createSpan({
 				cls: 'emend-additional-notes-path',
@@ -141,11 +150,27 @@ export class AdditionalNotesControl {
 			removeButton.addEventListener('click', () => {
 				const currentTargetPath = this.getTargetPath();
 				if (!this.disabled && currentTargetPath) {
+					this.pendingFocusIndex = index;
 					this.store.remove(currentTargetPath, path);
 				}
 			});
 		}
 		this.updateDisabled();
+		this.restoreRemovalFocus();
+	}
+
+	private restoreRemovalFocus(): void {
+		const index = this.pendingFocusIndex;
+		this.pendingFocusIndex = null;
+		if (index === null) {
+			return;
+		}
+		const removeButtons = [...this.removeButtons];
+		const target = removeButtons[index] ??
+			(removeButtons.length === 0
+				? this.addButton ?? this.clearButton
+				: this.clearButton ?? removeButtons[removeButtons.length - 1]);
+		target?.focus();
 	}
 
 	private createButton(

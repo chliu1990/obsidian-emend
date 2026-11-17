@@ -64,8 +64,26 @@ interface FakeEvent {
 	type: string;
 	target: FakeElement;
 	key?: string;
+	defaultPrevented: boolean;
+	propagationStopped: boolean;
 	preventDefault(): void;
 	stopPropagation(): void;
+}
+
+function makeEvent(type: string, target: FakeElement, key?: string): FakeEvent {
+	return {
+		type,
+		target,
+		key,
+		defaultPrevented: false,
+		propagationStopped: false,
+		preventDefault() {
+			this.defaultPrevented = true;
+		},
+		stopPropagation() {
+			this.propagationStopped = true;
+		},
+	};
 }
 
 class FakeDocument {
@@ -82,11 +100,12 @@ class FakeDocument {
 		this.listeners.set(type, listeners.filter((candidate) => candidate !== listener));
 	}
 
-	dispatch(type: string, target: FakeElement, key?: string) {
-		const event: FakeEvent = { type, target, key, preventDefault: () => undefined, stopPropagation: () => undefined };
+	dispatch(type: string, target: FakeElement, key?: string): FakeEvent {
+		const event = makeEvent(type, target, key);
 		for (const listener of this.listeners.get(type) ?? []) {
 			listener(event);
 		}
+		return event;
 	}
 
 	listenerCount(type: string): number {
@@ -127,17 +146,12 @@ class FakeElement {
 		this.listeners.set(type, listeners);
 	}
 
-	dispatch(type: string, key?: string, target: FakeElement = this) {
-		const event: FakeEvent = {
-			type,
-			target,
-			key,
-			preventDefault: () => undefined,
-			stopPropagation: () => undefined,
-		};
+	dispatch(type: string, key?: string, target: FakeElement = this): FakeEvent {
+		const event = makeEvent(type, target, key);
 		for (const listener of this.listeners.get(type) ?? []) {
 			listener(event);
 		}
+		return event;
 	}
 
 	contains(candidate: FakeElement): boolean {
@@ -710,13 +724,42 @@ describe('ContextCapacityDisplay', () => {
 		root.ownerDocument.dispatch('keydown', composer, 'Escape');
 		expect(tooltip.hidden).toBe(true);
 		root.dispatch('click');
-		root.ownerDocument.dispatch('keydown', root, 'Escape');
+		root.dispatch('keydown', 'Escape');
 		expect(tooltip.hidden).toBe(true);
 		root.dispatch('click');
 		root.ownerDocument.dispatch('pointerdown', root);
 		expect(tooltip.hidden).toBe(false);
 		root.ownerDocument.dispatch('pointerdown', new FakeElement('div', root.ownerDocument));
 		expect(tooltip.hidden).toBe(true);
+	});
+
+	it('does not stop Escape propagation outside the capacity bar', () => {
+		const { root } = renderDisplay(estimateForBar({
+			system: 10,
+			user: 20,
+			history: 15,
+			tools: 10,
+			continuation: 5,
+		}));
+		const tooltip = findByClass(root, 'emend-context-capacity-details') as FakeElement;
+		const composer = new FakeElement('textarea', root.ownerDocument);
+
+		root.dispatch('click');
+		root.dispatch('focusout');
+		expect(tooltip.hidden).toBe(false);
+
+		const outside = root.ownerDocument.dispatch('keydown', composer, 'Escape');
+
+		expect(tooltip.hidden).toBe(true);
+		expect(outside.defaultPrevented).toBe(false);
+		expect(outside.propagationStopped).toBe(false);
+
+		root.dispatch('click');
+		const inside = root.dispatch('keydown', 'Escape');
+
+		expect(tooltip.hidden).toBe(true);
+		expect(inside.defaultPrevented).toBe(true);
+		expect(inside.propagationStopped).toBe(true);
 	});
 
 	it('keeps keyboard focus visible on the wrapper even without a bar', () => {

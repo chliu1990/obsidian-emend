@@ -10,6 +10,7 @@ class FakeElement {
 	className = '';
 	textContent = '';
 	disabled = false;
+	focused = false;
 	value = '';
 
 	constructor(readonly tagName = 'div') {}
@@ -50,6 +51,10 @@ class FakeElement {
 		for (const listener of this.listeners.get('click') ?? []) {
 			listener();
 		}
+	}
+
+	focus() {
+		this.focused = true;
 	}
 
 	empty() {
@@ -93,6 +98,30 @@ function findButton(root: FakeElement, text: string) {
 		root,
 		(element) => element.tagName === 'button' && element.textContent === text,
 	)[0];
+}
+
+function removeButton(root: FakeElement, path: string): FakeElement {
+	const button = findElements(
+		root,
+		(element) => element.tagName === 'button'
+			&& element.attributes['aria-label'] === `Remove ${path}`,
+	)[0];
+	if (!button) {
+		throw new Error(`Missing remove button: ${path}`);
+	}
+	return button;
+}
+
+function focusedLabels(root: FakeElement): string[] {
+	return findElements(root, (element) => element.focused).map(
+		(element) => element.attributes['aria-label'] ?? element.textContent,
+	);
+}
+
+function clearFocus(root: FakeElement): void {
+	for (const element of findElements(root, () => true)) {
+		element.focused = false;
+	}
 }
 
 function textOf(root: FakeElement): string {
@@ -252,6 +281,31 @@ describe('AdditionalNotesControl', () => {
 		store.rename('One.md', 'Renamed.md');
 		expect(textOf(container)).toContain('One.md');
 		expect(textOf(container)).not.toContain('Renamed.md');
+	});
+
+	it('restores focus to the next remove button after removing a path', () => {
+		const { store, container, control } = createControl();
+		control.render(container as unknown as HTMLElement, false);
+		for (const path of ['One.md', 'Two.md', 'Three.md']) {
+			store.add('Active.md', path);
+		}
+
+		removeButton(container, 'Two.md').click();
+
+		expect(store.list('Active.md')).toEqual(['One.md', 'Three.md']);
+		expect(focusedLabels(container)).toEqual(['Remove Three.md']);
+
+		clearFocus(container);
+		removeButton(container, 'Three.md').click();
+
+		expect(store.list('Active.md')).toEqual(['One.md']);
+		expect(focusedLabels(container)).toEqual(['Clear all additional notes']);
+
+		clearFocus(container);
+		removeButton(container, 'One.md').click();
+
+		expect(store.list('Active.md')).toEqual([]);
+		expect(focusedLabels(container)).toEqual(['Add notes']);
 	});
 
 	it('closes its active picker on destroy', () => {
