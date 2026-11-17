@@ -355,3 +355,39 @@ C1–C3 ended at 1,826 tests, so this pass adds 11 (C4 4, C5 4, C6 2, C7 1). `ma
 - C5's announcement deferral is opt-in per render. Chat's composer already debounces the estimate at its source (C6), so the display default stays synchronous and the deferral is used by the Modify Selection textarea, whose input is not otherwise debounced. Reviewers should confirm that split is preferable to a silently lagging visible summary in chat.
 - C6 binds alignment with one extra integer field rather than a render-generation token object; `settleMarkdownRender` treats a missing field as the legacy unbound case, which keeps the direct-call unit harnesses meaningful.
 - C7 changes the rendered element's class name. `messageContentElements` in `tests/chat-view.test.ts` now matches either class because both are the single message body text element; nothing else keys on the old class.
+
+### PR C review round — cheap fixes
+
+The PR C review round raised six findings. Three were cheap and are fixed here; findings 3, 4, and 6 remain deferred and are listed below.
+
+#### Fixes
+
+1. **Finding 1 — completion generation wiring was untested.** The C6 fix recorded `responseStartRenderGeneration = renderGeneration + 1` beside `responseStartMessageId`, but every unit test drove `settleMarkdownRender` with a hand-written context, so removing the `+1` would still have passed. `wires a real completion to its own render generation before aligning` now submits through the real `submitPrompt`/completion path, asserts `responseStartRenderGeneration === renderGeneration` on the post-completion render, then settles that generation with stubbed scroll geometry and asserts the completed header alignment (`scrollTop` 40 → 200), the cleared target fields, and an unconsumed `pendingScrollRestore`. Removing the `+1` fails the first assertion (`expected 3 to be 4`).
+2. **Finding 2 — a refused switch left the selector on the rejected option.** `switchActiveSession` returned before touching the view, so the native `<select>` kept the option the user had just picked while the active session stayed unchanged. The refusal now calls a new `syncSessionControl()` (built from the same `sessionControlState()` the render path uses), which rewrites the option list, the active value, and the pending disabled state. The C3 test extends to set the selector to `a2`, refuse the switch, and assert the value snaps back to `a1` and the control becomes disabled. Removing the resync fails with `expected 'a2' to be 'a1'`.
+3. **Finding 5 — doc wording.** `AGENTS.md` described the capacity summary deferral as "deferred for one render"; it is a 500 ms trailing delay, so the contract now says "deferred to a 500 ms typing pause".
+
+The settle reorder also makes the alignment path leave `pendingScrollRestore` unconsumed instead of clearing a restore it never applied; that is what the new wiring test asserts, and `AGENTS.md` records it.
+
+#### Deferred review findings
+
+- **Finding 3 — capacity announcement deferral is opt-in per render.** Chat keeps a synchronous visible summary while the Modify Selection textarea defers its announcement, so the two surfaces have different announcement timing by design. No user-visible defect was proven, and a uniform policy needs a real screen-reader session; deferred to the PR E matrix.
+- **Finding 4 — the just-hidden menu grace window is a host-ordering assumption.** Clearing `activeMenu` in `onHide` while keeping one menu eligible for a single activation is the narrowest way to preserve Stage 50, but only real Obsidian can prove that a dismissed menu never delivers a late click for that window; deferred to the PR E real-Obsidian menu matrix.
+- **Finding 6 — rendered-answer class rename and the unverified soft-break rendering.** Rendered answers moved from `emend-chat-message-content` to `emend-chat-message-markdown`; any user CSS snippet that targeted the old class on finalized answers no longer applies, and the underlying soft-line-break defect was never reproduced in a real vault. Deferred to PR E, which owns the visual confirmation and any release note about the class name.
+
+#### Review-round gate
+
+At `ded5f5d`, with `main.js` rebuilt from a clean `ded5f5d` tree and SHA-256 `9ff09c3da6406917b57fdaa42f650742ee149f37383398e9c55516d8075bc4ab`:
+
+```text
+npm test        53 files / 1,838 tests passed
+npm run lint    clean
+npm run build   clean (tsc -noEmit -skipLibCheck + esbuild production)
+git diff --check clean
+```
+
+The C4–C7 pass ended at 1,837 tests; this round adds one test (the real-completion wiring assertion) and extends the existing C3 test.
+
+| Task | Commit | Message |
+| --- | --- | --- |
+| Review fixes | `ded5f5d` | `fix: close PR C review findings` |
+| Review docs | this docs commit | `docs: record PR C review round` |
