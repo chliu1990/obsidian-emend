@@ -8,6 +8,7 @@ export interface NoteWriter {
 	readCurrentText: (file: TFile) => Promise<string>;
 	write: (file: TFile, markdown: string) => Promise<void>;
 	isTargetCurrent: (file: TFile) => boolean;
+	readEditorText?: (file: TFile) => string | undefined;
 }
 
 export interface EditResult {
@@ -23,11 +24,13 @@ const STALE_NOTE_ERROR =
 export function createVaultNoteWriter(
 	vault: Vault,
 	isTargetCurrent: (file: TFile) => boolean,
+	readEditorText?: (file: TFile) => string | undefined,
 ): NoteWriter {
 	return {
 		readCurrentText: (file) => vault.read(file),
 		write: (file, markdown) => vault.modify(file, markdown),
 		isTargetCurrent,
+		...(readEditorText ? { readEditorText } : {}),
 	};
 }
 
@@ -56,9 +59,11 @@ export async function applyPreparedEdit(
 	}
 
 	const currentText = await writer.readCurrentText(snapshot.file);
+	const editorText = writer.readEditorText?.(snapshot.file);
 	signal?.throwIfAborted();
 	if (
 		currentText !== snapshot.sourceText ||
+		(editorText !== undefined && editorText !== snapshot.sourceText) ||
 		!writer.isTargetCurrent(snapshot.file)
 	) {
 		throw new Error(STALE_NOTE_ERROR);

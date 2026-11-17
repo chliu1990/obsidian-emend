@@ -931,6 +931,90 @@ describe('EmendPlugin Selection history', () => {
 	});
 });
 
+describe('EmendPlugin edit freshness', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('wires an editor reader scoped to the target file', async () => {
+		const response = JSON.stringify([
+			{ type: 'replace', target: 'beta', replacement: 'delta' },
+		]);
+		const event = JSON.stringify({ choices: [{ delta: { content: response } }] });
+		const encoder = new TextEncoder();
+		const fetchMock = vi.fn().mockImplementation(async () => {
+			const stream = new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(encoder.encode(`data: ${event}\n\n`));
+					controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+					controller.close();
+				},
+			});
+			return new Response(stream);
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		const sourceText = '# Note\nAlpha beta.';
+		const file = new TFile();
+		file.path = 'Note.md';
+		const targetGetValue = vi.fn(() => sourceText);
+		const targetView = Object.assign(
+			Object.create(MarkdownView.prototype) as MarkdownView,
+			{ file, editor: { getValue: targetGetValue } },
+		);
+		const otherFile = new TFile();
+		otherFile.path = 'Other.md';
+		const otherGetValue = vi.fn(() => '# Other\nUnsaved typing.');
+		const otherView = Object.assign(
+			Object.create(MarkdownView.prototype) as MarkdownView,
+			{ file: otherFile, editor: { getValue: otherGetValue } },
+		);
+		const vaultModify = vi.fn(async () => undefined);
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, {
+			settings: structuredClone(DEFAULT_SETTINGS),
+			getTargetMarkdownView: () => targetView,
+			app: {
+				vault: {
+					getAbstractFileByPath: () => null,
+					read: async () => sourceText,
+					modify: vaultModify,
+				},
+				workspace: {
+					iterateAllLeaves: (
+						callback: (leaf: { view: MarkdownView }) => void,
+					) => {
+						callback({ view: otherView });
+					},
+				},
+			},
+			getApiKey: () => 'dummy-key',
+		});
+
+		const result = await plugin.requestChatCompletion({
+			context: {
+				file,
+				sourceText,
+				selection: { from: 0, to: 0 },
+				noteLabel: file.path,
+				markdown: sourceText,
+			},
+			mode: 'edit',
+			prompt: 'Replace beta with delta.',
+			history: [],
+			callbacks: { onReasoning: vi.fn() },
+			signal: new AbortController().signal,
+		});
+
+		expect(result).toMatchObject({ applied: true, changeCount: 1 });
+		expect(targetGetValue).toHaveBeenCalledOnce();
+		expect(otherGetValue).not.toHaveBeenCalled();
+		expect(vaultModify).toHaveBeenCalledExactlyOnceWith(
+			file,
+			'# Note\nAlpha {~~beta~>delta~~}.',
+		);
+	});
+});
+
 describe('EmendPlugin settings capacity refresh', () => {
 	function makeSaveFixture(saveData: ReturnType<typeof vi.fn>) {
 		const refreshModelControl = vi.fn();

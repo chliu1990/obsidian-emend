@@ -426,6 +426,13 @@ export default class EmendPlugin extends Plugin {
 					writer: createVaultNoteWriter(
 						this.app.vault,
 						(file) => this.getTargetMarkdownView()?.file === file,
+						(file) => {
+							const view = this.getTargetMarkdownView();
+							if (!view || view.file !== file) {
+								return undefined;
+							}
+							return view.editor?.getValue();
+						},
 					),
 				});
 				return coordinator.submit({
