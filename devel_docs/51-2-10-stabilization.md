@@ -702,5 +702,84 @@ The docs commit changes the esbuild build identity, so a rebuild at the docs hea
 - Everything here is unit- and source-verified. No real-Obsidian run confirms multi-pane staleness rejection, the rename re-point in a live workspace, or the deleted-session Notice; the PR E exploratory matrix owns those runs, and no macOS, Windows, real-provider, or assistive-technology claim is made.
 - F1 widens freshness only. A pane that is *clean* still passes, the disk read and one `vault.modify` are unchanged, and no new vault read is added — the reader reuses the already-open editors' text.
 - F2 re-points a view but does not migrate the aggregate: after a rename the chat starts a fresh thread for the new path while the old aggregate stays under the old path's hash. Note-rename history migration remains deferred.
-- F3 covers the missing-session rejection for an applied edit only. A save rejection for any other reason, and the aborted branch, keep their existing handling; the surface-what-happened generalization for those paths is F4 in the second pass.
-- F4–F8 are not implemented in this pass.
+- F3 covers the missing-session rejection for an applied edit only. The other save failures are F4 in the second pass, which extends this branch instead of replacing it.
+
+### Second pass — F4–F8
+
+The second pass closes the remaining Round 3 findings on the same branch, with the same failing-test-first discipline. Base for the pass: `24dc9ed` (53 files / 1,870 tests).
+
+### Fixes
+
+4. **F4 (Medium) — a failed save was silent after Stop or a completed edit.** The aborted branch showed no save failure at all, and the error branch gated its Notice on `isActiveRequest`, so a save that rejected after Stop or a session transition lost its only explanation. The catch now classifies the failure once: `cancelled` means the thrown error is an abort, and `saveFailed` means the final save was attempted and the error was not a cancellation. A committed edit whose save fails keeps its concise applied summary as a ready message and shows either the distinct missing-session Notice (F3) or `Emend: Could not save this chat. <bounded reason>`; a non-committed save failure shows the same generic Notice in both the aborted and the error branch, and no longer depends on the originating request still being active. Provider errors keep their existing `isActiveRequest` gate, and `persistMessages` now rethrows an abort error instead of wrapping it as `Could not save this chat.`, so a deliberate Stop at save time is a cancellation rather than a reported failure. The pre-existing stale-save test changed name and expectation (`reports a stale final-save failure without touching the new session`) because the save failure is now always reported.
+5. **F5 (Medium) — stale transients and an incomplete session list.** A note's cached runtime-only session was never discarded, so a later failed load resurrected never-persisted messages; and New-chat/rename materialization replaced `this.sessions` with just the materialized entry, hiding sessions another view had created. `refreshTargetNote` now discards that note's transient entry and ID whenever a successful load finds a persisted active session (an aggregate with no active session still reuses the cached transient and its draft, which is the existing transient-recovery behavior), and a tolerant `loadStoredSessions` helper re-reads the store after materialization in `createNewSession` and `renameActiveSession` so the ordered session list is adopted from disk, falling back to the single materialized entry when the store list is unreadable or lacks it.
+6. **F6 (Medium) — later corruption overwrote the preserved original.** `writeConversation` wrote `<chat>.corrupt` unconditionally, so a second corruption event replaced the first preserved bytes. The backup is now written only when that file does not already exist; every later corruption keeps the first original, and the `.corrupt` path stays single. The existing reuse test became `keeps the first corrupt backup across later corruption events`.
+7. **F7 (Low) — Web configuration errors were soft failures.** `attempt` classified `DeepSeekConfigurationError` as a non-retryable `configuration` failure, which turned a local missing-key, invalid-base-URL, or credential-bearing-base-URL guard into a soft `search_failed`/`fetch_failed` tool result. It is now rethrown as fatal, so the submission aborts with the guard's own message before any request, no Search/Fetch/reader work follows, and the model never receives a tool result that hides a misconfiguration. `WebFailureReason` and the activity label map drop the now-unreachable `configuration` member; the deepseek-web non-retryable table keeps only the `format` case and a dedicated fatal-configuration test covers the new behavior, and the chat-view label table drops its `configuration` row.
+8. **F8 (Low) — a zero-result search looked complete.** A Search whose parse produced no usable result still ran a reader round and recorded a `completed` activity, so the answer silently had no evidence and no warning. `executeCall` now builds the extraction documents first and, when there are none, returns the existing `search_failed` failure with `reason: "empty"` and `attempts: 1` before any reader work or retry. The call therefore contributes to the existing `Emend could not complete N web search. The answer may be incomplete.` warning and renders `Failed (empty page)`, matching the empty-Fetch-page classification. The forced-answer fixture that used a zero-result search now asserts the reader is skipped and `failedSearches` is 1.
+
+### Regression evidence
+
+New tests (+5 net; base `24dc9ed` was 53 files / 1,870 tests):
+
+- `tests/chat-view.test.ts`: `reports a failed save after a committed edit when Stop raced completion`; `does not resurrect a stale transient session after a successful load`; `shows sessions created by another view after materialization`; the stale-save test renamed to `reports a stale final-save failure without touching the new session`.
+- `tests/conversation-store.test.ts`: `keeps the first corrupt backup across later corruption events` (was `reuses the single corrupt backup for later corruption`).
+- `tests/deepseek-web.test.ts`: `aborts the web loop on a configuration error`; `reports a zero-result search as empty`; the non-retryable table collapsed to its `format` row; `allows a forced answer without evidence or invented citations` now asserts the reader is skipped and one search failed.
+- `tests/chat-view.test.ts` activity-label table: the `configuration` row was removed with the failure reason.
+
+RED before each fix:
+
+```text
+# F4
+FAIL tests/chat-view.test.ts > EmendChatView committed edit persistence > reports a failed save after a committed edit when Stop raced completion
+- [ "Emend: Could not save this chat. Disk is full." ]
++ []
+
+# F5
+FAIL tests/chat-view.test.ts > EmendChatView thread-load recovery > does not resurrect a stale transient session after a successful load
+AssertionError: expected [ { id: 'never-saved', …(7) } ] to deeply equal []
+FAIL tests/chat-view.test.ts > EmendChatView session management > shows sessions created by another view after materialization
+AssertionError: expected [ …(2) ] to include 'other-view'
+
+# F6
+FAIL tests/conversation-store.test.ts > ConversationStore corruption recovery > keeps the first corrupt backup across later corruption events
+AssertionError: expected 'second malformed' to be 'first malformed' // Object.is equality
+
+# F7
+FAIL tests/deepseek-web.test.ts > DeepSeekWebSearchCoordinator > aborts the web loop on a configuration error
+AssertionError: promise resolved "{ …(10) }" instead of rejecting
+
+# F8
+FAIL tests/deepseek-web.test.ts > DeepSeekWebSearchCoordinator > reports a zero-result search as empty
+AssertionError: expected "vi.fn()" to not be called at all, but actually been called 1 times   (reader.extract)
+```
+
+### Commits
+
+| Task | Commit | Message |
+| --- | --- | --- |
+| F4 | `a92aa62` | `fix: report save failures after Stop` |
+| F5 | `79a37ed` | `fix: discard stale transient sessions after a load` |
+| F6 | `c7037cf` | `fix: preserve the first corrupt backup` |
+| F7 | `af56e8b` | `fix: abort on web configuration errors` |
+| F8 | `eec2f9f` | `fix: report zero-result searches as empty` |
+
+### Second-pass gate
+
+At code head `eec2f9f`, with `main.js` rebuilt from that tree and SHA-256 `98aae8d920698781c2be55c0c5779c52d559585cc8d0ca1122059e9bcb1f886a`:
+
+```text
+npm test        53 files / 1,873 tests passed
+npm run lint    clean
+npm run build   clean (tsc -noEmit -skipLibCheck + esbuild production)
+git diff --check clean
+```
+
+Base `24dc9ed` was 53 files / 1,870 tests, so the finished round adds 3 net (F4 +1, F5 +2, F6 0, F7 −1 from collapsing the failure table and removing the label row plus +1 new test, F8 +1). The docs commit changes the esbuild build identity, so a rebuild at the docs head will not reproduce the hash above.
+
+### Second-pass limits
+
+- Unit- and source-verified only, like F1–F3. No real-Obsidian run confirms the Stop-race save Notice, the stale-transient discard in a live workspace, the adopted session list across two views, the preserved `.corrupt` bytes across two real corruption events, the fatal configuration abort, or the zero-result warning; the PR E matrix owns those runs.
+- F4 reports every non-cancelled save rejection, including one whose originating session is no longer active. That is a deliberate change from the earlier suppression contract: a lost save is data loss, and the Notice is the only signal. A cancellation by Stop remains silent.
+- F5 discards a cached transient only when the successful load finds a persisted active session. An aggregate with no active session keeps its cached transient (and its unsaved messages and draft) across note switches, which is the existing transient-recovery behavior and is unchanged.
+- F6 keeps exactly one `.corrupt` file per chat and never overwrites it. A user who wants a newer snapshot must remove the old file; no rotation or timestamped variant is added.
+- F7 removes the `configuration` failure reason from the type and the labels. It is unreachable after the change, and no persisted data carries it (failure reasons are transient), but any external consumer of the label map would no longer see that key.
+- F8 classifies a zero-result search as a failure rather than an empty success and does not retry it. That avoids a second paid Search for a deterministic empty parse, and it means such a call now contributes to the search warning count instead of silently returning no evidence.
