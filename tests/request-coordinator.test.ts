@@ -1551,6 +1551,88 @@ describe('ReadOnlyRequestCoordinator web routing', () => {
 	});
 
 	it.each(['review', 'auto'] as const)(
+		'forwards the draft reset callback into %s web submissions',
+		async (mode) => {
+			const ordinaryRequest = successfulRequest();
+			const webSubmit = vi.fn(async (
+				request: AiProviderRequest,
+				options: WebSearchRunOptions,
+			): Promise<WebToolLoopResult> => {
+				options.callbacks.onContentReset?.();
+				return {
+					content: 'Web answer',
+					reasoning: '',
+					sources: [],
+					activities: [],
+					failedExtractions: 0,
+					failedSearches: 0,
+					skippedWebCalls: 0,
+					omittedEvidence: false,
+					rounds: [{
+						request,
+						result: {
+							content: 'Web answer',
+							reasoning: '',
+							usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12 },
+						},
+					}],
+				};
+			});
+			const coordinator = new ReadOnlyRequestCoordinator({
+				provider,
+				loadAdditionalNotes: makeAdditionalNotesLoader(),
+				loadInstructions: async () => ({ skillTexts: new Map() }),
+				request: ordinaryRequest,
+				webSearch: { submit: webSubmit },
+			});
+			const submission = makeSubmission({
+				callbacks: {
+					onContent: vi.fn(),
+					onReasoning: vi.fn(),
+					onContentReset: vi.fn(),
+				},
+				webSearch: {
+					mode,
+					maxToolCalls: 8,
+					maxContentCharactersPerCall: 20000,
+					reviewCalls: async (calls) => calls,
+					onActivity: vi.fn(),
+				},
+			});
+
+			const result = await coordinator.submit(submission);
+
+			const [, webOptions] = webSubmit.mock.calls[0] ?? [];
+			expect(webOptions?.callbacks.onContentReset).toBe(
+				submission.callbacks.onContentReset,
+			);
+			expect(submission.callbacks.onContentReset).toHaveBeenCalledOnce();
+			expect(submission.callbacks.onContent).not.toHaveBeenCalled();
+			expect(submission.callbacks.onReasoning).not.toHaveBeenCalled();
+			expect(ordinaryRequest).not.toHaveBeenCalled();
+			expect(result.content).toBe('Web answer');
+		},
+	);
+
+	it('never invokes the draft reset callback for Web Off submissions', async () => {
+		const { coordinator, request } = makeCoordinator();
+		const onContent = vi.fn();
+		const onReasoning = vi.fn();
+		const onContentReset = vi.fn();
+		const submission = makeSubmission({
+			callbacks: { onContent, onReasoning, onContentReset },
+		});
+
+		const result = await coordinator.submit(submission);
+
+		expect(onContentReset).not.toHaveBeenCalled();
+		expect(onContent).toHaveBeenCalledExactlyOnceWith('Streamed answer');
+		expect(onReasoning).toHaveBeenCalledExactlyOnceWith('Folded reasoning');
+		expect(request).toHaveBeenCalledOnce();
+		expect(result.content).toBe('Streamed answer');
+	});
+
+	it.each(['review', 'auto'] as const)(
 		'routes %s Chat Selection with the focused main request and isolated typed question',
 		async (mode) => {
 			const ordinaryRequest = successfulRequest();
