@@ -426,6 +426,7 @@ export default class EmendPlugin extends Plugin {
 					writer: createVaultNoteWriter(
 						this.app.vault,
 						(file) => this.getTargetMarkdownView()?.file === file,
+						(file) => this.readNoteEditorText(file),
 					),
 				});
 				return coordinator.submit({
@@ -571,6 +572,28 @@ export default class EmendPlugin extends Plugin {
 		if (markdownView) {
 			this.lastMarkdownView = markdownView;
 		}
+	}
+
+	private readNoteEditorText(file: TFile): string | undefined {
+		const target = this.getTargetMarkdownView();
+		const targetText = target?.file === file
+			? target.editor?.getValue()
+			: undefined;
+		const texts: string[] = [];
+		this.app.workspace?.iterateAllLeaves((leaf) => {
+			if (!(leaf.view instanceof MarkdownView) || leaf.view.file !== file) {
+				return;
+			}
+			const text = leaf.view.editor?.getValue();
+			if (text !== undefined) {
+				texts.push(text);
+			}
+		});
+		if (texts.length === 0) {
+			return targetText;
+		}
+		const reference = targetText ?? texts[0];
+		return texts.find((text) => text !== reference) ?? reference;
 	}
 
 	private isViewStillOpen(view: MarkdownView) {

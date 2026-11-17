@@ -174,6 +174,153 @@ export function findMarkdownEditViolation(
 	return undefined;
 }
 
+export function findPayloadStructureViolation(
+	fullText: string,
+	operations: readonly GuardedMarkdownOperation[],
+): MarkdownEditViolation | undefined {
+	for (const operation of operations) {
+		const wrapped = wrapOperationPayload(fullText, operation);
+		if (!wrapped) {
+			continue;
+		}
+		if (isPayloadStructureBalanced(wrapped)) {
+			continue;
+		}
+		return {
+			code: 'fenced-code-edit',
+			operation: operation.operation,
+			operationType: operation.operationType,
+			field: wrapped.field,
+			line: sourceLineAt(
+				fullText,
+				operation.operationType === 'insert'
+					? operation.insertionPoint ?? operation.start
+					: operation.start,
+			),
+		};
+	}
+	return undefined;
+}
+
+interface WrappedOperationPayload {
+	text: string;
+	payloadStart: number;
+	field: 'text' | 'replacement' | 'comment';
+}
+
+function wrapOperationPayload(
+	fullText: string,
+	operation: GuardedMarkdownOperation,
+): WrappedOperationPayload | undefined {
+	switch (operation.operationType) {
+		case 'insert': {
+			const prefix = '{++';
+			return {
+				text: `${prefix}${operation.text ?? ''}++}`,
+				payloadStart: prefix.length,
+				field: 'text',
+			};
+		}
+		case 'replace': {
+			const prefix = `{~~${fullText.slice(operation.start, operation.end)}~>`;
+			return {
+				text: `${prefix}${operation.replacement ?? ''}~~}`,
+				payloadStart: prefix.length,
+				field: 'replacement',
+			};
+		}
+		case 'comment': {
+			const prefix = '{>>';
+			return {
+				text: `${prefix}${operation.comment ?? ''}<<}`,
+				payloadStart: prefix.length,
+				field: 'comment',
+			};
+		}
+		case 'remove':
+			return undefined;
+	}
+}
+
+function isPayloadStructureBalanced(wrapped: WrappedOperationPayload): boolean {
+	const lines = scanLines(wrapped.text);
+	const fences: SourceRange[] = [];
+	for (let index = 0; index < lines.length; index += 1) {
+		const line = lines[index];
+		if (!line) {
+			continue;
+		}
+		const opening = parseFenceOpening(line.text);
+		const run = opening?.run;
+		if (!opening || !run) {
+			continue;
+		}
+		const closing = lines.findIndex((candidate, candidateIndex) =>
+			candidateIndex > index &&
+			candidate.end > candidate.contentEnd &&
+			isFenceClose(candidate.text, run[0] ?? '', run.length)
+		);
+		if (closing === -1) {
+			return false;
+		}
+		const closingLine = lines[closing];
+		if (!closingLine) {
+			return false;
+		}
+		fences.push({ start: line.start, end: closingLine.end });
+		index = closing;
+	}
+	return hasPairedBacktickRuns(wrapped.text, fences, wrapped.payloadStart);
+}
+
+function hasPairedBacktickRuns(
+	payload: string,
+	fences: readonly SourceRange[],
+	payloadStart: number,
+): boolean {
+	const runs: Array<{ start: number; length: number }> = [];
+	let index = 0;
+	while (index < payload.length) {
+		const fence = fences.find((range) => index >= range.start && index < range.end);
+		if (fence) {
+			index = fence.end;
+			continue;
+		}
+		if (payload[index] !== '`' || isEscaped(payload, index)) {
+			index += 1;
+			continue;
+		}
+		const end = backtickRunEnd(payload, index);
+		if (index >= payloadStart) {
+			runs.push({ start: index, length: end - index });
+		}
+		index = end;
+	}
+
+	const paired = new Set<number>();
+	for (let runIndex = 0; runIndex < runs.length; runIndex += 1) {
+		if (paired.has(runIndex)) {
+			continue;
+		}
+		const run = runs[runIndex];
+		if (!run) {
+			continue;
+		}
+		const partner = runs.findIndex((candidate, candidateIndex) =>
+			candidateIndex > runIndex &&
+			!paired.has(candidateIndex) &&
+			candidate.length === run.length
+		);
+		if (partner === -1) {
+			return false;
+		}
+		for (let between = runIndex; between <= partner; between += 1) {
+			paired.add(between);
+		}
+	}
+	return true;
+}
+
 function scanLines(fullText: string): SourceLine[] {
 	const lines: SourceLine[] = [];
 	let start = 0;

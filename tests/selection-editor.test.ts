@@ -2,7 +2,9 @@ import { TFile, type MarkdownView } from 'obsidian';
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import type { AdditionalNoteSnapshot } from '../src/additional-notes-context';
 import { ContextCapacityError, accountRequestCharacters } from '../src/context-accounting';
+import { prepareCriticMarkupEdit } from '../src/critic-markup';
 import type { EditPreparation } from '../src/edit-strategy';
+import { EditResponseValidationError } from '../src/edit-validation';
 import { operationEditStrategy } from '../src/operation-edit-strategy';
 import { formatProviderHistory } from '../src/provider-history';
 import type {
@@ -1502,6 +1504,87 @@ describe('SelectionEditRequestCoordinator', () => {
 			expect(adapter.replaceRange).not.toHaveBeenCalled();
 		},
 	);
+
+	it('rejects a selection replace that would nest markup inside an existing insertion token', async () => {
+		const fullText = 'a{++x++}b';
+		const snapshot = makeSnapshot(fullText, 'x');
+		const nestingResponse = JSON.stringify([
+			{ type: 'replace', target: 'x', replacement: 'y' },
+		]);
+		const request = selectionRequest(nestingResponse);
+		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
+		const onRetry = vi.fn();
+
+		const error = await coordinator
+			.submit(makeSelectionSubmission(snapshot, { callbacks: { onRetry } }))
+			.catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(EditResponseValidationError);
+		expect(error).toMatchObject({ code: 'compiled-markup-rejected' });
+		expect(String((error as Error).message)).toContain(
+			'Preserve existing CriticMarkup tokens and do not nest markup',
+		);
+		expect(onRetry).toHaveBeenCalledOnce();
+		expect(request).toHaveBeenCalledTimes(2);
+		expect(adapter.readCurrentText).not.toHaveBeenCalled();
+		expect(adapter.replaceRange).not.toHaveBeenCalled();
+	});
+
+	it('applies the corrected candidate after composed-markup rejection', async () => {
+		const fullText = 'a{++x++}b';
+		const snapshot = makeSnapshot(fullText, 'a{');
+		const boundaryInsertion = JSON.stringify([
+			{ type: 'insert', anchor: 'a{', position: 'after', text: 'p' },
+		]);
+		const corrected = JSON.stringify([
+			{ type: 'insert', anchor: 'a', position: 'before', text: 'p' },
+		]);
+		const request = selectionRequest(boundaryInsertion)
+			.mockResolvedValueOnce({ content: boundaryInsertion, reasoning: '' })
+			.mockResolvedValueOnce({ content: corrected, reasoning: '' });
+		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
+		const onRetry = vi.fn();
+
+		const result = await coordinator.submit(
+			makeSelectionSubmission(snapshot, { callbacks: { onRetry } }),
+		);
+
+		expect(request).toHaveBeenCalledTimes(2);
+		expect(onRetry).toHaveBeenCalledOnce();
+		expect(adapter.replaceRange).toHaveBeenCalledExactlyOnceWith(
+			'{++p++}a{',
+			snapshot.from,
+			snapshot.to,
+		);
+		expect(result.applied).toBe(true);
+		const composedFullText = `${fullText.slice(0, snapshot.from)}{++p++}a{${fullText.slice(snapshot.to)}`;
+		expect(composedFullText).toBe('{++p++}a{++x++}b');
+		expect(() =>
+			prepareCriticMarkupEdit(composedFullText, composedFullText),
+		).not.toThrow();
+	});
+
+	it('does not write when the composed candidate stays invalid', async () => {
+		const fullText = 'a{++x++}b';
+		const snapshot = makeSnapshot(fullText, 'x');
+		const request = selectionRequest('not-json')
+			.mockResolvedValueOnce({
+				content: JSON.stringify([{ type: 'comment', target: 'x', comment: 'note' }]),
+				reasoning: '',
+			})
+			.mockResolvedValueOnce({
+				content: JSON.stringify([{ type: 'remove', target: 'x' }]),
+				reasoning: '',
+			});
+		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
+
+		await expect(
+			coordinator.submit(makeSelectionSubmission(snapshot)),
+		).rejects.toMatchObject({ code: 'compiled-markup-rejected' });
+
+		expect(request).toHaveBeenCalledTimes(2);
+		expect(adapter.replaceRange).not.toHaveBeenCalled();
+	});
 });
 
 describe('authoritative assembled-request capacity checks for selections', () => {

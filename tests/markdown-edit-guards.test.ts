@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	findMarkdownEditViolation,
+	findPayloadStructureViolation,
 	type GuardedMarkdownOperation,
 } from '../src/markdown-edit-guards';
 
@@ -552,5 +553,136 @@ describe('violation ordering', () => {
 			field: 'target',
 			line: 1,
 		});
+	});
+});
+
+describe('payload structure guards', () => {
+	it('rejects an insertion payload that opens a fence without closing it', () => {
+		const fullText = 'Alpha beta.';
+
+		expect(findPayloadStructureViolation(fullText, [
+			insertionOperation(fullText, 'Alpha', 'after', { text: '\n```\ncode\n' }),
+		])).toEqual({
+			code: 'fenced-code-edit',
+			operation: 1,
+			operationType: 'insert',
+			field: 'text',
+			line: 1,
+		});
+	});
+
+	it('rejects a replacement payload introducing an unmatched backtick run', () => {
+		const fullText = 'Alpha beta.';
+
+		expect(findPayloadStructureViolation(fullText, [
+			targetOperation(fullText, 'beta', {
+				operationType: 'replace',
+				replacement: '`beta',
+			}),
+		])).toEqual({
+			code: 'fenced-code-edit',
+			operation: 1,
+			operationType: 'replace',
+			field: 'replacement',
+			line: 1,
+		});
+	});
+
+	it('allows a balanced fenced code block payload', () => {
+		const fullText = 'Alpha beta.';
+
+		expect(findPayloadStructureViolation(fullText, [
+			insertionOperation(fullText, 'Alpha', 'after', {
+				text: '\n```\ncode\n```\n',
+			}),
+			insertionOperation(fullText, 'beta', 'before', {
+				text: '\n~~~\ncode\n~~~\n',
+				operation: 2,
+			}),
+		])).toBeUndefined();
+	});
+
+	it('allows an inline code pair inside the payload', () => {
+		const fullText = 'Alpha beta.';
+
+		expect(findPayloadStructureViolation(fullText, [
+			insertionOperation(fullText, 'Alpha', 'after', {
+				text: 'see `code` here',
+			}),
+			targetOperation(fullText, 'beta', {
+				operationType: 'replace',
+				replacement: '``beta `and` more``',
+				operation: 2,
+			}),
+		])).toBeUndefined();
+	});
+
+	it('allows a nested backtick span inside the payload', () => {
+		const fullText = 'Alpha beta.';
+
+		expect(findPayloadStructureViolation(fullText, [
+			insertionOperation(fullText, 'Alpha', 'after', {
+				text: '``code with `nested` ticks``',
+			}),
+			insertionOperation(fullText, 'Alpha', 'after', {
+				text: '``a`b``',
+				operation: 2,
+			}),
+		])).toBeUndefined();
+	});
+
+	it('rejects an insertion payload whose fence closer shares the wrapper line', () => {
+		const fullText = 'Alpha beta.';
+
+		expect(findPayloadStructureViolation(fullText, [
+			insertionOperation(fullText, 'beta.', 'after', {
+				text: '\n```\ncode\n```',
+			}),
+		])).toEqual({
+			code: 'fenced-code-edit',
+			operation: 1,
+			operationType: 'insert',
+			field: 'text',
+			line: 1,
+		});
+	});
+
+	it('allows a balanced code block followed by a newline inside the payload', () => {
+		const fullText = 'Alpha beta.';
+
+		expect(findPayloadStructureViolation(fullText, [
+			insertionOperation(fullText, 'beta.', 'after', {
+				text: '\n```\ncode\n```\n',
+			}),
+		])).toBeUndefined();
+	});
+
+	it('rejects a comment payload that opens a fence', () => {
+		const fullText = 'Alpha beta.';
+
+		expect(findPayloadStructureViolation(fullText, [
+			targetOperation(fullText, 'beta', {
+				operationType: 'comment',
+				comment: '\n```\ncode\n',
+			}),
+		])).toEqual({
+			code: 'fenced-code-edit',
+			operation: 1,
+			operationType: 'comment',
+			field: 'comment',
+			line: 1,
+		});
+	});
+
+	it('ignores removal payloads and balanced comment payloads', () => {
+		const fullText = 'Alpha `beta` gamma';
+
+		expect(findPayloadStructureViolation(fullText, [
+			targetOperation(fullText, '`beta`', {
+				operationType: 'comment',
+				comment: 'See `code`.',
+			}),
+			targetOperation(fullText, 'gamma', { operation: 2 }),
+		])).toBeUndefined();
 	});
 });

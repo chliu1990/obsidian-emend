@@ -8,8 +8,10 @@ import {
 	requireValidContextCapacity,
 	resolveContextCapacity,
 } from './context-accounting';
+import { prepareCriticMarkupEdit } from './critic-markup';
 import { prepareEditResponse } from './edit-response';
 import type { EditPreparation, EditStrategy } from './edit-strategy';
+import { EditResponseValidationError } from './edit-validation';
 import type { EditResult } from './note-writer';
 import { canWriteToNote } from './permissions';
 import type { requestAiResponse } from './provider-stream';
@@ -29,6 +31,24 @@ import type {
 
 const STALE_NOTE_ERROR =
 	'The note changed while Emend was responding. No edits were applied.';
+
+const COMPOSED_MARKUP_ERROR =
+	'Compiled operations produce invalid CriticMarkup in the complete note. Preserve existing CriticMarkup tokens and do not nest markup.';
+
+function validateComposedSelectionEdit(
+	snapshot: SelectionSnapshot,
+	prepared: EditPreparation,
+): void {
+	const composedFullText = `${snapshot.fullText.slice(0, snapshot.from)}${prepared.annotatedMarkdown}${snapshot.fullText.slice(snapshot.to)}`;
+	try {
+		prepareCriticMarkupEdit(snapshot.fullText, composedFullText);
+	} catch {
+		throw new EditResponseValidationError(
+			'compiled-markup-rejected',
+			COMPOSED_MARKUP_ERROR,
+		);
+	}
+}
 
 interface SymmetricSelectionContext {
 	before: string;
@@ -254,6 +274,8 @@ export class SelectionEditRequestCoordinator {
 			editStrategy: this.dependencies.editStrategy,
 			requestRound: this.dependencies.request,
 			signal: submission.signal,
+			validatePrepared: (candidate) =>
+				validateComposedSelectionEdit(submission.snapshot, candidate),
 			onReasoning: submission.callbacks?.onReasoning,
 			onRetry: submission.callbacks?.onRetry,
 		});

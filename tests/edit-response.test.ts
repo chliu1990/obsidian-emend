@@ -127,6 +127,57 @@ describe('prepareEditResponse', () => {
 		);
 	});
 
+	it('routes a validatePrepared rejection into the single correction round', async () => {
+		const rejection = new EditResponseValidationError(
+			'compiled-markup-rejected',
+			'Composed note rejected.',
+		);
+		const validatePrepared = vi
+			.fn<(candidate: EditPreparation) => void>()
+			.mockImplementationOnce(() => { throw rejection; })
+			.mockImplementationOnce(() => undefined);
+		const prepareEdit = vi.fn<EditStrategy['prepareEdit']>().mockReturnValue(prepared);
+		const requestRound = vi.fn<typeof requestAiResponse>()
+			.mockResolvedValueOnce(result('first-candidate'))
+			.mockResolvedValueOnce(result('second-candidate'));
+		const onRetry = vi.fn();
+
+		const response = await prepareEditResponse(prepareOptions(
+			requestRound,
+			prepareEdit,
+			{ validatePrepared, onRetry },
+		));
+
+		expect(response.prepared).toBe(prepared);
+		expect(validatePrepared.mock.calls).toEqual([[prepared], [prepared]]);
+		expect(onRetry).toHaveBeenCalledOnce();
+		expect(requestRound).toHaveBeenCalledTimes(2);
+		expect(requestRound.mock.calls[1]?.[0].continuation?.[1]?.content).toContain(
+			'"code":"compiled-markup-rejected"',
+		);
+		expect(validatePrepared.mock.invocationCallOrder[0]).toBeGreaterThan(
+			prepareEdit.mock.invocationCallOrder[0] ?? -1,
+		);
+		expect(validatePrepared.mock.invocationCallOrder[0]).toBeLessThan(
+			requestRound.mock.invocationCallOrder[1] ?? 0,
+		);
+	});
+
+	it('does not retry a non-validation error thrown by validatePrepared', async () => {
+		const failure = new Error('Unexpected validator failure');
+		const validatePrepared = vi.fn<(candidate: EditPreparation) => void>(() => {
+			throw failure;
+		});
+		const prepareEdit = vi.fn<EditStrategy['prepareEdit']>().mockReturnValue(prepared);
+		const requestRound = vi.fn<typeof requestAiResponse>()
+			.mockResolvedValue(result('[]'));
+
+		await expect(
+			prepareEditResponse(prepareOptions(requestRound, prepareEdit, { validatePrepared })),
+		).rejects.toBe(failure);
+		expect(requestRound).toHaveBeenCalledTimes(1);
+	});
+
 	it('forwards absolute source context to both preparation attempts', async () => {
 		const sourceContext = {
 			fullText: 'Before `Original snapshot` after',

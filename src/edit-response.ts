@@ -13,6 +13,7 @@ export async function prepareEditResponse(options: {
 	requestRound: typeof requestAiResponse;
 	signal: AbortSignal;
 	sourceContext?: EditSourceContext;
+	validatePrepared?: (prepared: EditPreparation) => void;
 	onReasoning?: (text: string) => void;
 	onRetry?: () => void;
 }): Promise<{ prepared: EditPreparation; usage: TokenUsage }> {
@@ -40,6 +41,7 @@ export async function prepareEditResponse(options: {
 			prepared = options.sourceContext
 				? options.editStrategy.prepareEdit(options.original, result.content, options.sourceContext)
 				: options.editStrategy.prepareEdit(options.original, result.content);
+			options.validatePrepared?.(prepared);
 		} catch (error) {
 			if (round === 1 || !(error instanceof EditResponseValidationError)) {
 				throw error;
