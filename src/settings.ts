@@ -537,6 +537,12 @@ export class EmendSettingTab extends PluginSettingTab {
 						);
 						await this.plugin.saveSettings();
 					});
+				text.inputEl.addEventListener('change', () => {
+					const canonical = String(this.plugin.settings.maxContextCharacters);
+					if (text.inputEl.value !== canonical) {
+						text.setValue(canonical);
+					}
+				});
 			});
 
 		new Setting(containerEl)
@@ -557,6 +563,12 @@ export class EmendSettingTab extends PluginSettingTab {
 						);
 						await this.plugin.saveSettings();
 					});
+				text.inputEl.addEventListener('change', () => {
+					const canonical = String(this.plugin.settings.maxWebToolCalls);
+					if (text.inputEl.value !== canonical) {
+						text.setValue(canonical);
+					}
+				});
 			});
 
 		new Setting(containerEl)

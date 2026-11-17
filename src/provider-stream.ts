@@ -1,5 +1,6 @@
 import { assertRequestWithinCapacity, resolveContextCapacity } from './context-accounting';
 import { formatProviderHistory } from './provider-history';
+import { isConsistentTokenUsage } from './token-usage';
 import type { ProviderConfig, ProviderHistoryMessage } from './types';
 
 const MAX_PROVIDER_ERROR_CHARACTERS = 2000;
@@ -43,6 +44,7 @@ export interface AiProviderRequest {
 	tools?: ProviderToolDefinition[];
 	continuation?: ProviderContinuationMessage[];
 	responseFormat?: 'json_object';
+	allowToolOnlyResponse?: boolean;
 }
 
 export interface StreamResult {
@@ -85,6 +87,9 @@ export async function requestAiResponse(
 	}
 	if (parsedBaseUrl.protocol !== 'http:' && parsedBaseUrl.protocol !== 'https:') {
 		throw new Error(`${provider.name} base URL must use HTTP or HTTPS.`);
+	}
+	if (parsedBaseUrl.username || parsedBaseUrl.password) {
+		throw new Error(`${provider.name} base URL must not contain credentials.`);
 	}
 
 	signal.throwIfAborted();
@@ -169,11 +174,9 @@ export async function requestAiResponse(
 			}
 
 			const round = parser.getRoundState();
-			if (
-				!content &&
-				!reasoning &&
-				(round.toolCalls.length === 0 || !request.tools?.length)
-			) {
+			const toolOnlyAllowed = round.toolCalls.length > 0 &&
+				(Boolean(request.tools?.length) || request.allowToolOnlyResponse === true);
+			if (!content && !reasoning && !toolOnlyAllowed) {
 				throw new Error('No text was found in the provider response.');
 			}
 
@@ -249,6 +252,7 @@ export function sanitizeProviderError(error: unknown, apiKey: string) {
 		'[credential redacted]',
 	);
 	message = message.replace(/bearer\s+\S+/gi, '[credential redacted]');
+	message = message.replace(/\/\/[^\s/@]+@/g, '//***@');
 	if (message.length > MAX_PROVIDER_ERROR_CHARACTERS) {
 		message = `${message.slice(0, MAX_PROVIDER_ERROR_CHARACTERS - 12)}…[truncated]`;
 	}
@@ -447,7 +451,8 @@ function parseTokenUsage(value: unknown): ProviderTokenUsage | undefined {
 		return undefined;
 	}
 
-	return { promptTokens, completionTokens, totalTokens };
+	const usage = { promptTokens, completionTokens, totalTokens };
+	return isConsistentTokenUsage(usage) ? usage : undefined;
 }
 
 function isTokenCount(value: unknown): value is number {

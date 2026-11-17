@@ -391,3 +391,243 @@ The C4–C7 pass ended at 1,837 tests; this round adds one test (the real-comple
 | --- | --- | --- |
 | Review fixes | `ded5f5d` | `fix: close PR C review findings` |
 | Review docs | this docs commit | `docs: record PR C review round` |
+
+## PR D — provider, privacy, and settings correctness
+
+Branch `fix/2.10-provider-correctness`, based at `5576d4e` (PR C merged, 53 files / 1,838 tests). The first pass shipped D1–D3 and the second pass shipped D4–D6; both are recorded below.
+
+### Fixes (D1–D3)
+
+1. **D1 — credential-bearing base URLs and error redaction.** `requestAiResponse`, `discoverProviderModels`, and the `requestDeepSeekTool` base-URL validator now reject a parsed URL whose `username` or `password` is nonempty with `<provider> base URL must not contain credentials.` (M2). The message never repeats the URL, so the credential cannot be echoed. `sanitizeProviderError` and `sanitizeDiscoveryError` additionally replace a `//user:pass@` userinfo segment with `//***@`, so a host or transport error that quotes the configured URL cannot leak it. Failing before `fetch` also means the `user:pass@host` value never reaches the chat transport, the Search/Fetch JSON clients, or model discovery. Base-URL trimming, HTTP(S) enforcement, and the missing-key/model errors are unchanged.
+2. **D2 — schema failures are `format`, not `network`.** Parser throws now use an exported `DeepSeekResponseFormatError`, and a successful Search/Fetch response whose body is not JSON is tagged the same way before sanitization. `WebFailureReason` gained `'format'`; the coordinator classifies that error as `reason: 'format'` with `retryable: false` before the transport status rules, so a 200 response with a drifted schema performs exactly one call instead of a second paid retry and no longer reports a false cause (M3). Transport failures keep `network`/`http` and their existing retry matrix, and the failure payload keeps the closed `kind`/`reason`/`httpStatus`/`attempts` shape. A Search format failure still degrades non-fatally to `search_failed`; a Fetch format failure stays an unread `fetch_failed`. Activity rows render `Search · Failed (format) · …` / `Fetch · Failed (format) · …` through the `format` label added to `WEB_FAILURE_REASON_LABELS`. The aggregate unread-page, extraction, search, omission, and skipped-call warnings are unchanged: they already report incompleteness, and the reason itself stays transient in the activity row and tool result.
+3. **D3 — optional search metadata and duplicate URLs.** `parseDeepSeekSearchResponse` accepts an omitted (or `null`) `site_name`, `date`, and `snippet` instead of failing the whole search, and keeps `snippet` absent when it is absent (M4). Required `title`, `url`, `summary`, and `content` strings and the malformed-response rejection are unchanged, and an entry whose URL is not a credentialess HTTP(S) URL is still skipped. `buildSearchExtractionDocuments` now deduplicates by `normalizeWebUrl(result.url)` before assigning `R<n>` temporary IDs, so two hits for one URL produce one reader document, one tool-payload entry, and one stable `S` citation instead of duplicate IDs in the same payload (M18). First occurrence wins; the reader and citation order follow the surviving retrieval order.
+
+`AGENTS.md` records the credential-URL rule and userinfo redaction, the `format` reason and its non-retryable classification, the optional-metadata tolerance, and the normalized-URL deduplication in the module table, Providers and settings, DeepSeek online search item 6, the Web verification checklist, and Security and privacy.
+
+### Regression evidence
+
+New tests (+11):
+
+- `tests/provider-stream.test.ts`: `rejects a base URL with embedded credentials without echoing it`, `redacts a userinfo segment from a provider error`.
+- `tests/model-discovery.test.ts`: `rejects a base URL with embedded credentials without echoing it`.
+- `tests/deepseek-web.test.ts`: `rejects a base URL with embedded credentials without echoing it`, `reports a malformed search payload as a format failure without retrying`, `reports a malformed fetch payload as a format failure`, `does not retry a 200 retrieval response whose body is not JSON`, `parses search results that omit optional site_name and date`, `merges search results that share a normalized URL into one cited source`.
+- `tests/chat-view.test.ts`: the failed-activity label table gained a `format` row asserting `Search · Failed (format) · drifted query`.
+- `tests/web-extraction.test.ts`: `assigns one temporary ID per normalized URL and drops duplicate hits`.
+
+RED before each fix:
+
+```text
+FAIL tests/provider-stream.test.ts > requestAiResponse > rejects a base URL with embedded credentials without echoing it
+AssertionError: expected 'Cannot read properties of undefined (…' to match /base URL/i
+FAIL tests/model-discovery.test.ts > discoverProviderModels > rejects a base URL with embedded credentials without echoing it
+AssertionError: expected 'Cannot read properties of undefined (…' to match /base URL/i
+Tests  3 failed (3)
+
+FAIL tests/provider-stream.test.ts > requestAiResponse > redacts a userinfo segment from a provider error
+Expected: "connect failed for https://***@provider.example.test/v1"
+Received: "connect failed for https://token-user:token-secret@provider.example.test/v1"
+
+FAIL tests/deepseek-web.test.ts > DeepSeek web transport retry and search degradation > reports a malformed search payload as a format failure without retrying
+AssertionError: expected "vi.fn()" to be called once, but got 2 times
+FAIL tests/deepseek-web.test.ts > DeepSeek web transport retry and search degradation > reports a malformed fetch payload as a format failure
+AssertionError: expected "vi.fn()" to be called once, but got 2 times
+Tests  2 failed | 1 passed | 87 skipped (90)
+
+FAIL tests/deepseek-web.test.ts > DeepSeek retrieval clients > parses search results that omit optional site_name and date
+DeepSeekResponseFormatError: DeepSeek returned a malformed search response.
+FAIL tests/deepseek-web.test.ts > DeepSeekWebSearchCoordinator > merges search results that share a normalized URL into one cited source
+AssertionError: expected [ { sourceId: 'R1', …(4) }, …(1) ] to have a length of 1 but got 2
+FAIL tests/web-extraction.test.ts > canonical extraction documents > assigns one temporary ID per normalized URL and drops duplicate hits
+AssertionError: expected [ { sourceId: 'R1', …(4) }, …(2) ] to deeply equal [ { sourceId: 'R1', …(4) }, …(1) ]
+Tests  2 failed | 148 skipped (150)
+```
+
+The three credential tests failed because the URL was accepted and `fetch` ran with an `undefined` mock response; the format tests failed because the parser throw was classified `network` and retried once; the optional-metadata test failed because the parser required the three optional fields; and the duplicate-URL tests failed because two documents were built for one URL.
+
+### Local gate
+
+At code head `225037e`, with `main.js` rebuilt from that tree and SHA-256 `ece95287f033a1b7eef3993d9f684768ad144f59b3cb6b7c7df11255c83fe77d`:
+
+```text
+npm test        53 files / 1,849 tests passed
+npm run lint    clean
+npm run build   clean (tsc -noEmit -skipLibCheck + esbuild production)
+git diff --check clean
+```
+
+Base `5576d4e` was 53 files / 1,838 tests, so this pass adds 11. `main.js` is gitignored; the docs commit changes the esbuild build identity (`git rev-parse --short HEAD`), so a rebuild at the docs head will not reproduce the hash above.
+
+### Commits
+
+| Task | Commit | Message |
+| --- | --- | --- |
+| D1 | `feb64d9` | `fix: reject credential-bearing provider URLs` |
+| D2 | `05ca241` | `fix: classify schema failures as format errors` |
+| D3 | `225037e` | `fix: tolerate optional search metadata and merge duplicate URLs` |
+
+### Limits
+
+- Everything here is unit- and source-verified. No real Obsidian, loopback SSE/Search/Fetch harness, or real provider was exercised in this pass; the PR E exploratory matrix owns the live runs, and no macOS, Windows, provider, or assistive-technology claim is made.
+- Rejecting credentials at request time does not rewrite an already-persisted `user:pass@host` value in `data.json`; Settings still stores whatever the user typed, and the next request fails closed with the new message. A settings-level rejection or one-time rewrite was not added because it would change persisted data outside this fix's boundary.
+- The `format` label is a top-level failure reason beside the existing reader failure kind `format`; rows read `Failed (format)` for a schema-drift failure and `Failed (reader format)` for an extractor output failure.
+
+### Second pass — fixes (D4–D6)
+
+4. **D4 — usage-triplet consistency and the enforced call limit.** `provider-stream.ts` exports `isConsistentTokenUsage`, and `parseTokenUsage` now discards a nonnegative-integer triplet whose `total_tokens` is not the sum of `prompt_tokens` and `completion_tokens`, so the inconsistent value never reaches `StreamResult.usage` (M14). `token-usage.ts` applies the same rule defensively: `resolveTokenUsage` and `resolveRoundTokenUsage` treat a stored inconsistent triplet as unusable and take the existing character-estimate path, which labels the footer **Estimated** and keeps the prompt/completion/total relationship exact. A complete, consistent triplet, including legitimately reported zeros, remains **Provider**. The Web loop result gained `maxToolCalls`, holding the limit the coordinator actually enforced: `DeepSeekWebSearchCoordinator` returns `options.maxToolCalls` with the terminal result, `ChatStreamResult` carries it through the read-only coordinator (and `0` for a Web Off request), and `chat-view.ts` renders the skipped-call warning from that snapshot instead of re-reading `settings.maxWebToolCalls` (M19). The sentence shape is unchanged (`Web retrieval reached the <limit>-call limit. <N> proposed call was/were skipped; the answer may be incomplete.`), so a settings change made while the request was in flight can no longer misreport the limit that produced the skips.
+5. **D5 — forced text-less tool-only rounds are classified by their caller.** `AiProviderRequest` gained `allowToolOnlyResponse?: boolean`. When it is true, a response that carries tool calls and no text or reasoning returns normally instead of throwing `No text was found in the provider response.`; the ordinary throw is unchanged for every other request, including an undeclared tool-only response (M20). The two forced rounds set it because neither declares tools: the DeepSeek loop's single terminal no-tools round (set only when the call limit forced it) and the reader's forced no-tools JSON answer. The callers keep their own classifications, so a text-less tool-only forced round now surfaces as `The model returned tool calls after the web call limit was reached.` and as the reader's `limit` failure kind, instead of being converted into a generic missing-text provider failure that lost the limit meaning and, for the reader, changed `failureKind` from `limit` to `provider`.
+6. **D6 — displayed settings values are canonical.** The **Context character limit** and **Web tool call limit** inputs still clamp through `normalizeContextLimit` / `normalizeWebToolCallLimit` on input (M13). They now also rewrite the canonical stored value back into the field on the input `change` event, matching the existing capacity-pair commit behavior: a below-minimum entry displays `1000`, and a cleared call-limit field displays `8`. No new setting, validation rule, or save is added; the write-back saves nothing and only reflects what normalization already persisted, so typing is untouched until the field commits.
+
+`AGENTS.md` records the consistent-triplet rule in the provider-stream, token-usage, Providers and settings, and DeepSeek online search (item 7) text; the enforced-limit snapshot in the web-search, deepseek-web, and request-coordinator rows and the skipped-call warning sentence (item 4); `allowToolOnlyResponse` in the provider-stream, deepseek-web, and web-extraction-reader rows; and the canonical settings display in the Providers and settings paragraph.
+
+### Second-pass regression evidence
+
+New tests (+7; base `40c264e` was 53 files / 1,849 tests):
+
+- `tests/token-usage.test.ts`: `falls back to an estimate when the provider usage triplet is inconsistent` (both resolvers).
+- `tests/provider-stream.test.ts`: the existing `ignores %s usage` table gained an `inconsistent` row.
+- `tests/chat-view.test.ts`: `reports the enforced call limit in the skipped-call warning`; three existing Web fixtures gained a `maxToolCalls` snapshot while their asserted copy stayed byte-identical.
+- `tests/deepseek-web.test.ts`: `classifies a text-less tool-only forced round as a limit failure` (real transport over scripted SSE).
+- `tests/web-extraction-reader.test.ts`: the existing forced-round test now also asserts `allowToolOnlyResponse === true` on the forced request and absent on an ordinary extractor round.
+- `tests/settings.test.ts`: `shows the normalized value after clamping a below-minimum context input`, `restores the default in the call-limit field after clearing it`.
+
+RED before each fix:
+
+```text
+FAIL tests/token-usage.test.ts > resolveTokenUsage > falls back to an estimate when the provider usage triplet is inconsistent
+- { completionTokens: 3, promptTokens: 47, source: 'estimated', totalTokens: 50 }
++ { completionTokens: 5, promptTokens: 12, source: 'provider', totalTokens: 20 }
+  (the new provider-stream `inconsistent` table row emitted the triplet instead of no usage event)
+
+FAIL tests/chat-view.test.ts > EmendChatView web research > reports the enforced call limit in the skipped-call warning
+- Web retrieval reached the 20-call limit. 2 proposed calls were skipped; the answer may be incomplete.
++ Web retrieval reached the 8-call limit. 2 proposed calls were skipped; the answer may be incomplete.
+
+FAIL tests/provider-stream.test.ts > requestAiResponse > returns a text-less tool-only forced round to the caller
+Error: No text was found in the provider response.
+
+FAIL tests/deepseek-web.test.ts > DeepSeekWebSearchCoordinator > classifies a text-less tool-only forced round as a limit failure
+Expected: "The model returned tool calls after the web call limit was reached."
+Received: "No text was found in the provider response."
+
+FAIL tests/web-extraction-reader.test.ts > WebExtractionReader > forces one final no-tools extraction request at the reader round limit
+AssertionError: expected undefined to be true   (forced.allowToolOnlyResponse)
+
+FAIL tests/settings.test.ts > EmendSettingTab canonical input values > shows the normalized value after clamping a below-minimum context input
+AssertionError: expected '999' to be '1000'
+FAIL tests/settings.test.ts > EmendSettingTab canonical input values > restores the default in the call-limit field after clearing it
+AssertionError: expected '' to be '8'
+```
+
+The D5 deepseek-web test drives the real `requestAiResponse` over scripted SSE rounds (one over-limit batch, then a text-less tool-only forced round), so it fails on the transport throw rather than on a mocked coordinator result; the unit-level `returns a text-less tool-only forced round to the caller` covers the flagged return directly, and the existing undeclared-tool-only test still asserts the unflagged throw.
+
+### Second-pass local gate
+
+At code head `5a2a19d`, with `main.js` rebuilt from that tree and SHA-256 `18088f53f52afb820a8b94bfb30573300f0e151271d466558fe42645916922fb`:
+
+```text
+npm test        53 files / 1,856 tests passed
+npm run lint    clean
+npm run build   clean (tsc -noEmit -skipLibCheck + esbuild production)
+git diff --check clean
+```
+
+Base `40c264e` was 53 files / 1,849 tests, so the second pass adds 7. `main.js` is gitignored and was not committed; the docs commit changes the esbuild build identity, so a rebuild at the docs head will not reproduce the hash above.
+
+### Second-pass commits
+
+| Task | Commit | Message |
+| --- | --- | --- |
+| D4 | `9383b9d` | `fix: validate usage triplets and report enforced limits` |
+| D5 | `cb401ea` | `fix: classify forced tool-only rounds at the caller` |
+| D6 | `5a2a19d` | `fix: display canonical settings values` |
+| Docs | this docs commit | `docs: record provider and usage stabilization` |
+
+### Second-pass limits
+
+- Unit- and source-verified only, like D1–D3. No real Obsidian, loopback SSE/Search/Fetch harness, or real provider was run in this pass; the PR E exploratory matrix owns the live runs, and no macOS, Windows, provider, or assistive-technology claim is made.
+- The usage-triplet rule is a consistency check, not an accounting reconciliation. A provider that reports a consistent but wrong triplet is still trusted, and no tokenizer, pricing, or provider metadata is consulted.
+- The enforced-limit snapshot is per submission. A Web Off request reports `0`, and the warning is unreachable without skipped calls, so no ordinary chat copy changed.
+- The canonical write-back happens on `change` (blur/commit), not while typing, so a partially typed number is never rewritten mid-edit; the input keeps whatever the user typed until the field commits, then shows the stored value.
+- D5 changes classification only. A provider that answers a forced round with tool calls still fails without retrieval; nothing is executed, retried, or written, and the reader still treats that outcome as its `limit` failure.
+
+### PR D review round
+
+Six review findings closed on the same branch, code commit `829d638`:
+
+1. **Persisted inconsistent usage is dropped at load.** `normalizeLoadedMessage` now removes a stored usage triplet whose `totalTokens` is not `promptTokens + completionTokens`, so a reloaded thread shows no usage footer instead of a **Provider** footer built from impossible numbers. The message itself is still a valid ready message: `validateChatConversation` keeps it and reports `droppedMessages: 0`. The rule reuses `isConsistentTokenUsage`, which now lives in `token-usage.ts` and is imported by `provider-stream.ts`, so the transport, the resolvers, and the conversation schema share one predicate. A consistent triplet still normalizes a missing source to `provider`, and an explicitly `estimated` one is left alone.
+2. **The tool-client credential guard is non-retryable and self-contained.** `requestDeepSeekTool` performs its local configuration guards (missing key, invalid/non-HTTP base URL, credential-bearing base URL) before any `fetch` and now throws `DeepSeekConfigurationError`. `attempt` classifies that error as `{ ok: false, reason: 'configuration', retryable: false }`, so a credential-bearing base URL costs exactly one attempt, is never retried, and is no longer reported as `network`. The message still never includes the URL. `WebFailureReason` gained the `configuration` reason and the activity label map renders it as `Search · Failed (configuration) · …`, keeping a local configuration problem distinct from a schema-drift `format` failure; no request leaves the machine and the failure payload carries no message or credential. The same guard covers the missing-key and invalid-URL cases, which previously were also retried once as transport failures.
+3. **Duplicate search hits fill only empty fields.** `buildSearchExtractionDocuments` keeps the first hit's position, temporary ID, and nonempty fields, and fills an empty `title`, `snippet`, `summary`, or `content` from later hits for the same normalized URL before building the canonical document. A first hit with no content and a later hit with content now yields one document carrying the content instead of one document whose `Content:` line is empty.
+4. **The canonical write-back only runs when it changes the field.** Both settings inputs compare the live field value with the stored canonical string and call `setValue` only when they differ, matching `commitCapacity`. Pressing Enter on an unchanged or already-canonical value no longer rewrites the field, so the caret and selection stay where the user left them.
+5. **The reader's correction round is flagged too.** `allowToolOnlyResponse` is now set on the one format-correction request as well as the forced limit round, so a text-less tool-only correction reply reaches `ReaderFailure('format', 'The web extraction correction reply must be bare JSON without tool calls.')` instead of the transport's generic `No text was found in the provider response.` failure.
+6. **The enforced limit is asserted at the boundary.** The 21st-call test now asserts `result.maxToolCalls === 20` alongside the existing skip, activity, and payload checks, pinning the D4 snapshot to the over-limit path.
+
+RED before the fixes:
+
+```text
+FAIL tests/chat-sessions.test.ts > shared message serialization > loads a stored inconsistent usage triplet without a Provider footer
+AssertionError: expected { promptTokens: 10, …(3) } to be undefined
+
+FAIL tests/deepseek-web.test.ts > DeepSeek web transport retry and search degradation > does not retry a credential-bearing base URL and reports it as non-network
+  (later consolidated into the parametrized `reports $reason as a non-retryable failure with one attempt`)
+- { attempts: 1, failureReason: 'format', status: 'failed', … }
++ { attempts: 2, failureReason: 'network', status: 'failed', … }
+
+FAIL tests/web-extraction.test.ts > canonical extraction documents > fills only empty fields from a later duplicate hit
+AssertionError: expected [ { sourceId: 'R1', …(3) } ] to deeply equal [ { sourceId: 'R1', …(4) } ]
+
+FAIL tests/settings.test.ts > EmendSettingTab canonical input values > does not rewrite an already-canonical Context character limit value on change
+AssertionError: expected "setValue" to not be called at all, but actually been called 1 times
+FAIL tests/settings.test.ts > EmendSettingTab canonical input values > does not rewrite an already-canonical Web tool call limit value on change
+AssertionError: expected "setValue" to not be called at all, but actually been called 1 times
+
+FAIL tests/web-extraction-reader.test.ts > WebExtractionReader extraction and verification > runs one correction request for unparseable terminal output
+AssertionError: expected undefined to be true   (correction.allowToolOnlyResponse)
+```
+
+The D4 `maxToolCalls` assertion passed on the existing implementation; it was added to prevent regression rather than to drive a fix.
+
+### PR D review-round gate
+
+At code head `829d638`, with `main.js` rebuilt from that tree and SHA-256 `a65791f113cff88c60360b1f8145e9182b5cbe8ce3f7c318189613c1e4554227`:
+
+```text
+npm test        53 files / 1,861 tests passed
+npm run lint    clean
+npm run build   clean (tsc -noEmit -skipLibCheck + esbuild production)
+git diff --check clean
+```
+
+`d0a6a89` was 53 files / 1,856 tests, so the review round adds 5 (chat-sessions 1, web-extraction 1, deepseek-web 1, settings 2); the reader and boundary assertions were added to existing tests. `main.js` is gitignored and was not committed; the docs commit changes the build identity, so a rebuild at the docs head will not reproduce the hash above.
+
+### PR D review-round commits
+
+| Task | Commit | Message |
+| --- | --- | --- |
+| Review fixes | `829d638` | `fix: close PR D review findings` |
+| Review follow-up | `651eb06` | `fix: separate configuration failures from format` |
+| Review docs | this docs commit | `docs: record PR D review round` |
+
+### PR D review-round limits
+
+- Unit- and source-verified only; no real Obsidian, loopback harness, or real provider run. The PR E matrix still owns live verification of the settings blur behavior, the reader correction path, and the credential-URL rejection.
+- **Gateways and providers whose `total_tokens` includes cached prompt tokens now show Estimated.** A provider that reports `total = prompt + completion + cached` (or otherwise counts cache reads inside the total) produces a triplet that fails the `total === prompt + completion` check, so its footer is labeled **Estimated** even though the numbers are genuine provider data, and a stored thread carrying such a triplet loads with no usage footer. This is the deliberate cost of a provider-agnostic consistency rule: Emend has no provider metadata or tokenizer to separate cached tokens, and showing an inconsistent Provider total would be worse. Self-consistent but wrong triplets are still trusted as Provider.
+- **Configuration failures have their own reason and label.** A missing key, an invalid base URL, or a credential-bearing base URL renders `Failed (configuration)` with `attempts: 1` and a `reason: "configuration"` payload, while a schema-drift or non-JSON 200 response stays `Failed (format)`. Both are non-retryable, neither makes a request for the configuration case, no credential or URL is echoed, and the Search still degrades non-fatally. The reason remains transient: only the activity outcome is persisted.
+- **Duplicate merging is fill-only and first-wins.** A later duplicate with a richer nonempty summary or content does not replace an already nonempty field; only empty fields are filled, so citation order and temporary IDs remain the first hit's.
+- **The write-back guard reads the live field, not a draft.** `text.inputEl.value` is compared with the stored canonical string, so a value that already matches is never rewritten; a differing value is still replaced on `change` as before.
+
+### PR D review follow-up — configuration reason
+
+The review round initially folded the local configuration guards into the `format` reason. The follow-up (`651eb06`) keeps all retry and transport behavior identical and only makes the copy honest: `WebFailureReason` gained `'configuration'`, `attempt` maps `DeepSeekConfigurationError` to `{ reason: 'configuration', retryable: false }`, and the chat activity label map renders `Search · Failed (configuration) · …`. `DeepSeekResponseFormatError` is still `{ reason: 'format', retryable: false }`, so a schema-drift or non-JSON 200 payload keeps `Failed (format)`.
+
+Test coverage was consolidated into one parametrized test, `reports $reason as a non-retryable failure with one attempt`, with a `configuration` case (credential-bearing base URL: one attempt, no `fetch`, `{"error":{"kind":"search_failed","reason":"configuration","attempts":1}}`) and a `format` case (malformed search payload: one attempt, `reason: "format"`). The chat-view activity-label table gained a `configuration` row asserting `Search · Failed (configuration) · unconfigured provider`. The earlier RED was `+ "failureReason": "format"` against the expected `"configuration"`.
+
+At code head `651eb06`, with `main.js` rebuilt from that tree and SHA-256 `9c328527569f932150f2ab96cc1addf1f3df5181747673e03e8e54c7c724e968`:
+
+```text
+npm test        53 files / 1,863 tests passed
+npm run lint    clean
+npm run build   clean (tsc -noEmit -skipLibCheck + esbuild production)
+git diff --check clean
+```
+
+The review round was 1,861 tests, so the follow-up adds 2 (the parametrized configuration case and the activity-label row). Retry policy, transport-error classification, Search/Fetch degradation, payload shape apart from the reason value, and every other behavior are unchanged.

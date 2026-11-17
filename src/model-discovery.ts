@@ -30,6 +30,9 @@ export async function discoverProviderModels(
 	if (parsedBaseUrl.protocol !== 'http:' && parsedBaseUrl.protocol !== 'https:') {
 		throw new Error(`${provider.name} base URL must use HTTP or HTTPS.`);
 	}
+	if (parsedBaseUrl.username || parsedBaseUrl.password) {
+		throw new Error(`${provider.name} base URL must not contain credentials.`);
+	}
 
 	try {
 		// eslint-disable-next-line no-restricted-globals -- Obsidian provides browser fetch.
@@ -88,6 +91,7 @@ function sanitizeDiscoveryError(error: unknown, apiKey: string) {
 		'[credential redacted]',
 	);
 	message = message.replace(/bearer\s+\S+/gi, '[credential redacted]');
+	message = message.replace(/\/\/[^\s/@]+@/g, '//***@');
 	if (message.length > MAX_DISCOVERY_ERROR_CHARACTERS) {
 		message = `${message.slice(0, MAX_DISCOVERY_ERROR_CHARACTERS - 12)}…[truncated]`;
 	}

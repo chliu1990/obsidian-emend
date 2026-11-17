@@ -12,6 +12,10 @@ export interface TokenUsage extends ProviderTokenUsage {
 	source: 'provider' | 'estimated';
 }
 
+export function isConsistentTokenUsage(usage: ProviderTokenUsage) {
+	return usage.totalTokens === usage.promptTokens + usage.completionTokens;
+}
+
 type RequestText = Pick<
 	AiProviderRequest,
 	'systemPrompt' | 'userPrompt' | 'history' | 'continuation' | 'tools'
@@ -21,8 +25,9 @@ export function resolveTokenUsage(
 	request: RequestText,
 	result: StreamResult,
 ): TokenUsage {
-	if (result.usage) {
-		return { ...result.usage, source: 'provider' };
+	const usage = usableProviderUsage(result);
+	if (usage) {
+		return { ...usage, source: 'provider' };
 	}
 	return estimateRequestUsage(request, result);
 }
@@ -30,11 +35,11 @@ export function resolveTokenUsage(
 export function resolveRoundTokenUsage(
 	rounds: Array<{ request: RequestText; result: StreamResult }>,
 ): TokenUsage {
-	if (rounds.every((round) => round.result.usage)) {
+	if (rounds.every((round) => usableProviderUsage(round.result))) {
 		return rounds.reduce<TokenUsage>((total, round) => ({
-			promptTokens: total.promptTokens + (round.result.usage?.promptTokens ?? 0),
-			completionTokens: total.completionTokens + (round.result.usage?.completionTokens ?? 0),
-			totalTokens: total.totalTokens + (round.result.usage?.totalTokens ?? 0),
+			promptTokens: total.promptTokens + (usableProviderUsage(round.result)?.promptTokens ?? 0),
+			completionTokens: total.completionTokens + (usableProviderUsage(round.result)?.completionTokens ?? 0),
+			totalTokens: total.totalTokens + (usableProviderUsage(round.result)?.totalTokens ?? 0),
 			source: 'provider',
 		}), { promptTokens: 0, completionTokens: 0, totalTokens: 0, source: 'provider' });
 	}
@@ -48,6 +53,11 @@ export function resolveRoundTokenUsage(
 			source: 'estimated',
 		};
 	}, { promptTokens: 0, completionTokens: 0, totalTokens: 0, source: 'estimated' });
+}
+
+function usableProviderUsage(result: StreamResult): ProviderTokenUsage | undefined {
+	const usage = result.usage;
+	return usage && isConsistentTokenUsage(usage) ? usage : undefined;
 }
 
 function estimateRequestUsage(request: RequestText, result: StreamResult): TokenUsage {

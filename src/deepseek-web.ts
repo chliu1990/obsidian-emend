@@ -75,7 +75,7 @@ const FATAL_WEB_HTTP_STATUSES = [400, 401, 402, 413];
 export interface DeepSeekSearchResult {
 	title: string;
 	url: string;
-	snippet: string;
+	snippet?: string;
 	summary: string;
 	content: string;
 	siteName?: string;
@@ -85,6 +85,20 @@ export interface DeepSeekSearchResult {
 export interface DeepSeekFetchPage {
 	title: string;
 	content: string;
+}
+
+export class DeepSeekResponseFormatError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'DeepSeekResponseFormatError';
+	}
+}
+
+export class DeepSeekConfigurationError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'DeepSeekConfigurationError';
+	}
 }
 
 interface DeepSeekWebSearchDependencies {
@@ -133,6 +147,7 @@ export class DeepSeekWebSearchCoordinator {
 					? '\n\nThe configured Web call limit has been reached. Answer now from the current note, chat, and successfully extracted evidence. Do not call tools or invent citations; if evidence is insufficient, answer from available context and disclose uncertainty.'
 					: ''}`,
 				...(forceTerminal ? {} : { tools: WEB_TOOL_DEFINITIONS }),
+				...(forceTerminal ? { allowToolOnlyResponse: true } : {}),
 				continuation,
 			};
 			let contentEmitted = false;
@@ -169,6 +184,7 @@ export class DeepSeekWebSearchCoordinator {
 					activities,
 					failedExtractions,
 					failedSearches,
+					maxToolCalls: options.maxToolCalls,
 					skippedWebCalls,
 					omittedEvidence,
 					rounds,
@@ -334,6 +350,12 @@ export class DeepSeekWebSearchCoordinator {
 			}
 			if (isRecord(error) && error.name === 'AbortError') {
 				throw error;
+			}
+			if (error instanceof DeepSeekResponseFormatError) {
+				return { ok: false, reason: 'format', retryable: false };
+			}
+			if (error instanceof DeepSeekConfigurationError) {
+				return { ok: false, reason: 'configuration', retryable: false };
 			}
 			const status = isRecord(error) &&
 				typeof error.status === 'number' &&
@@ -540,7 +562,7 @@ export async function fetchDeepSeekPage(
 
 export function parseDeepSeekSearchResponse(value: unknown): DeepSeekSearchResult[] {
 	if (!isRecord(value) || !Array.isArray(value.results)) {
-		throw new Error('DeepSeek returned a malformed search response.');
+		throw new DeepSeekResponseFormatError('DeepSeek returned a malformed search response.');
 	}
 	const results: DeepSeekSearchResult[] = [];
 	for (const entry of value.results) {
@@ -548,34 +570,41 @@ export function parseDeepSeekSearchResponse(value: unknown): DeepSeekSearchResul
 			!isRecord(entry) ||
 			typeof entry.title !== 'string' ||
 			typeof entry.url !== 'string' ||
-			typeof entry.snippet !== 'string' ||
+			!isOptionalString(entry.snippet) ||
 			typeof entry.summary !== 'string' ||
 			typeof entry.content !== 'string' ||
-			(typeof entry.site_name !== 'string' && entry.site_name !== null) ||
-			(typeof entry.date !== 'string' && entry.date !== null)
+			!isOptionalString(entry.site_name) ||
+			!isOptionalString(entry.date)
 		) {
-			throw new Error('DeepSeek returned a malformed search response.');
+			throw new DeepSeekResponseFormatError('DeepSeek returned a malformed search response.');
 		}
 		const url = normalizeWebUrl(entry.url);
 		if (!url) {
 			continue;
 		}
-		results.push({
+		const result: DeepSeekSearchResult = {
 			title: entry.title,
 			url,
-			snippet: entry.snippet,
 			summary: entry.summary,
 			content: entry.content,
-			siteName: entry.site_name ?? undefined,
-			date: entry.date ?? undefined,
-		});
+		};
+		if (typeof entry.snippet === 'string') {
+			result.snippet = entry.snippet;
+		}
+		if (typeof entry.site_name === 'string') {
+			result.siteName = entry.site_name;
+		}
+		if (typeof entry.date === 'string') {
+			result.date = entry.date;
+		}
+		results.push(result);
 	}
 	return results;
 }
 
 export function parseDeepSeekFetchResponse(value: unknown): DeepSeekFetchPage {
 	if (!isRecord(value) || typeof value.title !== 'string' || typeof value.content !== 'string') {
-		throw new Error('DeepSeek returned a malformed fetch response.');
+		throw new DeepSeekResponseFormatError('DeepSeek returned a malformed fetch response.');
 	}
 	return { title: value.title, content: value.content };
 }
@@ -656,19 +685,29 @@ async function requestDeepSeekTool(
 ): Promise<unknown> {
 	const apiKey = provider.apiKey.trim();
 	if (!apiKey) {
-		throw new Error(`${provider.name} API key is missing.`);
+		throw new DeepSeekConfigurationError(`${provider.name} API key is missing.`);
 	}
 	let endpoint: string;
+	let parsedBaseUrl: URL;
 	try {
-		const baseUrl = new URL(provider.baseUrl.trim().replace(/\/+$/, ''));
-		if (baseUrl.protocol !== 'http:' && baseUrl.protocol !== 'https:') {
-			throw new Error();
-		}
-		const base = provider.baseUrl.trim().replace(/\/+$/, '');
-		endpoint = `${base}${base.endsWith('/v1') ? '' : '/v1'}/tools/${tool}`;
+		parsedBaseUrl = new URL(provider.baseUrl.trim().replace(/\/+$/, ''));
 	} catch {
-		throw new Error(`${provider.name} base URL must be a valid HTTP(S) URL.`);
+		throw new DeepSeekConfigurationError(
+			`${provider.name} base URL must be a valid HTTP(S) URL.`,
+		);
 	}
+	if (parsedBaseUrl.protocol !== 'http:' && parsedBaseUrl.protocol !== 'https:') {
+		throw new DeepSeekConfigurationError(
+			`${provider.name} base URL must be a valid HTTP(S) URL.`,
+		);
+	}
+	if (parsedBaseUrl.username || parsedBaseUrl.password) {
+		throw new DeepSeekConfigurationError(
+			`${provider.name} base URL must not contain credentials.`,
+		);
+	}
+	const base = provider.baseUrl.trim().replace(/\/+$/, '');
+	endpoint = `${base}${base.endsWith('/v1') ? '' : '/v1'}/tools/${tool}`;
 
 	try {
 		// eslint-disable-next-line no-restricted-globals -- DeepSeek tool APIs use ordinary JSON fetch responses.
@@ -690,18 +729,24 @@ async function requestDeepSeekTool(
 		try {
 			return await response.json();
 		} catch {
-			throw new Error(`DeepSeek returned malformed ${tool} JSON.`);
+			throw new DeepSeekResponseFormatError(`DeepSeek returned malformed ${tool} JSON.`);
 		}
 	} catch (error) {
 		if (signal.aborted || (isRecord(error) && error.name === 'AbortError')) {
 			throw error;
 		}
-		const sanitized = new Error(sanitizeProviderError(error, apiKey));
+		const sanitized = error instanceof DeepSeekResponseFormatError
+			? new DeepSeekResponseFormatError(sanitizeProviderError(error, apiKey))
+			: new Error(sanitizeProviderError(error, apiKey));
 		if (isRecord(error) && typeof error.status === 'number') {
 			Object.assign(sanitized, { status: error.status });
 		}
 		throw sanitized;
 	}
+}
+
+function isOptionalString(value: unknown): value is string | null | undefined {
+	return value === undefined || value === null || typeof value === 'string';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

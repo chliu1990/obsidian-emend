@@ -45,6 +45,26 @@ describe('resolveTokenUsage', () => {
 		});
 	});
 
+	it('falls back to an estimate when the provider usage triplet is inconsistent', () => {
+		const inconsistent = { promptTokens: 12, completionTokens: 5, totalTokens: 20 };
+
+		expect(resolveTokenUsage(request, result({ usage: inconsistent }))).toEqual({
+			promptTokens: 47,
+			completionTokens: 3,
+			totalTokens: 50,
+			source: 'estimated',
+		});
+		expect(resolveRoundTokenUsage([
+			{ request, result: result({ usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12 } }) },
+			{ request, result: result({ usage: inconsistent }) },
+		])).toEqual({
+			promptTokens: 94,
+			completionTokens: 6,
+			totalTokens: 100,
+			source: 'estimated',
+		});
+	});
+
 	it('estimates annotated history and response characters separately', () => {
 		expect(resolveTokenUsage(request, result())).toEqual({
 			promptTokens: 47,

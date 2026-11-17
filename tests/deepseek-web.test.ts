@@ -5,11 +5,14 @@ import {
 	parseDeepSeekFetchResponse,
 	parseDeepSeekSearchResponse,
 	searchDeepSeek,
+	type DeepSeekFetchPage,
+	type DeepSeekSearchResult,
 } from '../src/deepseek-web';
-import type {
-	AiProviderRequest,
-	StreamEvent,
-	StreamResult,
+import {
+	requestAiResponse,
+	type AiProviderRequest,
+	type StreamEvent,
+	type StreamResult,
 } from '../src/provider-stream';
 import { ContextCapacityError } from '../src/context-accounting';
 import { resolveRoundTokenUsage } from '../src/token-usage';
@@ -63,6 +66,15 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 });
 
+async function getError(promise: Promise<unknown>) {
+	try {
+		await promise;
+		throw new Error('Expected the request to reject.');
+	} catch (error) {
+		return error instanceof Error ? error : new Error(String(error));
+	}
+}
+
 describe('DeepSeek retrieval clients', () => {
 	it('posts the exact bounded search request and parses structured results', async () => {
 		const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ results: [searchResult] })));
@@ -110,6 +122,33 @@ describe('DeepSeek retrieval clients', () => {
 		})).toHaveLength(1);
 	});
 
+	it('parses search results that omit optional site_name and date', () => {
+		const withoutOptional = {
+			title: 'Emend documentation',
+			url: 'https://example.test/emend',
+			snippet: 'Short evidence',
+			summary: 'Longer model evidence',
+			content: '',
+		};
+		expect(parseDeepSeekSearchResponse({ results: [withoutOptional] })).toEqual([withoutOptional]);
+
+		const withoutSnippet = {
+			title: 'Emend documentation',
+			url: 'https://example.test/emend',
+			summary: 'Longer model evidence',
+			content: '',
+			site_name: 'Example',
+			date: null,
+		};
+		expect(parseDeepSeekSearchResponse({ results: [withoutSnippet] })).toEqual([{
+			title: 'Emend documentation',
+			url: 'https://example.test/emend',
+			summary: 'Longer model evidence',
+			content: '',
+			siteName: 'Example',
+		}]);
+	});
+
 	it('rejects malformed retrieval payloads without echoing them', () => {
 		expect(() => parseDeepSeekSearchResponse({ results: [{ secret: 'do-not-echo' }] })).toThrow(
 			'malformed search response',
@@ -148,6 +187,22 @@ describe('DeepSeek retrieval clients', () => {
 		});
 	});
 
+	it('rejects a base URL with embedded credentials without echoing it', async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+
+		const error = await getError(fetchDeepSeekPage(
+			{ id: 'call-2', name: 'web_fetch', url: 'https://example.test/docs', extractionGoal: 'Extract the documentation facts.' },
+			{ ...provider, baseUrl: 'https://token-user:token-secret@api.deepseek.com' },
+			new AbortController().signal,
+		));
+
+		expect(error.message).toMatch(/base URL/i);
+		expect(error.message).not.toContain('token-user');
+		expect(error.message).not.toContain('token-secret');
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
 	it('propagates aborts without wrapping them', async () => {
 		const controller = new AbortController();
 		const reason = new DOMException('Stopped', 'AbortError');
@@ -177,6 +232,19 @@ function toolRound(calls: Array<{ id: string; name: string; arguments: string }>
 
 function finalRound(content = 'Final answer', reasoning = ''): StreamResult {
 	return { content, reasoning, finishReason: 'stop' };
+}
+
+function sseResponse(chunks: string[]) {
+	const encoder = new TextEncoder();
+	const stream = new ReadableStream<Uint8Array>({
+		start(controller) {
+			for (const chunk of chunks) {
+				controller.enqueue(encoder.encode(chunk));
+			}
+			controller.close();
+		},
+	});
+	return new Response(stream);
 }
 
 function options(overrides: Partial<WebSearchRunOptions> = {}): WebSearchRunOptions {
@@ -233,8 +301,8 @@ function successfulReader() {
 
 function coordinatorWith(
 	rounds: StreamResult[],
-	search = vi.fn(async (_call: Extract<WebToolCall, { name: 'web_search' }>) => [parsedSearchResult]),
-	fetchPage = vi.fn(async () => ({ title: 'Fetched page', content: 'Fetched content' })),
+	search = vi.fn(async (_call: Extract<WebToolCall, { name: 'web_search' }>): Promise<DeepSeekSearchResult[]> => [parsedSearchResult]),
+	fetchPage = vi.fn(async (): Promise<DeepSeekFetchPage> => ({ title: 'Fetched page', content: 'Fetched content' })),
 	reader: Pick<WebExtractionReader, 'extract'> = successfulReader(),
 ) {
 	const request = vi.fn(async (
@@ -523,6 +591,37 @@ describe('DeepSeekWebSearchCoordinator', () => {
 			}>;
 		};
 		expect(payload.results.map((result: { sourceId: string }) => result.sourceId)).toEqual(['S2', 'S1']);
+	});
+
+	it('merges search results that share a normalized URL into one cited source', async () => {
+		const search = vi.fn(async () => [
+			parsedSearchResult,
+			{ ...parsedSearchResult, title: 'Duplicate hit', url: 'https://EXAMPLE.test/emend' },
+		]);
+		const reader = successfulReader();
+		const { coordinator, request } = coordinatorWith([
+			toolRound([searchCall('call-1', 'duplicate hits')]),
+			finalRound('Answer [S1]'),
+		], search, undefined, reader);
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(result.sources).toEqual([{
+			id: 'S1',
+			title: 'Emend documentation',
+			url: 'https://example.test/emend',
+			snippet: 'Short evidence',
+		}]);
+		expect(result.activities).toEqual([{ type: 'search', target: 'duplicate hits', status: 'completed' }]);
+		const readerInput = reader.extract.mock.calls[0]?.[0];
+		expect(readerInput?.documents).toHaveLength(1);
+		expect(readerInput?.documents[0]?.url).toBe('https://example.test/emend');
+		const toolMessage = request.mock.calls[1]?.[0].continuation?.find((message) => message.role === 'tool');
+		const payload = JSON.parse(toolMessage?.role === 'tool' ? toolMessage.content : '{}') as {
+			results: Array<{ sourceId: string }>;
+		};
+		expect(payload.results).toHaveLength(1);
+		expect(payload.results[0]?.sourceId).toBe('S1');
 	});
 
 	it('fits a final staged payload within the per-call cap instead of failing the extraction', async () => {
@@ -1068,6 +1167,7 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		}));
 
 		expect(result.content).toBe('Answer after twenty calls [S1]');
+		expect(result.maxToolCalls).toBe(20);
 		expect(result.skippedWebCalls).toBe(1);
 		expect(result.sources).toHaveLength(1);
 		expect(result.rounds).toHaveLength(23);
@@ -1119,6 +1219,35 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		expect(search).toHaveBeenCalledOnce();
 		expect(reader.extract).toHaveBeenCalledOnce();
 		expect(request).toHaveBeenCalledTimes(2);
+	});
+
+	it('classifies a text-less tool-only forced round as a limit failure', async () => {
+		const fetchMock = vi.fn()
+			.mockResolvedValueOnce(sseResponse([
+				'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"web_search","arguments":"{\\"query\\":\\"first\\",\\"extractionGoal\\":\\"Find the facts.\\"}"}},{"index":1,"id":"call-2","function":{"name":"web_search","arguments":"{\\"query\\":\\"late\\",\\"extractionGoal\\":\\"Find more facts.\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n',
+				'data: [DONE]\n\n',
+			]))
+			.mockResolvedValueOnce(sseResponse([
+				'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-3","function":{"name":"web_search","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}\n\n',
+				'data: [DONE]\n\n',
+			]));
+		vi.stubGlobal('fetch', fetchMock);
+		const search = vi.fn(async () => [parsedSearchResult]);
+		const reader = successfulReader();
+		const coordinator = new DeepSeekWebSearchCoordinator({
+			provider,
+			request: requestAiResponse,
+			search,
+			reader,
+		});
+
+		await expect(
+			coordinator.submit(aiRequest(), options({ maxToolCalls: 1 })),
+		).rejects.toThrow('The model returned tool calls after the web call limit was reached.');
+
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(search).toHaveBeenCalledOnce();
+		expect(reader.extract).toHaveBeenCalledOnce();
 	});
 
 	it('validates skipped proposals before Review or retrieval', async () => {
@@ -1789,6 +1918,59 @@ describe('DeepSeek web transport retry and search degradation', () => {
 		expect(result.failedSearches).toBe(0);
 	});
 
+	it.each([
+		{
+			providerOverride: { baseUrl: 'https://token-user:token-secret@api.deepseek.com' },
+			search: undefined,
+			reason: 'configuration',
+		},
+		{
+			providerOverride: {},
+			search: vi.fn(async () => parseDeepSeekSearchResponse({ results: 'drifted' })),
+			reason: 'format',
+		},
+	])(
+		'reports $reason as a non-retryable failure with one attempt',
+		async ({ providerOverride, search, reason }) => {
+			const fetchMock = vi.fn();
+			vi.stubGlobal('fetch', fetchMock);
+			const rounds = [
+				toolRound([searchCall('call-1', 'secret search')]),
+				finalRound('No evidence available.'),
+			];
+			const request = vi.fn(async (
+				_request: AiProviderRequest,
+				_callbacks: { onEvent(event: StreamEvent): void },
+				_signal: AbortSignal,
+			) => {
+				const result = rounds[request.mock.calls.length - 1];
+				if (!result) throw new Error('Unexpected model round');
+				return result;
+			});
+			const coordinator = new DeepSeekWebSearchCoordinator({
+				provider: { ...provider, ...providerOverride },
+				request,
+				...(search ? { search } : {}),
+			});
+
+			const result = await coordinator.submit(aiRequest(), options());
+
+			expect(fetchMock).not.toHaveBeenCalled();
+			expect(result.failedSearches).toBe(1);
+			expect(result.activities).toEqual([{
+				type: 'search',
+				target: 'secret search',
+				status: 'failed',
+				failureReason: reason,
+				attempts: 1,
+			}]);
+			const toolMessage = request.mock.calls[1]?.[0].continuation?.find((message) => message.role === 'tool');
+			const content = toolMessage?.role === 'tool' ? toolMessage.content : '';
+			expect(content).toBe(`{"error":{"kind":"search_failed","reason":"${reason}","attempts":1}}`);
+			expect(content).not.toContain('token-secret');
+		},
+	);
+
 	it('reports an http failure after the single Fetch retry is exhausted', async () => {
 		const target = 'https://example.test/unavailable';
 		const fetchPage = vi.fn(async () => { throw httpFailure(503); });
@@ -1939,6 +2121,92 @@ describe('DeepSeek web transport retry and search degradation', () => {
 			: [])).toEqual([
 			['call-1', '{"error":{"kind":"search_failed","reason":"network","attempts":2}}'],
 		]);
+	});
+
+	it('reports a malformed search payload as a format failure without retrying', async () => {
+		const search = vi.fn(async () => parseDeepSeekSearchResponse({
+			results: [{ title: 'Schema drifted' }],
+		}));
+		const reader = successfulReader();
+		const { coordinator, request } = coordinatorWith([
+			toolRound([searchCall('call-1', 'schema drift')]),
+			finalRound('Answer without that search'),
+		], search, undefined, reader);
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(search).toHaveBeenCalledOnce();
+		expect(reader.extract).not.toHaveBeenCalled();
+		expect(result.content).toBe('Answer without that search');
+		expect(result.failedSearches).toBe(1);
+		expect(result.failedExtractions).toBe(0);
+		expect(result.activities).toEqual([{
+			type: 'search',
+			target: 'schema drift',
+			status: 'failed',
+			failureReason: 'format',
+			attempts: 1,
+		}]);
+		const toolMessages = request.mock.calls[1]?.[0].continuation?.filter(
+			(message) => message.role === 'tool',
+		) ?? [];
+		expect(toolMessages.map((message) => message.role === 'tool'
+			? [message.toolCallId, message.content]
+			: [])).toEqual([
+			['call-1', '{"error":{"kind":"search_failed","reason":"format","attempts":1}}'],
+		]);
+	});
+
+	it('reports a malformed fetch payload as a format failure', async () => {
+		const target = 'https://example.test/drifted';
+		const fetchPage = vi.fn(async () => parseDeepSeekFetchResponse({ title: 'No content field' }));
+		const reader = successfulReader();
+		const { coordinator, request } = coordinatorWith([
+			toolRound([fetchCall('call-fetch', target)]),
+			finalRound('Answer without that page'),
+		], vi.fn(async () => []), fetchPage, reader);
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(fetchPage).toHaveBeenCalledOnce();
+		expect(reader.extract).not.toHaveBeenCalled();
+		expect(result.activities).toEqual([{
+			type: 'fetch',
+			target,
+			status: 'failed',
+			failureReason: 'format',
+			attempts: 1,
+		}]);
+		const toolMessage = request.mock.calls[1]?.[0].continuation?.find((message) => message.role === 'tool');
+		expect(toolMessage?.role === 'tool' && toolMessage.content).toBe(
+			'{"error":{"kind":"fetch_failed","reason":"format","attempts":1}}',
+		);
+	});
+
+	it('does not retry a 200 retrieval response whose body is not JSON', async () => {
+		const fetchMock = vi.fn().mockResolvedValue(new Response('not json', { status: 200 }));
+		vi.stubGlobal('fetch', fetchMock);
+		const search = vi.fn(() => searchDeepSeek(
+			{ id: 'call-1', name: 'web_search', query: 'opaque body', extractionGoal: 'Find evidence.' },
+			provider,
+			new AbortController().signal,
+		));
+		const reader = successfulReader();
+		const { coordinator } = coordinatorWith([
+			toolRound([searchCall('call-1', 'opaque body')]),
+			finalRound('Answer without that search'),
+		], search, undefined, reader);
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(fetchMock).toHaveBeenCalledOnce();
+		expect(result.activities).toEqual([{
+			type: 'search',
+			target: 'opaque body',
+			status: 'failed',
+			failureReason: 'format',
+			attempts: 1,
+		}]);
 	});
 
 	it('does not retry a Search HTTP 403 failure and degrades it', async () => {

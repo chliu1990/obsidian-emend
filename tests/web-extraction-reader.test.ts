@@ -634,6 +634,7 @@ describe('WebExtractionReader extraction and verification', () => {
 		expect(correction.continuation).toBeUndefined();
 		expect(correction.history).toEqual([]);
 		expect(correction.responseFormat).toBe('json_object');
+		expect(correction.allowToolOnlyResponse).toBe(true);
 		expect(correction.userPrompt).toContain('parseable JSON object');
 		expect(correction.userPrompt).toContain('Previous reply');
 		expect(correction.userPrompt).toContain('bare JSON');
@@ -693,6 +694,8 @@ describe('WebExtractionReader extraction and verification', () => {
 		expect(forced.systemPrompt).toContain('round limit');
 		expect(forced.systemPrompt).toContain('JSON');
 		expect(forced.continuation).toHaveLength(12);
+		expect(forced.allowToolOnlyResponse).toBe(true);
+		expect(request.mock.calls[0]![0].allowToolOnlyResponse).toBeUndefined();
 		expect(extracted.outcome).toEqual({
 			outcome: 'evidence',
 			results: [{

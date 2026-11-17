@@ -5294,6 +5294,7 @@ describe('EmendChatView web research', () => {
 				content: 'Answer from available evidence',
 				reasoning: '',
 				failedExtractions: 1,
+				maxToolCalls: 20,
 				skippedWebCalls,
 				activities: [
 					{ type: 'fetch' as const, target: 'https://example.test/unread', status: 'failed' as const },
@@ -5343,6 +5344,57 @@ describe('EmendChatView web research', () => {
 		expect(context.messages[1]?.content.split(skippedWarning)).toHaveLength(2);
 		const finalSave = persistMessages.mock.calls.at(-1)?.[1];
 		expect(finalSave?.[1]?.content).toBe(expectedContent);
+		expect(finalSave?.[1]?.content.split(skippedWarning)).toHaveLength(2);
+	});
+
+	it('reports the enforced call limit in the skipped-call warning', async () => {
+		const requestChatCompletion = vi.fn(async (submission: {
+			callbacks: { onContent(text: string): void };
+		}) => {
+			submission.callbacks.onContent('Answer from available evidence');
+			return {
+				content: 'Answer from available evidence',
+				reasoning: '',
+				failedExtractions: 0,
+				failedSearches: 0,
+				skippedWebCalls: 2,
+				maxToolCalls: 20,
+				omittedEvidence: false,
+				usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4, source: 'provider' as const },
+			};
+		});
+		const persistMessages = vi.fn(async (_notePath: string, _messages: ChatMessage[]) => undefined);
+		const context = {
+			inputEl: { value: 'Research' },
+			isSending: false,
+			isThreadLoading: false,
+			selectedMode: 'ask' as const,
+			webSearchMode: 'auto' as const,
+			messages: [] as ChatMessage[],
+			plugin: {
+				settings: { maxWebToolCalls: 8 },
+				captureChatContext: () => ({ file: { path: 'Note.md' } }),
+				additionalNotesStore: new AdditionalNotesStore(),
+				requestChatCompletion,
+			},
+			toProviderHistory: () => [],
+			persistMessages,
+			render: vi.fn(),
+			scheduleMessageRender: vi.fn(),
+			closed: false,
+			activeController: null,
+			webReviewModal: null,
+		};
+
+		await viewPrototype.submitPrompt.call(context);
+
+		const skippedWarning =
+			'Web retrieval reached the 20-call limit. 2 proposed calls were skipped; the answer may be incomplete.';
+		expect(context.messages[1]?.status).toBe('ready');
+		expect(context.messages[1]?.content).toBe(
+			`Answer from available evidence\n\n${skippedWarning}`,
+		);
+		const finalSave = persistMessages.mock.calls.at(-1)?.[1];
 		expect(finalSave?.[1]?.content.split(skippedWarning)).toHaveLength(2);
 	});
 
@@ -5414,6 +5466,7 @@ describe('EmendChatView web research', () => {
 				reasoning: '',
 				failedExtractions: 0,
 				failedSearches: 1,
+				maxToolCalls: 20,
 				skippedWebCalls: 1,
 				omittedEvidence: true,
 				activities: [],
@@ -5517,6 +5570,7 @@ describe('EmendChatView web research', () => {
 				reasoning: '',
 				failedExtractions: 1,
 				failedSearches: 2,
+				maxToolCalls: 20,
 				skippedWebCalls: 1,
 				omittedEvidence: true,
 				activities: [
@@ -5886,6 +5940,16 @@ describe('EmendChatView web activity review', () => {
 			'http',
 			{ type: 'search' as const, target: 'example query', status: 'failed' as const, failureReason: 'http' as const },
 			'Search · Failed (HTTP) · example query',
+		],
+		[
+			'format',
+			{ type: 'search' as const, target: 'drifted query', status: 'failed' as const, failureReason: 'format' as const },
+			'Search · Failed (format) · drifted query',
+		],
+		[
+			'configuration',
+			{ type: 'search' as const, target: 'unconfigured provider', status: 'failed' as const, failureReason: 'configuration' as const },
+			'Search · Failed (configuration) · unconfigured provider',
 		],
 		[
 			'empty',

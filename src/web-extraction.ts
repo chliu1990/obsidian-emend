@@ -1,3 +1,4 @@
+import { normalizeWebUrl } from './web-search';
 import { measureWebContent } from './web-content-measurement';
 
 export interface WebExtractionDocument {
@@ -44,7 +45,7 @@ export class WebExtractionParseError extends Error {
 interface SearchExtractionResult {
 	title: string;
 	url: string;
-	snippet: string;
+	snippet?: string;
 	summary: string;
 	content: string;
 }
@@ -81,13 +82,50 @@ const MAX_TOTAL_CLAIMS = 24;
 export function buildSearchExtractionDocuments(
 	results: readonly SearchExtractionResult[],
 ): WebExtractionDocument[] {
-	return results.map((result, index) => ({
-		sourceId: `R${index + 1}`,
-		title: result.title,
-		url: result.url,
-		snippet: result.snippet,
-		canonicalText: canonicalText(result.title, result.snippet, result.summary, result.content),
-	}));
+	const merged: SearchExtractionResult[] = [];
+	const indexByUrl = new Map<string, number>();
+	for (const result of results) {
+		const url = normalizeWebUrl(result.url) ?? result.url;
+		const index = indexByUrl.get(url);
+		if (index === undefined) {
+			indexByUrl.set(url, merged.length);
+			merged.push({ ...result, url });
+			continue;
+		}
+		const entry = merged[index];
+		if (!entry) {
+			continue;
+		}
+		if (!entry.title) {
+			entry.title = result.title;
+		}
+		if (!entry.snippet && result.snippet) {
+			entry.snippet = result.snippet;
+		}
+		if (!entry.summary) {
+			entry.summary = result.summary;
+		}
+		if (!entry.content) {
+			entry.content = result.content;
+		}
+	}
+	return merged.map((result, index) => {
+		const document: WebExtractionDocument = {
+			sourceId: `R${index + 1}`,
+			title: result.title,
+			url: result.url,
+			canonicalText: canonicalText(
+				result.title,
+				result.snippet ?? '',
+				result.summary,
+				result.content,
+			),
+		};
+		if (result.snippet !== undefined) {
+			document.snippet = result.snippet;
+		}
+		return document;
+	});
 }
 
 export function buildFetchExtractionDocument(

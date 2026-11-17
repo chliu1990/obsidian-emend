@@ -316,6 +316,21 @@ describe('shared message serialization', () => {
 			webActivities: [{ type: 'search', target: 'query', status: 'failed' }],
 		}));
 	});
+
+	it('loads a stored inconsistent usage triplet without a Provider footer', () => {
+		const message = readyMessage({
+			usage: { promptTokens: 10, completionTokens: 4, totalTokens: 20, source: 'provider' },
+		});
+
+		expect(normalizeLoadedMessage(message).usage).toBeUndefined();
+
+		const validated = validateChatConversation(conversation(session('first', {
+			messages: [message],
+		})));
+
+		expect(validated.droppedMessages).toBe(0);
+		expect(validated.conversation.sessions[0]?.messages[0]?.usage).toBeUndefined();
+	});
 });
 
 describe('schema-3 conversation validation', () => {

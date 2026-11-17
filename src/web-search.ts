@@ -28,7 +28,7 @@ export interface WebSearchRunOptions {
 	signal: AbortSignal;
 }
 
-export type WebFailureReason = 'network' | 'http' | 'empty' | 'reader';
+export type WebFailureReason = 'network' | 'http' | 'format' | 'configuration' | 'empty' | 'reader';
 export type WebReaderFailureKind = 'format' | 'provider' | 'limit';
 
 export interface WebActivityRecord {
@@ -49,6 +49,7 @@ export interface WebToolLoopResult {
 	activities: WebActivityRecord[];
 	failedExtractions: number;
 	failedSearches: number;
+	maxToolCalls: number;
 	skippedWebCalls: number;
 	omittedEvidence: boolean;
 	rounds: Array<{ request: AiProviderRequest; result: StreamResult }>;
