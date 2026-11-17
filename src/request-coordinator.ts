@@ -40,6 +40,7 @@ export type ReadOnlyMode = Exclude<Mode, 'edit'>;
 export interface ReadOnlyStreamCallbacks {
 	onContent: (text: string) => void;
 	onReasoning: (text: string) => void;
+	onContentReset?: () => void;
 }
 
 export type ReadOnlyWebSearchOptions = Omit<
@@ -154,7 +155,10 @@ export class ReadOnlyRequestCoordinator {
 			const result = await this.dependencies.webSearch.submit(request, {
 				...submission.webSearch,
 				question: submission.prompt,
-				callbacks,
+				callbacks: {
+					...callbacks,
+					onContentReset: submission.callbacks.onContentReset,
+				},
 				signal: submission.signal,
 			});
 			return {
