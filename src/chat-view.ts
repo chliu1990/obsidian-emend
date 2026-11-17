@@ -495,7 +495,8 @@ export class EmendChatView extends ItemView {
 				this.isSending ||
 				this.isThreadLoading ||
 				this.isSessionMutating,
-			sendDisabled: this.isModelSelectionSaving ||
+			sendDisabled: !this.notePath ||
+				this.isModelSelectionSaving ||
 				this.isThreadLoading ||
 				this.isSessionMutating ||
 				this.draftCapacityBlocked,
@@ -1638,11 +1639,13 @@ export class EmendChatView extends ItemView {
 			}
 		} catch (error) {
 			new Notice(`Emend: ${getErrorMessage(error)}`);
-			const draft = this.inputEl?.value ?? '';
-			this.render();
-			if (this.inputEl) {
-				this.inputEl.value = draft;
-			}
+			const input = this.inputEl;
+			this.render({
+				draft: input?.value ?? '',
+				selectionStart: input?.selectionStart ?? input?.value.length ?? 0,
+				selectionEnd: input?.selectionEnd ?? input?.value.length ?? 0,
+				focus: Boolean(input) && input?.ownerDocument?.activeElement === input,
+			});
 			return;
 		}
 

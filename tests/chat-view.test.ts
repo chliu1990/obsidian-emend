@@ -8108,3 +8108,57 @@ describe('EmendChatView committed edit persistence', () => {
 		expect(context.isSending).toBe(false);
 	});
 });
+
+describe('EmendChatView composer fail-closed state', () => {
+	beforeEach(() => {
+		noticeMessages().length = 0;
+	});
+
+	it('disables Send when no Markdown note is open', async () => {
+		const fixture = createCapacityView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(false);
+
+		Object.assign(fixture.context.plugin, { getActiveNotePath: () => null });
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+
+		expect(fixture.context.notePath).toBeNull();
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(true);
+	});
+
+	it('restores draft estimate and capacity blocking after a fail-closed capture', async () => {
+		const fixture = createCapacityView({
+			capacity: { contextWindowTokens: 1000, outputReserveTokens: 100 },
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const input = fixture.context.inputEl;
+		if (!input) {
+			throw new Error('Composer missing.');
+		}
+		const draft = 'Question '.repeat(600).trim();
+		expect(fixture.askEstimate('').overCapacity).toBe(false);
+		expect(fixture.askEstimate(draft).overCapacity).toBe(true);
+		input.value = draft;
+		input.dispatch('input');
+		expect(fixture.context.draftCapacityBlocked).toBe(true);
+		fixture.captureChatContext.mockImplementationOnce(() => {
+			throw new Error('The active note is no longer available.');
+		});
+		input.setSelectionRange(10, 20);
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(noticeMessages()).toContain('Emend: The active note is no longer available.');
+		expect(fixture.context.inputEl?.value).toBe(draft);
+		expect(fixture.context.inputEl?.selectionStart).toBe(10);
+		expect(fixture.context.inputEl?.selectionEnd).toBe(20);
+		expect(fixture.context.draftCapacityBlocked).toBe(true);
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedCapacitySummary(fixture.askEstimate(draft)),
+		);
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(true);
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(fixture.savedSnapshots).toEqual([]);
+		expect(fixture.context.messages).toEqual([]);
+	});
+});
