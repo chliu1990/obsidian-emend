@@ -155,3 +155,52 @@ The PR B branch adds 11 tests to the 1,805 counted after PR A. Each task was com
 ### Limits
 
 PR B is unit- and source-verified only. No real-Obsidian run confirms the load-failure recovery, the `.corrupt` backup of a partially valid thread, the quick-action draft restoration in a real textarea, the committed-edit Stop race, the instruction truncation Notice, the single retained modal across real command invocations, or the deleted-target related-note cleanup; that evidence belongs to PR E's exploratory matrix. No macOS, Windows, or real-provider evidence is claimed. The 20,000-character instruction cap is a local character budget, not tokenization.
+
+### Review round
+
+A fresh review of the PR B diff raised one Medium and three Low findings plus one test gap.
+
+- **Medium — legacy drops had no backup.** The schema-1/2 branch reported `droppedMessages: 0` while filtering with `isReadyMessage`, so an unreadable legacy message was still silently removed on the first migration write. `inspectThread` now filters once into `readyMessages` and reports `value.messages.length - readyMessages.length`, so the legacy path inherits the same load warning and the same pre-rewrite `.corrupt` backup as schema 3.
+- **Low — partial truncation marker.** `truncateInstructions` returned `INSTRUCTION_TRUNCATION_MARKER.slice(0, budget)` when the remaining budget was at or below the five-character marker, so the note ended with `[..` or `[...]` used as content. It now returns `undefined` for a text that cannot fit the complete `[...]` marker (a text that fits the tiny budget is still returned whole), so the marker is either complete or absent.
+- **Low — unreadable root instructions.** A rejecting `vault.read` for the vault-root instruction file aborted the whole submission. The root read is now wrapped in the same tolerant path as skills: one `Emend: Could not read the instruction file AGENTS.md.` Notice, no agent text, empty skills, and later calls keep working.
+- **Low — stale retained modal.** `activeSelectionModal` was only cleared on `onunload`, so a user-closed modal stayed referenced and a later command invocation issued a redundant `close()` on it. `SelectionModal` now takes an optional `notifyClosed(modal)` callback from `onClose`, and `main.ts` clears the field only when the closed instance is still the retained one; `onunload` clears the field first and then closes a still-open modal.
+- **Test gap — vacuous target-key assertion.** The deleted-target case asserted an empty list for a key that was never populated. It now seeds a real `Folder-other/Target.md` target beside `Folder/Target.md` and asserts the sibling keeps its selection while `Folder/Target.md` and `Folder/Target-other.md` are dropped, proving the folder boundary for target keys rather than only for entry paths.
+
+New tests:
+
+- `tests/conversation-store.test.ts`: `backs up a legacy thread before dropping an invalid message` — valid legacy message survives, one warning, no write on load, exact original bytes in `.corrupt` after the first mutation.
+- `tests/instructions-loader.test.ts`: `omits the agent text when only 5 characters of budget remain`, `omits the agent text when only 3 characters of budget remain` (parameterized), `skips an unreadable AGENTS.md and still loads skills`.
+- `tests/main.test.ts`: `clears the retained modal when it closes itself` — the shared lifecycle harness now routes the stubbed `close()` through `onClose()` and exposes the retained field, so self-close clears it and a repeated invocation does not call `close()` on the stale instance.
+- `tests/additional-notes-store.test.ts`: strengthened `drops the deleted target note's own selections` (sibling-prefix target key). This one passes against the existing predicate by design; it would fail under a naive `startsWith(folderPath)` boundary.
+
+RED excerpts:
+
+```text
+FAIL tests/conversation-store.test.ts > ConversationStore corruption recovery > backs up a legacy thread before dropping an invalid message
+AssertionError: expected "vi.fn()" to be called once, but got 0 times
+
+FAIL tests/instructions-loader.test.ts > loadAllInstructions > omits the agent text when only 5 characters of budget remain
+AssertionError: expected '[...]' to be undefined
+FAIL tests/instructions-loader.test.ts > loadAllInstructions > omits the agent text when only 3 characters of budget remain
+AssertionError: expected '[..' to be undefined
+FAIL tests/instructions-loader.test.ts > loadAllInstructions > skips an unreadable AGENTS.md and still loads skills
+Error: Unreadable root
+
+FAIL tests/main.test.ts > EmendPlugin Selection modal lifecycle > clears the retained modal when it closes itself
+AssertionError: expected SelectionModal{ app: { …(3) }, …(17) } to be null
+```
+
+The sibling-prefix target-key assertion is not a RED: it documents behavior the store already had and would fail only under a prefix-matching regression.
+
+### Review-round gate
+
+At `6ceb73d` with bundle SHA-256 `1a030bf29b9fc38689b461cff1a808523c24234ba901f2644c558d7292352c50`:
+
+```text
+npm test        53 files / 1,821 tests passed
+npm run lint    clean
+npm run build   clean (tsc -noEmit + esbuild production)
+git diff --check clean
+```
+
+The review round adds 5 tests (1,816 → 1,821). `src/selection-modal.ts` is the only module whose constructor contract changed, and only by one optional trailing callback, so the Stage 45/49 modal behavior and its tests are unchanged.
