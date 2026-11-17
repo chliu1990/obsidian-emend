@@ -394,7 +394,7 @@ The C4–C7 pass ended at 1,837 tests; this round adds one test (the real-comple
 
 ## PR D — provider, privacy, and settings correctness
 
-Branch `fix/2.10-provider-correctness`, based at `5576d4e` (PR C merged, 53 files / 1,838 tests). The first pass ships D1–D3 below; D4–D6 are recorded by the second pass.
+Branch `fix/2.10-provider-correctness`, based at `5576d4e` (PR C merged, 53 files / 1,838 tests). The first pass shipped D1–D3 and the second pass shipped D4–D6; both are recorded below.
 
 ### Fixes (D1–D3)
 
@@ -470,3 +470,82 @@ Base `5576d4e` was 53 files / 1,838 tests, so this pass adds 11. `main.js` is gi
 - Everything here is unit- and source-verified. No real Obsidian, loopback SSE/Search/Fetch harness, or real provider was exercised in this pass; the PR E exploratory matrix owns the live runs, and no macOS, Windows, provider, or assistive-technology claim is made.
 - Rejecting credentials at request time does not rewrite an already-persisted `user:pass@host` value in `data.json`; Settings still stores whatever the user typed, and the next request fails closed with the new message. A settings-level rejection or one-time rewrite was not added because it would change persisted data outside this fix's boundary.
 - The `format` label is a top-level failure reason beside the existing reader failure kind `format`; rows read `Failed (format)` for a schema-drift failure and `Failed (reader format)` for an extractor output failure.
+
+### Second pass — fixes (D4–D6)
+
+4. **D4 — usage-triplet consistency and the enforced call limit.** `provider-stream.ts` exports `isConsistentTokenUsage`, and `parseTokenUsage` now discards a nonnegative-integer triplet whose `total_tokens` is not the sum of `prompt_tokens` and `completion_tokens`, so the inconsistent value never reaches `StreamResult.usage` (M14). `token-usage.ts` applies the same rule defensively: `resolveTokenUsage` and `resolveRoundTokenUsage` treat a stored inconsistent triplet as unusable and take the existing character-estimate path, which labels the footer **Estimated** and keeps the prompt/completion/total relationship exact. A complete, consistent triplet, including legitimately reported zeros, remains **Provider**. The Web loop result gained `maxToolCalls`, holding the limit the coordinator actually enforced: `DeepSeekWebSearchCoordinator` returns `options.maxToolCalls` with the terminal result, `ChatStreamResult` carries it through the read-only coordinator (and `0` for a Web Off request), and `chat-view.ts` renders the skipped-call warning from that snapshot instead of re-reading `settings.maxWebToolCalls` (M19). The sentence shape is unchanged (`Web retrieval reached the <limit>-call limit. <N> proposed call was/were skipped; the answer may be incomplete.`), so a settings change made while the request was in flight can no longer misreport the limit that produced the skips.
+5. **D5 — forced text-less tool-only rounds are classified by their caller.** `AiProviderRequest` gained `allowToolOnlyResponse?: boolean`. When it is true, a response that carries tool calls and no text or reasoning returns normally instead of throwing `No text was found in the provider response.`; the ordinary throw is unchanged for every other request, including an undeclared tool-only response (M20). The two forced rounds set it because neither declares tools: the DeepSeek loop's single terminal no-tools round (set only when the call limit forced it) and the reader's forced no-tools JSON answer. The callers keep their own classifications, so a text-less tool-only forced round now surfaces as `The model returned tool calls after the web call limit was reached.` and as the reader's `limit` failure kind, instead of being converted into a generic missing-text provider failure that lost the limit meaning and, for the reader, changed `failureKind` from `limit` to `provider`.
+6. **D6 — displayed settings values are canonical.** The **Context character limit** and **Web tool call limit** inputs still clamp through `normalizeContextLimit` / `normalizeWebToolCallLimit` on input (M13). They now also rewrite the canonical stored value back into the field on the input `change` event, matching the existing capacity-pair commit behavior: a below-minimum entry displays `1000`, and a cleared call-limit field displays `8`. No new setting, validation rule, or save is added; the write-back saves nothing and only reflects what normalization already persisted, so typing is untouched until the field commits.
+
+`AGENTS.md` records the consistent-triplet rule in the provider-stream, token-usage, Providers and settings, and DeepSeek online search (item 7) text; the enforced-limit snapshot in the web-search, deepseek-web, and request-coordinator rows and the skipped-call warning sentence (item 4); `allowToolOnlyResponse` in the provider-stream, deepseek-web, and web-extraction-reader rows; and the canonical settings display in the Providers and settings paragraph.
+
+### Second-pass regression evidence
+
+New tests (+7; base `40c264e` was 53 files / 1,849 tests):
+
+- `tests/token-usage.test.ts`: `falls back to an estimate when the provider usage triplet is inconsistent` (both resolvers).
+- `tests/provider-stream.test.ts`: the existing `ignores %s usage` table gained an `inconsistent` row.
+- `tests/chat-view.test.ts`: `reports the enforced call limit in the skipped-call warning`; three existing Web fixtures gained a `maxToolCalls` snapshot while their asserted copy stayed byte-identical.
+- `tests/deepseek-web.test.ts`: `classifies a text-less tool-only forced round as a limit failure` (real transport over scripted SSE).
+- `tests/web-extraction-reader.test.ts`: the existing forced-round test now also asserts `allowToolOnlyResponse === true` on the forced request and absent on an ordinary extractor round.
+- `tests/settings.test.ts`: `shows the normalized value after clamping a below-minimum context input`, `restores the default in the call-limit field after clearing it`.
+
+RED before each fix:
+
+```text
+FAIL tests/token-usage.test.ts > resolveTokenUsage > falls back to an estimate when the provider usage triplet is inconsistent
+- { completionTokens: 3, promptTokens: 47, source: 'estimated', totalTokens: 50 }
++ { completionTokens: 5, promptTokens: 12, source: 'provider', totalTokens: 20 }
+  (the new provider-stream `inconsistent` table row emitted the triplet instead of no usage event)
+
+FAIL tests/chat-view.test.ts > EmendChatView web research > reports the enforced call limit in the skipped-call warning
+- Web retrieval reached the 20-call limit. 2 proposed calls were skipped; the answer may be incomplete.
++ Web retrieval reached the 8-call limit. 2 proposed calls were skipped; the answer may be incomplete.
+
+FAIL tests/provider-stream.test.ts > requestAiResponse > returns a text-less tool-only forced round to the caller
+Error: No text was found in the provider response.
+
+FAIL tests/deepseek-web.test.ts > DeepSeekWebSearchCoordinator > classifies a text-less tool-only forced round as a limit failure
+Expected: "The model returned tool calls after the web call limit was reached."
+Received: "No text was found in the provider response."
+
+FAIL tests/web-extraction-reader.test.ts > WebExtractionReader > forces one final no-tools extraction request at the reader round limit
+AssertionError: expected undefined to be true   (forced.allowToolOnlyResponse)
+
+FAIL tests/settings.test.ts > EmendSettingTab canonical input values > shows the normalized value after clamping a below-minimum context input
+AssertionError: expected '999' to be '1000'
+FAIL tests/settings.test.ts > EmendSettingTab canonical input values > restores the default in the call-limit field after clearing it
+AssertionError: expected '' to be '8'
+```
+
+The D5 deepseek-web test drives the real `requestAiResponse` over scripted SSE rounds (one over-limit batch, then a text-less tool-only forced round), so it fails on the transport throw rather than on a mocked coordinator result; the unit-level `returns a text-less tool-only forced round to the caller` covers the flagged return directly, and the existing undeclared-tool-only test still asserts the unflagged throw.
+
+### Second-pass local gate
+
+At code head `5a2a19d`, with `main.js` rebuilt from that tree and SHA-256 `18088f53f52afb820a8b94bfb30573300f0e151271d466558fe42645916922fb`:
+
+```text
+npm test        53 files / 1,856 tests passed
+npm run lint    clean
+npm run build   clean (tsc -noEmit -skipLibCheck + esbuild production)
+git diff --check clean
+```
+
+Base `40c264e` was 53 files / 1,849 tests, so the second pass adds 7. `main.js` is gitignored and was not committed; the docs commit changes the esbuild build identity, so a rebuild at the docs head will not reproduce the hash above.
+
+### Second-pass commits
+
+| Task | Commit | Message |
+| --- | --- | --- |
+| D4 | `9383b9d` | `fix: validate usage triplets and report enforced limits` |
+| D5 | `cb401ea` | `fix: classify forced tool-only rounds at the caller` |
+| D6 | `5a2a19d` | `fix: display canonical settings values` |
+| Docs | this docs commit | `docs: record provider and usage stabilization` |
+
+### Second-pass limits
+
+- Unit- and source-verified only, like D1–D3. No real Obsidian, loopback SSE/Search/Fetch harness, or real provider was run in this pass; the PR E exploratory matrix owns the live runs, and no macOS, Windows, provider, or assistive-technology claim is made.
+- The usage-triplet rule is a consistency check, not an accounting reconciliation. A provider that reports a consistent but wrong triplet is still trusted, and no tokenizer, pricing, or provider metadata is consulted.
+- The enforced-limit snapshot is per submission. A Web Off request reports `0`, and the warning is unreachable without skipped calls, so no ordinary chat copy changed.
+- The canonical write-back happens on `change` (blur/commit), not while typing, so a partially typed number is never rewritten mid-edit; the input keeps whatever the user typed until the field commits, then shows the stored value.
+- D5 changes classification only. A provider that answers a forced round with tool calls still fails without retrieval; nothing is executed, retried, or written, and the reader still treats that outcome as its `limit` failure.
