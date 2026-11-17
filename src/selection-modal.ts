@@ -41,6 +41,7 @@ export class SelectionModal extends Modal {
 			selectionContext: SelectionContextPolicy,
 		) => DraftCapacityEstimate,
 		private readonly smartSelectionContext: boolean,
+		private readonly notifyClosed?: (modal: SelectionModal) => void,
 	) {
 		super(app);
 	}
@@ -166,6 +167,7 @@ export class SelectionModal extends Modal {
 		this.draftCapacityBlocked = false;
 		this.targetFile = null;
 		this.contentEl.empty();
+		this.notifyClosed?.(this);
 	}
 
 	private getTargetPath(): string {

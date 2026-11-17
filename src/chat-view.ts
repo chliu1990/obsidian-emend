@@ -148,6 +148,7 @@ interface MessagePersistence {
 	message: ChatMessage;
 	request: ActiveRequest;
 	titlePrompt?: string;
+	allowAbortedSave?: boolean;
 }
 
 export class EmendChatView extends ItemView {
@@ -516,6 +517,10 @@ export class EmendChatView extends ItemView {
 			}
 		} catch (error) {
 			if (this.isCurrentNoteLoad(notePath, generation)) {
+				const transient = this.getTransientSession(notePath);
+				this.sessions = [transient];
+				this.activeSessionId = transient.id;
+				this.messages = transient.messages;
 				new Notice(`Emend: Could not load this chat. ${getErrorMessage(error)}`);
 			}
 		} finally {
@@ -1496,6 +1501,7 @@ export class EmendChatView extends ItemView {
 			return;
 		}
 		this.selectedMode = action.mode;
+		this.saveCurrentDraft();
 		await this.submitPrompt(action.prompt, { fromQuickAction: true });
 	}
 
@@ -1626,8 +1632,11 @@ export class EmendChatView extends ItemView {
 		const controller = new AbortController();
 		const request: ActiveRequest = { identity, controller, loadingMessage };
 		let finalSaveAttempted = false;
+		let committedEdit = false;
 
-		this.drafts.get(notePath)?.delete(sessionId);
+		if (!options?.fromQuickAction) {
+			this.drafts.get(notePath)?.delete(sessionId);
+		}
 		session.messages.push(userMessage, loadingMessage);
 		this.activeRequest = request;
 		this.activeController = controller;
@@ -1681,6 +1690,7 @@ export class EmendChatView extends ItemView {
 				const summaryOffset = capturedTarget.type === 'selection'
 					? capturedTarget.target.snapshot.from
 					: 0;
+				committedEdit = result.applied;
 				loadingMessage.content = result.applied
 					? formatEditSummary(
 						result.changeCount,
@@ -1760,7 +1770,9 @@ export class EmendChatView extends ItemView {
 					loadingMessage.content += `${loadingMessage.content ? '\n\n' : ''}Web retrieval reached the ${this.plugin.settings.maxWebToolCalls}-call limit. ${skipped} proposed ${skipped === 1 ? 'call was' : 'calls were'} skipped; the answer may be incomplete.`;
 				}
 			}
-			controller.signal.throwIfAborted();
+			if (!committedEdit) {
+				controller.signal.throwIfAborted();
+			}
 			delete loadingMessage.webDraft;
 			const readyAssistant: ChatMessage = { ...loadingMessage, status: 'ready' };
 			finalSaveAttempted = true;
@@ -1775,6 +1787,7 @@ export class EmendChatView extends ItemView {
 					message: readyAssistant,
 					request,
 					titlePrompt: userMessage.content,
+					...(committedEdit ? { allowAbortedSave: true } : {}),
 				},
 			);
 			loadingMessage.status = 'ready';
@@ -1873,7 +1886,9 @@ export class EmendChatView extends ItemView {
 					? undefined
 					: {
 						titlePrompt: persistence.titlePrompt,
-						signal: persistence.request.controller.signal,
+						signal: persistence.allowAbortedSave
+							? undefined
+							: persistence.request.controller.signal,
 					},
 			);
 		} catch (error) {

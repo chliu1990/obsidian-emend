@@ -139,6 +139,21 @@ const productionSubmitPrompt = (EmendChatView.prototype as unknown as {
 const productionRefreshTargetNote = (EmendChatView.prototype as unknown as {
 	refreshTargetNote(this: unknown): Promise<void>;
 }).refreshTargetNote;
+// eslint-disable-next-line @typescript-eslint/unbound-method -- The test wrapper supplies an explicit receiver.
+const productionPersistMessages = (EmendChatView.prototype as unknown as {
+	persistMessages(
+		this: unknown,
+		notePath: string,
+		messages: ChatMessage[],
+		persistence: {
+			session: ChatSession;
+			message: ChatMessage;
+			request: ActiveRequest;
+			titlePrompt?: string;
+			allowAbortedSave?: boolean;
+		},
+	): Promise<ChatSession | undefined>;
+}).persistMessages;
 
 type ComposerRestoreTestState = {
 	draft: string;
@@ -1892,6 +1907,70 @@ describe('EmendChatView conversation loading', () => {
 		await viewPrototype.onClose.call(context);
 
 		expect(context.isThreadLoading).toBe(false);
+	});
+});
+
+describe('EmendChatView thread-load recovery', () => {
+	beforeEach(() => {
+		noticeMessages().length = 0;
+	});
+
+	it('recovers a usable transient session when the thread load fails', async () => {
+		const fixture = createEditTargetView();
+		fixture.conversationStore.loadConversation.mockRejectedValue(
+			new Error('Unreadable thread'),
+		);
+		fixture.requestChatCompletion.mockImplementation(
+			async (submission: ReadOnlySubmission) => {
+				submission.callbacks.onContent?.('Answer');
+				return { content: 'Answer', reasoning: '' };
+			},
+		);
+
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+
+		expect(noticeMessages()).toContain(
+			'Emend: Could not load this chat. Unreadable thread',
+		);
+		expect(fixture.context.sessions).toHaveLength(1);
+		expect(fixture.context.activeSessionId).not.toBeNull();
+		expect(fixture.context.sessions[0]?.id).toBe(fixture.context.activeSessionId);
+		expect(fixture.context.messages).toEqual([]);
+
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Question';
+		}
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.requestChatCompletion).toHaveBeenCalledOnce();
+		expect(fixture.context.messages.map((entry) => entry.status)).toEqual([
+			'ready',
+			'ready',
+		]);
+	});
+
+	it('shows New chat as usable after a failed thread load', async () => {
+		const fixture = createEditTargetView();
+		fixture.conversationStore.loadConversation.mockRejectedValue(
+			new Error('Unreadable thread'),
+		);
+
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+
+		const sessionSelect = findSessionSelect(fixture.contentEl);
+		expect(
+			findElements(fixture.contentEl, (element) => element.tagName === 'option')
+				.map((element) => element.textContent),
+		).toEqual(['New chat']);
+		expect(sessionSelect?.value).toBe(fixture.context.activeSessionId);
+		expect(findSessionButton(fixture.contentEl, 'New chat session')?.disabled).toBe(false);
+		expect(findSessionButton(fixture.contentEl, 'Rename chat session')?.disabled).toBe(false);
+		expect(findSessionButton(fixture.contentEl, 'Delete chat session')?.disabled).toBe(false);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Question';
+			fixture.context.inputEl.dispatch('input');
+		}
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(false);
 	});
 });
 
@@ -7823,5 +7902,93 @@ describe('EmendChatView capacity refresh sources', () => {
 		expect(fixture.captureChatContext).not.toHaveBeenCalled();
 		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
 		expect(fixture.read).not.toHaveBeenCalled();
+	});
+});
+
+describe('EmendChatView quick action drafts', () => {
+	beforeEach(() => {
+		noticeMessages().length = 0;
+	});
+
+	it('preserves the typed draft after a successful quick action', async () => {
+		const fixture = createCapacityView({ mode: 'edit' });
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Keep this';
+		}
+
+		findQuickActionButton(fixture.contentEl, 'fix-grammar')?.dispatch('click');
+		await vi.waitFor(() => expect(fixture.requestChatCompletion).toHaveBeenCalledOnce());
+		await vi.waitFor(() => expect(fixture.context.isSending).toBe(false));
+
+		expect(fixture.requestChatCompletion.mock.calls[0]?.[0]).toMatchObject({
+			mode: 'edit',
+			prompt: QUICK_ACTIONS[0].prompt,
+		});
+		expect(fixture.context.messages[1]?.status).toBe('ready');
+		expect(fixture.context.inputEl?.value).toBe('Keep this');
+		expect(
+			fixture.context.drafts
+				.get('Note.md')
+				?.get(fixture.context.activeSessionId ?? ''),
+		).toBe('Keep this');
+	});
+});
+
+describe('EmendChatView committed edit persistence', () => {
+	it('persists an applied edit result when Stop races the ready snapshot', async () => {
+		const fixture = createSelectionEditSubmission();
+		const session = makeSession('session-1');
+		const context = fixture.context as typeof fixture.context & {
+			sessions: ChatSession[];
+			activeSessionId: string | null;
+			transientSessionIds: Set<string>;
+		};
+		context.sessions = [session];
+		context.activeSessionId = session.id;
+		context.messages = session.messages;
+		context.transientSessionIds = new Set();
+		const saved: ChatMessage[] = [];
+		const appendReadyMessage = vi.fn(async (
+			_notePath: string,
+			_sessionId: string,
+			appended: ChatMessage,
+			options?: { signal?: AbortSignal },
+		) => {
+			options?.signal?.throwIfAborted();
+			saved.push(appended);
+			return { ...session, messages: [...session.messages, appended] };
+		});
+		(
+			context.plugin.conversationStore as unknown as Record<string, unknown>
+		).appendReadyMessage = appendReadyMessage;
+		context.persistMessages = productionPersistMessages as unknown as
+			typeof context.persistMessages;
+		fixture.requestSelectionEdit.mockImplementationOnce(async () => {
+			queueMicrotask(() => context.activeController?.abort());
+			return {
+				applied: true,
+				changeCount: 1,
+				summaryItems: [{ type: 'replace', start: 0, end: 4 }],
+				summary: 'Tightened the wording.',
+				usage: {
+					promptTokens: 4,
+					completionTokens: 2,
+					totalTokens: 6,
+					source: 'provider' as const,
+				},
+			};
+		});
+
+		await viewPrototype.submitPrompt.call(context);
+
+		expect(context.messages[1]?.status).toBe('ready');
+		expect(context.messages[1]?.content).toContain('Tightened the wording.');
+		expect(saved.map((entry) => [entry.role, entry.status])).toEqual([
+			['user', 'ready'],
+			['assistant', 'ready'],
+		]);
+		expect(saved[1]?.content).toContain('Tightened the wording.');
+		expect(context.isSending).toBe(false);
 	});
 });

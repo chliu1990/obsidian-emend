@@ -638,6 +638,131 @@ describe('ConversationStore corruption recovery', () => {
 		expect(adapter.files.has(`${path}.corrupt`)).toBe(false);
 		expect(adapter.operations).toEqual([]);
 	});
+
+	it('backs up the aggregate before rewriting a thread that contains an invalid message', async () => {
+		const adapter = new MemoryAdapter();
+		const { store } = makeStore(adapter);
+		await saveMessages(store, 'Note.md', [readyMessage({ id: 'valid-message' })]);
+		const path = threadPath(adapter);
+		const thread = JSON.parse(adapter.files.get(path) ?? '') as {
+			sessions: Array<{ id: string; messages: ChatMessage[] }>;
+		};
+		const sessionId = thread.sessions[0]?.id ?? '';
+		thread.sessions[0]?.messages.push(readyMessage({
+			id: 'invalid-message',
+			content: 'Unreadable answer',
+			usage: {
+				promptTokens: 1,
+				completionTokens: 1,
+				totalTokens: 1.5,
+				source: 'provider',
+			},
+		}));
+		const original = JSON.stringify(thread);
+		adapter.files.set(path, original);
+		adapter.operations.length = 0;
+
+		await store.appendReadyMessage(
+			'Note.md',
+			sessionId,
+			readyMessage({ id: 'appended', content: 'Appended answer' }),
+			{ now: 5000 },
+		);
+
+		expect(adapter.files.get(`${path}.corrupt`)).toBe(original);
+		expect(adapter.operations.filter((operation) => operation.includes('.corrupt'))).toHaveLength(1);
+		const saved = JSON.parse(adapter.files.get(path) ?? '') as {
+			sessions: Array<{ messages: ChatMessage[] }>;
+		};
+		expect(saved.sessions[0]?.messages.map((entry) => entry.id)).toEqual([
+			'valid-message',
+			'appended',
+		]);
+	});
+
+	it('reports dropped messages without deleting the readable thread', async () => {
+		const adapter = new MemoryAdapter();
+		const { store, warning } = makeStore(adapter);
+		await saveMessages(store, 'Note.md', [readyMessage({ id: 'valid-message' })]);
+		const path = threadPath(adapter);
+		const thread = JSON.parse(adapter.files.get(path) ?? '') as {
+			sessions: Array<{ messages: ChatMessage[] }>;
+		};
+		thread.sessions[0]?.messages.push(readyMessage({
+			id: 'invalid-message',
+			usage: {
+				promptTokens: 1,
+				completionTokens: 1,
+				totalTokens: -1,
+				source: 'provider',
+			},
+		}));
+		const original = JSON.stringify(thread);
+		adapter.files.set(path, original);
+		adapter.operations.length = 0;
+
+		const loaded = await store.loadConversation('Note.md');
+
+		expect(loaded.kind).toBe('schema3');
+		expect(resolveActiveSession(loaded.conversation)?.messages.map((entry) => entry.id)).toEqual([
+			'valid-message',
+		]);
+		expect(warning).toHaveBeenCalledOnce();
+		expect(adapter.files.get(path)).toBe(original);
+		expect(adapter.operations).toEqual([]);
+	});
+
+	it('backs up a legacy thread before dropping an invalid message', async () => {
+		const adapter = new MemoryAdapter();
+		const { store, warning } = makeStore(adapter);
+		await saveMessages(store, 'Note.md', [readyMessage()]);
+		const path = threadPath(adapter);
+		const original = JSON.stringify({
+			version: 1,
+			messages: [
+				readyMessage({ id: 'legacy-valid', content: 'Legacy answer' }),
+				readyMessage({
+					id: 'legacy-invalid',
+					content: 'Unreadable legacy answer',
+					usage: {
+						promptTokens: 1,
+						completionTokens: 1,
+						totalTokens: 1.5,
+						source: 'provider',
+					},
+				}),
+			],
+		});
+		adapter.files.set(path, original);
+		adapter.operations.length = 0;
+
+		const loaded = await store.loadConversation('Note.md');
+
+		expect(loaded.kind).toBe('legacy');
+		expect(resolveActiveSession(loaded.conversation)?.messages.map((entry) => entry.id)).toEqual([
+			'legacy-valid',
+		]);
+		expect(warning).toHaveBeenCalledOnce();
+		expect(adapter.files.get(path)).toBe(original);
+		expect(adapter.operations).toEqual([]);
+
+		await store.appendReadyMessage(
+			'Note.md',
+			'legacy',
+			readyMessage({ id: 'appended', content: 'Appended answer' }),
+			{ now: 4000 },
+		);
+
+		expect(adapter.files.get(`${path}.corrupt`)).toBe(original);
+		expect(adapter.operations.filter((operation) => operation.includes('.corrupt'))).toHaveLength(1);
+		const saved = JSON.parse(adapter.files.get(path) ?? '') as {
+			sessions: Array<{ messages: ChatMessage[] }>;
+		};
+		expect(saved.sessions[0]?.messages.map((entry) => entry.id)).toEqual([
+			'legacy-valid',
+			'appended',
+		]);
+	});
 });
 
 

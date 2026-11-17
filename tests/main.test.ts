@@ -1,7 +1,7 @@
-import { MarkdownView, TFile, TFolder } from 'obsidian';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { MarkdownView, Notice, TFile, TFolder } from 'obsidian';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolveActiveSession } from '../src/chat-sessions';
-import { EmendChatView } from '../src/chat-view';
+import { EMEND_CHAT_VIEW_TYPE, EmendChatView } from '../src/chat-view';
 import type { ConversationDataAdapter } from '../src/conversation-store';
 import { formatVaultQualifiedPath } from '../src/context';
 import {
@@ -592,6 +592,62 @@ describe('EmendPlugin mode keyboard commands', () => {
 		expect(modify).not.toHaveBeenCalled();
 	});
 });
+
+describe('EmendPlugin settings migration', () => {
+	beforeEach(() => {
+		noticeMessages().length = 0;
+	});
+
+	it('registers commands when the legacy key migration save rejects', async () => {
+		const commands: Array<{ id: string }> = [];
+		const registerView = vi.fn();
+		const saveData = vi.fn().mockRejectedValueOnce(new Error('Disk is full'));
+		const setSecret = vi.fn();
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, {
+			app: {
+				vault: {
+					adapter: new MemoryAdapter(),
+					configDir: '.test-config',
+					on: () => ({}),
+				},
+				workspace: { on: () => ({}), getLeavesOfType: () => [] },
+				secretStorage: { setSecret, getSecret: () => null },
+			},
+			loadData: vi.fn().mockResolvedValue({
+				providers: { deepseek: { apiKey: 'legacy-deepseek-key' } },
+			}),
+			saveData,
+			registerView,
+			registerEditorExtension: vi.fn(),
+			registerEvent: vi.fn(),
+			rememberActiveMarkdownView: vi.fn(),
+			addRibbonIcon: vi.fn(),
+			addCommand: vi.fn((command: { id: string }) => commands.push(command)),
+			addSettingTab: vi.fn(),
+		});
+
+		await expect(plugin.onload()).resolves.toBeUndefined();
+
+		expect(setSecret).toHaveBeenCalledOnce();
+		expect(registerView).toHaveBeenCalledWith(EMEND_CHAT_VIEW_TYPE, expect.any(Function));
+		expect(commands.map((command) => command.id)).toEqual(expect.arrayContaining([
+			'emend:switch-to-ask-mode',
+			'emend:switch-to-edit-mode',
+		]));
+		expect(noticeMessages()).toContain(
+			'Emend: Could not save migrated API keys. Disk is full',
+		);
+		expect(plugin.settings.providers.deepseek.apiKey).toBe('legacy-deepseek-key');
+
+		saveData.mockResolvedValueOnce(undefined);
+		await expect(plugin.saveSettings()).resolves.toBeUndefined();
+	});
+});
+
+function noticeMessages(): string[] {
+	return (Notice as unknown as { messages: string[] }).messages;
+}
 
 describe('EmendPlugin additional-note lifecycle', () => {
 	it('routes file and folder rename/delete events without discovery, refresh, reads, or requests', async () => {
@@ -1675,6 +1731,169 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 			} else {
 				delete prototype.open;
 			}
+		}
+	});
+});
+describe('EmendPlugin Selection modal lifecycle', () => {
+	interface RegisteredCommand {
+		id: string;
+		editorCheckCallback?: (
+			checking: boolean,
+			editor: unknown,
+			view: unknown,
+		) => boolean;
+	}
+
+	function createModalHarness() {
+		const commands: RegisteredCommand[] = [];
+		const register = vi.fn();
+		const file = new TFile();
+		file.path = 'Selection.md';
+		const editor = {
+			getSelection: () => 'beta',
+			getValue: () => 'BeforebetaAfter',
+			getCursor: (which: 'from' | 'to') => ({
+				offset: which === 'from' ? 6 : 10,
+			}),
+			posToOffset: (position: { offset: number }) => position.offset,
+			offsetToPos: (offset: number) => ({ offset }),
+			replaceRange: vi.fn(),
+		};
+		const view = Object.assign(
+			Object.create(MarkdownView.prototype) as MarkdownView,
+			{ file, editor },
+		);
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, {
+			app: {
+				vault: {
+					adapter: new MemoryAdapter(),
+					configDir: '.test-config',
+					on: () => ({}),
+					getAbstractFileByPath: () => null,
+					getName: () => 'Vault',
+				},
+				workspace: {
+					on: () => ({}),
+					getLeavesOfType: () => [],
+				},
+				secretStorage: { setSecret: vi.fn(), getSecret: vi.fn(() => null) },
+			},
+			settings: structuredClone(DEFAULT_SETTINGS),
+			loadSettings: vi.fn().mockResolvedValue(undefined),
+			registerView: vi.fn(),
+			registerEditorExtension: vi.fn(),
+			registerEvent: vi.fn(),
+			rememberActiveMarkdownView: vi.fn(),
+			addRibbonIcon: vi.fn(),
+			addCommand: vi.fn((command: RegisteredCommand) => commands.push(command)),
+			addSettingTab: vi.fn(),
+			register,
+			getTargetMarkdownView: () => view,
+		});
+		const opened: SelectionModal[] = [];
+		const closed: SelectionModal[] = [];
+		const prototype = SelectionModal.prototype as unknown as {
+			open?: () => void;
+			close?: () => void;
+		};
+		const originalOpen = prototype.open;
+		const originalClose = prototype.close;
+		prototype.open = function (this: SelectionModal) {
+			opened.push(this);
+			(this as unknown as { contentEl: { empty(): void } }).contentEl = {
+				empty: vi.fn(),
+			};
+		};
+		prototype.close = function (this: SelectionModal) {
+			closed.push(this);
+			this.onClose();
+		};
+		return {
+			commands,
+			register,
+			plugin,
+			editor,
+			view,
+			opened,
+			closed,
+			activeModal: () =>
+				(plugin as unknown as { activeSelectionModal: SelectionModal | null })
+					.activeSelectionModal,
+			restore: () => {
+				if (originalOpen) {
+					prototype.open = originalOpen;
+				} else {
+					delete prototype.open;
+				}
+				if (originalClose) {
+					prototype.close = originalClose;
+				} else {
+					delete prototype.close;
+				}
+			},
+		};
+	}
+
+	it('retains at most one selection modal across repeated command invocations', async () => {
+		const harness = createModalHarness();
+		await harness.plugin.onload();
+		try {
+			const modifyCommand = harness.commands.find(
+				(command) => command.id === 'emend:modify-selected-text',
+			);
+			expect(modifyCommand).toBeDefined();
+			expect(
+				modifyCommand?.editorCheckCallback?.(false, harness.editor, harness.view),
+			).toBe(true);
+			expect(
+				modifyCommand?.editorCheckCallback?.(false, harness.editor, harness.view),
+			).toBe(true);
+
+			expect(harness.opened).toHaveLength(2);
+			expect(harness.closed).toEqual([harness.opened[0]]);
+			expect(harness.register).not.toHaveBeenCalled();
+
+			harness.plugin.onunload();
+
+			expect(harness.closed).toEqual([harness.opened[0], harness.opened[1]]);
+			expect(harness.register).not.toHaveBeenCalled();
+		} finally {
+			harness.restore();
+		}
+	});
+
+	it('clears the retained modal when it closes itself', async () => {
+		const harness = createModalHarness();
+		await harness.plugin.onload();
+		try {
+			const modifyCommand = harness.commands.find(
+				(command) => command.id === 'emend:modify-selected-text',
+			);
+			expect(
+				modifyCommand?.editorCheckCallback?.(false, harness.editor, harness.view),
+			).toBe(true);
+			const first = harness.opened[0];
+			expect(harness.activeModal()).toBe(first);
+
+			first?.close();
+
+			expect(harness.activeModal()).toBeNull();
+			expect(harness.closed).toEqual([first]);
+
+			expect(
+				modifyCommand?.editorCheckCallback?.(false, harness.editor, harness.view),
+			).toBe(true);
+
+			expect(harness.closed).toEqual([first]);
+			expect(harness.opened).toHaveLength(2);
+			expect(harness.activeModal()).toBe(harness.opened[1]);
+
+			harness.plugin.onunload();
+
+			expect(harness.closed).toEqual([first, harness.opened[1]]);
+		} finally {
+			harness.restore();
 		}
 	});
 });

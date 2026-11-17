@@ -440,6 +440,9 @@ export class AdditionalNotesStore {
 	): void {
 		const nextSelections = new Map<string, AdditionalNoteTargetState>();
 		for (const [targetPath, state] of this.selections) {
+			if (isDeletedPath(targetPath)) {
+				continue;
+			}
 			const next: AdditionalNoteTargetState = {
 				entries: [],
 				helpers: state.helpers.filter((helper) => !isInvalidHelper(helper)).map(cloneHelper),

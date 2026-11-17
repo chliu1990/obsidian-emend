@@ -150,7 +150,12 @@ export function legacyConversation(messages: ChatMessage[]): ChatConversation {
 	};
 }
 
-export function validateChatConversation(value: unknown): ChatConversation {
+export interface ValidatedChatConversation {
+	conversation: ChatConversation;
+	droppedMessages: number;
+}
+
+export function validateChatConversation(value: unknown): ValidatedChatConversation {
 	if (!isRecord(value) || value.version !== 3 || !Array.isArray(value.sessions)) {
 		throw new Error('Invalid chat conversation.');
 	}
@@ -159,6 +164,7 @@ export function validateChatConversation(value: unknown): ChatConversation {
 		throw new Error('Invalid chat conversation.');
 	}
 	const ids = new Set<string>();
+	let droppedMessages = 0;
 	const sessions = value.sessions.map((entry): ChatSession => {
 		if (
 			!isRecord(entry) ||
@@ -176,15 +182,17 @@ export function validateChatConversation(value: unknown): ChatConversation {
 			throw new Error('Invalid chat conversation.');
 		}
 		ids.add(entry.id);
+		const messages = entry.messages
+			.filter(isReadyMessage)
+			.map((message) => normalizeLoadedMessage({ ...message }));
+		droppedMessages += entry.messages.length - messages.length;
 		return {
 			id: entry.id,
 			title: entry.title,
 			titleSource: entry.titleSource,
 			createdAt: entry.createdAt,
 			updatedAt: entry.updatedAt,
-			messages: entry.messages
-				.filter(isReadyMessage)
-				.map((message) => normalizeLoadedMessage({ ...message })),
+			messages,
 		};
 	});
 	if (
@@ -194,7 +202,10 @@ export function validateChatConversation(value: unknown): ChatConversation {
 	) {
 		throw new Error('Invalid chat conversation.');
 	}
-	return { version: 3, lastActiveSessionId, sessions };
+	return {
+		conversation: { version: 3, lastActiveSessionId, sessions },
+		droppedMessages,
+	};
 }
 
 export function toPersistedMessage(message: ChatMessage): ChatMessage {

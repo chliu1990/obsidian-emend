@@ -44,11 +44,13 @@ describe('quick action submission', () => {
 				estimate: undefined,
 				blockMessage: undefined,
 			}),
+			saveCurrentDraft: vi.fn(),
 			submitPrompt: vi.fn(async (_prompt: string) => {}),
 		};
 
 		await viewPrototype.submitQuickAction.call(context, action);
 
+		expect(context.saveCurrentDraft).toHaveBeenCalledOnce();
 		expect(context.selectedMode).toBe('edit');
 		expect(context.submitPrompt).toHaveBeenCalledTimes(1);
 		expect(context.submitPrompt).toHaveBeenCalledWith(action.prompt, {

@@ -68,6 +68,7 @@ export default class EmendPlugin extends Plugin {
 	private settingsSaveQueue: Promise<void> | undefined;
 	private lastMarkdownView: MarkdownView | null = null;
 	private pendingNotePaths: Set<string> | undefined;
+	private activeSelectionModal: SelectionModal | null = null;
 
 	async onload() {
 		await this.loadSettings();
@@ -195,8 +196,14 @@ export default class EmendPlugin extends Plugin {
 							selectionContext,
 						),
 						this.settings.smartSelectionContext,
+						(closed) => {
+							if (this.activeSelectionModal === closed) {
+								this.activeSelectionModal = null;
+							}
+						},
 					);
-					this.register(() => modal.close());
+					this.activeSelectionModal?.close();
+					this.activeSelectionModal = modal;
 					modal.open();
 				} catch (error) {
 					new Notice(`Emend: ${getErrorMessage(error)}`);
@@ -208,23 +215,38 @@ export default class EmendPlugin extends Plugin {
 		this.addSettingTab(new EmendSettingTab(this.app, this));
 	}
 
+	onunload() {
+		const modal = this.activeSelectionModal;
+		this.activeSelectionModal = null;
+		modal?.close();
+	}
+
 	async loadSettings() {
 		this.settings = normalizeSettings(await this.loadData());
 		const storage = this.getApiKeyStorage();
-		let migrated = false;
+		const migratedProviders: ProviderId[] = [];
 		for (const providerId of ['deepseek', 'kimi', 'custom'] as const) {
 			const provider = this.settings.providers[providerId];
-			if (provider.apiKey) {
-				const legacyApiKey = provider.apiKey.trim();
-				if (legacyApiKey) {
-					storage.setApiKey(providerId, legacyApiKey);
-				}
-				provider.apiKey = '';
-				migrated = true;
+			if (!provider.apiKey) {
+				continue;
 			}
+			const legacyApiKey = provider.apiKey.trim();
+			if (legacyApiKey) {
+				storage.setApiKey(providerId, legacyApiKey);
+			}
+			migratedProviders.push(providerId);
 		}
-		if (migrated) {
+		if (migratedProviders.length === 0) {
+			return;
+		}
+		try {
 			await this.saveSettings();
+		} catch (error) {
+			new Notice(`Emend: Could not save migrated API keys. ${getErrorMessage(error)}`);
+			return;
+		}
+		for (const providerId of migratedProviders) {
+			this.settings.providers[providerId].apiKey = '';
 		}
 	}
 
