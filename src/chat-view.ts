@@ -516,6 +516,10 @@ export class EmendChatView extends ItemView {
 			}
 		} catch (error) {
 			if (this.isCurrentNoteLoad(notePath, generation)) {
+				const transient = this.getTransientSession(notePath);
+				this.sessions = [transient];
+				this.activeSessionId = transient.id;
+				this.messages = transient.messages;
 				new Notice(`Emend: Could not load this chat. ${getErrorMessage(error)}`);
 			}
 		} finally {

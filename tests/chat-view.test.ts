@@ -1895,6 +1895,70 @@ describe('EmendChatView conversation loading', () => {
 	});
 });
 
+describe('EmendChatView thread-load recovery', () => {
+	beforeEach(() => {
+		noticeMessages().length = 0;
+	});
+
+	it('recovers a usable transient session when the thread load fails', async () => {
+		const fixture = createEditTargetView();
+		fixture.conversationStore.loadConversation.mockRejectedValue(
+			new Error('Unreadable thread'),
+		);
+		fixture.requestChatCompletion.mockImplementation(
+			async (submission: ReadOnlySubmission) => {
+				submission.callbacks.onContent?.('Answer');
+				return { content: 'Answer', reasoning: '' };
+			},
+		);
+
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+
+		expect(noticeMessages()).toContain(
+			'Emend: Could not load this chat. Unreadable thread',
+		);
+		expect(fixture.context.sessions).toHaveLength(1);
+		expect(fixture.context.activeSessionId).not.toBeNull();
+		expect(fixture.context.sessions[0]?.id).toBe(fixture.context.activeSessionId);
+		expect(fixture.context.messages).toEqual([]);
+
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Question';
+		}
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(fixture.requestChatCompletion).toHaveBeenCalledOnce();
+		expect(fixture.context.messages.map((entry) => entry.status)).toEqual([
+			'ready',
+			'ready',
+		]);
+	});
+
+	it('shows New chat as usable after a failed thread load', async () => {
+		const fixture = createEditTargetView();
+		fixture.conversationStore.loadConversation.mockRejectedValue(
+			new Error('Unreadable thread'),
+		);
+
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+
+		const sessionSelect = findSessionSelect(fixture.contentEl);
+		expect(
+			findElements(fixture.contentEl, (element) => element.tagName === 'option')
+				.map((element) => element.textContent),
+		).toEqual(['New chat']);
+		expect(sessionSelect?.value).toBe(fixture.context.activeSessionId);
+		expect(findSessionButton(fixture.contentEl, 'New chat session')?.disabled).toBe(false);
+		expect(findSessionButton(fixture.contentEl, 'Rename chat session')?.disabled).toBe(false);
+		expect(findSessionButton(fixture.contentEl, 'Delete chat session')?.disabled).toBe(false);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Question';
+			fixture.context.inputEl.dispatch('input');
+		}
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(false);
+	});
+});
+
 describe('EmendChatView conversation saving', () => {
 	it('saves the ready user message and completed assistant message with usage', async () => {
 		const savedSnapshots: Array<Array<{ role: string; status: string; content: string }>> = [];
