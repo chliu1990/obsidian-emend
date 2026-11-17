@@ -519,6 +519,7 @@ function createEditTargetView(options: {
 		pendingMarkdownRenders: 0,
 		pendingScrollRestore: null,
 		responseStartMessageId: null,
+		responseStartRenderGeneration: null as number | null,
 		followLatestMessages: true,
 		renderGeneration: 0,
 		cancelPendingRender: vi.fn(),
@@ -6222,6 +6223,52 @@ describe('EmendChatView latest-message scrolling', () => {
 		expect(messagesEl.scrollTop).toBe(200);
 		expect(context.responseStartMessageId).toBeNull();
 	});
+
+	it('wires a real completion to its own render generation before aligning', async () => {
+		const fixture = createEditTargetView();
+		const pendingMarkdown = deferred<void>();
+		vi.spyOn(MarkdownRenderer, 'render').mockReturnValue(pendingMarkdown.promise);
+		fixture.requestChatCompletion.mockImplementation(async ({ callbacks }) => {
+			callbacks.onContent('Streamed **answer**');
+			return { content: 'Streamed **answer**', reasoning: '' };
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Question';
+		}
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		const generation = fixture.context.renderGeneration;
+		expect(fixture.context.responseStartMessageId).not.toBeNull();
+		expect(fixture.context.responseStartRenderGeneration).toBe(generation);
+		expect(fixture.context.pendingScrollRestore).not.toBeNull();
+
+		const messagesEl = (fixture.context as unknown as { messagesEl: FakeElement }).messagesEl;
+		const assistantId = fixture.context.messages[1]?.id;
+		if (!messagesEl || !assistantId) {
+			throw new Error('Completed answer missing.');
+		}
+		const responseEl = findMessageNode(messagesEl, assistantId);
+		if (!responseEl) {
+			throw new Error('Completed answer element missing.');
+		}
+		Object.assign(messagesEl, {
+			scrollTop: 40,
+			getBoundingClientRect: () => ({ top: 100 }),
+			querySelector: () => responseEl,
+		});
+		Object.assign(responseEl, {
+			getBoundingClientRect: () => ({ top: 260 }),
+		});
+
+		viewPrototype.settleMarkdownRender.call(fixture.context, generation);
+
+		expect(messagesEl.scrollTop).toBe(200);
+		expect(fixture.context.responseStartMessageId).toBeNull();
+		expect(fixture.context.responseStartRenderGeneration).toBeNull();
+		expect(fixture.context.pendingScrollRestore).not.toBeNull();
+	});
 });
 
 
@@ -8308,6 +8355,13 @@ describe('EmendChatView session switch guard', () => {
 		const submission = viewPrototype.submitPrompt.call(fixture.context);
 		await vi.waitFor(() => expect(fixture.requestChatCompletion).toHaveBeenCalledOnce());
 
+		const sessionSelect = findSessionSelect(fixture.contentEl);
+		if (!sessionSelect) {
+			throw new Error('Chat session selector missing.');
+		}
+		expect(sessionSelect.value).toBe('a1');
+		sessionSelect.value = 'a2';
+
 		await viewPrototype.switchActiveSession.call(fixture.context, 'a2');
 
 		expect(fixture.context.activeSessionId).toBe('a1');
@@ -8315,6 +8369,9 @@ describe('EmendChatView session switch guard', () => {
 		expect(fixture.context.messages[1]?.status).toBe('loading');
 		expect(fixture.context.isSending).toBe(true);
 		expect(requestSignal?.aborted).toBe(false);
+		expect(fixture.conversationStore.setActiveSession).not.toHaveBeenCalled();
+		expect(sessionSelect.value).toBe('a1');
+		expect(sessionSelect.disabled).toBe(true);
 		expect(fixture.conversationStore.setActiveSession).not.toHaveBeenCalled();
 
 		streamContent?.('Streamed answer');

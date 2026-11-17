@@ -19,7 +19,10 @@ import {
 	resolveActiveSession,
 	type ChatSession,
 } from './chat-sessions';
-import { ChatSessionControls } from './chat-session-controls';
+import {
+	ChatSessionControls,
+	type ChatSessionControlsState,
+} from './chat-session-controls';
 import {
 	ChatComposerControls,
 	type ComposerPermissionState,
@@ -299,6 +302,19 @@ export class EmendChatView extends ItemView {
 		this.contentEl.empty();
 	}
 
+	private sessionControlState(): ChatSessionControlsState {
+		return {
+			sessions: this.sessions,
+			activeSessionId: this.activeSessionId,
+			disabled: this.isSending || this.isThreadLoading || this.isSessionMutating,
+		};
+	}
+
+	private syncSessionControl() {
+		// A refused switch must not leave the native selector on the rejected option.
+		this.sessionControls?.render(this.sessionControlState());
+	}
+
 	refreshCapacityEstimate() {
 		if (!this.capacityDisplay) {
 			return;
@@ -572,14 +588,16 @@ export class EmendChatView extends ItemView {
 	async switchActiveSession(sessionId: string): Promise<void> {
 		const notePath = this.notePath;
 		const currentSessionId = this.activeSessionId;
+		const isPending = this.isSending || this.isThreadLoading || this.isSessionMutating;
 		if (
 			!notePath ||
 			!currentSessionId ||
 			sessionId === currentSessionId ||
-			this.isSending ||
-			this.isThreadLoading ||
-			this.isSessionMutating
+			isPending
 		) {
+			if (isPending) {
+				this.syncSessionControl();
+			}
 			return;
 		}
 		const target = this.sessions.find((session) => session.id === sessionId);
@@ -1144,11 +1162,7 @@ export class EmendChatView extends ItemView {
 				void this.deleteActiveSession();
 			},
 		}, this.app);
-		this.sessionControls.render({
-			sessions: this.sessions,
-			activeSessionId: this.activeSessionId,
-			disabled: this.isSending || this.isThreadLoading || this.isSessionMutating,
-		});
+		this.sessionControls.render(this.sessionControlState());
 
 		const messagesEl = contentEl.createDiv('emend-chat-messages');
 		this.messagesEl = messagesEl;
@@ -1504,8 +1518,6 @@ export class EmendChatView extends ItemView {
 			: null;
 		this.responseStartMessageId = null;
 		this.responseStartRenderGeneration = null;
-		const restore = this.pendingScrollRestore;
-		this.pendingScrollRestore = null;
 		if (responseStartMessageId) {
 			const messageEl = this.messagesEl?.querySelector<HTMLElement>(
 				`[data-message-id="${responseStartMessageId}"]`,
@@ -1517,6 +1529,8 @@ export class EmendChatView extends ItemView {
 			}
 			return;
 		}
+		const restore = this.pendingScrollRestore;
+		this.pendingScrollRestore = null;
 		if (restore) {
 			this.restoreMessageScroll(restore.previousScrollTop, restore.wasFollowing);
 		}
