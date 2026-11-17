@@ -109,6 +109,7 @@ export default class EmendPlugin extends Plugin {
 					} else if (file instanceof TFolder) {
 						this.additionalNotesStore.renameFolder(oldPath, file.path);
 					}
+					refreshChatTargetNotes();
 				}),
 			);
 			this.registerEvent(

@@ -258,6 +258,109 @@ describe('EmendPlugin workspace conversation events', () => {
 	});
 });
 
+describe('EmendPlugin note rename refresh', () => {
+	it('refreshes open chat views when the active note is renamed', async () => {
+		const adapter = new MemoryAdapter();
+		const vaultHandlers = new Map<string, (file: TFile, oldPath?: string) => void>();
+		const requestChatCompletion = vi.fn(
+			async (submission: ReadOnlySubmission) => {
+				submission.callbacks.onContent('Renamed answer');
+				return { content: 'Renamed answer', reasoning: '' };
+			},
+		);
+		let activeNotePath = 'Old.md';
+		const leaf: { view?: EmendChatView } = {};
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, {
+			app: {
+				vault: {
+					adapter,
+					configDir: '.test-config',
+					on: (event: string, handler: (file: TFile, oldPath?: string) => void) => {
+						vaultHandlers.set(event, handler);
+						return {};
+					},
+				},
+				workspace: {
+					on: () => ({}),
+					getLeavesOfType: () => [leaf],
+				},
+			},
+			loadSettings: vi.fn().mockResolvedValue(undefined),
+			registerView: vi.fn(),
+			registerEditorExtension: vi.fn(),
+			registerEvent: vi.fn(),
+			rememberActiveMarkdownView: vi.fn(),
+			addRibbonIcon: vi.fn(),
+			addCommand: vi.fn(),
+			addSettingTab: vi.fn(),
+			getActiveNotePath: () => activeNotePath,
+			captureChatContext: () => ({ file: { path: activeNotePath } }),
+			requestChatCompletion,
+			settings: structuredClone(DEFAULT_SETTINGS),
+		});
+		const view = Object.create(EmendChatView.prototype) as EmendChatView;
+		Object.assign(view, {
+			plugin,
+			notePath: 'Old.md',
+			conversationGeneration: 0,
+			sessions: [],
+			activeSessionId: null,
+			activeRequest: null,
+			isSessionMutating: false,
+			transientSessionIds: new Set<string>(),
+			transientSessions: new Map(),
+			messages: [] as ChatMessage[],
+			selectedMode: 'ask',
+			chatTarget: 'note',
+			isThreadLoading: false,
+			isSending: false,
+			activeController: null,
+			closed: false,
+			inputEl: { value: '' },
+			drafts: new Map<string, Map<string, string>>(),
+			render: vi.fn(),
+			scheduleMessageRender: vi.fn(),
+			saveCurrentDraft: vi.fn(),
+		});
+		leaf.view = view;
+		await plugin.onload();
+		noticeMessages().length = 0;
+		const state = view as unknown as {
+			notePath: string | null;
+			isThreadLoading: boolean;
+			messages: ChatMessage[];
+			inputEl: { value: string } | null;
+		};
+
+		activeNotePath = 'New.md';
+		const renamed = new TFile();
+		renamed.path = 'New.md';
+		vaultHandlers.get('rename')?.(renamed, 'Old.md');
+		await waitFor(() => state.notePath === 'New.md' && !state.isThreadLoading);
+
+		if (!state.inputEl) {
+			throw new Error('Composer missing.');
+		}
+		state.inputEl.value = 'Renamed prompt';
+		await (view as unknown as { submitPrompt(): Promise<void> }).submitPrompt.call(view);
+
+		expect(noticeMessages()).not.toContain(
+			'Emend: The active note changed before the request started. Try again.',
+		);
+		expect(requestChatCompletion).toHaveBeenCalledOnce();
+		const submission = requestChatCompletion.mock.calls[0]?.[0];
+		expect(submission?.context.file.path).toBe('New.md');
+		const stored = resolveActiveSession(
+			(await plugin.conversationStore.loadConversation('New.md')).conversation,
+		)?.messages ?? [];
+		expect(stored.map((item) => item.content)).toEqual([
+			'Renamed prompt',
+			'Renamed answer',
+		]);
+	});
+});
+
 describe('EmendPlugin selection presentation registration', () => {
 	it('registers one live-selection extension without requests, writes, or selection mutation', async () => {
 		const registerEditorExtension = vi.fn();
