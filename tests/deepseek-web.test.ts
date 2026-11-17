@@ -121,6 +121,33 @@ describe('DeepSeek retrieval clients', () => {
 		})).toHaveLength(1);
 	});
 
+	it('parses search results that omit optional site_name and date', () => {
+		const withoutOptional = {
+			title: 'Emend documentation',
+			url: 'https://example.test/emend',
+			snippet: 'Short evidence',
+			summary: 'Longer model evidence',
+			content: '',
+		};
+		expect(parseDeepSeekSearchResponse({ results: [withoutOptional] })).toEqual([withoutOptional]);
+
+		const withoutSnippet = {
+			title: 'Emend documentation',
+			url: 'https://example.test/emend',
+			summary: 'Longer model evidence',
+			content: '',
+			site_name: 'Example',
+			date: null,
+		};
+		expect(parseDeepSeekSearchResponse({ results: [withoutSnippet] })).toEqual([{
+			title: 'Emend documentation',
+			url: 'https://example.test/emend',
+			summary: 'Longer model evidence',
+			content: '',
+			siteName: 'Example',
+		}]);
+	});
+
 	it('rejects malformed retrieval payloads without echoing them', () => {
 		expect(() => parseDeepSeekSearchResponse({ results: [{ secret: 'do-not-echo' }] })).toThrow(
 			'malformed search response',
@@ -550,6 +577,37 @@ describe('DeepSeekWebSearchCoordinator', () => {
 			}>;
 		};
 		expect(payload.results.map((result: { sourceId: string }) => result.sourceId)).toEqual(['S2', 'S1']);
+	});
+
+	it('merges search results that share a normalized URL into one cited source', async () => {
+		const search = vi.fn(async () => [
+			parsedSearchResult,
+			{ ...parsedSearchResult, title: 'Duplicate hit', url: 'https://EXAMPLE.test/emend' },
+		]);
+		const reader = successfulReader();
+		const { coordinator, request } = coordinatorWith([
+			toolRound([searchCall('call-1', 'duplicate hits')]),
+			finalRound('Answer [S1]'),
+		], search, undefined, reader);
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(result.sources).toEqual([{
+			id: 'S1',
+			title: 'Emend documentation',
+			url: 'https://example.test/emend',
+			snippet: 'Short evidence',
+		}]);
+		expect(result.activities).toEqual([{ type: 'search', target: 'duplicate hits', status: 'completed' }]);
+		const readerInput = reader.extract.mock.calls[0]?.[0];
+		expect(readerInput?.documents).toHaveLength(1);
+		expect(readerInput?.documents[0]?.url).toBe('https://example.test/emend');
+		const toolMessage = request.mock.calls[1]?.[0].continuation?.find((message) => message.role === 'tool');
+		const payload = JSON.parse(toolMessage?.role === 'tool' ? toolMessage.content : '{}') as {
+			results: Array<{ sourceId: string }>;
+		};
+		expect(payload.results).toHaveLength(1);
+		expect(payload.results[0]?.sourceId).toBe('S1');
 	});
 
 	it('fits a final staged payload within the per-call cap instead of failing the extraction', async () => {

@@ -1,3 +1,4 @@
+import { normalizeWebUrl } from './web-search';
 import { measureWebContent } from './web-content-measurement';
 
 export interface WebExtractionDocument {
@@ -44,7 +45,7 @@ export class WebExtractionParseError extends Error {
 interface SearchExtractionResult {
 	title: string;
 	url: string;
-	snippet: string;
+	snippet?: string;
 	summary: string;
 	content: string;
 }
@@ -81,13 +82,26 @@ const MAX_TOTAL_CLAIMS = 24;
 export function buildSearchExtractionDocuments(
 	results: readonly SearchExtractionResult[],
 ): WebExtractionDocument[] {
-	return results.map((result, index) => ({
-		sourceId: `R${index + 1}`,
-		title: result.title,
-		url: result.url,
-		snippet: result.snippet,
-		canonicalText: canonicalText(result.title, result.snippet, result.summary, result.content),
-	}));
+	const documents: WebExtractionDocument[] = [];
+	const seen = new Set<string>();
+	for (const result of results) {
+		const url = normalizeWebUrl(result.url) ?? result.url;
+		if (seen.has(url)) {
+			continue;
+		}
+		seen.add(url);
+		const document: WebExtractionDocument = {
+			sourceId: `R${documents.length + 1}`,
+			title: result.title,
+			url,
+			canonicalText: canonicalText(result.title, result.snippet ?? '', result.summary, result.content),
+		};
+		if (result.snippet !== undefined) {
+			document.snippet = result.snippet;
+		}
+		documents.push(document);
+	}
+	return documents;
 }
 
 export function buildFetchExtractionDocument(

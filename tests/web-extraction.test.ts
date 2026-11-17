@@ -92,6 +92,45 @@ describe('canonical extraction documents', () => {
 		]);
 	});
 
+	it('assigns one temporary ID per normalized URL and drops duplicate hits', () => {
+		expect(buildSearchExtractionDocuments([
+			{
+				title: 'First',
+				url: 'https://EXAMPLE.test/one',
+				snippet: 'One snippet',
+				summary: 'One summary',
+				content: 'One content',
+			},
+			{
+				title: 'Duplicate',
+				url: 'https://example.test/one',
+				snippet: 'Duplicate snippet',
+				summary: 'Duplicate summary',
+				content: 'Duplicate content',
+			},
+			{
+				title: 'Second',
+				url: 'https://example.test/two',
+				summary: '',
+				content: 'Two content',
+			},
+		])).toEqual([
+			{
+				sourceId: 'R1',
+				title: 'First',
+				url: 'https://example.test/one',
+				snippet: 'One snippet',
+				canonicalText: 'Title: First\nSnippet: One snippet\nSummary: One summary\nContent: One content',
+			},
+			{
+				sourceId: 'R2',
+				title: 'Second',
+				url: 'https://example.test/two',
+				canonicalText: 'Title: Second\nSnippet: \nSummary: \nContent: Two content',
+			},
+		]);
+	});
+
 	it('builds one exact Fetch document with empty snippet and summary fields', () => {
 		expect(buildFetchExtractionDocument({
 			title: 'Fetched page',

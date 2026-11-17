@@ -75,7 +75,7 @@ const FATAL_WEB_HTTP_STATUSES = [400, 401, 402, 413];
 export interface DeepSeekSearchResult {
 	title: string;
 	url: string;
-	snippet: string;
+	snippet?: string;
 	summary: string;
 	content: string;
 	siteName?: string;
@@ -558,11 +558,11 @@ export function parseDeepSeekSearchResponse(value: unknown): DeepSeekSearchResul
 			!isRecord(entry) ||
 			typeof entry.title !== 'string' ||
 			typeof entry.url !== 'string' ||
-			typeof entry.snippet !== 'string' ||
+			!isOptionalString(entry.snippet) ||
 			typeof entry.summary !== 'string' ||
 			typeof entry.content !== 'string' ||
-			(typeof entry.site_name !== 'string' && entry.site_name !== null) ||
-			(typeof entry.date !== 'string' && entry.date !== null)
+			!isOptionalString(entry.site_name) ||
+			!isOptionalString(entry.date)
 		) {
 			throw new DeepSeekResponseFormatError('DeepSeek returned a malformed search response.');
 		}
@@ -570,15 +570,22 @@ export function parseDeepSeekSearchResponse(value: unknown): DeepSeekSearchResul
 		if (!url) {
 			continue;
 		}
-		results.push({
+		const result: DeepSeekSearchResult = {
 			title: entry.title,
 			url,
-			snippet: entry.snippet,
 			summary: entry.summary,
 			content: entry.content,
-			siteName: entry.site_name ?? undefined,
-			date: entry.date ?? undefined,
-		});
+		};
+		if (typeof entry.snippet === 'string') {
+			result.snippet = entry.snippet;
+		}
+		if (typeof entry.site_name === 'string') {
+			result.siteName = entry.site_name;
+		}
+		if (typeof entry.date === 'string') {
+			result.date = entry.date;
+		}
+		results.push(result);
 	}
 	return results;
 }
@@ -718,6 +725,10 @@ async function requestDeepSeekTool(
 		}
 		throw sanitized;
 	}
+}
+
+function isOptionalString(value: unknown): value is string | null | undefined {
+	return value === undefined || value === null || typeof value === 'string';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
