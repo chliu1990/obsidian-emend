@@ -10,6 +10,7 @@ import {
 } from './edit-validation';
 import {
 	findMarkdownEditViolation,
+	findPayloadStructureViolation,
 	type GuardedMarkdownOperation,
 	type MarkdownEditViolation,
 } from './markdown-edit-guards';
@@ -327,7 +328,8 @@ function validateMarkdownStructure(
 				return { ...base, comment: operation.comment };
 		}
 	});
-	const violation = findMarkdownEditViolation(sourceContext.fullText, operations);
+	const violation = findMarkdownEditViolation(sourceContext.fullText, operations) ??
+		findPayloadStructureViolation(sourceContext.fullText, operations);
 	if (violation) {
 		throw markdownEditValidationError(violation);
 	}
@@ -345,11 +347,10 @@ function markdownEditValidationError(
 		return new EditResponseValidationError(violation.code, message, details);
 	}
 	if (violation.code === 'fenced-code-edit') {
-		return new EditResponseValidationError(
-			violation.code,
-			`Operation ${operation} edits fenced code at line ${line}; Track Changes cannot review fenced-code edits. Choose text outside the fenced block. No edits were applied.`,
-			details,
-		);
+		const message = field === 'text' || field === 'replacement'
+			? `Operation ${operation} payload introduces unbalanced fenced code or backtick runs at line ${line}; keep every fence and backtick run paired inside the inserted text. No edits were applied.`
+			: `Operation ${operation} edits fenced code at line ${line}; Track Changes cannot review fenced-code edits. Choose text outside the fenced block. No edits were applied.`;
+		return new EditResponseValidationError(violation.code, message, details);
 	}
 	return new EditResponseValidationError(
 		violation.code,

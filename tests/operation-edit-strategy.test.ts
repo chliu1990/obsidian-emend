@@ -892,6 +892,40 @@ describe('Markdown structural edit safeguards', () => {
 		throw new Error('Expected structural validation to fail.');
 	}
 
+	it('compiles a balanced code-block insertion', () => {
+		expect(prepare('Alpha beta.', [
+			{ type: 'insert', anchor: 'beta.', position: 'after', text: '\n```\ncode\n```' },
+		]).annotatedMarkdown).toBe('Alpha beta.{++\n```\ncode\n```++}');
+		expect(prepare('Alpha beta.', [
+			{ type: 'replace', target: 'beta.', replacement: 'see `code`.' },
+		]).annotatedMarkdown).toBe('Alpha {~~beta.~>see `code`.~~}');
+	});
+
+	it('rejects an unbalanced fence insertion with a structural error', () => {
+		const error = structuralError(() => prepare('Alpha beta.', [
+			{ type: 'insert', anchor: 'beta.', position: 'after', text: '\n```\ncode' },
+		]));
+
+		expect(error).toMatchObject({
+			name: 'EditResponseValidationError',
+			code: 'fenced-code-edit',
+			operation: 1,
+			operationType: 'insert',
+			field: 'text',
+			line: 1,
+		});
+		expect((error as Error).message).toContain('paired');
+		expect((error as Error).message).toContain('No edits were applied.');
+		expect(structuralError(() => prepare('Alpha beta.', [
+			{ type: 'replace', target: 'beta.', replacement: '`beta.' },
+		]))).toMatchObject({
+			code: 'fenced-code-edit',
+			operationType: 'replace',
+			field: 'replacement',
+			line: 1,
+		});
+	});
+
 	it('rejects a content-only inline-code target with an actionable diagnostic', () => {
 		const error = structuralError(() => prepare('Before\n`alpha` after', [
 			{ type: 'replace', target: 'alpha', replacement: 'PRIVATE REPLACEMENT' },

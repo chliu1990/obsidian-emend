@@ -174,6 +174,107 @@ export function findMarkdownEditViolation(
 	return undefined;
 }
 
+export function findPayloadStructureViolation(
+	fullText: string,
+	operations: readonly GuardedMarkdownOperation[],
+): MarkdownEditViolation | undefined {
+	for (const operation of operations) {
+		if (operation.operationType !== 'insert' && operation.operationType !== 'replace') {
+			continue;
+		}
+		const field = operation.operationType === 'insert' ? 'text' : 'replacement';
+		if (isPayloadStructureBalanced(operation[field] ?? '')) {
+			continue;
+		}
+		return {
+			code: 'fenced-code-edit',
+			operation: operation.operation,
+			operationType: operation.operationType,
+			field,
+			line: sourceLineAt(
+				fullText,
+				operation.operationType === 'insert'
+					? operation.insertionPoint ?? operation.start
+					: operation.start,
+			),
+		};
+	}
+	return undefined;
+}
+
+function isPayloadStructureBalanced(payload: string): boolean {
+	const lines = scanLines(payload);
+	const fences: SourceRange[] = [];
+	for (let index = 0; index < lines.length; index += 1) {
+		const line = lines[index];
+		if (!line) {
+			continue;
+		}
+		const opening = parseFenceOpening(line.text);
+		const run = opening?.run;
+		if (!opening || !run) {
+			continue;
+		}
+		const closing = lines.findIndex((candidate, candidateIndex) =>
+			candidateIndex > index && isFenceClose(candidate.text, run[0] ?? '', run.length)
+		);
+		if (closing === -1) {
+			return false;
+		}
+		const closingLine = lines[closing];
+		if (!closingLine) {
+			return false;
+		}
+		fences.push({ start: line.start, end: closingLine.end });
+		index = closing;
+	}
+	return hasPairedBacktickRuns(payload, fences);
+}
+
+function hasPairedBacktickRuns(
+	payload: string,
+	fences: readonly SourceRange[],
+): boolean {
+	const runs: Array<{ start: number; length: number }> = [];
+	let index = 0;
+	while (index < payload.length) {
+		const fence = fences.find((range) => index >= range.start && index < range.end);
+		if (fence) {
+			index = fence.end;
+			continue;
+		}
+		if (payload[index] !== '`' || isEscaped(payload, index)) {
+			index += 1;
+			continue;
+		}
+		const end = backtickRunEnd(payload, index);
+		runs.push({ start: index, length: end - index });
+		index = end;
+	}
+
+	const paired = new Set<number>();
+	for (let runIndex = 0; runIndex < runs.length; runIndex += 1) {
+		if (paired.has(runIndex)) {
+			continue;
+		}
+		const run = runs[runIndex];
+		if (!run) {
+			continue;
+		}
+		const partner = runs.findIndex((candidate, candidateIndex) =>
+			candidateIndex > runIndex &&
+			!paired.has(candidateIndex) &&
+			candidate.length === run.length
+		);
+		if (partner === -1) {
+			return false;
+		}
+		paired.add(runIndex);
+		paired.add(partner);
+	}
+	return true;
+}
+
 function scanLines(fullText: string): SourceLine[] {
 	const lines: SourceLine[] = [];
 	let start = 0;
