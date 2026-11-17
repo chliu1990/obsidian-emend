@@ -1734,3 +1734,107 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 		}
 	});
 });
+
+describe('EmendPlugin Selection modal lifecycle', () => {
+	interface RegisteredCommand {
+		id: string;
+		editorCheckCallback?: (
+			checking: boolean,
+			editor: unknown,
+			view: unknown,
+		) => boolean;
+	}
+
+	it('retains at most one selection modal across repeated command invocations', async () => {
+		const commands: RegisteredCommand[] = [];
+		const register = vi.fn();
+		const file = new TFile();
+		file.path = 'Selection.md';
+		const editor = {
+			getSelection: () => 'beta',
+			getValue: () => 'BeforebetaAfter',
+			getCursor: (which: 'from' | 'to') => ({
+				offset: which === 'from' ? 6 : 10,
+			}),
+			posToOffset: (position: { offset: number }) => position.offset,
+			offsetToPos: (offset: number) => ({ offset }),
+			replaceRange: vi.fn(),
+		};
+		const view = Object.assign(
+			Object.create(MarkdownView.prototype) as MarkdownView,
+			{ file, editor },
+		);
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, {
+			app: {
+				vault: {
+					adapter: new MemoryAdapter(),
+					configDir: '.test-config',
+					on: () => ({}),
+					getAbstractFileByPath: () => null,
+					getName: () => 'Vault',
+				},
+				workspace: {
+					on: () => ({}),
+					getLeavesOfType: () => [],
+				},
+				secretStorage: { setSecret: vi.fn(), getSecret: vi.fn(() => null) },
+			},
+			settings: structuredClone(DEFAULT_SETTINGS),
+			loadSettings: vi.fn().mockResolvedValue(undefined),
+			registerView: vi.fn(),
+			registerEditorExtension: vi.fn(),
+			registerEvent: vi.fn(),
+			rememberActiveMarkdownView: vi.fn(),
+			addRibbonIcon: vi.fn(),
+			addCommand: vi.fn((command: RegisteredCommand) => commands.push(command)),
+			addSettingTab: vi.fn(),
+			register,
+			getTargetMarkdownView: () => view,
+		});
+
+		await plugin.onload();
+		const opened: SelectionModal[] = [];
+		const closed: SelectionModal[] = [];
+		const prototype = SelectionModal.prototype as unknown as {
+			open?: () => void;
+			close?: () => void;
+		};
+		const originalOpen = prototype.open;
+		const originalClose = prototype.close;
+		prototype.open = function (this: SelectionModal) {
+			opened.push(this);
+		};
+		prototype.close = function (this: SelectionModal) {
+			closed.push(this);
+		};
+		try {
+			const modifyCommand = commands.find(
+				(command) => command.id === 'emend:modify-selected-text',
+			);
+			expect(modifyCommand).toBeDefined();
+			expect(modifyCommand?.editorCheckCallback?.(false, editor, view)).toBe(true);
+			expect(modifyCommand?.editorCheckCallback?.(false, editor, view)).toBe(true);
+
+			expect(opened).toHaveLength(2);
+			expect(closed).toEqual([opened[0]]);
+			expect(register).not.toHaveBeenCalled();
+
+			plugin.onunload();
+
+			expect(closed).toEqual([opened[0], opened[1]]);
+			expect(register).not.toHaveBeenCalled();
+		} finally {
+			if (originalOpen) {
+				prototype.open = originalOpen;
+			} else {
+				delete prototype.open;
+			}
+			if (originalClose) {
+				prototype.close = originalClose;
+			} else {
+				delete prototype.close;
+			}
+		}
+	});
+});

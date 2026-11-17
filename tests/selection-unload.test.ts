@@ -144,11 +144,10 @@ describe('selection request plugin unload', () => {
 		expect(JSON.stringify(modalRequest)).not.toContain('[Historical');
 		const modal = modalState.instances[0];
 		expect(modal?.signal?.aborted).toBe(false);
-		expect(unloadCallbacks).toHaveLength(1);
+		expect(unloadCallbacks).toHaveLength(0);
 
-		for (const callback of unloadCallbacks) {
-			callback();
-		}
+		plugin.onunload();
+
 		expect(modal?.signal?.aborted).toBe(true);
 		delayedResponse.resolve({
 			content: JSON.stringify([

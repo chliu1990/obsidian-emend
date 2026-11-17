@@ -1,8 +1,9 @@
-import { TFile, type Vault } from 'obsidian';
-import { describe, expect, expectTypeOf, it, vi } from 'vitest';
+import { Notice, TFile, type Vault } from 'obsidian';
+import { beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 import {
 	extractSkillPaths,
 	loadAllInstructions,
+	MAX_INSTRUCTION_CHARACTERS,
 	type LoadedInstructions,
 } from '../src/instructions-loader';
 import type { InstructionPromptParts } from '../src/types';
@@ -17,6 +18,7 @@ function vaultWith(
 	files: Map<string, TFile | { path: string }>,
 	contents: Map<string, string>,
 	events: string[] = [],
+	unreadable: Set<string> = new Set(),
 ) {
 	return {
 		getAbstractFileByPath: vi.fn((path: string) => files.get(path) ?? null),
@@ -24,9 +26,16 @@ function vaultWith(
 			events.push(`start:${file.path}`);
 			await Promise.resolve();
 			events.push(`end:${file.path}`);
+			if (unreadable.has(file.path)) {
+				throw new Error(`Unreadable file: ${file.path}`);
+			}
 			return contents.get(file.path) ?? '';
 		}),
 	};
+}
+
+function noticeMessages(): string[] {
+	return (Notice as unknown as { messages: string[] }).messages;
 }
 
 describe('extractSkillPaths', () => {
@@ -86,6 +95,10 @@ describe('extractSkillPaths', () => {
 });
 
 describe('loadAllInstructions', () => {
+	beforeEach(() => {
+		noticeMessages().length = 0;
+	});
+
 	it('is structurally compatible with instruction prompt parts', () => {
 		expectTypeOf<LoadedInstructions>().toExtend<InstructionPromptParts>();
 	});
@@ -207,5 +220,66 @@ describe('loadAllInstructions', () => {
 		]));
 		expect(vault.getAbstractFileByPath).toHaveBeenCalledTimes(2);
 		expect(vault.getAbstractFileByPath).not.toHaveBeenCalledWith('skills/nested/SKILL.md');
+	});
+
+	it('skips a skill whose read rejects and keeps the rest', async () => {
+		const files = new Map<string, TFile>([
+			['AGENTS.md', markdownFile('AGENTS.md')],
+			['skills/broken/SKILL.md', markdownFile('skills/broken/SKILL.md')],
+			['skills/valid/SKILL.md', markdownFile('skills/valid/SKILL.md')],
+		]);
+		const contents = new Map<string, string>([
+			['AGENTS.md', '`skills/broken`\n`skills/valid`'],
+			['skills/broken/SKILL.md', 'Broken skill.'],
+			['skills/valid/SKILL.md', 'Valid skill.'],
+		]);
+		const vault = vaultWith(
+			files,
+			contents,
+			[],
+			new Set(['skills/broken/SKILL.md']),
+		);
+
+		const result = await loadAllInstructions(vault as unknown as Vault);
+
+		expect(result.agentText).toBe('`skills/broken`\n`skills/valid`');
+		expect(result.skillTexts).toEqual(new Map([
+			['skills/valid/SKILL.md', 'Valid skill.'],
+		]));
+		expect(noticeMessages()).toEqual([
+			'Emend: Could not read the instruction file skills/broken/SKILL.md.',
+		]);
+	});
+
+	it('bounds total instruction characters', async () => {
+		const largeSkill = 'S'.repeat(15000);
+		const largeAgentText = 'A'.repeat(15000);
+		const files = new Map<string, TFile>([
+			['AGENTS.md', markdownFile('AGENTS.md')],
+			['skills/large/SKILL.md', markdownFile('skills/large/SKILL.md')],
+		]);
+		const contents = new Map<string, string>([
+			['AGENTS.md', `\`skills/large\`\n${largeAgentText}`],
+			['skills/large/SKILL.md', largeSkill],
+		]);
+		const vault = vaultWith(files, contents);
+
+		const result = await loadAllInstructions(vault as unknown as Vault);
+
+		const total = (result.agentText?.length ?? 0) +
+			Array.from(result.skillTexts.values()).reduce(
+				(sum, text) => sum + text.length,
+				0,
+			);
+		expect(result.skillTexts.get('skills/large/SKILL.md')).toBe(largeSkill);
+		expect(result.agentText).toHaveLength(
+			MAX_INSTRUCTION_CHARACTERS - largeSkill.length,
+		);
+		expect(result.agentText?.endsWith('[...]')).toBe(true);
+		expect(total).toBe(MAX_INSTRUCTION_CHARACTERS);
+		expect(total).toBeLessThanOrEqual(MAX_INSTRUCTION_CHARACTERS);
+		expect(noticeMessages()).toEqual([
+			'Emend: Instructions were truncated at 20000 characters.',
+		]);
 	});
 });

@@ -1,4 +1,8 @@
-import { TFile, type Vault } from 'obsidian';
+import { Notice, TFile, type Vault } from 'obsidian';
+
+export const MAX_INSTRUCTION_CHARACTERS = 20000;
+
+const INSTRUCTION_TRUNCATION_MARKER = '[...]';
 
 export interface LoadedInstructions {
 	agentText?: string;
@@ -58,6 +62,19 @@ export function extractSkillPaths(agentText: string): string[] {
 	return paths;
 }
 
+function truncateInstructions(text: string, budget: number): string | undefined {
+	if (budget <= 0) {
+		return undefined;
+	}
+	if (text.length <= budget) {
+		return text;
+	}
+	if (budget <= INSTRUCTION_TRUNCATION_MARKER.length) {
+		return INSTRUCTION_TRUNCATION_MARKER.slice(0, budget);
+	}
+	return `${text.slice(0, budget - INSTRUCTION_TRUNCATION_MARKER.length)}${INSTRUCTION_TRUNCATION_MARKER}`;
+}
+
 export async function loadAllInstructions(vault: Vault): Promise<LoadedInstructions> {
 	const skillTexts = new Map<string, string>();
 	const agentFile = vault.getAbstractFileByPath('AGENTS.md');
@@ -65,14 +82,40 @@ export async function loadAllInstructions(vault: Vault): Promise<LoadedInstructi
 		return { skillTexts };
 	}
 
-	const agentText = await vault.read(agentFile);
-	for (const path of extractSkillPaths(agentText)) {
+	const rawAgentText = await vault.read(agentFile);
+	let remaining = MAX_INSTRUCTION_CHARACTERS;
+	let truncated = false;
+	for (const path of extractSkillPaths(rawAgentText)) {
 		const skillFile = vault.getAbstractFileByPath(path);
 		if (!(skillFile instanceof TFile)) {
 			continue;
 		}
-		skillTexts.set(path, (await vault.read(skillFile)).trim());
+		let skillContent: string;
+		try {
+			skillContent = (await vault.read(skillFile)).trim();
+		} catch {
+			new Notice(`Emend: Could not read the instruction file ${path}.`);
+			continue;
+		}
+		const skillText = truncateInstructions(skillContent, remaining);
+		if (skillText === undefined) {
+			truncated = true;
+			continue;
+		}
+		if (skillText.length < skillContent.length) {
+			truncated = true;
+		}
+		remaining -= skillText.length;
+		skillTexts.set(path, skillText);
 	}
 
-	return { agentText, skillTexts };
+	const agentText = truncateInstructions(rawAgentText, remaining);
+	if (agentText === undefined || agentText.length < rawAgentText.length) {
+		truncated = true;
+	}
+	if (truncated) {
+		new Notice(`Emend: Instructions were truncated at ${MAX_INSTRUCTION_CHARACTERS} characters.`);
+	}
+
+	return agentText === undefined ? { skillTexts } : { agentText, skillTexts };
 }

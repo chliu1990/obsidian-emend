@@ -68,6 +68,7 @@ export default class EmendPlugin extends Plugin {
 	private settingsSaveQueue: Promise<void> | undefined;
 	private lastMarkdownView: MarkdownView | null = null;
 	private pendingNotePaths: Set<string> | undefined;
+	private activeSelectionModal: SelectionModal | null = null;
 
 	async onload() {
 		await this.loadSettings();
@@ -196,7 +197,8 @@ export default class EmendPlugin extends Plugin {
 						),
 						this.settings.smartSelectionContext,
 					);
-					this.register(() => modal.close());
+					this.activeSelectionModal?.close();
+					this.activeSelectionModal = modal;
 					modal.open();
 				} catch (error) {
 					new Notice(`Emend: ${getErrorMessage(error)}`);
@@ -206,6 +208,11 @@ export default class EmendPlugin extends Plugin {
 		});
 
 		this.addSettingTab(new EmendSettingTab(this.app, this));
+	}
+
+	onunload() {
+		this.activeSelectionModal?.close();
+		this.activeSelectionModal = null;
 	}
 
 	async loadSettings() {
