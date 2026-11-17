@@ -561,6 +561,7 @@ export class EmendChatView extends ItemView {
 			}
 			const active = resolveActiveSession(loaded.conversation);
 			if (active) {
+				this.discardTransientSession(notePath);
 				this.sessions = loaded.conversation.sessions;
 				this.activeSessionId = active.id;
 				this.messages = active.messages;
@@ -658,9 +659,19 @@ export class EmendChatView extends ItemView {
 				if (!this.isCurrent(identity)) {
 					return;
 				}
-				this.sessions = [recovered];
-				this.activeSessionId = recovered.id;
-				this.messages = recovered.messages;
+				const stored = await this.loadStoredSessions(notePath);
+				if (!this.isCurrent(identity)) {
+					return;
+				}
+				const sessionList = stored.some((session) => session.id === recovered.id)
+					? stored
+					: [recovered];
+				const recoveredSession = sessionList.find(
+					(session) => session.id === recovered.id,
+				) ?? recovered;
+				this.sessions = sessionList;
+				this.activeSessionId = recoveredSession.id;
+				this.messages = recoveredSession.messages;
 				if (!hasReadyUser) {
 					this.isSessionMutating = false;
 					this.render();
@@ -715,9 +726,22 @@ export class EmendChatView extends ItemView {
 				if (!this.isCurrent(identity)) {
 					return;
 				}
-				const index = this.sessions.findIndex((session) => session.id === current.id);
-				this.sessions[index] = persisted;
-				this.messages = persisted.messages;
+				const stored = await this.loadStoredSessions(notePath);
+				if (!this.isCurrent(identity)) {
+					return;
+				}
+				if (stored.some((session) => session.id === persisted.id)) {
+					this.sessions = stored;
+					this.messages = this.sessions.find(
+						(session) => session.id === persisted.id,
+					)?.messages ?? persisted.messages;
+				} else {
+					const index = this.sessions.findIndex(
+						(session) => session.id === current.id,
+					);
+					this.sessions[index] = persisted;
+					this.messages = persisted.messages;
+				}
 			} else {
 				const persisted = await this.plugin.conversationStore.renameSession(
 					notePath,
@@ -905,6 +929,24 @@ export class EmendChatView extends ItemView {
 		controller?.abort();
 		this.webReviewModal?.close();
 		this.webReviewModal = null;
+	}
+
+	private discardTransientSession(notePath: string) {
+		const cached = this.transientSessions.get(notePath);
+		if (!cached) {
+			return;
+		}
+		this.transientSessions.delete(notePath);
+		this.transientSessionIds.delete(cached.id);
+	}
+
+	private async loadStoredSessions(notePath: string): Promise<ChatSession[]> {
+		try {
+			const loaded = await this.plugin.conversationStore.loadConversation(notePath);
+			return loaded.conversation.sessions;
+		} catch {
+			return [];
+		}
 	}
 
 	private getTransientSession(notePath: string) {

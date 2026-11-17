@@ -1988,6 +1988,41 @@ describe('EmendChatView thread-load recovery', () => {
 		}
 		expect(findSendButton(fixture.contentEl)?.disabled).toBe(false);
 	});
+
+	it('does not resurrect a stale transient session after a successful load', async () => {
+		const fixture = createEditTargetView();
+		const stale = makeSession('stale-session', [{
+			id: 'never-saved',
+			role: 'user',
+			content: 'Never saved',
+			reasoning: '',
+			mode: 'ask',
+			sourcePath: 'A.md',
+			status: 'ready',
+			timestamp: 1,
+		}]);
+		fixture.context.transientSessions.set('A.md', stale);
+		fixture.context.transientSessionIds.add('stale-session');
+		fixture.conversationStore.loadConversation.mockResolvedValue(
+			loadedConversation([makeSession('persisted-session')]),
+		);
+
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+
+		expect(fixture.context.activeSessionId).toBe('persisted-session');
+		fixture.conversationStore.loadConversation.mockRejectedValue(
+			new Error('Unreadable thread'),
+		);
+		fixture.setActivePath('B.md');
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		fixture.setActivePath('A.md');
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+
+		expect(fixture.context.messages).toEqual([]);
+		expect(fixture.context.sessions.map((session) => session.id)).not.toContain(
+			'stale-session',
+		);
+	});
 });
 
 describe('EmendChatView conversation saving', () => {
@@ -2968,6 +3003,34 @@ describe('EmendChatView session management', () => {
 		expect(fixture.context.transientSessionIds.has(transientId ?? '')).toBe(false);
 		expect(fixture.context.transientSessions.has('A.md')).toBe(false);
 		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+	});
+
+	it('shows sessions created by another view after materialization', async () => {
+		const fixture = createEditTargetView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const transientId = fixture.context.activeSessionId;
+		if (!transientId) {
+			throw new Error('Transient session missing.');
+		}
+		const readyUser: ChatMessage = {
+			...message('first-user', 'A.md'),
+			role: 'user',
+			content: 'First message',
+		};
+		fixture.context.messages.push(readyUser);
+		fixture.conversationStore.loadConversation.mockResolvedValue(
+			loadedConversation([
+				makeSession(transientId, [readyUser]),
+				makeSession('other-view'),
+			]),
+		);
+
+		await viewPrototype.createNewSession.call(fixture.context);
+
+		const ids = fixture.context.sessions.map((session) => session.id);
+		expect(ids).toContain('other-view');
+		expect(ids).toContain(transientId);
+		expect(fixture.context.activeSessionId).not.toBe(transientId);
 	});
 
 	it('recovers failed-save ready users before creating and activating the requested New session', async () => {
