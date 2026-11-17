@@ -1437,7 +1437,7 @@ export class EmendChatView extends ItemView {
 			text: message.content,
 		});
 		const renderedEl = bodyEl.ownerDocument.createElement('div');
-		renderedEl.className = 'emend-chat-message-content';
+		renderedEl.className = 'emend-chat-message-markdown';
 		const generation = this.renderGeneration;
 		this.pendingMarkdownRenders = (this.pendingMarkdownRenders ?? 0) + 1;
 		void MarkdownRenderer.render(

@@ -4550,6 +4550,30 @@ describe('EmendChatView terminal response continuity', () => {
 		expect(messageContentElements(assistant)).toHaveLength(1);
 	});
 
+	it('renders a finalized answer without the streaming pre-wrap class', async () => {
+		vi.spyOn(MarkdownRenderer, 'render').mockResolvedValue(undefined);
+		const { body, context } = createMessageBodyHarness();
+		const content = 'Line one\nLine two';
+
+		viewPrototype.renderMessageBody.call(context, {
+			...message('answer', 'Note.md'),
+			content,
+		});
+
+		expect(messageContentElements(body)).toHaveLength(1);
+
+		await vi.waitFor(() => expect(markdownContentElements(body)).toHaveLength(1));
+
+		const rendered = markdownContentElements(body)[0];
+		if (!rendered) {
+			throw new Error('Rendered answer missing.');
+		}
+		expect(rendered.className.split(' ')).toContain('emend-chat-message-markdown');
+		expect(rendered.className.split(' ')).not.toContain('emend-chat-message-content');
+		expect(getCssRule('.emend-chat-message-content')).toContain('white-space: pre-wrap;');
+		expect(getCssRule('.emend-chat-message-markdown')).toContain('white-space: normal;');
+	});
+
 	it('retains the answer when the final save fails without adding another answer', async () => {
 		const fixture = createEditTargetView();
 		fixture.requestChatCompletion.mockImplementation(async ({ callbacks }) => {
@@ -4962,7 +4986,16 @@ function textOf(root: FakeElement): string {
 function messageContentElements(root: FakeElement): FakeElement[] {
 	return findElements(
 		root,
-		(element) => element.className.split(' ').includes('emend-chat-message-content'),
+		(element) => element.className.split(' ')
+			.some((name) => name === 'emend-chat-message-content'
+				|| name === 'emend-chat-message-markdown'),
+	);
+}
+
+function markdownContentElements(root: FakeElement): FakeElement[] {
+	return findElements(
+		root,
+		(element) => element.className.split(' ').includes('emend-chat-message-markdown'),
 	);
 }
 

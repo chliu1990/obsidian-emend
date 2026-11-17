@@ -115,11 +115,13 @@
 	overflow-wrap: anywhere;
 }
 
-.emend-chat-message-content > :first-child {
+.emend-chat-message-content > :first-child,
+.emend-chat-message-markdown > :first-child {
 	margin-top: 0;
 }
 
-.emend-chat-message-content > :last-child {
+.emend-chat-message-content > :last-child,
+.emend-chat-message-markdown > :last-child {
 	margin-bottom: 0;
 }
 
@@ -182,6 +184,14 @@
 
 .emend-chat-message-content {
 	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	font-size: var(--font-ui-small);
+	line-height: 1.45;
+	user-select: text;
+}
+
+.emend-chat-message-markdown {
+	white-space: normal;
 	overflow-wrap: anywhere;
 	font-size: var(--font-ui-small);
 	line-height: 1.45;
