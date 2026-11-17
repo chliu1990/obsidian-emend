@@ -8280,6 +8280,10 @@ describe('EmendChatView quick action drafts', () => {
 });
 
 describe('EmendChatView committed edit persistence', () => {
+	beforeEach(() => {
+		noticeMessages().length = 0;
+	});
+
 	it('persists an applied edit result when Stop races the ready snapshot', async () => {
 		const fixture = createSelectionEditSubmission();
 		const session = makeSession('session-1');
@@ -8333,6 +8337,63 @@ describe('EmendChatView committed edit persistence', () => {
 			['assistant', 'ready'],
 		]);
 		expect(saved[1]?.content).toContain('Tightened the wording.');
+		expect(context.isSending).toBe(false);
+	});
+
+	it('keeps an applied edit summary when its session was deleted during the request', async () => {
+		const fixture = createSelectionEditSubmission();
+		const session = makeSession('session-1');
+		const context = fixture.context as typeof fixture.context & {
+			sessions: ChatSession[];
+			activeSessionId: string | null;
+			transientSessionIds: Set<string>;
+		};
+		context.sessions = [session];
+		context.activeSessionId = session.id;
+		context.messages = session.messages;
+		context.transientSessionIds = new Set();
+		const appendReadyMessage = vi.fn(async (
+			_notePath: string,
+			_sessionId: string,
+			appended: ChatMessage,
+		) => {
+			if (appended.role === 'assistant') {
+				throw new Error('Chat session does not exist.');
+			}
+			return { ...session, messages: [...session.messages, appended] };
+		});
+		(
+			context.plugin.conversationStore as unknown as Record<string, unknown>
+		).appendReadyMessage = appendReadyMessage;
+		context.persistMessages = productionPersistMessages as unknown as
+			typeof context.persistMessages;
+		fixture.requestSelectionEdit.mockImplementationOnce(async () => ({
+			applied: true,
+			changeCount: 1,
+			summaryItems: [{ type: 'replace', start: 0, end: 4 }],
+			summary: 'Tightened the wording.',
+			usage: {
+				promptTokens: 4,
+				completionTokens: 2,
+				totalTokens: 6,
+				source: 'provider' as const,
+			},
+		}));
+
+		await viewPrototype.submitPrompt.call(context);
+
+		const assistantAttempts = appendReadyMessage.mock.calls.filter(
+			([, , appended]) => appended.role === 'assistant',
+		);
+		expect(assistantAttempts).toHaveLength(1);
+		expect(appendReadyMessage).toHaveBeenCalledTimes(2);
+		expect(noticeMessages()).toEqual([
+			'Emend: Edit applied, but this chat could not be saved.',
+		]);
+		expect(context.messages[1]?.status).toBe('ready');
+		expect(context.messages[1]?.content).toContain('Edit applied');
+		expect(context.messages[1]?.content).toContain('Target: Selection.');
+		expect(context.messages[1]?.content).toContain('Tightened the wording.');
 		expect(context.isSending).toBe(false);
 	});
 });

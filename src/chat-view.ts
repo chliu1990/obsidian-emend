@@ -31,6 +31,7 @@ import {
 import { EMEND_BUILD_ID } from './build-info';
 import type EmendPlugin from './main';
 import { getComposerShortcut, getComposerShortcutLabels } from './chat-shortcuts';
+import { isMissingSessionSaveError } from './conversation-store';
 import {
 	buildFullNoteDraftEstimate,
 	buildReadOnlyDraftEstimate,
@@ -1903,7 +1904,14 @@ export class EmendChatView extends ItemView {
 			this.applyPersistedMetadata(session, persistedAssistant);
 		} catch (error) {
 			delete loadingMessage.webDraft;
-			if (controller.signal.aborted || isAbortError(error)) {
+			if (
+				committedEdit &&
+				finalSaveAttempted &&
+				isMissingSessionSaveError(error)
+			) {
+				loadingMessage.status = 'ready';
+				new Notice('Emend: Edit applied, but this chat could not be saved.');
+			} else if (controller.signal.aborted || isAbortError(error)) {
 				loadingMessage.status = 'stopped';
 				if (!loadingMessage.content && !loadingMessage.reasoning) {
 					loadingMessage.content = 'Response stopped.';

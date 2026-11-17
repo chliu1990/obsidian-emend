@@ -54,6 +54,10 @@ const UNSUPPORTED_ERROR =
 	'Cannot save this chat because its stored schema version is unsupported.';
 const MISSING_SESSION_ERROR = 'Chat session does not exist.';
 
+export function isMissingSessionSaveError(error: unknown) {
+	return error instanceof Error && error.message.includes(MISSING_SESSION_ERROR);
+}
+
 export class ConversationStore {
 	private readonly writeQueues = new Map<string, Promise<unknown>>();
 	private readonly chatDirectory: string;
