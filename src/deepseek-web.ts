@@ -271,9 +271,17 @@ export class DeepSeekWebSearchCoordinator {
 			if (!outcome.ok) {
 				return searchFailedOutcome(call.query, outcome, options);
 			}
+			const documents = buildSearchExtractionDocuments(outcome.value);
+			if (documents.length === 0) {
+				return searchFailedOutcome(
+					call.query,
+					{ reason: 'empty', attempts: outcome.attempts },
+					options,
+				);
+			}
 			return this.extractDocuments(
 				call,
-				buildSearchExtractionDocuments(outcome.value),
+				documents,
 				sources,
 				options,
 			);
@@ -303,12 +311,12 @@ export class DeepSeekWebSearchCoordinator {
 		options: WebSearchRunOptions,
 		isEmpty?: (value: T) => boolean,
 	): Promise<
-		{ ok: true; value: T } |
+		{ ok: true; value: T; attempts: number } |
 		({ ok: false } & WebAttemptFailure)
 	> {
 		const first = await this.attempt(run, isEmpty, options.signal);
 		if (first.ok) {
-			return first;
+			return { ...first, attempts: 1 };
 		}
 		if (!first.retryable) {
 			return {
@@ -322,7 +330,7 @@ export class DeepSeekWebSearchCoordinator {
 		options.onActivity({ status: 'pending', label: retryLabel });
 		options.signal.throwIfAborted();
 		const second = await this.attempt(run, isEmpty, options.signal);
-		return second.ok ? second : {
+		return second.ok ? { ...second, attempts: 2 } : {
 			ok: false,
 			reason: second.reason,
 			attempts: 2,
@@ -355,7 +363,7 @@ export class DeepSeekWebSearchCoordinator {
 				return { ok: false, reason: 'format', retryable: false };
 			}
 			if (error instanceof DeepSeekConfigurationError) {
-				return { ok: false, reason: 'configuration', retryable: false };
+				throw error;
 			}
 			const status = isRecord(error) &&
 				typeof error.status === 'number' &&

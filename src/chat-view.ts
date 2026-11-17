@@ -31,6 +31,7 @@ import {
 import { EMEND_BUILD_ID } from './build-info';
 import type EmendPlugin from './main';
 import { getComposerShortcut, getComposerShortcutLabels } from './chat-shortcuts';
+import { isMissingSessionSaveError } from './conversation-store';
 import {
 	buildFullNoteDraftEstimate,
 	buildReadOnlyDraftEstimate,
@@ -560,6 +561,7 @@ export class EmendChatView extends ItemView {
 			}
 			const active = resolveActiveSession(loaded.conversation);
 			if (active) {
+				this.discardTransientSession(notePath);
 				this.sessions = loaded.conversation.sessions;
 				this.activeSessionId = active.id;
 				this.messages = active.messages;
@@ -657,9 +659,19 @@ export class EmendChatView extends ItemView {
 				if (!this.isCurrent(identity)) {
 					return;
 				}
-				this.sessions = [recovered];
-				this.activeSessionId = recovered.id;
-				this.messages = recovered.messages;
+				const stored = await this.loadStoredSessions(notePath);
+				if (!this.isCurrent(identity)) {
+					return;
+				}
+				const sessionList = stored.some((session) => session.id === recovered.id)
+					? stored
+					: [recovered];
+				const recoveredSession = sessionList.find(
+					(session) => session.id === recovered.id,
+				) ?? recovered;
+				this.sessions = sessionList;
+				this.activeSessionId = recoveredSession.id;
+				this.messages = recoveredSession.messages;
 				if (!hasReadyUser) {
 					this.isSessionMutating = false;
 					this.render();
@@ -714,9 +726,22 @@ export class EmendChatView extends ItemView {
 				if (!this.isCurrent(identity)) {
 					return;
 				}
-				const index = this.sessions.findIndex((session) => session.id === current.id);
-				this.sessions[index] = persisted;
-				this.messages = persisted.messages;
+				const stored = await this.loadStoredSessions(notePath);
+				if (!this.isCurrent(identity)) {
+					return;
+				}
+				if (stored.some((session) => session.id === persisted.id)) {
+					this.sessions = stored;
+					this.messages = this.sessions.find(
+						(session) => session.id === persisted.id,
+					)?.messages ?? persisted.messages;
+				} else {
+					const index = this.sessions.findIndex(
+						(session) => session.id === current.id,
+					);
+					this.sessions[index] = persisted;
+					this.messages = persisted.messages;
+				}
 			} else {
 				const persisted = await this.plugin.conversationStore.renameSession(
 					notePath,
@@ -904,6 +929,25 @@ export class EmendChatView extends ItemView {
 		controller?.abort();
 		this.webReviewModal?.close();
 		this.webReviewModal = null;
+	}
+
+	private discardTransientSession(notePath: string) {
+		const cached = this.transientSessions.get(notePath);
+		if (!cached) {
+			return;
+		}
+		this.transientSessions.delete(notePath);
+		this.transientSessionIds.delete(cached.id);
+		this.drafts.get(notePath)?.delete(cached.id);
+	}
+
+	private async loadStoredSessions(notePath: string): Promise<ChatSession[]> {
+		try {
+			const loaded = await this.plugin.conversationStore.loadConversation(notePath);
+			return loaded.conversation.sessions;
+		} catch {
+			return [];
+		}
 	}
 
 	private getTransientSession(notePath: string) {
@@ -1903,18 +1947,34 @@ export class EmendChatView extends ItemView {
 			this.applyPersistedMetadata(session, persistedAssistant);
 		} catch (error) {
 			delete loadingMessage.webDraft;
-			if (controller.signal.aborted || isAbortError(error)) {
+			const cancelled = isAbortError(error);
+			const saveFailed = finalSaveAttempted && !cancelled;
+			if (committedEdit && finalSaveAttempted) {
+				loadingMessage.status = 'ready';
+				if (saveFailed) {
+					new Notice(
+						isMissingSessionSaveError(error)
+							? 'Emend: Edit applied, but this chat could not be saved.'
+							: `Emend: ${getErrorMessage(error)}`,
+					);
+				}
+			} else if (controller.signal.aborted || cancelled) {
 				loadingMessage.status = 'stopped';
 				if (!loadingMessage.content && !loadingMessage.reasoning) {
 					loadingMessage.content = 'Response stopped.';
+				}
+				if (saveFailed) {
+					new Notice(`Emend: ${getErrorMessage(error)}`);
 				}
 			} else {
 				if (!finalSaveAttempted) {
 					loadingMessage.content = getErrorMessage(error);
 				}
 				loadingMessage.status = 'error';
-				if (this.isActiveRequest(request)) {
-					new Notice(`Emend: ${finalSaveAttempted ? getErrorMessage(error) : loadingMessage.content}`);
+				if (saveFailed) {
+					new Notice(`Emend: ${getErrorMessage(error)}`);
+				} else if (this.isActiveRequest(request)) {
+					new Notice(`Emend: ${loadingMessage.content}`);
 				}
 			}
 		} finally {
@@ -2002,6 +2062,9 @@ export class EmendChatView extends ItemView {
 					},
 			);
 		} catch (error) {
+			if (isAbortError(error)) {
+				throw error;
+			}
 			throw new Error(`Could not save this chat. ${getErrorMessage(error)}`);
 		}
 	}
@@ -2163,7 +2226,6 @@ const WEB_FAILURE_REASON_LABELS: Record<string, string | undefined> = {
 	network: 'network',
 	http: 'HTTP',
 	format: 'format',
-	configuration: 'configuration',
 	empty: 'empty page',
 	reader: 'reader',
 };

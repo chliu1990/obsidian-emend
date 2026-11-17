@@ -1988,6 +1988,68 @@ describe('EmendChatView thread-load recovery', () => {
 		}
 		expect(findSendButton(fixture.contentEl)?.disabled).toBe(false);
 	});
+
+	it('does not resurrect a stale transient session after a successful load', async () => {
+		const fixture = createEditTargetView();
+		const stale = makeSession('stale-session', [{
+			id: 'never-saved',
+			role: 'user',
+			content: 'Never saved',
+			reasoning: '',
+			mode: 'ask',
+			sourcePath: 'A.md',
+			status: 'ready',
+			timestamp: 1,
+		}]);
+		fixture.context.transientSessions.set('A.md', stale);
+		fixture.context.transientSessionIds.add('stale-session');
+		fixture.conversationStore.loadConversation.mockResolvedValue(
+			loadedConversation([makeSession('persisted-session')]),
+		);
+
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+
+		expect(fixture.context.activeSessionId).toBe('persisted-session');
+		fixture.conversationStore.loadConversation.mockRejectedValue(
+			new Error('Unreadable thread'),
+		);
+		fixture.setActivePath('B.md');
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		fixture.setActivePath('A.md');
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+
+		expect(fixture.context.messages).toEqual([]);
+		expect(fixture.context.sessions.map((session) => session.id)).not.toContain(
+			'stale-session',
+		);
+	});
+
+	it('drops a discarded transient session draft with it', async () => {
+		const fixture = createEditTargetView();
+		fixture.conversationStore.loadConversation.mockRejectedValue(
+			new Error('Unreadable thread'),
+		);
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const transientId = fixture.context.activeSessionId;
+		if (!transientId || !fixture.context.inputEl) {
+			throw new Error('Transient session was not created.');
+		}
+		fixture.context.inputEl.value = 'Draft on a failed load';
+		fixture.setActivePath('B.md');
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		expect(fixture.context.drafts.get('A.md')?.get(transientId)).toBe(
+			'Draft on a failed load',
+		);
+
+		fixture.conversationStore.loadConversation.mockResolvedValue(
+			loadedConversation([makeSession('persisted-session')]),
+		);
+		fixture.setActivePath('A.md');
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+
+		expect(fixture.context.activeSessionId).toBe('persisted-session');
+		expect(fixture.context.drafts.get('A.md')?.has(transientId)).toBe(false);
+	});
 });
 
 describe('EmendChatView conversation saving', () => {
@@ -2560,7 +2622,7 @@ describe('EmendChatView session runtime', () => {
 		await newSubmission;
 	});
 
-	it('suppresses a stale final-save Notice after a session transition', async () => {
+	it('reports a stale final-save failure without touching the new session', async () => {
 		const fixture = createEditTargetView();
 		const first = makeSession('a1');
 		const second = makeSession('a2');
@@ -2596,7 +2658,9 @@ describe('EmendChatView session runtime', () => {
 
 		expect(fixture.context.activeSessionId).toBe('a2');
 		expect(fixture.context.messages).toEqual([]);
-		expect(noticeMessages().slice(noticeStart)).toEqual([]);
+		expect(noticeMessages().slice(noticeStart)).toEqual([
+			'Emend: Could not save this chat. Disk full',
+		]);
 	});
 
 	it.each(['note-switch', 'close', 'stop'] as const)(
@@ -2966,6 +3030,34 @@ describe('EmendChatView session management', () => {
 		expect(fixture.context.transientSessionIds.has(transientId ?? '')).toBe(false);
 		expect(fixture.context.transientSessions.has('A.md')).toBe(false);
 		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+	});
+
+	it('shows sessions created by another view after materialization', async () => {
+		const fixture = createEditTargetView();
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const transientId = fixture.context.activeSessionId;
+		if (!transientId) {
+			throw new Error('Transient session missing.');
+		}
+		const readyUser: ChatMessage = {
+			...message('first-user', 'A.md'),
+			role: 'user',
+			content: 'First message',
+		};
+		fixture.context.messages.push(readyUser);
+		fixture.conversationStore.loadConversation.mockResolvedValue(
+			loadedConversation([
+				makeSession(transientId, [readyUser]),
+				makeSession('other-view'),
+			]),
+		);
+
+		await viewPrototype.createNewSession.call(fixture.context);
+
+		const ids = fixture.context.sessions.map((session) => session.id);
+		expect(ids).toContain('other-view');
+		expect(ids).toContain(transientId);
+		expect(fixture.context.activeSessionId).not.toBe(transientId);
 	});
 
 	it('recovers failed-save ready users before creating and activating the requested New session', async () => {
@@ -5947,11 +6039,6 @@ describe('EmendChatView web activity review', () => {
 			'Search · Failed (format) · drifted query',
 		],
 		[
-			'configuration',
-			{ type: 'search' as const, target: 'unconfigured provider', status: 'failed' as const, failureReason: 'configuration' as const },
-			'Search · Failed (configuration) · unconfigured provider',
-		],
-		[
 			'empty',
 			{ type: 'fetch' as const, target: 'https://example.test/blank', status: 'failed' as const, failureReason: 'empty' as const },
 			'Fetch · Failed (empty page) · https://example.test/blank',
@@ -8280,6 +8367,10 @@ describe('EmendChatView quick action drafts', () => {
 });
 
 describe('EmendChatView committed edit persistence', () => {
+	beforeEach(() => {
+		noticeMessages().length = 0;
+	});
+
 	it('persists an applied edit result when Stop races the ready snapshot', async () => {
 		const fixture = createSelectionEditSubmission();
 		const session = makeSession('session-1');
@@ -8334,6 +8425,145 @@ describe('EmendChatView committed edit persistence', () => {
 		]);
 		expect(saved[1]?.content).toContain('Tightened the wording.');
 		expect(context.isSending).toBe(false);
+	});
+
+	it('keeps an applied edit summary when its session was deleted during the request', async () => {
+		const fixture = createSelectionEditSubmission();
+		const session = makeSession('session-1');
+		const context = fixture.context as typeof fixture.context & {
+			sessions: ChatSession[];
+			activeSessionId: string | null;
+			transientSessionIds: Set<string>;
+		};
+		context.sessions = [session];
+		context.activeSessionId = session.id;
+		context.messages = session.messages;
+		context.transientSessionIds = new Set();
+		const appendReadyMessage = vi.fn(async (
+			_notePath: string,
+			_sessionId: string,
+			appended: ChatMessage,
+		) => {
+			if (appended.role === 'assistant') {
+				throw new Error('Chat session does not exist.');
+			}
+			return { ...session, messages: [...session.messages, appended] };
+		});
+		(
+			context.plugin.conversationStore as unknown as Record<string, unknown>
+		).appendReadyMessage = appendReadyMessage;
+		context.persistMessages = productionPersistMessages as unknown as
+			typeof context.persistMessages;
+		fixture.requestSelectionEdit.mockImplementationOnce(async () => ({
+			applied: true,
+			changeCount: 1,
+			summaryItems: [{ type: 'replace', start: 0, end: 4 }],
+			summary: 'Tightened the wording.',
+			usage: {
+				promptTokens: 4,
+				completionTokens: 2,
+				totalTokens: 6,
+				source: 'provider' as const,
+			},
+		}));
+
+		await viewPrototype.submitPrompt.call(context);
+
+		const assistantAttempts = appendReadyMessage.mock.calls.filter(
+			([, , appended]) => appended.role === 'assistant',
+		);
+		expect(assistantAttempts).toHaveLength(1);
+		expect(appendReadyMessage).toHaveBeenCalledTimes(2);
+		expect(noticeMessages()).toEqual([
+			'Emend: Edit applied, but this chat could not be saved.',
+		]);
+		expect(context.messages[1]?.status).toBe('ready');
+		expect(context.messages[1]?.content).toContain('Edit applied');
+		expect(context.messages[1]?.content).toContain('Target: Selection.');
+		expect(context.messages[1]?.content).toContain('Tightened the wording.');
+		expect(context.isSending).toBe(false);
+	});
+
+	it('reports a failed save after a committed edit when Stop raced completion', async () => {
+		const fixture = createSelectionEditSubmission();
+		const session = makeSession('session-1');
+		const context = fixture.context as typeof fixture.context & {
+			sessions: ChatSession[];
+			activeSessionId: string | null;
+			transientSessionIds: Set<string>;
+		};
+		context.sessions = [session];
+		context.activeSessionId = session.id;
+		context.messages = session.messages;
+		context.transientSessionIds = new Set();
+		const appendReadyMessage = vi.fn(async (
+			_notePath: string,
+			_sessionId: string,
+			appended: ChatMessage,
+			options?: { signal?: AbortSignal },
+		) => {
+			options?.signal?.throwIfAborted();
+			if (appended.role === 'assistant') {
+				throw new Error('Disk is full.');
+			}
+			return { ...session, messages: [...session.messages, appended] };
+		});
+		(
+			context.plugin.conversationStore as unknown as Record<string, unknown>
+		).appendReadyMessage = appendReadyMessage;
+		context.persistMessages = productionPersistMessages as unknown as
+			typeof context.persistMessages;
+		fixture.requestSelectionEdit.mockImplementationOnce(async () => {
+			queueMicrotask(() => context.activeController?.abort());
+			return {
+				applied: true,
+				changeCount: 1,
+				summaryItems: [{ type: 'replace', start: 0, end: 4 }],
+				summary: 'Tightened the wording.',
+				usage: {
+					promptTokens: 4,
+					completionTokens: 2,
+					totalTokens: 6,
+					source: 'provider' as const,
+				},
+			};
+		});
+
+		await viewPrototype.submitPrompt.call(context);
+
+		expect(noticeMessages()).toEqual([
+			'Emend: Could not save this chat. Disk is full.',
+		]);
+		expect(context.messages[1]?.status).toBe('ready');
+		expect(context.messages[1]?.content).toContain('Edit applied');
+		expect(context.messages[1]?.content).toContain('Tightened the wording.');
+		expect(context.isSending).toBe(false);
+	});
+
+	it('stays silent when Stop cancels the final save', async () => {
+		const fixture = createEditTargetView();
+		fixture.requestChatCompletion.mockImplementation(async ({ callbacks }) => {
+			callbacks.onContent('Answer awaiting save');
+			return { content: 'Answer awaiting save', reasoning: '' };
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		fixture.conversationStore.appendReadyMessage.mockImplementation(async () => {
+			fixture.context.activeController?.abort();
+			throw new DOMException('Response stopped.', 'AbortError');
+		});
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Question';
+		}
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		const assistantSaves = fixture.conversationStore.appendReadyMessage.mock.calls
+			.filter(([, , appended]) => appended.role === 'assistant');
+		expect(assistantSaves).toHaveLength(1);
+		expect(noticeMessages()).toEqual([]);
+		expect(fixture.context.messages[1]?.status).toBe('stopped');
+		expect(fixture.context.messages[1]?.content).toBe('Answer awaiting save');
+		expect(fixture.context.isSending).toBe(false);
 	});
 });
 

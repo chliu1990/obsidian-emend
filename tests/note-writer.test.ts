@@ -29,16 +29,16 @@ function makeContext(sourceText = '# Note\nOriginal text'): RequestContext {
 
 function makeWriter(
 	currentText = '# Note\nOriginal text',
-	editorText?: string,
+	editorTexts?: readonly string[],
 ) {
 	let targetCurrent = true;
 	const writer: NoteWriter = {
 		readCurrentText: vi.fn(async () => currentText),
 		write: vi.fn(async () => undefined),
 		isTargetCurrent: vi.fn(() => targetCurrent),
-		...(editorText === undefined
+		...(editorTexts === undefined
 			? {}
-			: { readEditorText: vi.fn(() => editorText) }),
+			: { readEditorTexts: vi.fn(() => editorTexts) }),
 	};
 	return {
 		writer,
@@ -175,7 +175,7 @@ describe('applyPreparedEdit', () => {
 
 	it('rejects an edit when the open editor text differs from the captured source', async () => {
 		const context = makeContext();
-		const { writer } = makeWriter(context.sourceText, `${context.sourceText} `);
+		const { writer } = makeWriter(context.sourceText, [`${context.sourceText} `]);
 
 		await expect(
 			applyPreparedEdit(
@@ -190,13 +190,61 @@ describe('applyPreparedEdit', () => {
 			),
 		).rejects.toThrow(STALE_ERROR);
 
-		expect(writer.readEditorText).toHaveBeenCalledExactlyOnceWith(context.file);
+		expect(writer.readEditorTexts).toHaveBeenCalledExactlyOnceWith(context.file);
+		expect(writer.write).not.toHaveBeenCalled();
+	});
+
+	it('rejects an edit when the target pane is dirty and another pane matches the snapshot', async () => {
+		const context = makeContext();
+		const { writer } = makeWriter(context.sourceText, [
+			`${context.sourceText} typing`,
+			context.sourceText,
+		]);
+
+		await expect(
+			applyPreparedEdit(
+				'edit',
+				context,
+				{
+					annotatedMarkdown: '# Note\n{~~Original~>Edited~~} text',
+					changeCount: 1,
+					summaryItems: SUMMARY_ITEMS,
+				},
+				writer,
+			),
+		).rejects.toThrow(STALE_ERROR);
+
+		expect(writer.readEditorTexts).toHaveBeenCalledExactlyOnceWith(context.file);
+		expect(writer.write).not.toHaveBeenCalled();
+	});
+
+	it('rejects an edit when any open pane differs from the captured source', async () => {
+		const context = makeContext();
+		const { writer } = makeWriter(context.sourceText, [
+			context.sourceText,
+			context.sourceText,
+			`${context.sourceText}\n`,
+		]);
+
+		await expect(
+			applyPreparedEdit(
+				'edit',
+				context,
+				{
+					annotatedMarkdown: '# Note\n{~~Original~>Edited~~} text',
+					changeCount: 1,
+					summaryItems: SUMMARY_ITEMS,
+				},
+				writer,
+			),
+		).rejects.toThrow(STALE_ERROR);
+
 		expect(writer.write).not.toHaveBeenCalled();
 	});
 
 	it('applies when disk and editor text both match the captured source', async () => {
 		const context = makeContext();
-		const { writer } = makeWriter(context.sourceText, context.sourceText);
+		const { writer } = makeWriter(context.sourceText, [context.sourceText]);
 		const annotatedMarkdown = '# Note\n{~~Original~>Edited~~} text';
 
 		const result = await applyPreparedEdit(
@@ -207,11 +255,33 @@ describe('applyPreparedEdit', () => {
 		);
 
 		expect(result.applied).toBe(true);
-		expect(writer.readEditorText).toHaveBeenCalledExactlyOnceWith(context.file);
+		expect(writer.readEditorTexts).toHaveBeenCalledExactlyOnceWith(context.file);
 		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
 			context.file,
 			annotatedMarkdown,
 		);
+	});
+
+	it('applies when every open editor matches the captured source', async () => {
+		const context = makeContext();
+		const { writer } = makeWriter(context.sourceText, [
+			context.sourceText,
+			context.sourceText,
+		]);
+
+		const result = await applyPreparedEdit(
+			'edit',
+			context,
+			{
+				annotatedMarkdown: '# Note\n{~~Original~>Edited~~} text',
+				changeCount: 1,
+				summaryItems: SUMMARY_ITEMS,
+			},
+			writer,
+		);
+
+		expect(result.applied).toBe(true);
+		expect(writer.write).toHaveBeenCalledOnce();
 	});
 
 	it('accepts a disk-only writer when no editor reader is supplied', async () => {
@@ -229,7 +299,7 @@ describe('applyPreparedEdit', () => {
 			writer,
 		);
 
-		expect(writer.readEditorText).toBeUndefined();
+		expect(writer.readEditorTexts).toBeUndefined();
 		expect(result.applied).toBe(true);
 		expect(writer.write).toHaveBeenCalledOnce();
 	});
@@ -350,22 +420,22 @@ describe('createVaultNoteWriter', () => {
 			read: vi.fn(async () => context.sourceText),
 			modify: vi.fn(async () => undefined),
 		};
-		const readEditorText = vi.fn((file: TFile) => `${file.path}:editor`);
+		const readEditorTexts = vi.fn((file: TFile) => [`${file.path}:editor`]);
 
 		const writer = createVaultNoteWriter(
 			vault as unknown as Vault,
 			() => true,
-			readEditorText,
+			readEditorTexts,
 		);
 		const diskOnlyWriter = createVaultNoteWriter(
 			vault as unknown as Vault,
 			() => true,
 		);
 
-		expect(writer.readEditorText?.(context.file)).toBe(
+		expect(writer.readEditorTexts?.(context.file)).toEqual([
 			'folder/note.md:editor',
-		);
-		expect(readEditorText).toHaveBeenCalledExactlyOnceWith(context.file);
-		expect(diskOnlyWriter.readEditorText).toBeUndefined();
+		]);
+		expect(readEditorTexts).toHaveBeenCalledExactlyOnceWith(context.file);
+		expect(diskOnlyWriter.readEditorTexts).toBeUndefined();
 	});
 });
