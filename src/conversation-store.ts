@@ -33,7 +33,7 @@ export type ConversationDataAdapter = Pick<
 >;
 
 type ThreadInspection =
-	| { kind: 'schema3' | 'legacy'; conversation: ChatConversation }
+	| { kind: 'schema3' | 'legacy'; conversation: ChatConversation; droppedMessages: number }
 	| { kind: 'malformed' }
 	| { kind: 'unsupported' };
 
@@ -46,6 +46,8 @@ type MutationInspection = {
 
 const MALFORMED_WARNING =
 	'Emend could not read a saved chat. The original file was preserved.';
+const DROPPED_MESSAGE_WARNING =
+	'Emend skipped unreadable messages in a saved chat. The readable messages were kept.';
 const UNSUPPORTED_WARNING =
 	'Emend found a chat with an unsupported schema version. It will not be overwritten.';
 const UNSUPPORTED_ERROR =
@@ -77,7 +79,10 @@ export class ConversationStore {
 
 		const inspection = inspectThread(await this.adapter.read(path));
 		if (inspection.kind === 'schema3' || inspection.kind === 'legacy') {
-			return inspection;
+			if (inspection.droppedMessages > 0) {
+				this.warn(DROPPED_MESSAGE_WARNING);
+			}
+			return { kind: inspection.kind, conversation: inspection.conversation };
 		}
 		this.warn(
 			inspection.kind === 'unsupported'
@@ -268,7 +273,12 @@ export class ConversationStore {
 				malformedContents: contents,
 			};
 		}
-		return { path, kind: inspection.kind, conversation: inspection.conversation };
+		return {
+			path,
+			kind: inspection.kind,
+			conversation: inspection.conversation,
+			...(inspection.droppedMessages > 0 ? { malformedContents: contents } : {}),
+		};
 	}
 
 	private async writeConversation(
@@ -355,7 +365,7 @@ function snapshotSession(session: ChatSession): ChatSession {
 		version: 3,
 		lastActiveSessionId: snapshot.id,
 		sessions: [snapshot],
-	}).sessions;
+	}).conversation.sessions;
 	if (!persisted) {
 		throw new Error('Invalid chat session.');
 	}
@@ -390,7 +400,12 @@ function inspectThread(contents: string): ThreadInspection {
 	}
 	if (value.version === CONVERSATION_SCHEMA_VERSION) {
 		try {
-			return { kind: 'schema3', conversation: validateChatConversation(value) };
+			const validated = validateChatConversation(value);
+			return {
+				kind: 'schema3',
+				conversation: validated.conversation,
+				droppedMessages: validated.droppedMessages,
+			};
 		} catch {
 			return { kind: 'malformed' };
 		}
@@ -402,6 +417,7 @@ function inspectThread(contents: string): ThreadInspection {
 		return {
 			kind: 'legacy',
 			conversation: legacyConversation(value.messages.filter(isReadyMessage)),
+			droppedMessages: 0,
 		};
 	}
 	return { kind: 'unsupported' };

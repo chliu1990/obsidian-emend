@@ -338,9 +338,10 @@ describe('schema-3 conversation validation', () => {
 
 		const validated = validateChatConversation(JSON.parse(JSON.stringify(value)));
 
-		expect(validated).toEqual(value);
-		expect(validated).not.toBe(value);
-		expect(validated.sessions).not.toBe(value.sessions);
+		expect(validated.conversation).toEqual(value);
+		expect(validated.droppedMessages).toBe(0);
+		expect(validated.conversation).not.toBe(value);
+		expect(validated.conversation.sessions).not.toBe(value.sessions);
 	});
 
 	it('filters invalid and non-ready message entries without rejecting the session', () => {
@@ -354,7 +355,10 @@ describe('schema-3 conversation validation', () => {
 			],
 		}));
 
-		expect(validateChatConversation(value).sessions[0]?.messages).toEqual([valid]);
+		const validated = validateChatConversation(value);
+
+		expect(validated.conversation.sessions[0]?.messages).toEqual([valid]);
+		expect(validated.droppedMessages).toBe(3);
 	});
 
 	it('loads legacy source-less usage as provider-reported in schema 3', () => {
@@ -363,7 +367,7 @@ describe('schema-3 conversation validation', () => {
 			usage: { promptTokens: 1, completionTokens: 2, totalTokens: 3 },
 		};
 		const value = conversation(session('one', { messages: [message as ChatMessage] }));
-		expect(validateChatConversation(value).sessions[0]?.messages[0]?.usage).toEqual({
+		expect(validateChatConversation(value).conversation.sessions[0]?.messages[0]?.usage).toEqual({
 			promptTokens: 1,
 			completionTokens: 2,
 			totalTokens: 3,
