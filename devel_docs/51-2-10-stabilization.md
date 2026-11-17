@@ -549,3 +549,66 @@ Base `40c264e` was 53 files / 1,849 tests, so the second pass adds 7. `main.js` 
 - The enforced-limit snapshot is per submission. A Web Off request reports `0`, and the warning is unreachable without skipped calls, so no ordinary chat copy changed.
 - The canonical write-back happens on `change` (blur/commit), not while typing, so a partially typed number is never rewritten mid-edit; the input keeps whatever the user typed until the field commits, then shows the stored value.
 - D5 changes classification only. A provider that answers a forced round with tool calls still fails without retrieval; nothing is executed, retried, or written, and the reader still treats that outcome as its `limit` failure.
+
+### PR D review round
+
+Six review findings closed on the same branch, code commit `829d638`:
+
+1. **Persisted inconsistent usage is dropped at load.** `normalizeLoadedMessage` now removes a stored usage triplet whose `totalTokens` is not `promptTokens + completionTokens`, so a reloaded thread shows no usage footer instead of a **Provider** footer built from impossible numbers. The message itself is still a valid ready message: `validateChatConversation` keeps it and reports `droppedMessages: 0`. The rule reuses `isConsistentTokenUsage`, which now lives in `token-usage.ts` and is imported by `provider-stream.ts`, so the transport, the resolvers, and the conversation schema share one predicate. A consistent triplet still normalizes a missing source to `provider`, and an explicitly `estimated` one is left alone.
+2. **The tool-client credential guard is non-retryable and self-contained.** `requestDeepSeekTool` performs its local configuration guards (missing key, invalid/non-HTTP base URL, credential-bearing base URL) before any `fetch` and now throws `DeepSeekConfigurationError`. `attempt` classifies that error as `{ ok: false, reason: 'format', retryable: false }`, so a credential-bearing base URL costs exactly one attempt, is never retried, and is no longer reported as `network`. The message still never includes the URL. Because the failure-reason vocabulary is closed, the activity row reads `Failed (format)`; no request leaves the machine and the failure payload carries no message or credential. The same guard now covers the missing-key and invalid-URL cases, which previously were also retried once as transport failures.
+3. **Duplicate search hits fill only empty fields.** `buildSearchExtractionDocuments` keeps the first hit's position, temporary ID, and nonempty fields, and fills an empty `title`, `snippet`, `summary`, or `content` from later hits for the same normalized URL before building the canonical document. A first hit with no content and a later hit with content now yields one document carrying the content instead of one document whose `Content:` line is empty.
+4. **The canonical write-back only runs when it changes the field.** Both settings inputs compare the live field value with the stored canonical string and call `setValue` only when they differ, matching `commitCapacity`. Pressing Enter on an unchanged or already-canonical value no longer rewrites the field, so the caret and selection stay where the user left them.
+5. **The reader's correction round is flagged too.** `allowToolOnlyResponse` is now set on the one format-correction request as well as the forced limit round, so a text-less tool-only correction reply reaches `ReaderFailure('format', 'The web extraction correction reply must be bare JSON without tool calls.')` instead of the transport's generic `No text was found in the provider response.` failure.
+6. **The enforced limit is asserted at the boundary.** The 21st-call test now asserts `result.maxToolCalls === 20` alongside the existing skip, activity, and payload checks, pinning the D4 snapshot to the over-limit path.
+
+RED before the fixes:
+
+```text
+FAIL tests/chat-sessions.test.ts > shared message serialization > loads a stored inconsistent usage triplet without a Provider footer
+AssertionError: expected { promptTokens: 10, …(3) } to be undefined
+
+FAIL tests/deepseek-web.test.ts > DeepSeek web transport retry and search degradation > does not retry a credential-bearing base URL and reports it as non-network
+- { attempts: 1, failureReason: 'format', status: 'failed', … }
++ { attempts: 2, failureReason: 'network', status: 'failed', … }
+
+FAIL tests/web-extraction.test.ts > canonical extraction documents > fills only empty fields from a later duplicate hit
+AssertionError: expected [ { sourceId: 'R1', …(3) } ] to deeply equal [ { sourceId: 'R1', …(4) } ]
+
+FAIL tests/settings.test.ts > EmendSettingTab canonical input values > does not rewrite an already-canonical Context character limit value on change
+AssertionError: expected "setValue" to not be called at all, but actually been called 1 times
+FAIL tests/settings.test.ts > EmendSettingTab canonical input values > does not rewrite an already-canonical Web tool call limit value on change
+AssertionError: expected "setValue" to not be called at all, but actually been called 1 times
+
+FAIL tests/web-extraction-reader.test.ts > WebExtractionReader extraction and verification > runs one correction request for unparseable terminal output
+AssertionError: expected undefined to be true   (correction.allowToolOnlyResponse)
+```
+
+The D4 `maxToolCalls` assertion passed on the existing implementation; it was added to prevent regression rather than to drive a fix.
+
+### PR D review-round gate
+
+At code head `829d638`, with `main.js` rebuilt from that tree and SHA-256 `55555a2707339fefe5adb2bfe003c736c97c070bcbd65cce160c7fb48cb8897e`:
+
+```text
+npm test        53 files / 1,861 tests passed
+npm run lint    clean
+npm run build   clean (tsc -noEmit -skipLibCheck + esbuild production)
+git diff --check clean
+```
+
+`d0a6a89` was 53 files / 1,856 tests, so the review round adds 5 (chat-sessions 1, web-extraction 1, deepseek-web 1, settings 2); the reader and boundary assertions were added to existing tests. `main.js` is gitignored and was not committed; the docs commit changes the build identity, so a rebuild at the docs head will not reproduce the hash above.
+
+### PR D review-round commits
+
+| Task | Commit | Message |
+| --- | --- | --- |
+| Review fixes | `829d638` | `fix: close PR D review findings` |
+| Review docs | this docs commit | `docs: record PR D review round` |
+
+### PR D review-round limits
+
+- Unit- and source-verified only; no real Obsidian, loopback harness, or real provider run. The PR E matrix still owns live verification of the settings blur behavior, the reader correction path, and the credential-URL rejection.
+- **Gateways and providers whose `total_tokens` includes cached prompt tokens now show Estimated.** A provider that reports `total = prompt + completion + cached` (or otherwise counts cache reads inside the total) produces a triplet that fails the `total === prompt + completion` check, so its footer is labeled **Estimated** even though the numbers are genuine provider data, and a stored thread carrying such a triplet loads with no usage footer. This is the deliberate cost of a provider-agnostic consistency rule: Emend has no provider metadata or tokenizer to separate cached tokens, and showing an inconsistent Provider total would be worse. Self-consistent but wrong triplets are still trusted as Provider.
+- **A configuration failure is reported as `format`.** The failure-reason union stays closed, so a missing key or a credential-bearing base URL renders `Failed (format)` with `attempts: 1` and a `reason: "format"` payload. No request is made, no credential or URL is echoed, and the Search degrades non-fatally exactly like a schema failure.
+- **Duplicate merging is fill-only and first-wins.** A later duplicate with a richer nonempty summary or content does not replace an already nonempty field; only empty fields are filled, so citation order and temporary IDs remain the first hit's.
+- **The write-back guard reads the live field, not a draft.** `text.inputEl.value` is compared with the stored canonical string, so a value that already matches is never rewritten; a differing value is still replaced on `change` as before.
