@@ -183,6 +183,12 @@ const viewPrototype = EmendChatView.prototype as unknown as {
 	render(this: unknown, composerRestore?: ComposerRestoreTestState): void;
 	renderMessage(this: unknown, containerEl: HTMLElement, message: ChatMessage): void;
 	renderMessageBody(this: unknown, message: ChatMessage): void;
+	renderStreamingMessageBody(
+		this: unknown,
+		bodyEl: HTMLElement,
+		message: ChatMessage,
+	): void;
+	renderFinalMessageBody(this: unknown, bodyEl: HTMLElement, message: ChatMessage): void;
 	scrollMessagesToBottom(this: unknown): void;
 	scrollMessagesToBottomIfFollowing(this: unknown): void;
 	restoreMessageScroll(this: unknown, previousScrollTop: number, wasFollowing: boolean): void;
@@ -4370,6 +4376,10 @@ describe('EmendChatView presentation', () => {
 			messageBodyEls: new Map<string, HTMLElement>([
 				['streaming', body as unknown as HTMLElement],
 			]),
+			renderStreamingMessageBody: (bodyEl: HTMLElement, pending: ChatMessage) =>
+				viewPrototype.renderStreamingMessageBody.call(context, bodyEl, pending),
+			renderFinalMessageBody: (bodyEl: HTMLElement, pending: ChatMessage) =>
+				viewPrototype.renderFinalMessageBody.call(context, bodyEl, pending),
 		};
 
 		viewPrototype.renderMessageBody.call(context, {
@@ -4626,6 +4636,100 @@ describe('EmendChatView web draft rendering', () => {
 	});
 });
 
+describe('EmendChatView streaming DOM identity', () => {
+	function streamingFrames() {
+		const { body, context } = createMessageBodyHarness();
+		let nextFrame: (() => void) | null = null;
+		const frames = {
+			...context,
+			pendingMessages: new Set<ChatMessage>(),
+			pendingRenderFrame: null as number | null,
+			contentEl: {
+				ownerDocument: {
+					defaultView: {
+						requestAnimationFrame: (callback: () => void) => {
+							nextFrame = callback;
+							return 1;
+						},
+					},
+				},
+			},
+			scrollMessagesToBottomIfFollowing: vi.fn(),
+			renderMessageBody: (pending: ChatMessage) =>
+				viewPrototype.renderMessageBody.call(frames, pending),
+		};
+		const flushFrame = () => {
+			const callback = nextFrame;
+			nextFrame = null;
+			callback?.();
+		};
+		return { body, frames, flushFrame };
+	}
+
+	function reasoningParts(body: FakeElement) {
+		const details = findElements(body, (element) => element.tagName === 'details')[0];
+		const content = findElements(
+			body,
+			(element) => element.className.split(' ').includes('emend-chat-reasoning-content'),
+		)[0];
+		if (!details || !content) {
+			throw new Error('Reasoning panel missing.');
+		}
+		return { details, content };
+	}
+
+	it('keeps an opened reasoning panel and its scroll while streaming', () => {
+		const { body, frames, flushFrame } = streamingFrames();
+		const loading = {
+			...message('answer', 'Note.md'),
+			status: 'loading' as const,
+			reasoning: 'First thought',
+			content: 'First delta',
+		};
+
+		viewPrototype.renderMessageBody.call(frames, loading);
+		const { details, content } = reasoningParts(body);
+		details.open = true;
+		content.scrollTop = 120;
+
+		loading.content = 'First delta and second';
+		viewPrototype.scheduleMessageRender.call(frames, loading);
+		flushFrame();
+		loading.content = 'First delta and second and third';
+		viewPrototype.scheduleMessageRender.call(frames, loading);
+		flushFrame();
+
+		expect(reasoningParts(body).details).toBe(details);
+		expect(details.open).toBe(true);
+		expect(content.scrollTop).toBe(120);
+		expect(textOf(body)).toContain('First delta and second and third');
+	});
+
+	it('keeps the opened reasoning panel when the first answer content arrives', () => {
+		const { body, frames, flushFrame } = streamingFrames();
+		const loading = {
+			...message('answer', 'Note.md'),
+			status: 'loading' as const,
+			reasoning: 'Thinking',
+			content: '',
+		};
+
+		viewPrototype.renderMessageBody.call(frames, loading);
+		const { details, content } = reasoningParts(body);
+		details.open = true;
+		content.scrollTop = 64;
+
+		loading.content = 'The answer starts here.';
+		viewPrototype.scheduleMessageRender.call(frames, loading);
+		flushFrame();
+
+		expect(reasoningParts(body).details).toBe(details);
+		expect(details.open).toBe(true);
+		expect(content.scrollTop).toBe(64);
+		expect(textOf(body)).toContain('The answer starts here.');
+	});
+});
+
 class FakeElement {
 	readonly children: FakeElement[] = [];
 	readonly attributes: Record<string, string> = {};
@@ -4873,6 +4977,10 @@ function createMessageBodyHarness() {
 		]),
 		settleMarkdownRender: vi.fn(),
 		scrollMessagesToBottomIfFollowing: vi.fn(),
+		renderStreamingMessageBody: (bodyEl: HTMLElement, pending: ChatMessage) =>
+			viewPrototype.renderStreamingMessageBody.call(context, bodyEl, pending),
+		renderFinalMessageBody: (bodyEl: HTMLElement, pending: ChatMessage) =>
+			viewPrototype.renderFinalMessageBody.call(context, bodyEl, pending),
 	};
 	return { body, context };
 }
@@ -5935,6 +6043,10 @@ describe('EmendChatView latest-message scrolling', () => {
 			scrollMessagesToBottomIfFollowing,
 			settleMarkdownRender: (generation: number) =>
 				viewPrototype.settleMarkdownRender.call(context, generation),
+			renderStreamingMessageBody: (bodyEl: HTMLElement, pending: ChatMessage) =>
+				viewPrototype.renderStreamingMessageBody.call(context, bodyEl, pending),
+			renderFinalMessageBody: (bodyEl: HTMLElement, pending: ChatMessage) =>
+				viewPrototype.renderFinalMessageBody.call(context, bodyEl, pending),
 		};
 
 		viewPrototype.renderMessageBody.call(context, message('answer', 'Note.md'));
@@ -6049,6 +6161,10 @@ describe('EmendChatView completion relayout and unread pages', () => {
 				viewPrototype.settleMarkdownRender.call(context, generation),
 			restoreMessageScroll: (previousScrollTop: number, wasFollowing: boolean) =>
 				viewPrototype.restoreMessageScroll.call(context, previousScrollTop, wasFollowing),
+			renderStreamingMessageBody: (bodyEl: HTMLElement, pending: ChatMessage) =>
+				viewPrototype.renderStreamingMessageBody.call(context, bodyEl, pending),
+			renderFinalMessageBody: (bodyEl: HTMLElement, pending: ChatMessage) =>
+				viewPrototype.renderFinalMessageBody.call(context, bodyEl, pending),
 		};
 		for (const id of ['first', 'second']) {
 			const body = new FakeElement();
