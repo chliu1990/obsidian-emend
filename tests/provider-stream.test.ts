@@ -732,6 +732,26 @@ describe('requestAiResponse', () => {
 		).rejects.toThrow('No text was found in the provider response.');
 	});
 
+	it('returns a text-less tool-only forced round to the caller', async () => {
+		mockStream([
+			'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"web_search","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}\n\n',
+			'data: [DONE]\n\n',
+		]);
+
+		const result = await requestAiResponse(
+			makeRequest({ allowToolOnlyResponse: true }),
+			{ onEvent: vi.fn() },
+			new AbortController().signal,
+		);
+
+		expect(result).toEqual({
+			content: '',
+			reasoning: '',
+			finishReason: 'tool_calls',
+			toolCalls: [{ id: 'call-1', name: 'web_search', arguments: '{}' }],
+		});
+	});
+
 	it('serializes ordinary assistant and user continuations without tool_calls', async () => {
 		const fetchMock = mockStream([
 			'data: {"choices":[{"delta":{"content":"corrected"}}]}\n\n',

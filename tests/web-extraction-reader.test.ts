@@ -693,6 +693,8 @@ describe('WebExtractionReader extraction and verification', () => {
 		expect(forced.systemPrompt).toContain('round limit');
 		expect(forced.systemPrompt).toContain('JSON');
 		expect(forced.continuation).toHaveLength(12);
+		expect(forced.allowToolOnlyResponse).toBe(true);
+		expect(request.mock.calls[0]![0].allowToolOnlyResponse).toBeUndefined();
 		expect(extracted.outcome).toEqual({
 			outcome: 'evidence',
 			results: [{

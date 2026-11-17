@@ -140,6 +140,7 @@ export class DeepSeekWebSearchCoordinator {
 					? '\n\nThe configured Web call limit has been reached. Answer now from the current note, chat, and successfully extracted evidence. Do not call tools or invent citations; if evidence is insufficient, answer from available context and disclose uncertainty.'
 					: ''}`,
 				...(forceTerminal ? {} : { tools: WEB_TOOL_DEFINITIONS }),
+				...(forceTerminal ? { allowToolOnlyResponse: true } : {}),
 				continuation,
 			};
 			let contentEmitted = false;

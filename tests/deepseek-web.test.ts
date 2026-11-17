@@ -8,10 +8,11 @@ import {
 	type DeepSeekFetchPage,
 	type DeepSeekSearchResult,
 } from '../src/deepseek-web';
-import type {
-	AiProviderRequest,
-	StreamEvent,
-	StreamResult,
+import {
+	requestAiResponse,
+	type AiProviderRequest,
+	type StreamEvent,
+	type StreamResult,
 } from '../src/provider-stream';
 import { ContextCapacityError } from '../src/context-accounting';
 import { resolveRoundTokenUsage } from '../src/token-usage';
@@ -231,6 +232,19 @@ function toolRound(calls: Array<{ id: string; name: string; arguments: string }>
 
 function finalRound(content = 'Final answer', reasoning = ''): StreamResult {
 	return { content, reasoning, finishReason: 'stop' };
+}
+
+function sseResponse(chunks: string[]) {
+	const encoder = new TextEncoder();
+	const stream = new ReadableStream<Uint8Array>({
+		start(controller) {
+			for (const chunk of chunks) {
+				controller.enqueue(encoder.encode(chunk));
+			}
+			controller.close();
+		},
+	});
+	return new Response(stream);
 }
 
 function options(overrides: Partial<WebSearchRunOptions> = {}): WebSearchRunOptions {
@@ -1204,6 +1218,35 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		expect(search).toHaveBeenCalledOnce();
 		expect(reader.extract).toHaveBeenCalledOnce();
 		expect(request).toHaveBeenCalledTimes(2);
+	});
+
+	it('classifies a text-less tool-only forced round as a limit failure', async () => {
+		const fetchMock = vi.fn()
+			.mockResolvedValueOnce(sseResponse([
+				'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"web_search","arguments":"{\\"query\\":\\"first\\",\\"extractionGoal\\":\\"Find the facts.\\"}"}},{"index":1,"id":"call-2","function":{"name":"web_search","arguments":"{\\"query\\":\\"late\\",\\"extractionGoal\\":\\"Find more facts.\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n',
+				'data: [DONE]\n\n',
+			]))
+			.mockResolvedValueOnce(sseResponse([
+				'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-3","function":{"name":"web_search","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}\n\n',
+				'data: [DONE]\n\n',
+			]));
+		vi.stubGlobal('fetch', fetchMock);
+		const search = vi.fn(async () => [parsedSearchResult]);
+		const reader = successfulReader();
+		const coordinator = new DeepSeekWebSearchCoordinator({
+			provider,
+			request: requestAiResponse,
+			search,
+			reader,
+		});
+
+		await expect(
+			coordinator.submit(aiRequest(), options({ maxToolCalls: 1 })),
+		).rejects.toThrow('The model returned tool calls after the web call limit was reached.');
+
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(search).toHaveBeenCalledOnce();
+		expect(reader.extract).toHaveBeenCalledOnce();
 	});
 
 	it('validates skipped proposals before Review or retrieval', async () => {

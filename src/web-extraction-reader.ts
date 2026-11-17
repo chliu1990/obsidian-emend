@@ -259,6 +259,7 @@ export class WebExtractionReader {
 			userPrompt,
 			history: [],
 			responseFormat: 'json_object',
+			allowToolOnlyResponse: true,
 			...(continuation === undefined ? {} : { continuation }),
 		};
 		const forced = await this.request(forcedRequest, options, rounds);

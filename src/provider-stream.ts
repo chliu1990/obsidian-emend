@@ -43,6 +43,7 @@ export interface AiProviderRequest {
 	tools?: ProviderToolDefinition[];
 	continuation?: ProviderContinuationMessage[];
 	responseFormat?: 'json_object';
+	allowToolOnlyResponse?: boolean;
 }
 
 export interface StreamResult {
@@ -176,11 +177,9 @@ export async function requestAiResponse(
 			}
 
 			const round = parser.getRoundState();
-			if (
-				!content &&
-				!reasoning &&
-				(round.toolCalls.length === 0 || !request.tools?.length)
-			) {
+			const toolOnlyAllowed = round.toolCalls.length > 0 &&
+				(Boolean(request.tools?.length) || request.allowToolOnlyResponse === true);
+			if (!content && !reasoning && !toolOnlyAllowed) {
 				throw new Error('No text was found in the provider response.');
 			}
 
