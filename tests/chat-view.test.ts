@@ -139,6 +139,21 @@ const productionSubmitPrompt = (EmendChatView.prototype as unknown as {
 const productionRefreshTargetNote = (EmendChatView.prototype as unknown as {
 	refreshTargetNote(this: unknown): Promise<void>;
 }).refreshTargetNote;
+// eslint-disable-next-line @typescript-eslint/unbound-method -- The test wrapper supplies an explicit receiver.
+const productionPersistMessages = (EmendChatView.prototype as unknown as {
+	persistMessages(
+		this: unknown,
+		notePath: string,
+		messages: ChatMessage[],
+		persistence: {
+			session: ChatSession;
+			message: ChatMessage;
+			request: ActiveRequest;
+			titlePrompt?: string;
+			allowAbortedSave?: boolean;
+		},
+	): Promise<ChatSession | undefined>;
+}).persistMessages;
 
 type ComposerRestoreTestState = {
 	draft: string;
@@ -7917,5 +7932,63 @@ describe('EmendChatView quick action drafts', () => {
 				.get('Note.md')
 				?.get(fixture.context.activeSessionId ?? ''),
 		).toBe('Keep this');
+	});
+});
+
+describe('EmendChatView committed edit persistence', () => {
+	it('persists an applied edit result when Stop races the ready snapshot', async () => {
+		const fixture = createSelectionEditSubmission();
+		const session = makeSession('session-1');
+		const context = fixture.context as typeof fixture.context & {
+			sessions: ChatSession[];
+			activeSessionId: string | null;
+			transientSessionIds: Set<string>;
+		};
+		context.sessions = [session];
+		context.activeSessionId = session.id;
+		context.messages = session.messages;
+		context.transientSessionIds = new Set();
+		const saved: ChatMessage[] = [];
+		const appendReadyMessage = vi.fn(async (
+			_notePath: string,
+			_sessionId: string,
+			appended: ChatMessage,
+			options?: { signal?: AbortSignal },
+		) => {
+			options?.signal?.throwIfAborted();
+			saved.push(appended);
+			return { ...session, messages: [...session.messages, appended] };
+		});
+		(
+			context.plugin.conversationStore as unknown as Record<string, unknown>
+		).appendReadyMessage = appendReadyMessage;
+		context.persistMessages = productionPersistMessages as unknown as
+			typeof context.persistMessages;
+		fixture.requestSelectionEdit.mockImplementationOnce(async () => {
+			queueMicrotask(() => context.activeController?.abort());
+			return {
+				applied: true,
+				changeCount: 1,
+				summaryItems: [{ type: 'replace', start: 0, end: 4 }],
+				summary: 'Tightened the wording.',
+				usage: {
+					promptTokens: 4,
+					completionTokens: 2,
+					totalTokens: 6,
+					source: 'provider' as const,
+				},
+			};
+		});
+
+		await viewPrototype.submitPrompt.call(context);
+
+		expect(context.messages[1]?.status).toBe('ready');
+		expect(context.messages[1]?.content).toContain('Tightened the wording.');
+		expect(saved.map((entry) => [entry.role, entry.status])).toEqual([
+			['user', 'ready'],
+			['assistant', 'ready'],
+		]);
+		expect(saved[1]?.content).toContain('Tightened the wording.');
+		expect(context.isSending).toBe(false);
 	});
 });
