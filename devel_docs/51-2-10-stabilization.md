@@ -698,3 +698,198 @@ Screenshots inspected: `01-selection-edit-inside-existing-token.png` (Notice ban
 - The minimal-edit suite was adapted in the ignored harness only (menus, accessible labels, ready-body selector, correction-instruction wording, schema-3 audit); its assertions still come from the Stage 37 record and were not expanded with Stage 51 coverage. Its evidence file does not recompute a bundle hash: like the other suites it copies the root `main.js` shown above into its vault during `prepare()`, and no separate bundle was built for it.
 
 The tree that produced these runs also passes the local gates unchanged: `npm test` **53 files / 1,863 tests**, `npm run lint` clean, `git diff --check` clean, and the bundle hash above.
+## PR F — Round 3 cross-cutting fixes
+
+Branch `fix/2.10-concurrency`, based at `a285d98` (53 files / 1,863 tests). The first pass ships F1–F3; a second pass owns F4–F8. Every task followed the same discipline: focused failing test, captured RED, smallest fix, GREEN, one commit with the brief's message.
+
+### Findings and fixes
+
+1. **F1 (High, write safety) — the editor reader failed open.** `NoteWriter.readEditorText(file)` returned exactly one string. `main.ts` built it by taking the maintained target view's text as a reference and then returning the first *other* open pane whose text differed from that reference. When the target pane itself was the dirty one and a second pane still held the captured source, the differing entry was the clean one, so `applyPreparedEdit` compared the clean text against the snapshot, passed, and `vault.modify` overwrote the unsaved typing in the target pane. The reader contract is now `readEditorTexts(file): readonly string[] | undefined`, and the writer requires **every** returned entry to equal `snapshot.sourceText`; `undefined` or an empty result still means no open editor and keeps the disk-only path. `main.ts` collects the target view's text plus every open Markdown view whose `file` is the captured file, without a new vault read. A dirty pane can no longer be masked by a clean sibling, and the guard is strictly wider than before: no write path was relaxed.
+2. **F2 (High, common path) — a rename stranded every chat view.** The vault `rename` handler updated only the additional-notes store. The chat view kept its old `notePath`, so `captureChatContext()` returned the renamed file's new path, `sourcePath !== notePath` failed, and every submission was rejected with `The active note changed before the request started.` until the user switched notes. The handler now calls the same `refreshChatTargetNotes()` callback that `active-leaf-change` and `file-open` already use, after the store update, so every open `EmendChatView` re-points at the new path (and reloads that path's aggregate) in one place. `refreshTargetNote` still early-returns for views whose active note did not change, so an unrelated rename only refreshes their edit-target control and draft estimate. Conversation aggregates are still not migrated across a rename, per the existing deferred item.
+3. **F3 (High, record loss) — an applied edit's result was buried behind a save error.** When another chat view deleted the session during an in-flight request, `appendReadyMessage` rejected with `Chat session does not exist.` The note write had already happened, yet the message was marked `error` and the only explanation was `Emend: Could not save this chat. Chat session does not exist.` `conversation-store.ts` now exports `isMissingSessionSaveError`, and `chat-view.ts` checks it for an already-applied edit whose final save was attempted: the concise applied summary stays in the message as ready content and one distinct `Emend: Edit applied, but this chat could not be saved.` Notice is shown. The save is attempted exactly once — no re-append, no second write, and the pending lock is still released in `finally`.
+
+### Regression evidence
+
+New tests (+7; base `a285d98` was 53 files / 1,863 tests):
+
+- `tests/note-writer.test.ts`: `rejects an edit when the target pane is dirty and another pane matches the snapshot`, `rejects an edit when any open pane differs from the captured source`, `applies when every open editor matches the captured source`; the existing differing-text, both-match, and disk-only cases now drive `readEditorTexts`.
+- `tests/main.test.ts`: `rejects an edit when the target pane is dirty and another pane matches the snapshot` (plugin wiring), `rejects an edit when any open pane differs from the captured source`, `refreshes open chat views when the active note is renamed`.
+- `tests/chat-view.test.ts`: `keeps an applied edit summary when its session was deleted during the request`.
+
+RED before each fix:
+
+```text
+# F1 — writer contract
+FAIL tests/note-writer.test.ts > applyPreparedEdit > rejects an edit when the target pane is dirty and another pane matches the snapshot
+  (the edit resolved and wrote the annotated note instead of rejecting)
+FAIL tests/note-writer.test.ts > applyPreparedEdit > rejects an edit when the open editor text differs from the captured source
+AssertionError: expected "vi.fn()" to be called exactly once, but got 0 times   (readEditorTexts)
+Tests  5 failed | 13 passed (18)
+
+# F1 — plugin wiring, reproduced by restoring the old reference-and-find-differing reader
+FAIL tests/main.test.ts > EmendPlugin edit freshness > rejects an edit when the target pane is dirty and another pane matches the snapshot
+  (the edit applied and vault.modify ran instead of rejecting)
+
+# F2
+FAIL tests/main.test.ts > EmendPlugin note rename refresh > refreshes open chat views when the active note is renamed
+Error: Condition did not become true.   (the view's notePath never left Old.md)
+
+# F3
+FAIL tests/chat-view.test.ts > EmendChatView committed edit persistence > keeps an applied edit summary when its session was deleted during the request
+- "Emend: Edit applied, but this chat could not be saved.",
++ "Emend: Could not save this chat. Chat session does not exist.",
+```
+
+Every focused suite and the full gate are green at the final code head.
+
+### Commits
+
+| Task | Commit | Message |
+| --- | --- | --- |
+| F1 | `a602803` | `fix: require every open editor to match the captured source` |
+| F2 | `48fca85` | `fix: refresh chat state when a note is renamed` |
+| F3 | `06895a2` | `fix: keep applied results when the session disappears` |
+
+### Local gate
+
+At code head `06895a2`, with `main.js` rebuilt from that tree and SHA-256 `71ffa80e20bba0da91d37a1dd15857bcaeb0f06eef11c84b3d59d9666f4ffed7`:
+
+```text
+npm test        53 files / 1,870 tests passed
+npm run lint    clean
+npm run build   clean (tsc -noEmit -skipLibCheck + esbuild production)
+git diff --check clean
+```
+
+The docs commit changes the esbuild build identity, so a rebuild at the docs head will not reproduce the hash above.
+
+### Limits
+
+- Everything here is unit- and source-verified. No real-Obsidian run confirms multi-pane staleness rejection, the rename re-point in a live workspace, or the deleted-session Notice; the PR E exploratory matrix owns those runs, and no macOS, Windows, real-provider, or assistive-technology claim is made.
+- F1 widens freshness only. A pane that is *clean* still passes, the disk read and one `vault.modify` are unchanged, and no new vault read is added — the reader reuses the already-open editors' text.
+- F2 re-points a view but does not migrate the aggregate: after a rename the chat starts a fresh thread for the new path while the old aggregate stays under the old path's hash. Note-rename history migration remains deferred.
+- F3 covers the missing-session rejection for an applied edit only. The other save failures are F4 in the second pass, which extends this branch instead of replacing it.
+
+### Second pass — F4–F8
+
+The second pass closes the remaining Round 3 findings on the same branch, with the same failing-test-first discipline. Base for the pass: `24dc9ed` (53 files / 1,870 tests).
+
+### Fixes
+
+4. **F4 (Medium) — a failed save was silent after Stop or a completed edit.** The aborted branch showed no save failure at all, and the error branch gated its Notice on `isActiveRequest`, so a save that rejected after Stop or a session transition lost its only explanation. The catch now classifies the failure once: `cancelled` means the thrown error is an abort, and `saveFailed` means the final save was attempted and the error was not a cancellation. A committed edit whose save fails keeps its concise applied summary as a ready message and shows either the distinct missing-session Notice (F3) or `Emend: Could not save this chat. <bounded reason>`; a non-committed save failure shows the same generic Notice in both the aborted and the error branch, and no longer depends on the originating request still being active. Provider errors keep their existing `isActiveRequest` gate, and `persistMessages` now rethrows an abort error instead of wrapping it as `Could not save this chat.`, so a deliberate Stop at save time is a cancellation rather than a reported failure. The pre-existing stale-save test changed name and expectation (`reports a stale final-save failure without touching the new session`) because the save failure is now always reported.
+5. **F5 (Medium) — stale transients and an incomplete session list.** A note's cached runtime-only session was never discarded, so a later failed load resurrected never-persisted messages; and New-chat/rename materialization replaced `this.sessions` with just the materialized entry, hiding sessions another view had created. `refreshTargetNote` now discards that note's transient entry and ID whenever a successful load finds a persisted active session (an aggregate with no active session still reuses the cached transient and its draft, which is the existing transient-recovery behavior), and a tolerant `loadStoredSessions` helper re-reads the store after materialization in `createNewSession` and `renameActiveSession` so the ordered session list is adopted from disk, falling back to the single materialized entry when the store list is unreadable or lacks it.
+6. **F6 (Medium) — later corruption overwrote the preserved original.** `writeConversation` wrote `<chat>.corrupt` unconditionally, so a second corruption event replaced the first preserved bytes. The backup is now written only when that file does not already exist; every later corruption keeps the first original, and the `.corrupt` path stays single. The existing reuse test became `keeps the first corrupt backup across later corruption events`.
+7. **F7 (Low) — Web configuration errors were soft failures.** `attempt` classified `DeepSeekConfigurationError` as a non-retryable `configuration` failure, which turned a local missing-key, invalid-base-URL, or credential-bearing-base-URL guard into a soft `search_failed`/`fetch_failed` tool result. It is now rethrown as fatal, so the submission aborts with the guard's own message before any request, no Search/Fetch/reader work follows, and the model never receives a tool result that hides a misconfiguration. `WebFailureReason` and the activity label map drop the now-unreachable `configuration` member; the deepseek-web non-retryable table keeps only the `format` case and a dedicated fatal-configuration test covers the new behavior, and the chat-view label table drops its `configuration` row.
+8. **F8 (Low) — a zero-result search looked complete.** A Search whose parse produced no usable result still ran a reader round and recorded a `completed` activity, so the answer silently had no evidence and no warning. `executeCall` now builds the extraction documents first and, when there are none, returns the existing `search_failed` failure with `reason: "empty"` and `attempts: 1` before any reader work or retry. The call therefore contributes to the existing `Emend could not complete N web search. The answer may be incomplete.` warning and renders `Failed (empty page)`, matching the empty-Fetch-page classification. The forced-answer fixture that used a zero-result search now asserts the reader is skipped and `failedSearches` is 1.
+
+### Regression evidence
+
+New tests (+5 net; base `24dc9ed` was 53 files / 1,870 tests):
+
+- `tests/chat-view.test.ts`: `reports a failed save after a committed edit when Stop raced completion`; `does not resurrect a stale transient session after a successful load`; `shows sessions created by another view after materialization`; the stale-save test renamed to `reports a stale final-save failure without touching the new session`.
+- `tests/conversation-store.test.ts`: `keeps the first corrupt backup across later corruption events` (was `reuses the single corrupt backup for later corruption`).
+- `tests/deepseek-web.test.ts`: `aborts the web loop on a configuration error`; `reports a zero-result search as empty`; the non-retryable table collapsed to its `format` row; `allows a forced answer without evidence or invented citations` now asserts the reader is skipped and one search failed.
+- `tests/chat-view.test.ts` activity-label table: the `configuration` row was removed with the failure reason.
+
+RED before each fix:
+
+```text
+# F4
+FAIL tests/chat-view.test.ts > EmendChatView committed edit persistence > reports a failed save after a committed edit when Stop raced completion
+- [ "Emend: Could not save this chat. Disk is full." ]
++ []
+
+# F5
+FAIL tests/chat-view.test.ts > EmendChatView thread-load recovery > does not resurrect a stale transient session after a successful load
+AssertionError: expected [ { id: 'never-saved', …(7) } ] to deeply equal []
+FAIL tests/chat-view.test.ts > EmendChatView session management > shows sessions created by another view after materialization
+AssertionError: expected [ …(2) ] to include 'other-view'
+
+# F6
+FAIL tests/conversation-store.test.ts > ConversationStore corruption recovery > keeps the first corrupt backup across later corruption events
+AssertionError: expected 'second malformed' to be 'first malformed' // Object.is equality
+
+# F7
+FAIL tests/deepseek-web.test.ts > DeepSeekWebSearchCoordinator > aborts the web loop on a configuration error
+AssertionError: promise resolved "{ …(10) }" instead of rejecting
+
+# F8
+FAIL tests/deepseek-web.test.ts > DeepSeekWebSearchCoordinator > reports a zero-result search as empty
+AssertionError: expected "vi.fn()" to not be called at all, but actually been called 1 times   (reader.extract)
+```
+
+### Commits
+
+| Task | Commit | Message |
+| --- | --- | --- |
+| F4 | `a92aa62` | `fix: report save failures after Stop` |
+| F5 | `79a37ed` | `fix: discard stale transient sessions after a load` |
+| F6 | `c7037cf` | `fix: preserve the first corrupt backup` |
+| F7 | `af56e8b` | `fix: abort on web configuration errors` |
+| F8 | `eec2f9f` | `fix: report zero-result searches as empty` |
+
+### Second-pass gate
+
+At code head `eec2f9f`, with `main.js` rebuilt from that tree and SHA-256 `98aae8d920698781c2be55c0c5779c52d559585cc8d0ca1122059e9bcb1f886a`:
+
+```text
+npm test        53 files / 1,873 tests passed
+npm run lint    clean
+npm run build   clean (tsc -noEmit -skipLibCheck + esbuild production)
+git diff --check clean
+```
+
+Base `24dc9ed` was 53 files / 1,870 tests, so the finished round adds 3 net (F4 +1, F5 +2, F6 0, F7 −1 from collapsing the failure table and removing the label row plus +1 new test, F8 +1). The docs commit changes the esbuild build identity, so a rebuild at the docs head will not reproduce the hash above.
+
+### Second-pass limits
+
+- Unit- and source-verified only, like F1–F3. No real-Obsidian run confirms the Stop-race save Notice, the stale-transient discard in a live workspace, the adopted session list across two views, the preserved `.corrupt` bytes across two real corruption events, the fatal configuration abort, or the zero-result warning; the PR E matrix owns those runs.
+- F4 reports every non-cancelled save rejection, including one whose originating session is no longer active. That is a deliberate change from the earlier suppression contract: a lost save is data loss, and the Notice is the only signal. A cancellation by Stop remains silent.
+- F5 discards a cached transient only when the successful load finds a persisted active session. An aggregate with no active session keeps its cached transient (and its unsaved messages and draft) across note switches, which is the existing transient-recovery behavior and is unchanged.
+- F6 keeps exactly one `.corrupt` file per chat and never overwrites it. A user who wants a newer snapshot must remove the old file; no rotation or timestamped variant is added.
+- F7 removes the `configuration` failure reason from the type and the labels. It is unreachable after the change, and no persisted data carries it (failure reasons are transient), but any external consumer of the label map would no longer see that key.
+- F8 classifies a zero-result search as a failure rather than an empty success and does not retry it. That avoids a second paid Search for a deterministic empty parse, and it means such a call now contributes to the search warning count instead of silently returning no evidence.
+
+## PR F review round
+
+Four findings closed on the same branch, code commit `5fbaef4` and docs commit below.
+
+1. **Search attempt count was hard-coded.** A Search whose first attempt was retried and whose second attempt returned no usable result reported `attempts: 1`, contradicting the documented rule that `attempts` is 1 without a retry or 2 after it. `attemptWithRetry` now carries the attempt count on its success result too, and the zero-result `search_failed` outcome uses `outcome.attempts`, so the activity and the tool payload both report 2 for a retried-then-empty Search.
+2. **A discarded transient left its draft behind.** `discardTransientSession` removed the cached transient session and its ID but not the `{notePath, sessionId}` draft entry, so a later render could restore text into a session that no longer exists. It now also deletes that transient ID's draft entry.
+3. **Unrelated-rename behavior was untested.** A rename of a different file runs `refreshTargetNote`, finds the active path unchanged, and takes the cheap same-path branch. A new test pins that it does not abort an in-flight request's signal, does not reload the conversation, and does not issue a second provider request, and that the answer still persists afterwards.
+4. **Stop-cancelled saves were only implied.** A new test drives an `AbortError` rejection out of `appendReadyMessage` after Stop and asserts the assistant save is attempted exactly once, no save-failure Notice appears, the partial answer stays as stopped content, and the view leaves the sending state — pinning the F4 cancellation classification so a future re-wrap of abort errors cannot silently turn a deliberate Stop into a reported failure.
+
+### Tests and gate
+
+New tests (+4; base `27bfe19` was 53 files / 1,873 tests):
+
+- `tests/deepseek-web.test.ts`: `reports a retried zero-result search with two attempts`.
+- `tests/chat-view.test.ts`: `drops a discarded transient session draft with it`, `stays silent when Stop cancels the final save`.
+- `tests/main.test.ts`: `leaves an in-flight request running when a different note is renamed`.
+
+RED before the two code fixes:
+
+```text
+FAIL tests/deepseek-web.test.ts > DeepSeekWebSearchCoordinator > reports a retried zero-result search with two attempts
+- "attempts": 2,
++ "attempts": 1,
+
+FAIL tests/chat-view.test.ts > EmendChatView thread-load recovery > drops a discarded transient session draft with it
+AssertionError: expected true to be false // Object.is equality
+```
+
+The two behavior tests (3 and 4) passed on the fixed code as guards rather than as fixes; both target classifications the review asked to pin.
+
+At review code head `5fbaef4`, with `main.js` rebuilt from that tree and SHA-256 `f00e42e23ef64f0fd4ebb01b24ca40a66554b5219be49755e551c6916a0e1ddc`:
+
+```text
+npm test        53 files / 1,877 tests passed
+npm run lint    clean
+npm run build   clean (tsc -noEmit -skipLibCheck + esbuild production)
+git diff --check clean
+```
+
+### Remaining limits
+
+- The optional `readEditorTexts` reader stays optional: a writer without it (disk-only usage outside the composer path) skips the live-editor comparison entirely, which is the documented contract but leaves that seam unreachable in chat. No test or type change was made here.
+- Popout and reading-mode behavior is still unverified: the reader iterates `workspace.iterateAllLeaves`, so a popout window's Markdown view is covered only if the host reports it through the same workspace; reading-mode (preview, no editor) panes expose no editor text and therefore contribute nothing to the comparison. Real-Obsidian confirmation remains with the PR E matrix, together with the rest of the round's live runs.

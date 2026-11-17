@@ -1203,7 +1203,8 @@ describe('DeepSeekWebSearchCoordinator', () => {
 		expect(result.sources).toEqual([]);
 		expect(result.content).not.toContain('[S');
 		expect(search).toHaveBeenCalledOnce();
-		expect(reader.extract).toHaveBeenCalledOnce();
+		expect(reader.extract).not.toHaveBeenCalled();
+		expect(result.failedSearches).toBe(1);
 		expect(request).toHaveBeenCalledTimes(2);
 	});
 
@@ -1918,58 +1919,137 @@ describe('DeepSeek web transport retry and search degradation', () => {
 		expect(result.failedSearches).toBe(0);
 	});
 
-	it.each([
-		{
-			providerOverride: { baseUrl: 'https://token-user:token-secret@api.deepseek.com' },
-			search: undefined,
-			reason: 'configuration',
-		},
-		{
-			providerOverride: {},
+	it('reports a format failure as a non-retryable failure with one attempt', async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+		const rounds = [
+			toolRound([searchCall('call-1', 'secret search')]),
+			finalRound('No evidence available.'),
+		];
+		const request = vi.fn(async (
+			_request: AiProviderRequest,
+			_callbacks: { onEvent(event: StreamEvent): void },
+			_signal: AbortSignal,
+		) => {
+			const result = rounds[request.mock.calls.length - 1];
+			if (!result) throw new Error('Unexpected model round');
+			return result;
+		});
+		const coordinator = new DeepSeekWebSearchCoordinator({
+			provider,
+			request,
 			search: vi.fn(async () => parseDeepSeekSearchResponse({ results: 'drifted' })),
-			reason: 'format',
-		},
-	])(
-		'reports $reason as a non-retryable failure with one attempt',
-		async ({ providerOverride, search, reason }) => {
-			const fetchMock = vi.fn();
-			vi.stubGlobal('fetch', fetchMock);
-			const rounds = [
-				toolRound([searchCall('call-1', 'secret search')]),
-				finalRound('No evidence available.'),
-			];
-			const request = vi.fn(async (
-				_request: AiProviderRequest,
-				_callbacks: { onEvent(event: StreamEvent): void },
-				_signal: AbortSignal,
-			) => {
-				const result = rounds[request.mock.calls.length - 1];
-				if (!result) throw new Error('Unexpected model round');
-				return result;
-			});
-			const coordinator = new DeepSeekWebSearchCoordinator({
-				provider: { ...provider, ...providerOverride },
-				request,
-				...(search ? { search } : {}),
-			});
+		});
 
-			const result = await coordinator.submit(aiRequest(), options());
+		const result = await coordinator.submit(aiRequest(), options());
 
-			expect(fetchMock).not.toHaveBeenCalled();
-			expect(result.failedSearches).toBe(1);
-			expect(result.activities).toEqual([{
-				type: 'search',
-				target: 'secret search',
-				status: 'failed',
-				failureReason: reason,
-				attempts: 1,
-			}]);
-			const toolMessage = request.mock.calls[1]?.[0].continuation?.find((message) => message.role === 'tool');
-			const content = toolMessage?.role === 'tool' ? toolMessage.content : '';
-			expect(content).toBe(`{"error":{"kind":"search_failed","reason":"${reason}","attempts":1}}`);
-			expect(content).not.toContain('token-secret');
-		},
-	);
+		expect(fetchMock).not.toHaveBeenCalled();
+		expect(result.failedSearches).toBe(1);
+		expect(result.activities).toEqual([{
+			type: 'search',
+			target: 'secret search',
+			status: 'failed',
+			failureReason: 'format',
+			attempts: 1,
+		}]);
+		const toolMessage = request.mock.calls[1]?.[0].continuation?.find((message) => message.role === 'tool');
+		const content = toolMessage?.role === 'tool' ? toolMessage.content : '';
+		expect(content).toBe('{"error":{"kind":"search_failed","reason":"format","attempts":1}}');
+		expect(content).not.toContain('token-secret');
+	});
+
+	it('reports a zero-result search as empty', async () => {
+		const search = vi.fn(async (): Promise<DeepSeekSearchResult[]> => []);
+		const reader = successfulReader();
+		const { coordinator, request } = coordinatorWith([
+			toolRound([searchCall('call-1', 'nothing found')]),
+			finalRound('No evidence available.'),
+		], search, vi.fn(), reader);
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(search).toHaveBeenCalledOnce();
+		expect(reader.extract).not.toHaveBeenCalled();
+		expect(result.failedSearches).toBe(1);
+		expect(result.sources).toEqual([]);
+		expect(result.activities).toEqual([{
+			type: 'search',
+			target: 'nothing found',
+			status: 'failed',
+			failureReason: 'empty',
+			attempts: 1,
+		}]);
+		const toolMessage = request.mock.calls[1]?.[0].continuation?.find(
+			(message) => message.role === 'tool',
+		);
+		expect(toolMessage?.role === 'tool' && toolMessage.content).toBe(
+			'{"error":{"kind":"search_failed","reason":"empty","attempts":1}}',
+		);
+	});
+
+	it('reports a retried zero-result search with two attempts', async () => {
+		const search = vi.fn<() => Promise<DeepSeekSearchResult[]>>()
+			.mockRejectedValueOnce(httpFailure(500))
+			.mockResolvedValueOnce([]);
+		const reader = successfulReader();
+		const { coordinator, request } = coordinatorWith([
+			toolRound([searchCall('call-1', 'nothing found')]),
+			finalRound('No evidence available.'),
+		], search, vi.fn(), reader);
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(search).toHaveBeenCalledTimes(2);
+		expect(reader.extract).not.toHaveBeenCalled();
+		expect(result.failedSearches).toBe(1);
+		expect(result.activities).toEqual([{
+			type: 'search',
+			target: 'nothing found',
+			status: 'failed',
+			failureReason: 'empty',
+			attempts: 2,
+		}]);
+		const toolMessage = request.mock.calls[1]?.[0].continuation?.find(
+			(message) => message.role === 'tool',
+		);
+		expect(toolMessage?.role === 'tool' && toolMessage.content).toBe(
+			'{"error":{"kind":"search_failed","reason":"empty","attempts":2}}',
+		);
+	});
+
+	it('aborts the web loop on a configuration error', async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+		const labels: string[] = [];
+		const rounds = [
+			toolRound([searchCall('call-1', 'secret search')]),
+			finalRound('No evidence available.'),
+		];
+		const request = vi.fn(async (
+			_request: AiProviderRequest,
+			_callbacks: { onEvent(event: StreamEvent): void },
+			_signal: AbortSignal,
+		) => {
+			const result = rounds[request.mock.calls.length - 1];
+			if (!result) throw new Error('Unexpected model round');
+			return result;
+		});
+		const coordinator = new DeepSeekWebSearchCoordinator({
+			provider: {
+				...provider,
+				baseUrl: 'https://token-user:token-secret@api.deepseek.com',
+			},
+			request,
+		});
+
+		await expect(coordinator.submit(aiRequest(), options({
+			onActivity: (event) => labels.push(event.label),
+		}))).rejects.toThrow('DeepSeek base URL must not contain credentials.');
+
+		expect(fetchMock).not.toHaveBeenCalled();
+		expect(request).toHaveBeenCalledOnce();
+		expect(labels.some((label) => label.startsWith('Search failed'))).toBe(false);
+	});
 
 	it('reports an http failure after the single Fetch retry is exhausted', async () => {
 		const target = 'https://example.test/unavailable';
