@@ -3,6 +3,7 @@ import { Notice, TFile, type Vault } from 'obsidian';
 export const MAX_INSTRUCTION_CHARACTERS = 20000;
 
 const INSTRUCTION_TRUNCATION_MARKER = '[...]';
+const AGENT_INSTRUCTIONS_PATH = 'AGENTS.md';
 
 export interface LoadedInstructions {
 	agentText?: string;
@@ -63,26 +64,29 @@ export function extractSkillPaths(agentText: string): string[] {
 }
 
 function truncateInstructions(text: string, budget: number): string | undefined {
-	if (budget <= 0) {
-		return undefined;
+	if (budget <= INSTRUCTION_TRUNCATION_MARKER.length) {
+		return text.length <= budget ? text : undefined;
 	}
 	if (text.length <= budget) {
 		return text;
-	}
-	if (budget <= INSTRUCTION_TRUNCATION_MARKER.length) {
-		return INSTRUCTION_TRUNCATION_MARKER.slice(0, budget);
 	}
 	return `${text.slice(0, budget - INSTRUCTION_TRUNCATION_MARKER.length)}${INSTRUCTION_TRUNCATION_MARKER}`;
 }
 
 export async function loadAllInstructions(vault: Vault): Promise<LoadedInstructions> {
 	const skillTexts = new Map<string, string>();
-	const agentFile = vault.getAbstractFileByPath('AGENTS.md');
+	const agentFile = vault.getAbstractFileByPath(AGENT_INSTRUCTIONS_PATH);
 	if (!(agentFile instanceof TFile)) {
 		return { skillTexts };
 	}
 
-	const rawAgentText = await vault.read(agentFile);
+	let rawAgentText: string;
+	try {
+		rawAgentText = await vault.read(agentFile);
+	} catch {
+		new Notice(`Emend: Could not read the instruction file ${AGENT_INSTRUCTIONS_PATH}.`);
+		return { skillTexts };
+	}
 	let remaining = MAX_INSTRUCTION_CHARACTERS;
 	let truncated = false;
 	for (const path of extractSkillPaths(rawAgentText)) {

@@ -414,10 +414,11 @@ function inspectThread(contents: string): ThreadInspection {
 		if (!Array.isArray(value.messages)) {
 			return { kind: 'malformed' };
 		}
+		const readyMessages = value.messages.filter(isReadyMessage);
 		return {
 			kind: 'legacy',
-			conversation: legacyConversation(value.messages.filter(isReadyMessage)),
-			droppedMessages: 0,
+			conversation: legacyConversation(readyMessages),
+			droppedMessages: value.messages.length - readyMessages.length,
 		};
 	}
 	return { kind: 'unsupported' };

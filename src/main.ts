@@ -196,6 +196,11 @@ export default class EmendPlugin extends Plugin {
 							selectionContext,
 						),
 						this.settings.smartSelectionContext,
+						(closed) => {
+							if (this.activeSelectionModal === closed) {
+								this.activeSelectionModal = null;
+							}
+						},
 					);
 					this.activeSelectionModal?.close();
 					this.activeSelectionModal = modal;
@@ -211,8 +216,9 @@ export default class EmendPlugin extends Plugin {
 	}
 
 	onunload() {
-		this.activeSelectionModal?.close();
+		const modal = this.activeSelectionModal;
 		this.activeSelectionModal = null;
+		modal?.close();
 	}
 
 	async loadSettings() {

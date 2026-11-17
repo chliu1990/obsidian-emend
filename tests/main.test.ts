@@ -1734,7 +1734,6 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 		}
 	});
 });
-
 describe('EmendPlugin Selection modal lifecycle', () => {
 	interface RegisteredCommand {
 		id: string;
@@ -1745,7 +1744,7 @@ describe('EmendPlugin Selection modal lifecycle', () => {
 		) => boolean;
 	}
 
-	it('retains at most one selection modal across repeated command invocations', async () => {
+	function createModalHarness() {
 		const commands: RegisteredCommand[] = [];
 		const register = vi.fn();
 		const file = new TFile();
@@ -1792,8 +1791,6 @@ describe('EmendPlugin Selection modal lifecycle', () => {
 			register,
 			getTargetMarkdownView: () => view,
 		});
-
-		await plugin.onload();
 		const opened: SelectionModal[] = [];
 		const closed: SelectionModal[] = [];
 		const prototype = SelectionModal.prototype as unknown as {
@@ -1804,37 +1801,99 @@ describe('EmendPlugin Selection modal lifecycle', () => {
 		const originalClose = prototype.close;
 		prototype.open = function (this: SelectionModal) {
 			opened.push(this);
+			(this as unknown as { contentEl: { empty(): void } }).contentEl = {
+				empty: vi.fn(),
+			};
 		};
 		prototype.close = function (this: SelectionModal) {
 			closed.push(this);
+			this.onClose();
 		};
+		return {
+			commands,
+			register,
+			plugin,
+			editor,
+			view,
+			opened,
+			closed,
+			activeModal: () =>
+				(plugin as unknown as { activeSelectionModal: SelectionModal | null })
+					.activeSelectionModal,
+			restore: () => {
+				if (originalOpen) {
+					prototype.open = originalOpen;
+				} else {
+					delete prototype.open;
+				}
+				if (originalClose) {
+					prototype.close = originalClose;
+				} else {
+					delete prototype.close;
+				}
+			},
+		};
+	}
+
+	it('retains at most one selection modal across repeated command invocations', async () => {
+		const harness = createModalHarness();
+		await harness.plugin.onload();
 		try {
-			const modifyCommand = commands.find(
+			const modifyCommand = harness.commands.find(
 				(command) => command.id === 'emend:modify-selected-text',
 			);
 			expect(modifyCommand).toBeDefined();
-			expect(modifyCommand?.editorCheckCallback?.(false, editor, view)).toBe(true);
-			expect(modifyCommand?.editorCheckCallback?.(false, editor, view)).toBe(true);
+			expect(
+				modifyCommand?.editorCheckCallback?.(false, harness.editor, harness.view),
+			).toBe(true);
+			expect(
+				modifyCommand?.editorCheckCallback?.(false, harness.editor, harness.view),
+			).toBe(true);
 
-			expect(opened).toHaveLength(2);
-			expect(closed).toEqual([opened[0]]);
-			expect(register).not.toHaveBeenCalled();
+			expect(harness.opened).toHaveLength(2);
+			expect(harness.closed).toEqual([harness.opened[0]]);
+			expect(harness.register).not.toHaveBeenCalled();
 
-			plugin.onunload();
+			harness.plugin.onunload();
 
-			expect(closed).toEqual([opened[0], opened[1]]);
-			expect(register).not.toHaveBeenCalled();
+			expect(harness.closed).toEqual([harness.opened[0], harness.opened[1]]);
+			expect(harness.register).not.toHaveBeenCalled();
 		} finally {
-			if (originalOpen) {
-				prototype.open = originalOpen;
-			} else {
-				delete prototype.open;
-			}
-			if (originalClose) {
-				prototype.close = originalClose;
-			} else {
-				delete prototype.close;
-			}
+			harness.restore();
+		}
+	});
+
+	it('clears the retained modal when it closes itself', async () => {
+		const harness = createModalHarness();
+		await harness.plugin.onload();
+		try {
+			const modifyCommand = harness.commands.find(
+				(command) => command.id === 'emend:modify-selected-text',
+			);
+			expect(
+				modifyCommand?.editorCheckCallback?.(false, harness.editor, harness.view),
+			).toBe(true);
+			const first = harness.opened[0];
+			expect(harness.activeModal()).toBe(first);
+
+			first?.close();
+
+			expect(harness.activeModal()).toBeNull();
+			expect(harness.closed).toEqual([first]);
+
+			expect(
+				modifyCommand?.editorCheckCallback?.(false, harness.editor, harness.view),
+			).toBe(true);
+
+			expect(harness.closed).toEqual([first]);
+			expect(harness.opened).toHaveLength(2);
+			expect(harness.activeModal()).toBe(harness.opened[1]);
+
+			harness.plugin.onunload();
+
+			expect(harness.closed).toEqual([first, harness.opened[1]]);
+		} finally {
+			harness.restore();
 		}
 	});
 });

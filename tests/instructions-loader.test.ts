@@ -282,4 +282,67 @@ describe('loadAllInstructions', () => {
 			'Emend: Instructions were truncated at 20000 characters.',
 		]);
 	});
+	it.each([5, 3])(
+		'omits the agent text when only %i characters of budget remain',
+		async (remainingBudget) => {
+			const fillSkill = 'S'.repeat(MAX_INSTRUCTION_CHARACTERS - remainingBudget);
+			const files = new Map<string, TFile>([
+				['AGENTS.md', markdownFile('AGENTS.md')],
+				['skills/fill/SKILL.md', markdownFile('skills/fill/SKILL.md')],
+			]);
+			const contents = new Map<string, string>([
+				['AGENTS.md', `\`skills/fill\`\n${'A'.repeat(100)}`],
+				['skills/fill/SKILL.md', fillSkill],
+			]);
+			const vault = vaultWith(files, contents);
+
+			const result = await loadAllInstructions(vault as unknown as Vault);
+
+			expect(result.skillTexts.get('skills/fill/SKILL.md')).toBe(fillSkill);
+			expect(result.agentText).toBeUndefined();
+			expect(noticeMessages()).toEqual([
+				'Emend: Instructions were truncated at 20000 characters.',
+			]);
+		},
+	);
+
+	it('skips an unreadable AGENTS.md and still loads skills', async () => {
+		const files = new Map<string, TFile>([
+			['AGENTS.md', markdownFile('AGENTS.md')],
+			['skills/valid/SKILL.md', markdownFile('skills/valid/SKILL.md')],
+		]);
+		const contents = new Map<string, string>([
+			['AGENTS.md', '`skills/valid`'],
+			['skills/valid/SKILL.md', 'Valid skill.'],
+		]);
+		let rootReads = 0;
+		const vault = {
+			getAbstractFileByPath: vi.fn((path: string) => files.get(path) ?? null),
+			read: vi.fn(async (file: TFile) => {
+				if (file.path === 'AGENTS.md') {
+					rootReads += 1;
+					if (rootReads === 1) {
+						throw new Error('Unreadable root');
+					}
+				}
+				return contents.get(file.path) ?? '';
+			}),
+		};
+
+		const skipped = await loadAllInstructions(vault as unknown as Vault);
+
+		expect(skipped.agentText).toBeUndefined();
+		expect(skipped.skillTexts).toEqual(new Map());
+		expect(noticeMessages()).toEqual([
+			'Emend: Could not read the instruction file AGENTS.md.',
+		]);
+
+		const retried = await loadAllInstructions(vault as unknown as Vault);
+
+		expect(retried.agentText).toBe('`skills/valid`');
+		expect(retried.skillTexts).toEqual(new Map([
+			['skills/valid/SKILL.md', 'Valid skill.'],
+		]));
+		expect(noticeMessages()).toHaveLength(1);
+	});
 });

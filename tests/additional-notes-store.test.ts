@@ -119,6 +119,8 @@ describe('AdditionalNotesStore', () => {
 		store.add('A.md', 'B.md');
 		store.add('A.md', 'C.md');
 		store.add('Folder/Target.md', 'C.md');
+		store.add('Folder-other/Target.md', 'C.md');
+		store.add('Folder/Target-other.md', 'C.md');
 
 		store.removeDeleted('A.md');
 
@@ -132,6 +134,7 @@ describe('AdditionalNotesStore', () => {
 
 		expect(store.list('Folder/Target.md')).toEqual([]);
 		expect(store.list('Folder/Target-other.md')).toEqual([]);
+		expect(store.list('Folder-other/Target.md')).toEqual(['C.md']);
 	});
 
 	it('notifies subscribers for mutations and stops after unsubscription', () => {
