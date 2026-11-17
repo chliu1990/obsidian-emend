@@ -448,7 +448,7 @@ export default class EmendPlugin extends Plugin {
 					writer: createVaultNoteWriter(
 						this.app.vault,
 						(file) => this.getTargetMarkdownView()?.file === file,
-						(file) => this.readNoteEditorText(file),
+						(file) => this.readNoteEditorTexts(file),
 					),
 				});
 				return coordinator.submit({
@@ -596,12 +596,15 @@ export default class EmendPlugin extends Plugin {
 		}
 	}
 
-	private readNoteEditorText(file: TFile): string | undefined {
-		const target = this.getTargetMarkdownView();
-		const targetText = target?.file === file
-			? target.editor?.getValue()
-			: undefined;
+	private readNoteEditorTexts(file: TFile): readonly string[] | undefined {
 		const texts: string[] = [];
+		const target = this.getTargetMarkdownView();
+		if (target?.file === file) {
+			const targetText = target.editor?.getValue();
+			if (targetText !== undefined) {
+				texts.push(targetText);
+			}
+		}
 		this.app.workspace?.iterateAllLeaves((leaf) => {
 			if (!(leaf.view instanceof MarkdownView) || leaf.view.file !== file) {
 				return;
@@ -611,11 +614,7 @@ export default class EmendPlugin extends Plugin {
 				texts.push(text);
 			}
 		});
-		if (texts.length === 0) {
-			return targetText;
-		}
-		const reference = targetText ?? texts[0];
-		return texts.find((text) => text !== reference) ?? reference;
+		return texts.length === 0 ? undefined : texts;
 	}
 
 	private isViewStillOpen(view: MarkdownView) {

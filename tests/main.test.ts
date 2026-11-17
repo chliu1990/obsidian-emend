@@ -1140,6 +1140,114 @@ describe('EmendPlugin edit freshness', () => {
 
 		expect(vaultModify).not.toHaveBeenCalled();
 	});
+
+	function makeFreshnessFixture(
+		targetText: string,
+		otherTexts: readonly string[],
+	) {
+		const response = JSON.stringify([
+			{ type: 'replace', target: 'beta', replacement: 'delta' },
+		]);
+		const event = JSON.stringify({ choices: [{ delta: { content: response } }] });
+		const encoder = new TextEncoder();
+		vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => {
+			const stream = new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(encoder.encode(`data: ${event}\n\n`));
+					controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+					controller.close();
+				},
+			});
+			return new Response(stream);
+		}));
+		const sourceText = '# Note\nAlpha beta.';
+		const file = new TFile();
+		file.path = 'Note.md';
+		const targetView = Object.assign(
+			Object.create(MarkdownView.prototype) as MarkdownView,
+			{ file, editor: { getValue: vi.fn(() => targetText) } },
+		);
+		const otherViews = otherTexts.map((text) => Object.assign(
+			Object.create(MarkdownView.prototype) as MarkdownView,
+			{ file, editor: { getValue: vi.fn(() => text) } },
+		));
+		const vaultModify = vi.fn(async () => undefined);
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, {
+			settings: structuredClone(DEFAULT_SETTINGS),
+			getTargetMarkdownView: () => targetView,
+			app: {
+				vault: {
+					getAbstractFileByPath: () => null,
+					read: async () => sourceText,
+					modify: vaultModify,
+				},
+				workspace: {
+					iterateAllLeaves: (
+						callback: (leaf: { view: MarkdownView }) => void,
+					) => {
+						for (const view of otherViews) {
+							callback({ view });
+						}
+					},
+				},
+			},
+			getApiKey: () => 'dummy-key',
+		});
+		return { file, sourceText, plugin, vaultModify };
+	}
+
+	it('rejects an edit when the target pane is dirty and another pane matches the snapshot', async () => {
+		const fixture = makeFreshnessFixture(
+			'# Note\nAlpha beta. typing',
+			['# Note\nAlpha beta.'],
+		);
+
+		await expect(fixture.plugin.requestChatCompletion({
+			context: {
+				file: fixture.file,
+				sourceText: fixture.sourceText,
+				selection: { from: 0, to: 0 },
+				noteLabel: fixture.file.path,
+				markdown: fixture.sourceText,
+			},
+			mode: 'edit',
+			prompt: 'Replace beta with delta.',
+			history: [],
+			callbacks: { onReasoning: vi.fn() },
+			signal: new AbortController().signal,
+		})).rejects.toThrow(
+			'The note changed while Emend was responding. No edits were applied.',
+		);
+
+		expect(fixture.vaultModify).not.toHaveBeenCalled();
+	});
+
+	it('rejects an edit when any open pane differs from the captured source', async () => {
+		const fixture = makeFreshnessFixture('# Note\nAlpha beta.', [
+			'# Note\nAlpha beta.',
+			'# Note\nAlpha beta. ',
+		]);
+
+		await expect(fixture.plugin.requestChatCompletion({
+			context: {
+				file: fixture.file,
+				sourceText: fixture.sourceText,
+				selection: { from: 0, to: 0 },
+				noteLabel: fixture.file.path,
+				markdown: fixture.sourceText,
+			},
+			mode: 'edit',
+			prompt: 'Replace beta with delta.',
+			history: [],
+			callbacks: { onReasoning: vi.fn() },
+			signal: new AbortController().signal,
+		})).rejects.toThrow(
+			'The note changed while Emend was responding. No edits were applied.',
+		);
+
+		expect(fixture.vaultModify).not.toHaveBeenCalled();
+	});
 });
 
 describe('EmendPlugin settings capacity refresh', () => {
