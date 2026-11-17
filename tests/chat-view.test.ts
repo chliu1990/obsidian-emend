@@ -195,6 +195,7 @@ const viewPrototype = EmendChatView.prototype as unknown as {
 	settleMarkdownRender(this: unknown, generation: number): void;
 	scheduleMessageRender(this: unknown, message: ChatMessage): void;
 	getDisplayText(this: unknown): string;
+	abortActiveRequest(this: unknown): void;
 	onClose(this: unknown): Promise<void>;
 	toProviderHistory(this: unknown): ProviderHistoryMessage[];
 	refreshDraftEstimate(this: unknown, prompt?: string): void;
@@ -2518,6 +2519,7 @@ describe('EmendChatView session runtime', () => {
 		await vi.waitFor(() => expect(fixture.requestChatCompletion).toHaveBeenCalledOnce());
 		const oldRequest = fixture.context.activeRequest as ActiveRequest | null;
 
+		viewPrototype.abortActiveRequest.call(fixture.context);
 		await viewPrototype.switchActiveSession.call(fixture.context, 'a2');
 		fixture.setActivePath('B.md');
 		await viewPrototype.refreshTargetNote.call(fixture.context);
@@ -2577,6 +2579,7 @@ describe('EmendChatView session runtime', () => {
 		const submission = viewPrototype.submitPrompt.call(fixture.context);
 		await vi.waitFor(() => expect(fixture.conversationStore.appendReadyMessage).toHaveBeenCalledTimes(2));
 
+		viewPrototype.abortActiveRequest.call(fixture.context);
 		await viewPrototype.switchActiveSession.call(fixture.context, 'a2');
 		const noticeStart = noticeMessages().length;
 		finalSave.reject(new Error('Disk full'));
@@ -2786,6 +2789,7 @@ describe('EmendChatView session runtime', () => {
 		const submission = viewPrototype.submitPrompt.call(fixture.context);
 		await vi.waitFor(() => expect(fixture.conversationStore.appendReadyMessage).toHaveBeenCalledOnce());
 
+		viewPrototype.abortActiveRequest.call(fixture.context);
 		await viewPrototype.switchActiveSession.call(fixture.context, 'a2');
 		initialSave.resolve();
 		await submission;
@@ -8160,5 +8164,52 @@ describe('EmendChatView composer fail-closed state', () => {
 		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
 		expect(fixture.savedSnapshots).toEqual([]);
 		expect(fixture.context.messages).toEqual([]);
+	});
+});
+
+describe('EmendChatView session switch guard', () => {
+	beforeEach(() => {
+		noticeMessages().length = 0;
+	});
+
+	it('refuses a session switch while a request is in flight', async () => {
+		const fixture = createEditTargetView();
+		const first = makeSession('a1');
+		const second = makeSession('a2');
+		fixture.conversationStore.loadConversation.mockResolvedValue(
+			loadedConversation([first, second], 'a1'),
+		);
+		const response = deferred<SessionChatResult>();
+		let requestSignal: AbortSignal | undefined;
+		let streamContent: ((text: string) => void) | undefined;
+		fixture.requestChatCompletion.mockImplementationOnce(async (submission) => {
+			requestSignal = submission.signal;
+			streamContent = submission.callbacks.onContent;
+			return response.promise;
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Streaming question';
+		}
+		const submission = viewPrototype.submitPrompt.call(fixture.context);
+		await vi.waitFor(() => expect(fixture.requestChatCompletion).toHaveBeenCalledOnce());
+
+		await viewPrototype.switchActiveSession.call(fixture.context, 'a2');
+
+		expect(fixture.context.activeSessionId).toBe('a1');
+		expect(fixture.context.messages).toBe(first.messages);
+		expect(fixture.context.messages[1]?.status).toBe('loading');
+		expect(fixture.context.isSending).toBe(true);
+		expect(requestSignal?.aborted).toBe(false);
+		expect(fixture.conversationStore.setActiveSession).not.toHaveBeenCalled();
+
+		streamContent?.('Streamed answer');
+		response.resolve({ content: 'Streamed answer', reasoning: '' });
+		await submission;
+
+		expect(fixture.context.messages[1]).toMatchObject({
+			status: 'ready',
+			content: 'Streamed answer',
+		});
 	});
 });

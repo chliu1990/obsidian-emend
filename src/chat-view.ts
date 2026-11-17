@@ -575,6 +575,7 @@ export class EmendChatView extends ItemView {
 			!notePath ||
 			!currentSessionId ||
 			sessionId === currentSessionId ||
+			this.isSending ||
 			this.isThreadLoading ||
 			this.isSessionMutating
 		) {
