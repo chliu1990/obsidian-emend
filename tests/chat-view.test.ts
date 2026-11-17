@@ -5534,17 +5534,22 @@ describe('EmendChatView web research', () => {
 	it('clears a streamed web draft before tool calls and keeps only the terminal answer', async () => {
 		const fixture = createEditTargetView();
 		const drafts: Array<{ content: string; webDraft: boolean | undefined }> = [];
+		let resetRenderMessages: ChatMessage[] = [];
 		fixture.requestChatCompletion.mockImplementation(async (submission) => {
 			submission.callbacks.onContent('Draft **text**');
 			drafts.push({
 				content: fixture.context.messages[1]?.content ?? '',
 				webDraft: fixture.context.messages[1]?.webDraft,
 			});
+			fixture.context.scheduleMessageRender.mockClear();
 			submission.callbacks.onContentReset?.();
 			drafts.push({
 				content: fixture.context.messages[1]?.content ?? '',
 				webDraft: fixture.context.messages[1]?.webDraft,
 			});
+			resetRenderMessages = fixture.context.scheduleMessageRender.mock.calls.map(
+				(call) => call[0] as ChatMessage,
+			);
 			submission.callbacks.onContent('Final answer');
 			return { content: 'Final answer', reasoning: '' };
 		});
@@ -5560,9 +5565,36 @@ describe('EmendChatView web research', () => {
 			{ content: 'Draft **text**', webDraft: true },
 			{ content: '', webDraft: false },
 		]);
+		expect(resetRenderMessages).toEqual([fixture.context.messages[1]]);
 		expect(fixture.context.messages[1]?.content).toBe('Final answer');
 		expect(fixture.context.messages[1]?.status).toBe('ready');
+		expect(fixture.context.messages[1]).not.toHaveProperty('webDraft');
 	});
+
+	it.each(['stopped', 'error'] as const)(
+		'clears the transient web draft flag on a %s message',
+		async (status) => {
+			const fixture = createEditTargetView();
+			fixture.requestChatCompletion.mockImplementation(async (submission) => {
+				submission.callbacks.onContent('Draft **text**');
+				if (status === 'stopped') {
+					fixture.context.activeController?.abort();
+					return { content: 'Draft **text**', reasoning: '' };
+				}
+				throw new Error('Provider failed');
+			});
+			await viewPrototype.refreshTargetNote.call(fixture.context);
+			Object.assign(fixture.context, { webSearchMode: 'auto' });
+			if (fixture.context.inputEl) {
+				fixture.context.inputEl.value = 'Research';
+			}
+
+			await viewPrototype.submitPrompt.call(fixture.context);
+
+			expect(fixture.context.messages[1]?.status).toBe(status);
+			expect(fixture.context.messages[1]).not.toHaveProperty('webDraft');
+		},
+	);
 
 	it('never marks a Web Off streamed answer as a draft', async () => {
 		const fixture = createEditTargetView();

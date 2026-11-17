@@ -1761,6 +1761,7 @@ export class EmendChatView extends ItemView {
 				}
 			}
 			controller.signal.throwIfAborted();
+			delete loadingMessage.webDraft;
 			const readyAssistant: ChatMessage = { ...loadingMessage, status: 'ready' };
 			finalSaveAttempted = true;
 			const persistedAssistant = await this.persistMessages(
@@ -1779,6 +1780,7 @@ export class EmendChatView extends ItemView {
 			loadingMessage.status = 'ready';
 			this.applyPersistedMetadata(session, persistedAssistant);
 		} catch (error) {
+			delete loadingMessage.webDraft;
 			if (controller.signal.aborted || isAbortError(error)) {
 				loadingMessage.status = 'stopped';
 				if (!loadingMessage.content && !loadingMessage.reasoning) {
