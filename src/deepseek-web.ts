@@ -275,7 +275,7 @@ export class DeepSeekWebSearchCoordinator {
 			if (documents.length === 0) {
 				return searchFailedOutcome(
 					call.query,
-					{ reason: 'empty', attempts: 1 },
+					{ reason: 'empty', attempts: outcome.attempts },
 					options,
 				);
 			}
@@ -311,12 +311,12 @@ export class DeepSeekWebSearchCoordinator {
 		options: WebSearchRunOptions,
 		isEmpty?: (value: T) => boolean,
 	): Promise<
-		{ ok: true; value: T } |
+		{ ok: true; value: T; attempts: number } |
 		({ ok: false } & WebAttemptFailure)
 	> {
 		const first = await this.attempt(run, isEmpty, options.signal);
 		if (first.ok) {
-			return first;
+			return { ...first, attempts: 1 };
 		}
 		if (!first.retryable) {
 			return {
@@ -330,7 +330,7 @@ export class DeepSeekWebSearchCoordinator {
 		options.onActivity({ status: 'pending', label: retryLabel });
 		options.signal.throwIfAborted();
 		const second = await this.attempt(run, isEmpty, options.signal);
-		return second.ok ? second : {
+		return second.ok ? { ...second, attempts: 2 } : {
 			ok: false,
 			reason: second.reason,
 			attempts: 2,

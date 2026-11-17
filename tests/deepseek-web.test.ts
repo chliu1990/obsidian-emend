@@ -1987,6 +1987,36 @@ describe('DeepSeek web transport retry and search degradation', () => {
 		);
 	});
 
+	it('reports a retried zero-result search with two attempts', async () => {
+		const search = vi.fn<() => Promise<DeepSeekSearchResult[]>>()
+			.mockRejectedValueOnce(httpFailure(500))
+			.mockResolvedValueOnce([]);
+		const reader = successfulReader();
+		const { coordinator, request } = coordinatorWith([
+			toolRound([searchCall('call-1', 'nothing found')]),
+			finalRound('No evidence available.'),
+		], search, vi.fn(), reader);
+
+		const result = await coordinator.submit(aiRequest(), options());
+
+		expect(search).toHaveBeenCalledTimes(2);
+		expect(reader.extract).not.toHaveBeenCalled();
+		expect(result.failedSearches).toBe(1);
+		expect(result.activities).toEqual([{
+			type: 'search',
+			target: 'nothing found',
+			status: 'failed',
+			failureReason: 'empty',
+			attempts: 2,
+		}]);
+		const toolMessage = request.mock.calls[1]?.[0].continuation?.find(
+			(message) => message.role === 'tool',
+		);
+		expect(toolMessage?.role === 'tool' && toolMessage.content).toBe(
+			'{"error":{"kind":"search_failed","reason":"empty","attempts":2}}',
+		);
+	});
+
 	it('aborts the web loop on a configuration error', async () => {
 		const fetchMock = vi.fn();
 		vi.stubGlobal('fetch', fetchMock);

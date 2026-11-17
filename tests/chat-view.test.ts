@@ -2023,6 +2023,33 @@ describe('EmendChatView thread-load recovery', () => {
 			'stale-session',
 		);
 	});
+
+	it('drops a discarded transient session draft with it', async () => {
+		const fixture = createEditTargetView();
+		fixture.conversationStore.loadConversation.mockRejectedValue(
+			new Error('Unreadable thread'),
+		);
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		const transientId = fixture.context.activeSessionId;
+		if (!transientId || !fixture.context.inputEl) {
+			throw new Error('Transient session was not created.');
+		}
+		fixture.context.inputEl.value = 'Draft on a failed load';
+		fixture.setActivePath('B.md');
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		expect(fixture.context.drafts.get('A.md')?.get(transientId)).toBe(
+			'Draft on a failed load',
+		);
+
+		fixture.conversationStore.loadConversation.mockResolvedValue(
+			loadedConversation([makeSession('persisted-session')]),
+		);
+		fixture.setActivePath('A.md');
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+
+		expect(fixture.context.activeSessionId).toBe('persisted-session');
+		expect(fixture.context.drafts.get('A.md')?.has(transientId)).toBe(false);
+	});
 });
 
 describe('EmendChatView conversation saving', () => {
@@ -8511,6 +8538,32 @@ describe('EmendChatView committed edit persistence', () => {
 		expect(context.messages[1]?.content).toContain('Edit applied');
 		expect(context.messages[1]?.content).toContain('Tightened the wording.');
 		expect(context.isSending).toBe(false);
+	});
+
+	it('stays silent when Stop cancels the final save', async () => {
+		const fixture = createEditTargetView();
+		fixture.requestChatCompletion.mockImplementation(async ({ callbacks }) => {
+			callbacks.onContent('Answer awaiting save');
+			return { content: 'Answer awaiting save', reasoning: '' };
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		fixture.conversationStore.appendReadyMessage.mockImplementation(async () => {
+			fixture.context.activeController?.abort();
+			throw new DOMException('Response stopped.', 'AbortError');
+		});
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Question';
+		}
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		const assistantSaves = fixture.conversationStore.appendReadyMessage.mock.calls
+			.filter(([, , appended]) => appended.role === 'assistant');
+		expect(assistantSaves).toHaveLength(1);
+		expect(noticeMessages()).toEqual([]);
+		expect(fixture.context.messages[1]?.status).toBe('stopped');
+		expect(fixture.context.messages[1]?.content).toBe('Answer awaiting save');
+		expect(fixture.context.isSending).toBe(false);
 	});
 });
 

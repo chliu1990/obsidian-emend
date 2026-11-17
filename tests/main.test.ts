@@ -359,6 +359,110 @@ describe('EmendPlugin note rename refresh', () => {
 			'Renamed answer',
 		]);
 	});
+
+	it('leaves an in-flight request running when a different note is renamed', async () => {
+		const adapter = new MemoryAdapter();
+		const vaultHandlers = new Map<string, (file: TFile, oldPath?: string) => void>();
+		const answer = deferred<{ content: string; reasoning: string }>();
+		const requestChatCompletion = vi.fn(
+			async (submission: ReadOnlySubmission) => {
+				submission.callbacks.onContent('Streaming answer');
+				return answer.promise;
+			},
+		);
+		const leaf: { view?: EmendChatView } = {};
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, {
+			app: {
+				vault: {
+					adapter,
+					configDir: '.test-config',
+					on: (event: string, handler: (file: TFile, oldPath?: string) => void) => {
+						vaultHandlers.set(event, handler);
+						return {};
+					},
+				},
+				workspace: {
+					on: () => ({}),
+					getLeavesOfType: () => [leaf],
+				},
+			},
+			loadSettings: vi.fn().mockResolvedValue(undefined),
+			registerView: vi.fn(),
+			registerEditorExtension: vi.fn(),
+			registerEvent: vi.fn(),
+			rememberActiveMarkdownView: vi.fn(),
+			addRibbonIcon: vi.fn(),
+			addCommand: vi.fn(),
+			addSettingTab: vi.fn(),
+			getActiveNotePath: () => 'A.md',
+			captureChatContext: () => ({ file: { path: 'A.md' } }),
+			requestChatCompletion,
+			settings: structuredClone(DEFAULT_SETTINGS),
+		});
+		const view = Object.create(EmendChatView.prototype) as EmendChatView;
+		Object.assign(view, {
+			plugin,
+			notePath: null,
+			conversationGeneration: 0,
+			sessions: [],
+			activeSessionId: null,
+			activeRequest: null,
+			isSessionMutating: false,
+			transientSessionIds: new Set<string>(),
+			transientSessions: new Map(),
+			messages: [] as ChatMessage[],
+			selectedMode: 'ask',
+			chatTarget: 'note',
+			isThreadLoading: false,
+			isSending: false,
+			activeController: null,
+			closed: false,
+			inputEl: { value: '' },
+			drafts: new Map<string, Map<string, string>>(),
+			render: vi.fn(),
+			scheduleMessageRender: vi.fn(),
+			saveCurrentDraft: vi.fn(),
+		});
+		leaf.view = view;
+		await plugin.onload();
+		await plugin.conversationStore.createSession('A.md', {
+			id: 'a1', title: 'A chat', titleSource: 'auto', createdAt: 1, updatedAt: 1,
+			messages: [],
+		});
+		await view.refreshTargetNote();
+		const state = view as unknown as {
+			inputEl: { value: string } | null;
+			activeRequest: { controller: AbortController } | null;
+		};
+		if (!state.inputEl) {
+			throw new Error('Composer missing.');
+		}
+		state.inputEl.value = 'Unrelated rename prompt';
+		const submission = (view as unknown as { submitPrompt(): Promise<void> })
+			.submitPrompt.call(view);
+		await vi.waitFor(() => expect(requestChatCompletion).toHaveBeenCalledOnce());
+		const request = state.activeRequest;
+		const loadConversation = vi.spyOn(plugin.conversationStore, 'loadConversation');
+
+		const renamed = new TFile();
+		renamed.path = 'Renamed.md';
+		vaultHandlers.get('rename')?.(renamed, 'Other.md');
+		await Promise.resolve();
+
+		expect(request?.controller.signal.aborted).toBe(false);
+		expect(loadConversation).not.toHaveBeenCalled();
+		expect(requestChatCompletion).toHaveBeenCalledOnce();
+		answer.resolve({ content: 'Streaming answer', reasoning: '' });
+		await submission;
+		const stored = resolveActiveSession(
+			(await plugin.conversationStore.loadConversation('A.md')).conversation,
+		)?.messages ?? [];
+		expect(stored.map((item) => item.content)).toEqual([
+			'Unrelated rename prompt',
+			'Streaming answer',
+		]);
+	});
 });
 
 describe('EmendPlugin selection presentation registration', () => {

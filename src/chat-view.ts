@@ -938,6 +938,7 @@ export class EmendChatView extends ItemView {
 		}
 		this.transientSessions.delete(notePath);
 		this.transientSessionIds.delete(cached.id);
+		this.drafts.get(notePath)?.delete(cached.id);
 	}
 
 	private async loadStoredSessions(notePath: string): Promise<ChatSession[]> {
