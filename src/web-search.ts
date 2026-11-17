@@ -21,7 +21,10 @@ export interface WebSearchRunOptions {
 	maxContentCharactersPerCall: number;
 	reviewCalls(calls: readonly WebToolCall[]): Promise<readonly WebToolCall[]>;
 	onActivity(activity: WebSearchActivity): void;
-	callbacks: { onEvent(event: StreamEvent): void };
+	callbacks: {
+		onEvent(event: StreamEvent): void;
+		onContentReset?: () => void;
+	};
 	signal: AbortSignal;
 }
 

@@ -1327,8 +1327,16 @@ export class EmendChatView extends ItemView {
 		}
 
 		if (message.role === 'user' || message.status === 'error' || message.status === 'loading') {
+			if (message.status === 'loading' && message.webDraft) {
+				bodyEl.createDiv({
+					cls: 'emend-chat-web-draft-label',
+					text: 'Draft answer — research may continue',
+				});
+			}
 			bodyEl.createDiv({
-				cls: 'emend-chat-message-content',
+				cls: message.status === 'loading' && message.webDraft
+					? 'emend-chat-message-content is-web-draft'
+					: 'emend-chat-message-content',
 				text: message.content,
 			});
 			return;
@@ -1698,7 +1706,15 @@ export class EmendChatView extends ItemView {
 					additionalNotePaths,
 					callbacks: {
 						onContent: (text) => {
+							if (webSearchMode !== 'off') {
+								loadingMessage.webDraft = true;
+							}
 							loadingMessage.content += text;
+							this.scheduleRequestRender(request);
+						},
+						onContentReset: () => {
+							loadingMessage.content = '';
+							loadingMessage.webDraft = false;
 							this.scheduleRequestRender(request);
 						},
 						onReasoning: (text) => {
@@ -1745,6 +1761,7 @@ export class EmendChatView extends ItemView {
 				}
 			}
 			controller.signal.throwIfAborted();
+			delete loadingMessage.webDraft;
 			const readyAssistant: ChatMessage = { ...loadingMessage, status: 'ready' };
 			finalSaveAttempted = true;
 			const persistedAssistant = await this.persistMessages(
@@ -1763,6 +1780,7 @@ export class EmendChatView extends ItemView {
 			loadingMessage.status = 'ready';
 			this.applyPersistedMetadata(session, persistedAssistant);
 		} catch (error) {
+			delete loadingMessage.webDraft;
 			if (controller.signal.aborted || isAbortError(error)) {
 				loadingMessage.status = 'stopped';
 				if (!loadingMessage.content && !loadingMessage.reasoning) {

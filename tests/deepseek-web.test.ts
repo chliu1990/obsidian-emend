@@ -1289,6 +1289,246 @@ describe('DeepSeekWebSearchCoordinator', () => {
 	});
 });
 
+describe('DeepSeek web draft streaming', () => {
+	function streamingCoordinator(
+		rounds: Array<{ events?: StreamEvent[]; result: StreamResult }>,
+		search = vi.fn(async (_call: Extract<WebToolCall, { name: 'web_search' }>) => [parsedSearchResult]),
+		reader: Pick<WebExtractionReader, 'extract'> = successfulReader(),
+	) {
+		const request = vi.fn(async (
+			_roundRequest: AiProviderRequest,
+			callbacks: { onEvent(event: StreamEvent): void },
+		) => {
+			const round = rounds[request.mock.calls.length - 1];
+			if (!round) throw new Error('Unexpected model round');
+			for (const event of round.events ?? []) {
+				callbacks.onEvent(event);
+			}
+			return round.result;
+		});
+		const coordinator = new DeepSeekWebSearchCoordinator({
+			provider,
+			request,
+			search,
+			reader,
+		});
+		return { coordinator, request };
+	}
+
+	function contentEvents(onEvent: ReturnType<typeof vi.fn>) {
+		return onEvent.mock.calls
+			.map(([event]) => event as StreamEvent)
+			.filter((event) => event.type === 'content');
+	}
+
+	function labelEvent(event: StreamEvent) {
+		return 'text' in event ? `event:${event.type}:${event.text}` : `event:${event.type}`;
+	}
+
+	it('forwards draft content then resets once before Review and tool execution', async () => {
+		const log: string[] = [];
+		const onEvent = vi.fn((event: StreamEvent) => {
+			log.push(labelEvent(event));
+		});
+		const onContentReset = vi.fn(() => {
+			log.push('reset');
+		});
+		const reviewCalls = vi.fn(async (calls: readonly WebToolCall[]) => {
+			log.push('review');
+			return calls;
+		});
+		const onActivity = vi.fn((activity: WebSearchActivity) => {
+			log.push(`activity:${activity.status}:${activity.label}`);
+		});
+		const { coordinator } = streamingCoordinator([
+			{
+				events: [
+					{ type: 'content', text: 'Draft ' },
+					{ type: 'content', text: 'answer' },
+					{ type: 'reasoning', text: 'Thinking' },
+				],
+				result: { ...toolRound([searchCall('call-1', 'draft query')]), content: 'Draft answer' },
+			},
+			{
+				events: [{ type: 'content', text: 'Final answer' }],
+				result: finalRound('Final answer'),
+			},
+		]);
+
+		const result = await coordinator.submit(aiRequest(), options({
+			mode: 'review',
+			callbacks: { onEvent, onContentReset },
+			reviewCalls,
+			onActivity,
+		}));
+
+		expect(log.slice(0, 6)).toEqual([
+			'event:content:Draft ',
+			'event:content:answer',
+			'event:reasoning:Thinking',
+			'reset',
+			'review',
+			'activity:pending:Searching: draft query',
+		]);
+		expect(onContentReset).toHaveBeenCalledOnce();
+		expect(contentEvents(onEvent)).toEqual([
+			{ type: 'content', text: 'Draft ' },
+			{ type: 'content', text: 'answer' },
+			{ type: 'content', text: 'Final answer' },
+		]);
+		expect(result.content).toBe('Final answer');
+	});
+
+	it('does not re-emit terminal content that already streamed', async () => {
+		const onEvent = vi.fn();
+		const onContentReset = vi.fn();
+		const { coordinator } = streamingCoordinator([
+			{
+				events: [
+					{ type: 'content', text: 'Streamed ' },
+					{ type: 'content', text: 'answer' },
+				],
+				result: finalRound('Streamed answer'),
+			},
+		]);
+
+		const result = await coordinator.submit(aiRequest(), options({
+			callbacks: { onEvent, onContentReset },
+		}));
+
+		expect(contentEvents(onEvent)).toEqual([
+			{ type: 'content', text: 'Streamed ' },
+			{ type: 'content', text: 'answer' },
+		]);
+		expect(onEvent).toHaveBeenCalledTimes(2);
+		expect(onContentReset).not.toHaveBeenCalled();
+		expect(result.content).toBe('Streamed answer');
+	});
+
+	it('emits aggregated terminal content once when no content event streamed', async () => {
+		const onEvent = vi.fn();
+		const onContentReset = vi.fn();
+		const { coordinator } = streamingCoordinator([
+			{ result: toolRound([searchCall('call-1', 'buffered query')]) },
+			{ result: finalRound('Buffered answer') },
+		]);
+
+		const result = await coordinator.submit(aiRequest(), options({
+			callbacks: { onEvent, onContentReset },
+		}));
+
+		expect(contentEvents(onEvent)).toEqual([{ type: 'content', text: 'Buffered answer' }]);
+		expect(onContentReset).toHaveBeenCalledOnce();
+		expect(result.content).toBe('Buffered answer');
+	});
+
+	it('emits one content event for a zero-tool first round with no reset', async () => {
+		const onEvent = vi.fn();
+		const onContentReset = vi.fn();
+		const { coordinator, request } = streamingCoordinator([
+			{ result: finalRound('No research needed') },
+		]);
+
+		const result = await coordinator.submit(aiRequest(), options({
+			callbacks: { onEvent, onContentReset },
+		}));
+
+		expect(contentEvents(onEvent)).toEqual([
+			{ type: 'content', text: 'No research needed' },
+		]);
+		expect(onContentReset).not.toHaveBeenCalled();
+		expect(request).toHaveBeenCalledOnce();
+		expect(result.content).toBe('No research needed');
+	});
+
+	it('resets once for a call-limit tool round and still returns the forced answer', async () => {
+		const log: string[] = [];
+		const onEvent = vi.fn((event: StreamEvent) => {
+			log.push(labelEvent(event));
+		});
+		const onContentReset = vi.fn(() => {
+			log.push('reset');
+		});
+		const onActivity = vi.fn((activity: WebSearchActivity) => {
+			log.push(`activity:${activity.status}:${activity.label}`);
+		});
+		const { coordinator, request } = streamingCoordinator([
+			{
+				events: [{ type: 'content', text: 'Draft answer' }],
+				result: {
+					...toolRound([searchCall('call-1', 'first'), searchCall('call-2', 'skipped')], 'Draft answer'),
+				},
+			},
+			{ result: finalRound('Answer from the current note only.') },
+		]);
+
+		const result = await coordinator.submit(aiRequest(), options({
+			maxToolCalls: 1,
+			callbacks: { onEvent, onContentReset },
+			onActivity,
+		}));
+
+		expect(onContentReset).toHaveBeenCalledOnce();
+		expect(log.indexOf('reset')).toBeLessThan(
+			log.indexOf('activity:pending:Searching: first'),
+		);
+		expect(result.skippedWebCalls).toBe(1);
+		expect(result.content).toBe('Answer from the current note only.');
+		expect(contentEvents(onEvent)).toEqual([
+			{ type: 'content', text: 'Draft answer' },
+			{ type: 'content', text: 'Answer from the current note only.' },
+		]);
+		expect(request).toHaveBeenCalledTimes(2);
+	});
+
+	it('streams drafts without a reset callback supplied', async () => {
+		const onEvent = vi.fn();
+		const { coordinator } = streamingCoordinator([
+			{
+				events: [{ type: 'content', text: 'Draft' }],
+				result: { ...toolRound([searchCall('call-1', 'no reset')]), content: 'Draft' },
+			},
+			{ result: finalRound('Final answer') },
+		]);
+
+		const result = await coordinator.submit(aiRequest(), options({ callbacks: { onEvent } }));
+
+		expect(contentEvents(onEvent)).toEqual([
+			{ type: 'content', text: 'Draft' },
+			{ type: 'content', text: 'Final answer' },
+		]);
+		expect(result.content).toBe('Final answer');
+	});
+
+	it('resets once per tool round across consecutive rounds', async () => {
+		const onEvent = vi.fn();
+		const onContentReset = vi.fn();
+		const { coordinator } = streamingCoordinator([
+			{
+				events: [{ type: 'content', text: 'First draft' }],
+				result: { ...toolRound([searchCall('call-1', 'first')]), content: 'First draft' },
+			},
+			{
+				events: [{ type: 'content', text: 'Second draft' }],
+				result: { ...toolRound([searchCall('call-2', 'second')]), content: 'Second draft' },
+			},
+			{ result: finalRound('Final answer') },
+		]);
+
+		const result = await coordinator.submit(aiRequest(), options({
+			callbacks: { onEvent, onContentReset },
+		}));
+
+		expect(onContentReset).toHaveBeenCalledTimes(2);
+		expect(contentEvents(onEvent)).toEqual([
+			{ type: 'content', text: 'First draft' },
+			{ type: 'content', text: 'Second draft' },
+			{ type: 'content', text: 'Final answer' },
+		]);
+		expect(result.content).toBe('Final answer');
+	});
+});
+
 describe('DeepSeek web follow-up behavior', () => {
 	it('marks a lone Fetch extraction failure separately from an unread retrieval failure', async () => {
 		const reader = successfulReader();
