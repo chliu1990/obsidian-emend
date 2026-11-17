@@ -537,6 +537,9 @@ export class EmendSettingTab extends PluginSettingTab {
 						);
 						await this.plugin.saveSettings();
 					});
+				text.inputEl.addEventListener('change', () => {
+					text.setValue(String(this.plugin.settings.maxContextCharacters));
+				});
 			});
 
 		new Setting(containerEl)
@@ -557,6 +560,9 @@ export class EmendSettingTab extends PluginSettingTab {
 						);
 						await this.plugin.saveSettings();
 					});
+				text.inputEl.addEventListener('change', () => {
+					text.setValue(String(this.plugin.settings.maxWebToolCalls));
+				});
 			});
 
 		new Setting(containerEl)

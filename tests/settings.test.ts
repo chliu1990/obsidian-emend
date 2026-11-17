@@ -1015,6 +1015,54 @@ describe('EmendSettingTab web output cap', () => {
 	});
 });
 
+describe('EmendSettingTab canonical input values', () => {
+	beforeEach(() => {
+		settingInstances.length = 0;
+	});
+
+	function inputFor(name: string) {
+		const text = latestSetting(name).texts[0];
+		if (!text) throw new Error(`Missing settings input: ${name}`);
+		return text;
+	}
+
+	it('shows the normalized value after clamping a below-minimum context input', async () => {
+		const { plugin, tab } = createModelSettingsTab();
+		displaySettings(tab);
+		const text = inputFor('Context character limit');
+
+		text.inputEl.value = '999';
+		await text.onChangeHandler('999');
+		expect(plugin.settings.maxContextCharacters).toBe(1000);
+		expect(text.inputEl.value).toBe('999');
+
+		text.inputEl.dispatchEvent({ type: 'change' });
+		await Promise.resolve();
+
+		expect(text.inputEl.value).toBe('1000');
+		expect(text.value).toBe('1000');
+		expect(plugin.settings.maxContextCharacters).toBe(1000);
+	});
+
+	it('restores the default in the call-limit field after clearing it', async () => {
+		const { plugin, tab } = createModelSettingsTab();
+		displaySettings(tab);
+		const text = inputFor('Web tool call limit');
+
+		text.inputEl.value = '';
+		await text.onChangeHandler('');
+		expect(plugin.settings.maxWebToolCalls).toBe(DEFAULT_SETTINGS.maxWebToolCalls);
+		expect(text.inputEl.value).toBe('');
+
+		text.inputEl.dispatchEvent({ type: 'change' });
+		await Promise.resolve();
+
+		expect(text.inputEl.value).toBe(String(DEFAULT_SETTINGS.maxWebToolCalls));
+		expect(text.value).toBe(String(DEFAULT_SETTINGS.maxWebToolCalls));
+		expect(plugin.settings.maxWebToolCalls).toBe(DEFAULT_SETTINGS.maxWebToolCalls);
+	});
+});
+
 describe('EmendSettingTab model discovery', () => {
 	beforeEach(() => {
 		settingInstances.length = 0;
