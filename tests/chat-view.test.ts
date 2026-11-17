@@ -115,6 +115,16 @@ describe('EmendChatView compact composer styles', () => {
 			'outline: 2px solid var(--focus-border-color);',
 		);
 	});
+
+	it('mutes streamed draft labels and their content', () => {
+		const label = getCssRule('.emend-chat-web-draft-label');
+		expect(label).toContain('color: var(--text-muted);');
+		expect(label).toContain('font-size: var(--font-ui-smaller);');
+		expect(label).toContain('margin-bottom: 4px;');
+		expect(getCssRule('.emend-chat-message-content.is-web-draft')).toContain(
+			'color: var(--text-muted);',
+		);
+	});
 });
 
 // eslint-disable-next-line @typescript-eslint/unbound-method -- The test wrapper supplies an explicit receiver.
@@ -4471,6 +4481,72 @@ describe('EmendChatView terminal response continuity', () => {
 	});
 });
 
+describe('EmendChatView web draft rendering', () => {
+	it('labels a loading web draft above muted content', () => {
+		const { body, context } = createMessageBodyHarness();
+
+		viewPrototype.renderMessageBody.call(context, {
+			...message('answer', 'Note.md'),
+			status: 'loading',
+			content: 'Draft **answer**',
+			webDraft: true,
+		});
+
+		const labels = webDraftLabelElements(body);
+		expect(labels).toHaveLength(1);
+		expect(labels[0]?.textContent).toBe('Draft answer — research may continue');
+		const contentEl = messageContentElements(body)[0];
+		if (!contentEl) {
+			throw new Error('Draft content missing.');
+		}
+		expect(contentEl.className.split(' ')).toContain('is-web-draft');
+		expect(body.children.indexOf(labels[0] as FakeElement)).toBeLessThan(
+			body.children.indexOf(contentEl),
+		);
+	});
+
+	it('does not label a loading answer without the draft flag', () => {
+		const { body, context } = createMessageBodyHarness();
+
+		viewPrototype.renderMessageBody.call(context, {
+			...message('answer', 'Note.md'),
+			status: 'loading',
+			content: 'Streamed answer',
+		});
+
+		expect(webDraftLabelElements(body)).toHaveLength(0);
+		expect(messageContentElements(body)[0]?.className.split(' ')).not.toContain('is-web-draft');
+	});
+
+	it('never labels a ready answer even when the transient flag survived', () => {
+		const { body, context } = createMessageBodyHarness();
+
+		viewPrototype.renderMessageBody.call(context, {
+			...message('answer', 'Note.md'),
+			content: 'Final answer',
+			webDraft: true,
+		});
+
+		expect(webDraftLabelElements(body)).toHaveLength(0);
+		expect(messageContentElements(body)[0]?.className.split(' ')).not.toContain('is-web-draft');
+	});
+
+	it('never labels a stopped or errored answer', () => {
+		for (const status of ['stopped', 'error'] as const) {
+			const { body, context } = createMessageBodyHarness();
+
+			viewPrototype.renderMessageBody.call(context, {
+				...message('answer', 'Note.md'),
+				status,
+				content: 'Partial answer',
+				webDraft: true,
+			});
+
+			expect(webDraftLabelElements(body)).toHaveLength(0);
+		}
+	});
+});
+
 class FakeElement {
 	readonly children: FakeElement[] = [];
 	readonly attributes: Record<string, string> = {};
@@ -4688,6 +4764,13 @@ function messageContentElements(root: FakeElement): FakeElement[] {
 	return findElements(
 		root,
 		(element) => element.className.split(' ').includes('emend-chat-message-content'),
+	);
+}
+
+function webDraftLabelElements(root: FakeElement): FakeElement[] {
+	return findElements(
+		root,
+		(element) => element.className.split(' ').includes('emend-chat-web-draft-label'),
 	);
 }
 
@@ -5446,6 +5529,58 @@ describe('EmendChatView web research', () => {
 
 		expect(activityAtRequestEntry).toBeUndefined();
 		expect(fixture.context.messages[1]?.webActivity).toBeUndefined();
+	});
+
+	it('clears a streamed web draft before tool calls and keeps only the terminal answer', async () => {
+		const fixture = createEditTargetView();
+		const drafts: Array<{ content: string; webDraft: boolean | undefined }> = [];
+		fixture.requestChatCompletion.mockImplementation(async (submission) => {
+			submission.callbacks.onContent('Draft **text**');
+			drafts.push({
+				content: fixture.context.messages[1]?.content ?? '',
+				webDraft: fixture.context.messages[1]?.webDraft,
+			});
+			submission.callbacks.onContentReset?.();
+			drafts.push({
+				content: fixture.context.messages[1]?.content ?? '',
+				webDraft: fixture.context.messages[1]?.webDraft,
+			});
+			submission.callbacks.onContent('Final answer');
+			return { content: 'Final answer', reasoning: '' };
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		Object.assign(fixture.context, { webSearchMode: 'auto' });
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Research';
+		}
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(drafts).toEqual([
+			{ content: 'Draft **text**', webDraft: true },
+			{ content: '', webDraft: false },
+		]);
+		expect(fixture.context.messages[1]?.content).toBe('Final answer');
+		expect(fixture.context.messages[1]?.status).toBe('ready');
+	});
+
+	it('never marks a Web Off streamed answer as a draft', async () => {
+		const fixture = createEditTargetView();
+		let draftDuringStream: boolean | undefined;
+		fixture.requestChatCompletion.mockImplementation(async (submission) => {
+			submission.callbacks.onContent('Answer');
+			draftDuringStream = fixture.context.messages[1]?.webDraft;
+			return { content: 'Answer', reasoning: '' };
+		});
+		await viewPrototype.refreshTargetNote.call(fixture.context);
+		if (fixture.context.inputEl) {
+			fixture.context.inputEl.value = 'Question';
+		}
+
+		await viewPrototype.submitPrompt.call(fixture.context);
+
+		expect(draftDuringStream).toBeUndefined();
+		expect(fixture.context.messages[1]?.webDraft).toBeUndefined();
 	});
 });
 

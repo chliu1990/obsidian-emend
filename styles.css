@@ -843,6 +843,16 @@
 	margin-top: 6px;
 }
 
+.emend-chat-web-draft-label {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	margin-bottom: 4px;
+}
+
+.emend-chat-message-content.is-web-draft {
+	color: var(--text-muted);
+}
+
 .emend-chat-web-sources {
 	margin-top: 8px;
 }

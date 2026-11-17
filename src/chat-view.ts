@@ -1327,8 +1327,16 @@ export class EmendChatView extends ItemView {
 		}
 
 		if (message.role === 'user' || message.status === 'error' || message.status === 'loading') {
+			if (message.status === 'loading' && message.webDraft) {
+				bodyEl.createDiv({
+					cls: 'emend-chat-web-draft-label',
+					text: 'Draft answer — research may continue',
+				});
+			}
 			bodyEl.createDiv({
-				cls: 'emend-chat-message-content',
+				cls: message.status === 'loading' && message.webDraft
+					? 'emend-chat-message-content is-web-draft'
+					: 'emend-chat-message-content',
 				text: message.content,
 			});
 			return;
@@ -1698,7 +1706,15 @@ export class EmendChatView extends ItemView {
 					additionalNotePaths,
 					callbacks: {
 						onContent: (text) => {
+							if (webSearchMode !== 'off') {
+								loadingMessage.webDraft = true;
+							}
 							loadingMessage.content += text;
+							this.scheduleRequestRender(request);
+						},
+						onContentReset: () => {
+							loadingMessage.content = '';
+							loadingMessage.webDraft = false;
 							this.scheduleRequestRender(request);
 						},
 						onReasoning: (text) => {

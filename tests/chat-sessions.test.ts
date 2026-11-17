@@ -286,6 +286,13 @@ describe('shared message serialization', () => {
 		});
 	});
 
+	it('drops the transient web draft flag', () => {
+		const persisted = toPersistedMessage({ ...readyMessage(), webDraft: true });
+
+		expect(persisted).not.toHaveProperty('webDraft');
+		expect(Object.keys(persisted)).not.toContain('webDraft');
+	});
+
 	it('normalizes source-less usage and sanitizes loaded web metadata', () => {
 		const message = {
 			...readyMessage({

@@ -48,6 +48,7 @@ export interface ChatMessage {
 	webSources?: WebSource[];
 	webActivities?: WebActivityRecord[];
 	webActivity?: string;
+	webDraft?: boolean;
 }
 
 export interface SelectionSnapshot {
