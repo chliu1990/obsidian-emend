@@ -2,7 +2,7 @@
 
 ## Status
 
-In progress on `fix/2.10-write-safety` and its follow-up PR branches. This record accumulates the confirmed findings, focused fixes, regression evidence, and remaining limits for the 2.10 bug-hunt round. Promotion remains blocked until every section below is complete and the final whole-branch review passes.
+Status: PR A through PR F are recorded below, including each review round, the local gates, the PR E real-Obsidian matrix, and the 16 Round 3/4 deferrals with their tracking issues. Promotion is a separate controller/release decision; this record does not claim a release, a real-provider run, or coverage outside the recorded Linux/Xvfb environment.
 
 Baseline for the round: `main` at `0db93f4`, 53 test files / 1,782 tests, lint and build clean.
 
@@ -74,7 +74,7 @@ PR A is unit- and source-verified. Real-Obsidian confirmation of the composed-ma
 
 ## Remaining sections
 
-PRs B–E append their findings, fixes, RED→GREEN evidence, gates, and the final exploratory matrix below. Stage 51 is not complete until PR E records the whole-round gate and every deferral link.
+PRs B–F append their findings, fixes, RED→GREEN evidence, and gates below, and the PR E real-Obsidian matrix records the whole-round runs. The deferred Round 3/4 items with their issue numbers are listed at the end of this record.
 
 ## PR B — session, persistence, and instruction resilience
 
@@ -694,7 +694,7 @@ Screenshots inspected: `01-selection-edit-inside-existing-token.png` (Notice ban
 
 - Linux on Xvfb with loopback mocks only. macOS, Windows, physical keyboards, screen readers, other Obsidian versions, and real provider accounts were not exercised, and no pixel comparison was made.
 - `app.appVersion` is unavailable in this renderer, so the Obsidian version comes from bundled package metadata (1.15.0); the cache-name fallback is unreliable (1.15.1 on the earlier tree, `null` on the final tree), as described above.
-- H1's successful follow-up covers an edit whose *selection* encloses the whole pending token; editing strictly inside an existing tracked change remains rejected by design, and its notice is still the generic `compiled-markup-rejected` copy (deferral item 13).
+- H1's successful follow-up covers an edit whose *selection* encloses the whole pending token; editing strictly inside an existing tracked change remains rejected by design, and its notice is still the generic `compiled-markup-rejected` copy (deferral item 13, [#88](https://github.com/chliu1990/obsidian-emend/issues/88)).
 - M1 injects a harness-only `max-height`/`overflow-y` rule on `.emend-chat-reasoning-content`, because the shipped stylesheet does not make that container scrollable at the Xvfb viewport. The injected rule changes presentation only; the streaming update path, element identity, `open` state, and scroll preservation are the product code under test.
 - H2 observes a single timing sample: the disk file still matched the captured source when the response was released. On a slower run the autosave could land first, in which case either freshness check would reject identically; the harness records the observed value in its evidence.
 - The selection suite exercises one 1440×1000 Xvfb screen with the default theme; 240 px behavior is covered by the dedicated layout scenarios rather than by every new scenario.
@@ -899,3 +899,26 @@ git diff --check clean
 
 - The optional `readEditorTexts` reader stays optional: a writer without it (disk-only usage outside the composer path) skips the live-editor comparison entirely, which is the documented contract but leaves that seam unreachable in chat. No test or type change was made here.
 - Popout and reading-mode behavior is still unverified: the reader iterates `workspace.iterateAllLeaves`, so a popout window's Markdown view is covered only if the host reports it through the same workspace; reading-mode (preview, no editor) panes expose no editor text and therefore contribute nothing to the comparison. Real-Obsidian confirmation remains with the PR E matrix, together with the rest of the round's live runs.
+
+## Deferred Round 3/4 items
+
+Every release blocker in this round is fixed and verified. The following items were deliberately deferred; each issue names its evidence (file paths/functions), risk, and reason for deferral. The same list appears in `ROADMAP.md` under **Deferred from the 2.10 stabilization round**.
+
+1. **`chat-view.ts` decomposition ([#76](https://github.com/chliu1990/obsidian-emend/issues/76)).** The view interleaves six state machines (more than 2,300 lines), and `tests/chat-view.test.ts` reaches private prototypes and hand-built contexts, which is why H4/M1/M10/M12 stayed green.
+2. **One edit-freshness model ([#77](https://github.com/chliu1990/obsidian-emend/issues/77)).** `note-writer.ts` checks disk bytes plus every open editor; `selection-editor.ts` checks only its captured editor. Unifying them must preserve the H2/F1 fail-closed checks.
+3. **One edit-target representation ([#78](https://github.com/chliu1990/obsidian-emend/issues/78)).** `edit-target.ts` choices, `displayedEditTarget`, per-submission conversions, and the mutating `getTargetMarkdownView()` encode one target three ways.
+4. **One Markdown structure scanner ([#79](https://github.com/chliu1990/obsidian-emend/issues/79)).** `selection-context.ts` and `markdown-edit-guards.ts` implement divergent fence/frontmatter/table scans; consolidation must keep the Stage 38 conservative boundaries.
+5. **`provider-stream.ts` split ([#80](https://github.com/chliu1990/obsidian-emend/issues/80)).** Transport, SSE parsing, tool assembly, capacity guard, and caller-kind flags such as `allowToolOnlyResponse` share one module.
+6. **`deepseek-web.ts` split ([#81](https://github.com/chliu1990/obsidian-emend/issues/81)).** Clients, retry policy, loop orchestration, citations, and cap fitting share one 762-line module.
+7. **Related-notes panel positioning and refresh probes ([#82](https://github.com/chliu1990/obsidian-emend/issues/82)).** `positionPanel()` runs once with no resize/scroll tracking, and every open/Refresh scans vault metadata.
+8. **Aggregate lifecycle on note rename and delete ([#83](https://github.com/chliu1990/obsidian-emend/issues/83)).** The vault handlers maintain only the additional-notes store; chat history is neither migrated on rename nor removed on delete.
+9. **Instruction caching ([#84](https://github.com/chliu1990/obsidian-emend/issues/84)).** `loadAllInstructions` re-reads the root file and every skill per request, bounded only by the 20,000-character cap.
+10. **`saveSettings` double updater invocation ([#85](https://github.com/chliu1990/obsidian-emend/issues/85)).** `main.ts` calls a function updater once to resolve the saved candidate and again to apply live values; safe only while updaters stay pure.
+11. **Dead CSS for retired header controls ([#86](https://github.com/chliu1990/obsidian-emend/issues/86)).** `.emend-chat-edit-target` and `.emend-chat-web-mode` in `styles.css` have no source references.
+12. **Public `chat-view` test surface ([#87](https://github.com/chliu1990/obsidian-emend/issues/87)).** Tests assert private prototypes instead of a public view contract, coupling refactors and hiding behavior regressions.
+13. **Actionable in-token selection rejection ([#88](https://github.com/chliu1990/obsidian-emend/issues/88)).** A selection strictly inside a pending tracked change still gets the generic `compiled-markup-rejected` copy and spends the one correction round; both need a terminal, actionable replacement.
+14. **Uniform capacity-summary announcement policy ([#89](https://github.com/chliu1990/obsidian-emend/issues/89)).** Chat announces synchronously; Modify Selection defers 500 ms. Choosing one policy needs a screen-reader session.
+15. **Tool-client configuration contract ([#90](https://github.com/chliu1990/obsidian-emend/issues/90)).** `DeepSeekConfigurationError` is fatal in the tool client but effectively unreachable behind the chat transport guard; removing or redefining that path is a deliberate decision.
+16. **Platform and provider verification gaps ([#91](https://github.com/chliu1990/obsidian-emend/issues/91)).** macOS, Windows, physical input, screen readers, popout edge cases, other Obsidian versions, and real providers remain unverified; all evidence is Linux/Xvfb with loopback mocks.
+
+These issues do not approve behavior changes. Each needs its own focused PR with tests, review, and verification under the project's existing constraints.
