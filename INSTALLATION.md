@@ -108,16 +108,17 @@ If Emend was already enabled, use **Reload app without saving** from the Command
 
 ## Update a source installation
 
-From the repository:
+From the repository, replace `/path/to/your/vault` with the vault you want to update, then run:
 
 ```bash
 git pull --ff-only
 npm ci
 npm run build
+VAULT="/path/to/your/vault"
 cp main.js manifest.json styles.css "$VAULT/.obsidian/plugins/emend/"
 ```
 
-Reload Obsidian. Provider settings and saved conversations remain local to the vault.
+Confirm that the three files are directly inside `"$VAULT/.obsidian/plugins/emend/"` before reloading Obsidian. Provider settings and saved conversations remain local to the vault.
 
 ## Remove Emend
 

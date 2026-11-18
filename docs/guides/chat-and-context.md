@@ -95,7 +95,7 @@ Opening, searching, selecting, removing, clearing, and refreshing read no note b
 
 Each session keeps its own unsent draft, ready messages, and provider history. Switching sessions does not mix those histories. Session management makes no provider request. Reordering is deferred; the current controls have no Move action.
 
-Ready sessions, their order, and the last active session survive reload. Drafts, stopped responses, loading content, and errors do not. See [Local data](privacy-and-storage.md#local-data) for the complete persistence boundary.
+Ready sessions, their order, and the last active session survive reload. Renaming a note does not migrate its saved chats to the new path. Drafts, stopped responses, loading content, and errors do not. See [Local data](privacy-and-storage.md#local-data) for the complete persistence boundary.
 
 **Observable result:** Switching restores the selected session's messages and draft. After reload, ready conversations return and unsent drafts are empty.
 

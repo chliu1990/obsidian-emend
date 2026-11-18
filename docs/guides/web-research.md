@@ -15,11 +15,11 @@ An unsupported provider or model produces an explicit capability error. Emend ne
 
 The main DeepSeek model receives the ordinary Chat context. It may derive search queries, fetch URLs, and extraction goals from your note and chat. **Web Review** shows those arguments for editing before retrieval. **Web Auto** skips only that review pause.
 
-Successful retrieval may be billed separately. Extractor, verifier, and refine model rounds may also incur separate charges. A failed retrieval call still counts toward the configured call limit. Emend does not know your provider's prices or estimate charges. See [Web sharing and charges](privacy-and-storage.md#web-sharing-and-charges) for the canonical recipient and disclosure boundary.
+Successful retrieval may be billed separately. Extractor, verifier, and refine model rounds may also incur separate charges. A transient Search or Fetch failure may be retried once. A failed retrieval call still counts toward the configured call limit. Emend does not know your provider's prices or estimate charges. See [Web sharing and charges](privacy-and-storage.md#web-sharing-and-charges) for the canonical recipient and disclosure boundary.
 
 ## Use Web Review or Auto
 
-**Outcome:** Review one proposed retrieval batch, run it, and receive a sourced answer without changing the note.
+**Outcome:** Review one proposed retrieval batch, run it, and receive a terminal answer, with citations when retrieved evidence supports them, without changing the note.
 
 **Prerequisites:** [Configure DeepSeek](settings-reference.md#configure-a-provider) with an API key and exactly `deepseek-flash` or `deepseek-v4-pro`. Open a Markdown note and Emend chat. Decide whether the note-derived arguments and possible provider charges are acceptable.
 
@@ -39,7 +39,7 @@ The model can legitimately answer without requesting retrieval. In that case, no
 
 **Observable result:** After **Run**, only the reviewed executable calls can retrieve content. The terminal answer becomes the ready answer with any result-backed citations and applicable warnings. Provisional text is gone, and the note is byte-for-byte unchanged because Chat has no writer.
 
-**Recipe recap:** You opted into DeepSeek research, inspected and edited note-derived arguments, consented with **Run**, and should observe one terminal sourced answer with no note write.
+**Recipe recap:** You opted into DeepSeek research, inspected and edited note-derived arguments, consented with **Run**, and should observe one terminal answer, any result-backed citations, and no note write.
 
 ### Web Auto variant
 
@@ -102,7 +102,7 @@ For protocol and presentation internals, see:
 - [Stage 48: Web response transition](../../devel_docs/48-web-response-transition.md);
 - [Stage 52: Web draft streaming](../../devel_docs/52-web-draft-streaming.md).
 
-Verification used local loopback chat, Search, Fetch, and extraction mocks with dummy credentials. It did not use real Web providers, real accounts, or paid retrieval. These guides therefore make no real-provider answer-quality, latency, or pricing claim.
+Web behavior was verified with local loopback chat, Search, Fetch, and extraction mocks with dummy credentials. Stage 40 also records one authorized minimal JSON-mode compatibility probe using the local DeepSeek configuration, with no note content or retrieval. No real-provider extraction or answer-quality verification and no paid Web retrieval were performed. These guides therefore make no real-provider answer-quality, latency, or pricing claim.
 
 ## Recap
 
@@ -111,6 +111,6 @@ Verification used local loopback chat, Search, Fetch, and extraction mocks with 
 - **Review pauses for editable queries, URLs, and extraction goals.** Auto skips only that pause. Retrieval and reader rounds can incur separate charges.
 - **Provisional content uses `Draft answer — research may continue`.** It clears before Review or retrieval. Terminal content becomes the answer once, without duplication or the draft label.
 - **Evidence is bounded and inspectable.** Citations come from represented sources, and unread, extraction, search, omission, and skipped-call warnings disclose possible gaps.
-- **Verification was loopback-only.** Real Web providers were not exercised.
+- **Verification used loopback mocks, plus one minimal JSON-mode compatibility probe with no note content or retrieval.** No real-provider extraction or answer-quality verification and no paid Web retrieval were performed.
 
 Next, review [Privacy and storage](privacy-and-storage.md) for sharing and persistence, or return to [Chat and context](chat-and-context.md) for writer-free note questions.

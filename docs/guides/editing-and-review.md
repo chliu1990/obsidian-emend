@@ -49,9 +49,9 @@ The Default Selection policy follows **Smart selection context** in [Settings](s
 **Actions:**
 
 1. Open Emend chat and choose **Edit · Full note** in **Writing and web search**.
-2. Type an editing instruction, such as `Make the introduction clearer without changing its meaning.`
-3. Alternatively, click **Fix grammar**, **Make concise**, or **Add examples**. These three quick actions appear only in Edit.
-4. Submit once and wait for validation and the guarded write to finish.
+2. For a typed instruction, enter an editing request, such as `Make the introduction clearer without changing its meaning.`
+3. For a quick action instead, click **Fix grammar**, **Make concise**, or **Add examples**. These three quick actions appear only in Edit.
+4. If you typed an instruction, submit it once. If you clicked a quick action, that click already submitted it; do not click Send again. Wait for validation and the guarded write to finish.
 5. Read the concise result in chat, then review the CriticMarkup with Track Changes.
 
 A quick action uses the maintained target and Selection-context policy. It saves your typed draft without consuming it, then follows the same submission path as a typed instruction. It does not create a separate writer or provider flow.
@@ -70,8 +70,8 @@ A quick action uses the maintained target and Selection-context policy. It saves
 
 1. Focus Emend chat without clearing the Selection.
 2. Choose **Edit · Selection** for Default context, or **Edit · Selection · Full note** for complete-note context.
-3. Type an instruction, or use **Fix grammar**, **Make concise**, or **Add examples**.
-4. Submit once and wait for the concise Selection result.
+3. For a typed instruction, enter your request. For a quick action instead, click **Fix grammar**, **Make concise**, or **Add examples**.
+4. If you typed an instruction, submit it once. If you clicked a quick action, that click already submitted it; do not click Send again. Wait for the concise Selection result.
 5. Review with Track Changes, or use native undo to restore the original Selection.
 
 **Edit · Selection · Full note** means **full-note context, Selection-only write**. The model can read the complete note, but Emend replaces only the exact captured range. The complete Selection is sent even when it exceeds the ordinary context budget.
@@ -91,9 +91,9 @@ An empty, whitespace-only, or vanished Selection fails closed. Emend shows `Sele
 **Actions:**
 
 1. Run **Modify selected text with AI** from the Command Palette.
-2. Enter an instruction, or choose **Fix grammar**, **Make concise**, or **Add examples**.
+2. For a typed instruction, enter your request. For a quick action instead, click **Fix grammar**, **Make concise**, or **Add examples**.
 3. Keep **Selection context** at Default, or choose **Full note**. The selector resets to Default each time the modal opens.
-4. Submit once and wait for the result notice.
+4. If you typed an instruction, submit it once. If you clicked a quick action, that click already submitted it; do not submit again. Wait for the result notice.
 5. Review with Track Changes, or use native undo.
 
 Default uses your Smart or Symmetric setting. Full note sends the complete note as supporting context, but only the Selection can change. The modal sends no chat history and shows notices rather than chat, usage, or retry displays.
@@ -118,6 +118,8 @@ Provider errors, cancellation, stale sources, and write failures do not start th
 For technical details, see [Stage 37: Minimal edit ranges and guarded correction](../../devel_docs/37-minimal-edit-ranges.md), [Stage 38: Markdown edit safeguards](../../devel_docs/38-markdown-edit-safeguards.md), and [Stage 51: 2.10 stabilization](../../devel_docs/51-2-10-stabilization.md).
 
 ## Review and undo
+
+Open the Command Palette and run **Open review panel** from Track Changes.
 
 Track Changes owns the review experience. Use its review cards and Accept/Reject controls to resolve the CriticMarkup that Emend wrote. Emend does not add another Apply or diff panel.
 

@@ -170,7 +170,7 @@ DeepSeek documents 1M context and 384K maximum output for the listed models. Kim
 
 1. Open **Settings → Emend** for the provider.
 2. Click **Use documented defaults** for a listed model, or enter **Context window (tokens)** and **Output reserve (tokens)** manually.
-3. To turn checks off, leave both fields empty only when no invalid marker exists. After an invalid configuration, **Clear capacity settings** is the reliable way to clear the marker and turn checks off.
+3. To turn checks off, click **Clear capacity settings**. Confirm that both fields are empty and the chat bar says **Capacity checks are off**.
 4. Return to chat and inspect the compact capacity bar below the header.
 
 The button applies values only when clicked. Selecting a model or loading settings applies no defaults automatically. Emend does not fetch model limits or add a metadata request.

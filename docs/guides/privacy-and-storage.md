@@ -51,7 +51,7 @@ Related notes are explicit, read-only context. Opening the explorer, choosing no
 
 The main DeepSeek model may derive search queries, fetch URLs, and extraction goals from your note and chat context. **Web Review** shows these proposals for editing before retrieval. **Web Auto** skips only that review pause.
 
-Successful retrieval may be billed separately. Extractor, verifier, and refine model rounds may also incur separate charges. Emend does not know your provider's prices and does not estimate charges.
+Successful retrieval may be billed separately. Extractor, verifier, and refine model rounds may also incur separate charges. A transient Search or Fetch failure may be retried once. Failed calls still count toward the configured call limit. Emend does not know your provider's prices and does not estimate charges.
 
 Web research remains read-only. Unsupported providers or models fail with an explicit error instead of silently continuing without Web research. See [Stage 40](../../devel_docs/40-web-content-budget-diagnostics.md) for the exact extraction, evidence, and output-cap rules.
 
@@ -61,15 +61,15 @@ Web research remains read-only. Unsupported providers or models fail with an exp
 | --- | --- | --- | --- |
 | Provider API keys | Obsidian SecretStorage under `emend-api-key-deepseek`, `emend-api-key-kimi`, and `emend-api-key-custom`. | The provider credentials. Plugin `data.json` always stores empty `apiKey` fields. | SecretStorage values survive reload and plugin-folder removal. An in-memory fallback, used when no stored secret is available, does not survive reload. |
 | Emend settings | `<Vault>/.obsidian/plugins/emend/data.json`. | Non-secret provider configuration, privacy choices, history limits, capacity values, and other settings. | Settings survive reload. Removing the Emend plugin folder removes this file. |
-| Saved chats | Schema-3 files under `<Vault>/.obsidian/emend/chats/`. | Ready messages with source note paths, concise Edit results, main reasoning, usage, and sanitized Web citations and activity. | Saved sessions and their order survive reload. Drafts and unfinished responses are excluded. |
+| Saved chats | Versioned chat files under `<Vault>/.obsidian/emend/chats/`. | Completed, saved messages with source note paths, concise Edit results, main reasoning, usage, and sanitized Web citations and activity. | Saved sessions and their order survive reload. Drafts and unfinished responses are excluded. |
 | Drafts and unfinished responses | Memory only. | Composer drafts, loading or stopped responses, errors, and provisional Web draft text. | Drafts survive note and session switches in the same view lifetime. Everything in this row clears on reload and is not written to saved chats. |
 | Additional-note selections and snapshots | Memory only. | Selected paths, helper choices, and submission-time note snapshots. | Selections survive note switches for the same target. Snapshots are request-only. Selections clear on reload, and neither is persisted. |
-| Raw retrieval and reader artifacts | Temporary request memory only. | Retrieved content, tool arguments and results, extracted evidence, reader reasoning, and transient failure details. | These artifacts are discarded after the request. They are never written to saved chats. |
+| Raw retrieval and temporary Web extraction and verification data | Temporary request memory only. | Retrieved content, tool arguments and results, extracted evidence, processing reasoning, and transient failure details. | This data is discarded after the request. It is never written to saved chats. |
 | Buffered edit responses | Temporary request memory only. | Raw JSON candidates, compiled responses, and correction feedback. | These artifacts are discarded after validation or failure. Only the concise Edit result can persist. |
 
 Malformed conversation data is preserved. Before the first valid replacement, Emend writes the original bytes to a `.corrupt` backup if that backup does not already exist. Unsupported schema versions are not overwritten. [Stage 43](../../devel_docs/43-multiple-chat-sessions.md) records the exact storage and migration rules.
 
-Deleting a note does not delete its saved chat aggregate. Disabling Emend also preserves its settings and chats. To remove everything, clear each provider's API key in Emend settings, remove the plugin folder, and delete `<Vault>/.obsidian/emend/` separately. The [removal steps](../../INSTALLATION.md#remove-emend) explain this cleanup.
+Deleting a note does not delete the note's saved sessions. Renaming a note does not migrate its saved chats to the new path; the old saved data remains under the old note identity. Disabling Emend also preserves its settings and chats. To remove everything, clear each provider's API key in Emend settings, remove the plugin folder, and delete `<Vault>/.obsidian/emend/` separately. The [removal steps](../../INSTALLATION.md#remove-emend) explain this cleanup.
 
 [Stage 51](../../devel_docs/51-2-10-stabilization.md) records the current edit freshness checks, composed-note validation, and storage-resilience fixes.
 
@@ -77,5 +77,5 @@ Deleting a note does not delete its saved chat aggregate. Disabling Emend also p
 
 - **What can write:** Only Full-note Edit and Selection Edit can write. Full-note Edit uses the guarded vault writer. Selection uses exact native replacement, and only the captured Selection can change. Chat never writes.
 - **What is sent:** Explicit submissions send the listed context to your selected provider. Opted-in DeepSeek Web flows can also send note-derived queries, URLs, and extraction goals, plus claims and quotes from retrieved evidence.
-- **What persists:** SecretStorage keys, non-secret settings, and ready chats persist. Drafts, Related-note selections, raw retrieval, reader artifacts, and buffered edit responses do not.
+- **What persists:** SecretStorage keys, non-secret settings, and completed, saved chats persist. Drafts, Related-note selections, raw retrieval, temporary Web extraction and verification data, and buffered edit responses do not.
 - **What never happens automatically:** Emend makes no background AI requests and never installs other plugins. Chat never edits a note, and Full-note Selection context never expands the Selection write target.

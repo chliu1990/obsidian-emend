@@ -4,9 +4,11 @@
 
 Emend is a desktop Obsidian plugin for streaming AI chat and guarded, reviewable edits to Markdown notes. Ask questions without giving the model a writer, or propose changes that remain visible as review markup. You choose the context, the workflow, and when a request is sent.
 
-Emend supports DeepSeek, Kimi Code, and custom OpenAI-compatible providers. The separate **Track Changes** plugin reviews every edit. Emend makes no background AI requests.
+Emend supports DeepSeek, Kimi, and custom OpenAI-compatible providers. The separate **Track Changes** plugin reviews every edit. Emend makes no background AI requests.
 
 ## Why Emend?
+
+A **Selection** is the exact text range captured when you submit. Edit requests use structured insert, remove, replace, and comment **Operations**.
 
 - **Chat without note writes.** Ordinary Chat uses bounded note context. Explicit **Chat · Selection** sends the complete note plus a separate, complete Selection as read-only focus. Both stream answers and reasoning into the sidebar, and neither can edit a note.
 - **Choose exactly what can change.** Full-note Edit can change the captured note. Selection Edit replaces only the captured range, even when you choose full-note supporting context. Empty or vanished Selections fail closed rather than widening the target.
@@ -52,7 +54,7 @@ These are current capabilities, not a promise of automatic context compression, 
 | Provider | Preset model and base URL | Chat and Edit | Web Review / Auto |
 | --- | --- | --- | --- |
 | DeepSeek | `deepseek-flash` at `https://api.deepseek.com`; `deepseek-v4-pro` is also built in | Supported | Only with exactly `deepseek-flash` or `deepseek-v4-pro` |
-| Kimi Code | `k3.1-pro` at `https://api.kimi.com/coding/v1` | Supported | Not supported |
+| Kimi | `k3.1-pro` at `https://api.kimi.com/coding/v1` | Supported | Not supported |
 | Custom | Your model and OpenAI-compatible base URL | Supported when the endpoint streams chat completions | Not supported |
 
 Models and base URLs remain editable. Emend appends `/chat/completions`. **Refresh models** in Settings is the only model-discovery action; it sends an explicit authenticated `GET <base URL>/models` request. Opening chat or the model menu never discovers models automatically.
@@ -60,6 +62,8 @@ Models and base URLs remain editable. Emend appends `/chat/completions`. **Refre
 Unsupported Web combinations fail explicitly. Emend never silently turns them into ordinary unsearched Chat or switches providers. Web research is Off by default, unavailable in Edit, and has no note writer.
 
 ## Installation
+
+Choose an installation method below, or follow the [complete installation guide](INSTALLATION.md). In **Settings → Community plugins**, turn off **Restricted mode** if it is enabled.
 
 **Recommended: use BRAT.** Install and enable **BRAT — Beta Reviewers Auto-update Tool**, choose **Add beta plugin**, and enter:
 
@@ -71,7 +75,7 @@ BRAT installs Emend from GitHub releases; it does not install Track Changes. Alt
 
 If you will edit notes, install and enable the separate **Track Changes** plugin before enabling Emend. Then enable **Emend** under **Settings → Community plugins**. Chat alone does not require Track Changes, and Emend never installs other plugins automatically.
 
-Follow the [installation guide](INSTALLATION.md) for ZIP, source, folder-layout, update, removal, and troubleshooting steps. Then configure a provider and complete the [Quick Start](QUICK_START.md).
+The complete guide also covers ZIP, source, folder-layout, update, removal, and troubleshooting steps. Then configure a provider and complete the [Quick Start](QUICK_START.md).
 
 ## Privacy and write safety
 

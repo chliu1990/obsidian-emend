@@ -31,9 +31,10 @@ Choose the path that matches what you need to do. The focused guides contain the
 
 ## Contributors
 
-- Read the [contributor and agent instructions](../AGENTS.md) and [contributing guide](../CONTRIBUTING.md).
-- Use the [implementation contract and stage index](../IMPLEMENTATION_PLAN.md) to find owning modules and technical records.
-- Consult the [2.10 stabilization record](../devel_docs/51-2-10-stabilization.md) for recent fixes and verification limits.
+1. Set up Node.js 24, clone the repository, and run a first build with [Build from source](../INSTALLATION.md#build-from-source).
+2. Read [Contributing](../CONTRIBUTING.md), open or reference an issue, and create a focused branch from main.
+3. Use [AGENTS.md](../AGENTS.md) and the [implementation contract](../IMPLEMENTATION_PLAN.md) to identify the owning module and safety invariants before changing behavior.
+4. Run the [required checks](../CONTRIBUTING.md#required-checks) and open a focused PR with the requested test, privacy, storage, and write-path evidence.
 
 ## Release maintainers
 

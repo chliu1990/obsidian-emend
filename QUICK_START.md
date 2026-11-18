@@ -28,7 +28,7 @@ Open **Settings → Emend**, choose **Active provider**, and enter its API key, 
 | Provider | Base URL | Preset model |
 | --- | --- | --- |
 | DeepSeek | `https://api.deepseek.com` | `deepseek-flash` |
-| Kimi Code | `https://api.kimi.com/coding/v1` | `k3.1-pro` |
+| Kimi | `https://api.kimi.com/coding/v1` | `k3.1-pro` |
 | Custom | Your OpenAI-compatible base URL | A model available on that endpoint |
 
 The endpoint must support streaming chat completions. Emend appends `/chat/completions` to the base URL.
@@ -115,7 +115,7 @@ You have verified the core boundaries:
 - The separate Track Changes plugin provided Accept/Reject controls.
 - Selection Edit changed only the captured range, even though it could use surrounding context.
 - Native undo restored the exact original Selection.
-- Provider requests occurred only after explicit submission, not while preparing these steps.
+- Chat and Edit requests occurred only after explicit submission. Preparing the note, choosing workflows, and changing model selections made no request; **Refresh models** makes a request only if you explicitly click it.
 
 If a step fails, check the provider message in chat and the [provider settings reference](docs/guides/settings-reference.md). For installation or missing-review-plugin problems, use [installation troubleshooting](INSTALLATION.md#troubleshooting).
 
