@@ -9,6 +9,8 @@ Emend is a desktop-only Obsidian plugin. Mobile Obsidian is not supported.
 - Node.js **24** and npm if building from source.
 - A DeepSeek, Kimi, or other OpenAI-compatible provider. You need an API key and an available model. A local OpenAI-compatible endpoint also works when it permits requests from Obsidian.
 
+> **Separate review plugin:** Emend produces CriticMarkup for proposed edits. The separate [Track Changes community plugin](https://github.com/philphilphil/obsidian-track-changes) visualizes it and supplies Accept/Reject controls. Chat does not require Track Changes. To review edits, install it through **Settings → Community plugins → Browse**, the existing community-plugin installation path. BRAT installs Emend only. Emend does not bundle or automatically install other plugins.
+
 ## Install with BRAT
 
 **BRAT — Beta Reviewers Auto-update Tool** installs and updates plugins directly from GitHub releases, which is useful when a plugin is not listed in the Obsidian Community Directory.
