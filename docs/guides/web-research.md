@@ -21,11 +21,11 @@ Successful retrieval may be billed separately. Extractor, verifier, and refine m
 
 *Conceptual flow: Review pauses for editable arguments; Auto skips only that pause. Both paths enforce the same evidence and terminal-answer boundaries.*
 
-**Text equivalent:** Web is Off by default and limited to supported DeepSeek models in Chat or Chat Selection. After an explicit opt-in, the model may propose Search or Fetch arguments. Review allows editing and consent before retrieval; Auto skips only that review pause. Retrieval passes through extraction and verification before the main model produces a terminal answer with Sources and applicable warnings. Unsupported configurations fail without unsearched fallback, and no step has a note writer.
+**Text equivalent:** Web is Off by default and limited to supported DeepSeek models in Chat or Chat Selection. After an explicit opt-in, the model may propose Search or Fetch arguments. Review allows editing and consent before retrieval; Auto skips only that review pause. Any retrieval passes through extraction and verification before the main model produces a terminal answer with any supported Sources and applicable warnings. A zero-call answer is also valid. Unsupported configurations fail without unsearched fallback, and no step has a note writer.
 
 ## Use Web Review or Auto
 
-**Outcome:** Review one proposed retrieval batch, run it, and receive a terminal answer, with citations when retrieved evidence supports them, without changing the note.
+**Outcome:** Review and run any proposed retrieval batch, then receive one terminal answer without changing the note. A valid zero-call result needs no Review or retrieval activity and may have no citations.
 
 **Prerequisites:** [Configure DeepSeek](settings-reference.md#configure-a-provider) with an API key and exactly `deepseek-flash` or `deepseek-v4-pro`. Open a Markdown note and Emend chat. Decide whether the note-derived arguments and possible provider charges are acceptable.
 
@@ -36,27 +36,27 @@ Successful retrieval may be billed separately. Extractor, verifier, and refine m
 3. Type a research question, such as `Find the official documentation for this plugin API and summarize the setup requirements.` Then submit once.
 4. When the model streams provisional answer text, observe the exact label `Draft answer — research may continue`. Treat that text as unfinished.
 5. If the model proposes retrieval, the draft text and label clear before **Review** opens. No Search or Fetch from that batch has run yet.
-6. Review each proposed search **query** or fetch **URL** and its **extraction goal**. Edit them to name the information you want, then click **Run**. Closing or cancelling the review aborts the submission instead of running retrieval.
-7. Observe the folded activity as Search/Fetch and extraction proceed. Later provisional content also carries the draft label and clears before another Review or retrieval batch.
-8. Read the terminal answer and its **Sources** section. Expand the activity and source disclosures to inspect the completed outcomes and actual source links.
+6. If **Review** opens, review each proposed search **query** or fetch **URL** and its **extraction goal**. Edit them to name the information you want, then click **Run**. Closing or cancelling the review aborts the submission instead of running retrieval.
+7. If retrieval runs, observe the folded activity as Search/Fetch and extraction proceed. Later provisional content also carries the draft label and clears before another Review or retrieval batch.
+8. Read the terminal answer and, when present, its **Sources** section. Expand any activity and source disclosures to inspect the completed outcomes and actual source links.
 9. Confirm that the answer appears once, without the draft label, and that the note remains unchanged.
 
-The model can legitimately answer without requesting retrieval. In that case, no Review batch opens and the terminal answer may have no citations. A supported model choosing zero calls is not a silent fallback.
+If the model proposes no retrieval, no Review modal opens and no retrieval activity appears. The answer may have no citations, but it still appears once as a terminal answer without the draft label, and the note remains unchanged. A supported model choosing zero calls is not a silent fallback.
 
-**Observable result:** After **Run**, only the reviewed executable calls can retrieve content. The terminal answer becomes the ready answer with any result-backed citations and applicable warnings. Provisional text is gone, and the note is byte-for-byte unchanged because Chat has no writer.
+**Observable result:** If retrieval was proposed, only the reviewed executable calls can retrieve content after **Run**. With or without retrieval, the terminal answer becomes the ready answer with any result-backed citations and applicable warnings. Provisional text is gone, and the note is byte-for-byte unchanged because Chat has no writer.
 
-**Recipe recap:** You opted into DeepSeek research, inspected and edited note-derived arguments, consented with **Run**, and should observe one terminal answer, any result-backed citations, and no note write.
+**Recipe recap:** You opted into DeepSeek research, inspected and edited any proposed arguments, and consented with **Run** when retrieval was proposed. You should observe one terminal answer, any result-backed citations, and no note write, whether or not retrieval occurred.
 
 ### Web Auto variant
 
 1. Keep the same supported DeepSeek provider and Chat prerequisites.
 2. Choose **Web Auto**, enter the research question, and submit once.
-3. Observe the same labelled provisional drafts and activity. A draft clears before retrieval begins.
-4. Read the terminal answer, citations, and any warnings. Confirm that the note remains unchanged.
+3. Observe the same labelled provisional drafts. If retrieval is proposed, observe the activity; each draft clears before retrieval begins.
+4. Read the terminal answer, any citations, and any warnings. Confirm that the note remains unchanged.
 
 Auto performs the same argument validation, extraction, evidence checks, and limit enforcement as Review. It skips only the editable review pause, so proposed queries, URLs, and goals are not shown for approval before execution. **Stop** cancels the active submission.
 
-**Observable result:** Auto retrieves without a Review modal and promotes only terminal content to the ready answer. It produces no note write or unsearched fallback.
+**Observable result:** Any proposed retrieval runs without a Review modal. Auto promotes only terminal content to the ready answer and produces no note write. The same explicit zero-call result is valid and is not silent unsearched fallback.
 
 ## Drafts and final answers
 
@@ -114,7 +114,7 @@ Web behavior was verified with local loopback chat, Search, Fetch, and extractio
 
 - **Web is Off by default and read-only.** Only DeepSeek `deepseek-flash` and `deepseek-v4-pro` support it in Chat and Chat Selection.
 - **Unsupported combinations fail explicitly.** There is no silent unsearched fallback, fallback provider, or note writer; the note remains unchanged.
-- **Review pauses for editable queries, URLs, and extraction goals.** Auto skips only that pause. Retrieval and reader rounds can incur separate charges.
+- **Review pauses for editable queries, URLs, and extraction goals when retrieval is proposed.** Any proposed Auto retrieval skips only that pause. Retrieval and reader rounds can incur separate charges; a zero-call answer is valid.
 - **Provisional content uses `Draft answer — research may continue`.** It clears before Review or retrieval. Terminal content becomes the answer once, without duplication or the draft label.
 - **Evidence is bounded and inspectable.** Citations come from represented sources, and unread, extraction, search, omission, and skipped-call warnings disclose possible gaps.
 - **Verification used loopback mocks, plus one minimal JSON-mode compatibility probe with no note content or retrieval.** No real-provider extraction or answer-quality verification and no paid Web retrieval were performed.

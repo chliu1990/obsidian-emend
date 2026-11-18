@@ -5,7 +5,7 @@
 Emend is distributed through the public GitHub repository and manual installation. There is **no plan to submit Emend to the Obsidian Community Directory** at this time.
 
 - Repository: https://github.com/chliu1990/obsidian-emend
-- Installation: [BRAT](../INSTALLATION.md#install-with-brat) (recommended), [release ZIP](../INSTALLATION.md#install-from-the-release-zip), or [manual source installation](../INSTALLATION.md)
+- Installation: [BRAT](../INSTALLATION.md#install-with-brat) (recommended), [release ZIP](../INSTALLATION.md#install-from-the-release-zip), or [manual source installation](../INSTALLATION.md#build-from-source)
 - Release automation: [GitHub release workflow](../.github/workflows/release.yaml)
 - Release assets: `main.js`, `manifest.json`, `styles.css`, and `emend-<version>.zip` (a ready-to-extract `emend/` folder)
 - Release tags must exactly match `manifest.json`, without a leading `v`.
@@ -94,8 +94,8 @@ Canonical sources for the promotional claims are the [README](../README.md), [Ch
 
 ## Release checklist
 
-1. Run clean install, lint, tests, production build, and security review.
-2. Confirm `package.json`, `manifest.json`, `package-lock.json`, and `versions.json` agree on the release version.
-3. Create or dispatch a matching Git tag through the release workflow.
-4. Verify the GitHub Actions run and all four uploaded assets.
-5. Test the release assets in a clean vault before announcing the release.
+1. Open the separate release PR. Update `CHANGELOG.md` and all release-specific status, installation, and verification text. Remove or update the temporary pre-release status notes in `README.md` and `INSTALLATION.md`, and update this file's preparation status so no pre-release wording survives publication.
+2. Run `npm version <patch|minor|major>`. Review the synchronized `package.json`, `package-lock.json`, `manifest.json`, and `versions.json`, then run clean install, lint, tests, production build, `git diff --check`, and the required security review. Merge the release PR only after these checks and reviews pass.
+3. From the merged release commit, create and push a tag exactly matching `manifest.json`, without a leading `v`, or dispatch the release workflow with that same version.
+4. Verify the GitHub Actions run and all four assets: `main.js`, `manifest.json`, `styles.css`, and `emend-<version>.zip`.
+5. Test the packaged assets in a clean vault and complete the public launch readiness checklist. Publish the launch announcement only after the package and launch checks pass.

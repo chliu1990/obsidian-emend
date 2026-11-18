@@ -2,7 +2,7 @@
 
 Use this guide when you want to know what Emend can change, what it sends, and what it stores.
 
-Emend makes no background AI requests. Note content leaves the vault only through explicit submissions and the Web flows you opt into for those submissions. Opening chat, changing settings, or selecting Related notes does not send note content.
+Emend makes no background AI requests. Note content leaves the vault only through explicit submissions and the Web flows you opt into for those submissions. Opening chat, changing settings, or selecting Related notes (called Additional notes in Modify Selection) does not send note content.
 
 Web research is **Off** by default. It is available only for DeepSeek `deepseek-flash` and `deepseek-v4-pro`.
 

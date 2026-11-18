@@ -101,8 +101,8 @@ Live Selection highlighting uses current editor state without I/O, persistence, 
   Selection document before replacement. Never partially apply a rejected candidate.
 - Candidate-validation failure gets one same-provider correction with bounded diagnostics. Provider, abort, stale,
   capacity, and write failures get none. Raw candidates and feedback remain private.
-- Full annotated responses never enter chat or persistence. Store only the concise result, optional validated summary,
-  and all-round usage. Never write the model summary into the note.
+- Full annotated responses and rejected-attempt reasoning never enter chat or persistence. Store only concise results,
+  optional validated summaries, successful-attempt reasoning, and all-round usage. Never write model summaries into notes.
 - Track Changes is the separate companion and only review surface. Emend has no diff/Apply/Reject UI, does not bundle
   or auto-install it, and requires separate design for any missing-plugin affordance.
 

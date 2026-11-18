@@ -2,6 +2,8 @@
 
 Emend is a desktop-only Obsidian plugin. Mobile Obsidian is not supported.
 
+> **Pre-release status:** This guide tracks the upcoming 2.10 release on `main`. Until it is published, BRAT and the [latest release ZIP](https://github.com/chliu1990/obsidian-emend/releases) install the latest released feature set. [Build this branch from source](#build-from-source) to use the workflows described here.
+
 ## Requirements
 
 - Desktop Obsidian **1.11.4 or newer**.

@@ -110,11 +110,12 @@ An empty, whitespace-only, or vanished Selection fails closed. Emend shows `Sele
 
 1. Run **Modify selected text with AI** from the Command Palette.
 2. Keep **Selection context** at Default, or choose **Full note**. The selector resets to Default each time the modal opens.
-3. For a typed instruction, enter your request. For a quick action instead, click **Fix grammar**, **Make concise**, or **Add examples**.
-4. If you typed an instruction, submit it once. If you clicked a quick action, that click already submitted it; do not submit again. Wait for the result notice.
-5. Review with Track Changes, or use native undo.
+3. Optional: To include other Markdown notes, click **Add notes**, select paths, and review the **Additional notes** list. Use **Remove** or **Clear all** as needed.
+4. For a typed instruction, enter your request. For a quick action instead, click **Fix grammar**, **Make concise**, or **Add examples**.
+5. If you typed an instruction, submit it once. If you clicked a quick action, that click already submitted it; do not submit again. Wait for the result notice.
+6. Review with Track Changes, or use native undo.
 
-Default uses your Smart or Symmetric setting. Full note sends the complete note as supporting context, but only the Selection can change. The modal sends no chat history and shows notices rather than chat, usage, or retry displays.
+Default uses your Smart or Symmetric setting. Full note sends the complete note as supporting context, but only the Selection can change. Additional-note contents are bounded, read fresh at submission, and remain read-only; the notes never become edit targets. The modal sends no chat history and shows notices rather than chat, usage, or retry displays.
 
 **Observable result:** A successful action replaces only the captured range and shows a result notice. A failed validation, stale source, cancellation, or provider error replaces nothing and leaves the controls available for retry.
 
