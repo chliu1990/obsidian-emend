@@ -34,7 +34,7 @@ See [Write permissions](privacy-and-storage.md#write-permissions) for the other 
 
 **Observable result:** The answer appears in chat, and the note remains unchanged. No edit review is needed because Chat cannot write.
 
-**Recipe recap:** You asked with bounded note context, received a read-only answer, and should observe no note changes.
+**Recipe recap:** Ordinary Chat sent bounded note context without a writer. To focus on one passage with complete-note context, continue to [Focus on a Selection](#focus-on-a-selection).
 
 ![A completed Ordinary Chat answer beside its synthetic source note, with compact Chat and DeepSeek model controls and no note write](../images/emend-chat.png)
 
@@ -59,7 +59,7 @@ An empty, whitespace-only, or vanished Selection stops the submission. Emend sho
 
 **Observable result:** The answer can use the complete note and the complete Selection. The Selection is not truncated to the Ordinary Chat budget, and no note content changes.
 
-**Recipe recap:** You explicitly sent complete-note context plus complete read-only focus, and should observe an answer with no write or silent fallback.
+**Recipe recap:** Chat Selection kept the complete focus read-only without falling back to Ordinary Chat. Next, [add Related notes](#add-related-notes) if the answer needs explicit context from other Markdown notes.
 
 ## Add Related notes
 

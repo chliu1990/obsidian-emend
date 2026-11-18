@@ -21,6 +21,10 @@ A **Selection** is the exact text range captured when you submit. Edit requests 
 - **Work in a compact composer.** Choose Chat or an Edit target, use Edit-only quick actions, and select a provider, model, and reasoning effort. Model choices save locally without submitting your draft or contacting a provider.
 - **Research only when you opt in.** Supported DeepSeek models offer Web Review and Web Auto in Chat. Review exposes editable queries, URLs, and extraction goals. Answers can include verified evidence, citations, and visible incompleteness warnings.
 
+![A concise Full-note Edit result beside two Track Changes review cards and preserved Unicode text](docs/images/emend-edit-review.png)
+
+*A guarded Full-note Edit produced two review cards; the chat stays concise while Track Changes owns Accept/Reject review.*
+
 ## Choose a workflow
 
 Supporting context helps the model understand a request. It does not grant write access or expand an edit target.
@@ -36,6 +40,14 @@ Supporting context helps the model understand a request. It does not grant write
 
 All Edit paths compile valid Operations into CriticMarkup. A failed candidate, stale source, or cancelled request produces no partial write. See [Editing and review](docs/guides/editing-and-review.md) for recipes and validation details.
 
+![A live highlighted Selection beside the eight-item Writing and Web menu while chat retains focus](docs/images/emend-selection.png)
+
+*The Writing/Web menu and live Selection decoration remain visible while chat owns focus.*
+
+![Selection Edit producing a concise result and Track Changes cards, followed by native undo restoring the original sentence](docs/images/emend-edit-demo.gif)
+
+*Fifteen-second silent 10 fps capture with a local delayed mock and shortened idle waits: one genuine Selection replacement, Track Changes review, then native undo restores exact original bytes.*
+
 ## 2.10 highlights
 
 > **Pre-release status:** These docs track the upcoming 2.10 release on `main`. Until it is published, BRAT and the [latest release ZIP](https://github.com/chliu1990/obsidian-emend/releases) install the latest released feature set. [Build this branch from source](INSTALLATION.md#build-from-source) to use the workflows described here.
@@ -44,7 +56,6 @@ All Edit paths compile valid Operations into CriticMarkup. A failed candidate, s
 - **Full-note context without a wider Selection write:** The composer and Modify Selection can share the complete note while replacing only the captured Selection.
 - **More capable compact controls:** Writing/Web and model/reasoning menus preserve drafts and separate local settings changes from actual submissions.
 - **Explicit Related notes:** All/Links exploration, path search, folder helpers, and manual Refresh select context without reading note bodies in advance.
-- **Independent note sessions:** New, switch, rename, and delete actions keep ready messages, drafts, and provider history scoped to each session.
 - **Clearer Web progression:** Provisional research text is labelled `Draft answer — research may continue`, clears before retrieval, and never replaces the terminal answer.
 - **Stabilized editing and persistence:** Composed-note validation, multi-pane freshness checks, session recovery, and sanitized saved results reinforce existing write and privacy boundaries.
 
