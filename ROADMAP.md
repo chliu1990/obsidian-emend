@@ -30,7 +30,7 @@ Track Changes remains a separate companion plugin and Emend's only CriticMarkup 
 
 The public-launch path remains independent content PRs plus the normal separate release PR, which contains only CHANGELOG and version updates:
 
-1. **Public documentation and promotional launch materials — in progress:** finish and integrate the redesigned public guides, contributor/technical documentation, genuine current assets, and concise evidence-backed launch copy. Mark this work completed only after integration. Keep Community Directory submission a separate explicit decision. Follow [publication and distribution](devel_docs/publication.md).
+1. **Public documentation and promotional launch materials — integrated:** the redesigned entry points and five public guides, contributor/technical documentation, six current visuals, and concise evidence-backed launch copy are integrated. The separate release PR, packaged-install verification, and any announcement remain pending. Keep Community Directory submission a separate explicit decision. Follow [publication and distribution](devel_docs/publication.md).
 
 ## Later
 
