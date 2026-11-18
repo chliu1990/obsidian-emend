@@ -2,156 +2,119 @@
 
 [![CI](https://github.com/chliu1990/obsidian-emend/actions/workflows/ci.yaml/badge.svg)](https://github.com/chliu1990/obsidian-emend/actions/workflows/ci.yaml)
 
-Emend is a desktop Obsidian plugin for streaming AI chat and safe, reviewable edits to your Markdown notes. It supports DeepSeek, Kimi Code, and custom OpenAI-compatible providers, with **Track Changes** as the review surface for every AI edit.
+Emend is a desktop Obsidian plugin for streaming AI chat and guarded, reviewable edits to Markdown notes. Ask questions without giving the model a writer, or propose changes that remain visible as review markup. You choose the context, the workflow, and when a request is sent.
 
-## Features
+Emend supports DeepSeek, Kimi Code, and custom OpenAI-compatible providers. The separate **Track Changes** plugin reviews every edit. Emend makes no background AI requests.
 
-- **Chat with context:** Ask questions, discuss ideas, or brainstorm with the active note from the unified **Chat** composer. Ordinary Chat uses bounded note context. Choose **Chat · Selection** explicitly to send the complete note plus a separate copy of the complete selection as read-only conversational focus, including selections larger than the ordinary context budget; empty, whitespace-only, or vanished selections require reselection with no request or fallback. Responses and reasoning stream into the sidebar, and neither Chat target can write to your notes.
-- **Research on the web explicitly:** For DeepSeek `deepseek-flash` and `deepseek-v4-pro`, Chat's **Writing and web search** menu offers **Web Off** (the default), **Web Review**, and **Web Auto**, summarized as **Chat**, **Chat · Review search**, and **Chat · Auto search**. The model can direct sequential Search/Fetch calls across multiple rounds; Review shows editable queries/URLs and extraction goals. Every readable result is processed by one bounded AI extraction reader that produces compact, question-focused claims, each backed by exact verbatim quotes. While research continues, streamed answer text appears only as a muted `Draft answer — research may continue` draft: it is cleared before any Search/Fetch round runs and never replaces the final answer, which becomes the ready response on the terminal round. A same-provider verifier checks that the quotes fully support every claim; rejected claims get up to two refine rounds, and claims that still fail are dropped in favor of quotes-only evidence or `no_relevant_evidence`. The answering model receives actual source metadata plus verified claims and their quotes—not raw retrieval or unverified AI-generated facts—and its final claims must remain supported by that evidence. If the per-call output cap forces Emend to drop a claim or a whole source result, the ready answer appends a visible omission warning; only a shortened quote prefix is marked `truncated` instead. Actual HTTP(S) sources represented by successful extractions become stable, safe citations. Expected Fetch failures become visible unread-page outcomes instead of failing the whole answer, and a failed Search retries once before degrading to a visible incompleteness warning rather than a failed answer; credential/account errors and HTTP `400`/`401`/`402`/`413` remain fatal. Folded Web activity preserves query/URL/status metadata plus a transient network, HTTP, empty-page, or reader failure reason and attempt count; failed calls also count toward the configured call limit, and failure tool results expose only a bounded reason, HTTP status, and attempt count. Web retrieval never writes notes. Kimi/custom providers and other models are unsupported, with no silent unsearched fallback.
-- **Add notes explicitly:** Use **Related notes** in chat or **Add notes** in Modify Selection to include bounded, read-only snapshots of other Markdown notes. Chat's explorer offers explicit **All** and resolved outgoing/incoming **Links** snapshots, full-path search, folder and Select-all helpers, and manual **Refresh**; it uses path/metadata APIs without reading bodies to find links. Chat shows the selected count and details with remove/clear controls. Selections belong to the active target note, last only for the current plugin session, and clear when the Emend plugin or Obsidian reloads. Automatic linked/folder inclusion and automatic TOCs are not part of this flow.
-- **Edit with confidence:** Full-note and selection edits use a closed Operations protocol—`insert`, `remove`, `replace`, and `comment`—with exact anchors and atomic validation before anything is written.
-- **Target selections directly:** Select text and focus chat, then choose **Edit · Selection** from **Writing and web search** for a typed request or any Edit quick action. Your current selection stays visibly highlighted while you use chat. **Edit · Selection** is the automatic target with usable selected text and retains the default Smart/Symmetric surrounding-context policy; choose **Edit · Selection · Full note** to send complete-note supporting context while still editing only the selection, or **Edit · Full note** to target the whole note. Selection edits use native Obsidian undo and show concise chat results with reasoning and token usage.
-- **Review every change:** Valid operations become CriticMarkup that you can accept or reject in Track Changes. Emend has no competing diff or Apply button.
-- **Work quickly:** In Edit, use **Fix grammar**, **Make concise**, or **Add examples** above the chat composer; the selection modal retains the same actions. Chat hides these Edit-only controls. Keyboard shortcuts and native undo are unchanged.
-- **Keep multiple conversations:** Create, switch, rename, and delete independent chat sessions for each note. Drafts and provider history stay session-scoped, automatic titles update only after successful answers, and the last active session and manual order restore after reload. Reordering is deferred to a future session management page. Schema 1/2 chats migrate lazily without eager writes; management actions make no provider calls.
-- **Keep your place:** Per-note sessions persist locally, multi-turn edits retain earlier review markup, and note/source changes invalidate stale responses.
-- **Stay in control:** Include optional `AGENTS.md` instructions and skills, configure context limits, and see provider-reported or clearly labelled estimated token usage. Choose a provider, model, and reasoning effort from the button between **Writing and web search** and Send. Its separate **Model** and **Reasoning effort** sections list only providers with an API key and usable model, with one effort set for the active provider. Opening, checking, or dismissing that menu performs no save or network/note I/O; an actual selection performs exactly one sanitized local settings save without a provider request or note read/write.
-- **Know the budget:** Set an optional **Context window (tokens)** and **Output reserve (tokens)** for a provider. A compact bar directly below the chat header and in Modify Selection shows known input, remaining input, and an output allowance that shrinks as input grows. Hover or focus it for estimates and exclusions; Emend blocks a submission that would exceed effective input capacity instead of sending it. Emend never estimates unmeasured additional-note contents, compresses, or truncates context to make a request fit, and the estimate is a character-based approximation, not billing data.
+## Why Emend?
 
-## Requirements
+- **Chat without note writes.** Ordinary Chat uses bounded note context. Explicit **Chat · Selection** sends the complete note plus a separate, complete Selection as read-only focus. Both stream answers and reasoning into the sidebar, and neither can edit a note.
+- **Choose exactly what can change.** Full-note Edit can change the captured note. Selection Edit replaces only the captured range, even when you choose full-note supporting context. Empty or vanished Selections fail closed rather than widening the target.
+- **Review instead of trusting a rewrite.** The model proposes closed Operations. Emend validates the complete candidate, checks note freshness, and writes CriticMarkup through a guarded path. Track Changes supplies Accept/Reject controls; Emend adds no competing diff or Apply panel.
+- **Keep context explicit.** Add Related notes through visible path controls, include vault instructions, and choose per-session history. Related notes are bounded, read-only snapshots and never become edit targets.
+- **Work in a compact composer.** Choose Chat or an Edit target, use Edit-only quick actions, and select a provider, model, and reasoning effort. Model choices save locally without submitting your draft or contacting a provider.
+- **Research only when you opt in.** Supported DeepSeek models offer Web Review and Web Auto in Chat. Review exposes editable queries, URLs, and extraction goals. Answers can include verified evidence, citations, and visible incompleteness warnings.
 
-- Desktop Obsidian **1.11.4 or newer**; mobile is not supported.
-- **Track Changes**, installed and enabled separately for edit review.
-- A DeepSeek, Kimi Code, or custom OpenAI-compatible provider with an available model and API key.
+## Choose a workflow
 
-Emend does not install other plugins automatically.
+Supporting context helps the model understand a request. It does not grant write access or expand an edit target.
+
+| Workflow | Context sent | Write permission | Review or recovery |
+| --- | --- | --- | --- |
+| **Chat** | Bounded active-note Markdown. Small notes can be sent whole. | **None.** Chat has no note writer. | Read the streamed answer; the note stays unchanged. |
+| **Chat · Selection** | The complete note plus a separate, complete Selection as read-only focus. | **None.** Selecting text does not change this boundary. | Read the answer; no Track Changes review is needed. |
+| **Edit · Full note** | The complete active note. | The complete captured note, after atomic validation and freshness checks. | Review CriticMarkup in the separate Track Changes plugin. |
+| **Edit · Selection** | The complete Selection plus Default Smart or Symmetric surroundings. | **Only the captured Selection.** | Track Changes review or Obsidian's native undo. |
+| **Edit · Selection · Full note** | The complete note plus a separate, complete Selection target. | **Full-note context, Selection-only write.** | Track Changes review or native undo for the exact range. |
+| **Modify selected text with AI** | The complete Selection with Default or full-note context, without chat history. | **Only the captured Selection.** | A result notice, Track Changes review, or native undo. |
+
+All Edit paths compile valid Operations into CriticMarkup. A failed candidate, stale source, or cancelled request produces no partial write. See [Editing and review](docs/guides/editing-and-review.md) for recipes and validation details.
+
+## 2.10 highlights
+
+- **Selection-focused conversation:** Explicit Chat Selection keeps the complete Selection intact above the ordinary context budget while remaining read-only.
+- **Full-note context without a wider Selection write:** The composer and Modify Selection can share the complete note while replacing only the captured Selection.
+- **More capable compact controls:** Writing/Web and model/reasoning menus preserve drafts and separate local settings changes from actual submissions.
+- **Explicit Related notes:** All/Links exploration, path search, folder helpers, and manual Refresh select context without reading note bodies in advance.
+- **Independent note sessions:** New, switch, rename, and delete actions keep ready messages, drafts, and provider history scoped to each session.
+- **Clearer Web progression:** Provisional research text is labelled `Draft answer — research may continue`, clears before retrieval, and never replaces the terminal answer.
+- **Stabilized editing and persistence:** Composed-note validation, multi-pane freshness checks, session recovery, and sanitized saved results reinforce existing write and privacy boundaries.
+
+These are current capabilities, not a promise of automatic context compression, background discovery, or Web support for every provider. The [changelog](CHANGELOG.md) records shipped releases and the [roadmap](ROADMAP.md) separates current behavior from deferred work.
+
+## Requirements and providers
+
+- Desktop Obsidian **1.11.4 or newer**. Mobile is not supported.
+- An API key and available model on a streaming OpenAI-compatible chat endpoint.
+- The separate [Track Changes community plugin](https://github.com/philphilphil/obsidian-track-changes) to review Emend edits. Chat works without it.
+- Node.js **24** and npm only when building from source.
+
+| Provider | Preset model and base URL | Chat and Edit | Web Review / Auto |
+| --- | --- | --- | --- |
+| DeepSeek | `deepseek-flash` at `https://api.deepseek.com`; `deepseek-v4-pro` is also built in | Supported | Only with exactly `deepseek-flash` or `deepseek-v4-pro` |
+| Kimi Code | `k3.1-pro` at `https://api.kimi.com/coding/v1` | Supported | Not supported |
+| Custom | Your model and OpenAI-compatible base URL | Supported when the endpoint streams chat completions | Not supported |
+
+Models and base URLs remain editable. Emend appends `/chat/completions`. **Refresh models** in Settings is the only model-discovery action; it sends an explicit authenticated `GET <base URL>/models` request. Opening chat or the model menu never discovers models automatically.
+
+Unsupported Web combinations fail explicitly. Emend never silently turns them into ordinary unsearched Chat or switches providers. Web research is Off by default, unavailable in Edit, and has no note writer.
 
 ## Installation
 
-Emend is distributed through GitHub releases and manual installation. An Obsidian Community Directory submission is not currently planned; see [publication and distribution](devel_docs/publication.md).
-
-See the complete [installation guide](INSTALLATION.md) for build, update, removal, and troubleshooting instructions.
-
-**Recommended: install with BRAT.** Install and enable **BRAT — Beta Reviewers Auto-update Tool** from Obsidian’s community plugins, choose **Add beta plugin** in BRAT, and enter `https://github.com/chliu1990/obsidian-emend`. BRAT installs Emend from GitHub releases and can keep it updated. Enable **Emend** and **Track Changes** after installation. See the [BRAT installation tutorial](INSTALLATION.md#install-with-brat).
-
-Alternatively, download the release ZIP named `emend-<version>.zip` from the [GitHub releases page](https://github.com/chliu1990/obsidian-emend/releases) and extract it into `<Vault>/.obsidian/plugins/`. The ZIP contains the complete `emend/` plugin folder.
-
-For a source installation, clone this repository and run:
-
-```bash
-npm ci
-npm run build
-```
-
-Then copy `main.js`, `manifest.json`, and `styles.css` into:
+**Recommended: use BRAT.** Install and enable **BRAT — Beta Reviewers Auto-update Tool**, choose **Add beta plugin**, and enter:
 
 ```text
-<Vault>/.obsidian/plugins/emend/
+https://github.com/chliu1990/obsidian-emend
 ```
 
-Open **Settings → Community plugins**, reload plugins, and enable **Emend** and **Track Changes**.
+BRAT installs Emend from GitHub releases; it does not install Track Changes. Alternatively, download `emend-<version>.zip` from [GitHub releases](https://github.com/chliu1990/obsidian-emend/releases) and extract it into `<Vault>/.obsidian/plugins/`. The archive contains the complete `emend/` folder.
 
-## Quick start
+If you will edit notes, install and enable the separate **Track Changes** plugin before enabling Emend. Then enable **Emend** under **Settings → Community plugins**. Chat alone does not require Track Changes, and Emend never installs other plugins automatically.
 
-1. Open **Settings → Emend** and configure a provider:
+Follow the [installation guide](INSTALLATION.md) for ZIP, source, folder-layout, update, removal, and troubleshooting steps. Then configure a provider and complete the [Quick Start](QUICK_START.md).
 
-   | Provider | Base URL | Default model |
-   | --- | --- | --- |
-   | DeepSeek | `https://api.deepseek.com` | `deepseek-flash` |
-   | Kimi Code | `https://api.kimi.com/coding/v1` | `k3.1-pro` |
-   | Custom | Your OpenAI-compatible base URL | Your model |
+## Privacy and write safety
 
-   Emend appends `/chat/completions` to the base URL. Models and URLs remain editable.
+Emend sends note content only through an explicit Chat or Edit submission. Opening chat, changing a model, selecting Related notes, loading a session, or changing Web mode makes no background AI request. Settings-only model discovery runs only when you click **Refresh models**.
 
-   To populate the model selector, click the compact **Refresh models** icon in **Settings → Emend**. This explicitly sends an authenticated `GET <base URL>/models` request using the provider's API key from SecretStorage; discovery never runs automatically. Returned model IDs and display names become dropdown options, while the current selection and editable custom-model entry remain available. Discovered lists persist locally, and changing a provider's base URL or API key clears only that provider's list. Custom endpoints that do not support `/models`, HTTP failures, and malformed responses show an error without replacing the previous list.
+Ordinary Chat uses bounded context. Chat Selection deliberately sends the complete note and complete read-only focus. Full-note Edit always sends the complete note. Selection Edit sends the complete Selection with bounded surroundings or explicit full-note support; **full-note context still means Selection-only write**. Related notes are included only after explicit selection and remain read-only.
 
-   Optionally set **Context window (tokens)** and **Output reserve (tokens)** for the active provider. Both values are required together and must be positive, with the window larger than the reserve; effective input capacity is `window − reserve`. Leave both empty, or use **Clear capacity settings**, to turn capacity checks off. Emend does not infer or fetch model limits, but the separate **Capacity defaults** row offers **Use documented defaults** for three exact preset IDs: DeepSeek `deepseek-flash` and `deepseek-v4-pro` use window `1048576` and reserve `393216` (1M context, 384K maximum output); Kimi `k3.1-pro` uses window `1048576` and reserve `131072` (up to 1M context on eligible plans and 131,072 default output, so lower-tier plans may need a smaller window). These are documentation values, not account-specific provider responses. Nothing is applied automatically: only clicking the button overwrites existing values, custom and unknown models remain manual, and no provider metadata call is added. The reserve is used only for local accounting and is never sent as `max_tokens`.
+Ready history comes only from the originating session and respects **Chat history messages**. Vault-root `AGENTS.md` and safely referenced skills can join submissions. **Include note path** is Off by default. API keys use Obsidian SecretStorage, while non-secret settings and ready chats remain in the vault.
 
-2. Open **Emend chat** from the ribbon or Command Palette. The button between **Writing and web search** and Send summarizes the active catalog provider, model, and reasoning effort. Its **Model** section lists built-in, discovered, or current options only for providers with a nonempty API key and at least one usable model; Custom needs both a key and a configured/discovered model. Unavailable providers are omitted, and **No available models** appears disabled if none qualify. The separate **Reasoning effort** section contains one Low/Medium/High set for the active provider. Model selection preserves that provider's effort; reasoning changes only the active provider's effort and preserves its latest current model. Blank current models disable reasoning without disabling valid model choices. Availability uses the existing SecretStorage entries, never persisted plaintext keys; adding or removing a key in Settings refreshes open views through the normal save path without model discovery. Opening, checking, or dismissing the menu performs no save or network/note I/O. An actual choice performs exactly one sanitized local save, preserves credentials and other settings, and refreshes every open chat view and its capacity estimate without making a request. Successful saves close stale open menus. **Refresh models** and editable custom-model text remain in **Settings → Emend**; opening the composer menu never performs discovery. Use the **Chat session** selector and adjacent icons directly after the capacity bar and before messages to create, switch, rename, and delete independent sessions for the note. Reordering is deferred to a future session management page. Each session keeps its own draft, messages, and provider history; Chat/Edit, the Chat target, retained Web choice, explicit/automatic Edit target, Selection-context policy, and related-note selections remain unchanged when switching sessions of the same note; an actual target-note change resets Chat Selection to ordinary Chat and Selection context to Default. Automatic titles update only after successful answers, manual titles stay pinned, and management actions make no provider calls. The last active session and manual order restore after reload, while drafts and transient states do not persist.
-3. Use **Chat** and submit a question. The note stays unchanged. When capacity is configured, the compact bar directly below the header shows measured input categories, free input, and the remaining output allowance. Its output partition uses `max(0, min(reserve, window − estimated input))`, so it shrinks when input grows beyond effective capacity; remaining input is `max(0, window − reserve − estimated input)`. Hover or keyboard-focus the bar for current estimates, capacity values, per-category tokens, and the lower-bound/exclusion note. Category text matches its bar segment color, and the meter uses its summary as its accessible name without a separate native **Context capacity** hover tag. Click to pin those details; pointer exit or focus loss hides an unpinned panel, and outside click or **Escape** dismisses it. No meter remains under the composer, and there is no compact-context button. The estimate updates as you type, move the caret, change Chat/Edit or its target, select related notes, or change settings. Send and the affected quick actions are disabled when the draft is at or above capacity, and Enter/Mod+Enter show the capacity notice instead of submitting. The draft excludes loaded instructions and skills, additional-note contents, the first Web round's system prompt and tool declarations, and later Web or correction rounds, so the exact check at submission can still reject a request that looked fine; that rejection makes no provider request, adds no answer, and writes nothing. Unconfigured or invalid settings show no fabricated proportional bar or output partition. Fix an invalid window/reserve pair in settings before retrying.
-4. Optionally open Chat's **Writing and web search** menu with DeepSeek `deepseek-flash` or `deepseek-v4-pro`. **Web Off** is the default; **Web Review** shows each executable Search/Fetch batch with editable queries/URLs and extraction goals, while **Web Auto** runs validated batches directly. The model may use multiple rounds and sequential calls up to **Settings → Emend → Web tool call limit** (default 8, range 1–20), which caps executed calls. If a batch exceeds the remaining slots, Emend executes only those slots in model order, skips the excess without retrieval, and requests one final answer without Web tools. Skipped calls receive activity entries and one singular/plural incompleteness warning persists with the ready answer; exact-limit completion adds no warning. **Web output cap per call (characters)** independently bounds each complete serialized extraction tool response (default 20,000, range 1,000–100,000), so total tool-payload growth is cap × executed calls. Every readable executed result invokes one AI extraction reader with at most 6 model rounds and bounded local grep/read tools, plus a same-provider verifier and up to two refine rounds. A malformed local reader tool call returns a small `invalid_local_call` error to the reader and continues the same extraction instead of discarding it. The answering model receives verified claims with their exact quotes, or quotes-only evidence when no claim survived, rather than raw pages. If cap fitting must drop claims or whole results, the ready answer appends `Emend omitted some extracted evidence to fit the per-call output cap. The answer may be incomplete.` after any search warning and before the skipped-call warning. The extractor receives your current question and extraction goal, and extraction, verifier, and refine rounds may incur separate charges; the Review/Auto disclosure also states that a transient Search or Fetch failure may be retried once. Extractor failure after its one format-correction round produces one aggregate incompleteness warning without raw fallback. Each Search/Fetch call retries once for a transient failure (no HTTP status, `429`, `5xx`, or an empty Fetch page); `403`/`404` are not retried. A Search that still fails adds its own visible incompleteness warning instead of failing the answer, while HTTP `400`/`401`/`402`/`413` and aborts remain fatal, and failed activity rows show a network, HTTP, empty-page, or reader reason. Chat Selection retains the same Web choices with **Chat · Selection · Review search** or **Chat · Selection · Auto search** summaries. Web is unavailable in Edit and for Kimi/custom providers or unsupported models; failures never silently become unsearched answers.
-5. Optionally click **Related notes** to choose other Markdown notes as read-only context for the next request. **All** shows current Markdown paths; **Links** shows resolved outgoing and incoming links from one metadata snapshot, with an honest disclosure while indexing is incomplete. Search filters full paths without limiting Select-all, folder helpers select only descendants in the current All/Links scope, and **Refresh** alone updates path/link membership. Manual selections survive helper deselection; removing a path individually lets a later Refresh re-add it only while its helper remains active. Check the count, expand **Selected notes** to review paths, and use **Remove** or **Clear all** as needed. These per-target selections survive note switches during the current plugin session and clear when the Emend plugin or Obsidian reloads. Opening, searching, selecting, refreshing, removing, or clearing reads no note content and makes no request; content is read at submission and shares the existing fair combined source budget.
-6. For a full-note change, choose **Edit · Full note** from **Writing and web search**, then enter a request or use a quick action. Review the resulting markup in Track Changes.
-7. For a smaller edit, select text and focus chat, then choose **Edit · Selection** from **Writing and web search**. Enter an Edit instruction or use **Fix grammar**, **Make concise**, or **Add examples**, which appear only in Edit. **Edit · Selection** keeps the configured Default Smart/Symmetric context; **Edit · Selection · Full note** instead sends the complete note as supporting context with the complete selection as the only edit target. Only the captured range changes in either policy, native undo restores it, and chat shows a concise result with reasoning and token usage. If the selection is empty, whitespace-only, or vanishes before submission, Emend fails closed without requesting or writing instead of falling back to Full note. Returning to Chat retains your previous Web choice.
-8. Alternatively, run **Modify selected text with AI** from the Command Palette. Its **Selection context** control offers **Default (Smart)** or **Default (Symmetric)** according to settings plus **Full note**, resets to Default on every open, and disables while pending. The modal accepts an instruction or quick action and shares the same target note's additional-note selections, sends no chat history, and does not add a chat result or usage/retry display.
+A candidate-validation failure can cause one automatic correction request to the same provider. It includes the original request, invalid candidate, and bounded feedback. Provider, cancellation, stale-note, and write failures do not trigger that correction.
 
-<img src="docs/images/emend-selection.jpg" alt="Modify selected text dialog with quick actions" width="720">
+With Web Review or Auto, DeepSeek may derive retrieval arguments from note context. Review shows them before retrieval; Auto skips only that pause. Retrieval, extraction, verification, and refinement can incur separate charges. Retrieved content remains untrusted, read-only data.
 
-Follow the guided [quick start](QUICK_START.md) for detailed verification steps, skills, shortcuts, and operation-based editing examples.
-
-## Composer shortcuts and build identity
-
-The compact header contains only the title, build identity, and active-note label; it has no mode buttons or shortcut list. Empty composer placeholders show the send/newline shortcuts. The default commands are:
-
-| Action | macOS | Windows/Linux |
-| --- | --- | --- |
-| Chat mode | `⌘⇧A` | `Ctrl+Shift+A` |
-| Edit mode | `⌘⇧E` | `Ctrl+Shift+E` |
-| Send | `Enter` or `⌘+Enter` | `Enter` or `Ctrl+Enter` |
-| Newline | `Shift+Enter` | `Shift+Enter` |
-
-These are defaults; they do not change when you remap hotkeys in Obsidian. The **Open Emend chat** command has no default hotkey. The composer also exposes its send/newline shortcuts through `aria-keyshortcuts`.
-
-The compact identity beside the **Emend** title shows the manifest version in release builds. Development and other untagged builds show the short Git commit hash instead. Development watch mode captures that hash when it starts, so restart `npm run dev` after a commit to update the displayed identity.
-
-## Safe editing model
-
-Emend never lets the model rewrite a document directly. It returns a bare JSON array of closed operations against the captured source, optionally wrapped in an envelope with a short model-written summary for chat. Emend then:
-
-1. Requires exact anchors and unique matches or explicit one-based occurrences, with typed diagnostics that identify the operation, failure code, and bounded match details.
-2. Rejects malformed, ambiguous, overlapping, or markup-injecting commands. Declared-range overlap and insertion-ambiguity rules remain conservative even when smaller review hunks could otherwise coexist.
-3. Rejects partial inline-code targets (`inline-code-range`), fenced-code edits (`fenced-code-edit`), and table structure changes (`table-structure-edit`) atomically. Tables allow text edits within one existing header/body cell, including safe insert/remove/replace/comment Operations and escaped pipes. Selection uses full-note context only for structural classification, never target expansion.
-4. Compiles valid operations into CriticMarkup and revalidates the result. Broad replacements are reduced to deterministic Unicode word/segment-level hunks—not character-minimal fragments—with whole-target fallback for backtick-containing replacements and a bounded single-substitution fallback for expensive responses.
-5. If candidate validation fails, automatically makes one correction request to the same provider (at most two provider calls total). The unchanged original request is resubmitted with the invalid response and bounded diagnostic feedback; there is no delay, backoff, or new retry setting. A second invalid response is terminal.
-6. Checks that the captured file and source have not changed and that the request was not aborted, then writes once so Track Changes can review the edit. Provider failures, aborts, stale targets, and write failures are terminal rather than triggers for another correction round.
-
-Full-note Edit always sends the complete note. Ordinary Chat uses bounded context, while Chat Selection sends the complete note and a separate complete read-only focus selection. Composer Selection sends the complete selection and the active session's recent ready chat history with either Default Smart/Symmetric surrounding context or explicit complete-note supporting context; Modify Selection offers the same two policies with no history and resets to Default per open. Full-note Selection context never expands Operation anchors or the native replacement beyond the captured range. Both selection entry points replace only that range through native `editor.replaceRange` and use the same minimization and validation-correction flow. Composer full-note and Selection results include the target, an optional model-written explanation, bounded change bullets, all attempted rounds' token usage, and only successful-attempt reasoning after correction; the summary is shown in chat and never written into the note. The separate selection modal keeps its existing notices without a summary, usage footer, or retry-status display. Raw operations, invalid responses, and correction feedback remain transient rather than ready-chat content or persisted history.
-
-Model history retains each ready message's mode, historical note-write permission, and origin, and is captured only from the originating chat session. **Chat history messages** defaults to 8 and accepts 0–50; 0 disables history for read-only chat and both Edit targets. The Command Palette Modify Selection modal never sends chat history. Local Edit results are labeled as local outcomes and may include model-written summary prose; neither is a model instruction or permission. These annotations describe earlier requests only: the currently selected mode alone controls note-write access, so an earlier Edit never grants writing to a later Chat request, including historical read-only Discuss or Brainstorm messages.
-
-## Privacy and local data
-
-Emend makes **no background AI requests**. Content is sent only when you explicitly submit a chat or edit action.
-
-- Note context, prompts, the originating session's recent ready history, explicitly selected additional-note snapshots, and any loaded `AGENTS.md`/skill instructions are sent to the selected provider as required for that request. Opening, checking, or dismissing the composer model menu performs no save, discovery, provider request, note-content read, or note write; an actual selection performs exactly one sanitized local settings save with no network or note I/O. Key/model availability reads only the existing SecretStorage IDs, and real Settings key changes refresh it through the same sanitized save path without discovery; provider `apiKey` fields in `data.json` remain empty. Opening the explorer, searching, switching All/Links, selecting/removing/clearing, Refresh, and note switches send nothing and read no additional-note content. Links uses Obsidian metadata without scanning bodies; selected content is read only at submission.
-- With **Web Review** or **Web Auto**, ordinary main-model rounds go to DeepSeek, which may derive search queries, fetch URLs, and extraction goals from them. DeepSeek Search/Fetch endpoints receive only the visible validated query or URL; Review permits editing every proposed target and goal. Each readable result also invokes a same-provider AI extractor that receives your current typed question, extraction goal, target, and source catalog—not note context, chat history, instructions/skills, additional notes, or vault content. The extractor uses only bounded local grep/read tools, and its verifier receives only the question, goal, and numbered claims with quotes. These rounds may incur separate charges. Retrieved text and extracted evidence are untrusted external data and never write notes or become instructions/skills. Changing the Web control, opening a note, loading a session, or rendering citations performs no retrieval.
-- Full-note Edit sends the entire active note. Ordinary Chat uses bounded active-note context; Chat Selection deliberately sends the complete note plus a separate complete selection as read-only focus. Composer Selection sends the complete selection and originating session's recent ready history with Default bounded Smart/Symmetric context or explicit complete-note supporting context; Modify Selection offers those policies without history. Full-note/focus prompts intentionally duplicate selected text and their capacity estimates include that duplicate content. Neither policy truncates the selection or expands the edit target. Additional notes use a separate combined source-character budget and are read-only in every mode. Web search is unavailable to Edit, quick actions, and Modify Selection. An invalid edit candidate can cause one automatic second call to the same provider, containing the unchanged original request plus that candidate and bounded validation feedback; this possible extra call has no separate setting and may incur provider charges.
-- Note and vault paths are sent only when **Include note path** is enabled. With it off, additional-note sections have generic numbered labels without their paths; with it on, they include vault-qualified paths. The local controls always show selected paths before submission.
-- API keys are stored in **Obsidian SecretStorage**, not plaintext `data.json`. Legacy plaintext keys are migrated automatically.
-- Capacity settings are ordinary local provider settings, and the capacity bar's estimate is computed locally: it makes no provider call, tokenizer download, pricing or model-metadata lookup, vault scan, or additional-note content read. Its floating details list unmeasured instructions/skills, additional-note contents, and later-round exclusions rather than assigning them a gray segment. An over-capacity request is rejected before networking, and Emend never compresses, summarizes, or truncates context to make it fit; there is no compact-context button.
-- Ready conversations are stored locally under `<Vault>/.obsidian/emend/chats/` as schema-3 ordered per-note session aggregates. Schema 1/2 threads load as one legacy session and migrate lazily on the first valid mutation; malformed bytes receive the existing `.corrupt` backup only on valid replacement, and unsupported future versions reject every mutation. The last active session and manual order restore after reload. Ready Review/Auto badges, sanitized result-backed citations, folded Web activity (search queries, fetch URLs, and completed/failed/skipped outcomes), main-answer reasoning, and usage may persist in their originating session. Activity failure reasons and attempt counts are transient and not persisted, while the unread, extraction, search, cap-omission, and skipped-call warnings are ordinary persisted content. API keys, per-session drafts, unknown message artifacts, raw request bodies/tool arguments/results, retrieved content, extractor/verifier/refine payloads, evidence, reasoning, and rounds, transient activity, additional-note selections/snapshots, loading/error/stopped states, and buffered edit responses are not persisted. An Edit result's optional model-written summary is ordinary ready assistant content; it is never written into the note or stored as a structured field. Session management and automatic title derivation make no provider calls; AI titles/summaries and note-rename history migration are not implemented.
-- Deleting a note does not automatically delete its saved conversation.
-
-See the [privacy and storage details](QUICK_START.md#8-verify-persistence-and-privacy-behavior) and [installation/removal guide](INSTALLATION.md#remove-emend) for cleanup instructions.
+See [Privacy and storage](docs/guides/privacy-and-storage.md) for request recipients, local-data lifetimes, Web sharing, and cleanup.
 
 ## Documentation
 
-- [Installation guide](INSTALLATION.md)
-- [Quick start](QUICK_START.md)
-- [Architecture and implementation records](IMPLEMENTATION_PLAN.md)
-- [Roadmap](ROADMAP.md) and [changelog](CHANGELOG.md)
-- [DeepSeek online search implementation](devel_docs/36-deepseek-online-search.md)
-- [Minimal edit ranges and guarded correction](devel_docs/37-minimal-edit-ranges.md)
-- [Markdown edit safeguards and verification](devel_docs/38-markdown-edit-safeguards.md)
-- [Easier selected-text editing and verification](devel_docs/39-easier-selection-editing.md)
-- [Context accounting and capacity guards](devel_docs/42-context-accounting-capacity.md)
-- [Multiple chat sessions and verification](devel_docs/43-multiple-chat-sessions.md)
-- [Compact composer and verification](devel_docs/44-compact-composer.md)
-- [Related-notes explorer and verification](devel_docs/45-related-notes-explorer.md)
-- [Composer model controls and verification](devel_docs/46-composer-model-controls.md)
-- [Live selection highlight and verification](devel_docs/47-selection-highlight.md)
-- [Web terminal-response continuity](devel_docs/48-web-response-transition.md)
-- [Selection focus and shared Selection context](devel_docs/49-selection-focus-and-context.md)
-- [Native menu item activation](devel_docs/50-native-menu-activation.md)
-- [2.10 bug hunt and stabilization record](devel_docs/51-2-10-stabilization.md)
-- [Web draft streaming](devel_docs/52-web-draft-streaming.md)
-- [Contributing guide](CONTRIBUTING.md) and [security policy](SECURITY.md)
-- [CI and release workflows](.github/workflows/)
-- [Deferred context-compression roadmap](devel_docs/future-context-management.md)
-- [Remaining web-search roadmap](devel_docs/future-web-search.md)
-- [Provider and context feature backlog](devel_docs/future-provider-and-context-features.md)
+### Use Emend
 
-Deferred documents describe possible future work, not features in this release; they separately identify implemented baselines such as DeepSeek search, Stage 42 accounting, compact Related notes, and explicit All/Links/folder snapshots. Automatic compression, automatic linked/folder inclusion, background discovery, and automatic TOCs remain deferred.
+- [Quick Start](QUICK_START.md) — complete a first Chat, Full-note Edit, Selection Edit, review, and undo.
+- [Chat and context](docs/guides/chat-and-context.md) — Chat Selection, Related notes, sessions, models, capacity, and instructions.
+- [Editing and review](docs/guides/editing-and-review.md) — Edit targets, quick actions, Modify Selection, Track Changes, and native undo.
+- [Web research](docs/guides/web-research.md) — Review/Auto, provisional drafts, citations, limits, and warnings.
+- [Settings reference](docs/guides/settings-reference.md) — providers, discovery, context, history, capacity, and Web limits.
+
+### Privacy and safety
+
+- [Privacy and storage](docs/guides/privacy-and-storage.md) — write permissions, recipients, credentials, and persistence.
+- [Installation and removal](INSTALLATION.md#remove-emend) — plugin files, API keys, and saved-chat cleanup.
+- [Security policy](SECURITY.md) — vulnerability reporting and security boundaries.
+
+### Develop and verify
+
+- [Contributing guide](CONTRIBUTING.md) — focused PRs, required checks, and review expectations.
+- [Contributor and agent instructions](AGENTS.md) — architecture invariants and development conventions.
+- [Implementation contract and stage index](IMPLEMENTATION_PLAN.md) — owning modules and detailed technical records.
+- [2.10 stabilization record](devel_docs/51-2-10-stabilization.md) — fixes, verification evidence, and recorded limits.
+
+### Release and roadmap
+
+- [Changelog](CHANGELOG.md) — shipped-version history.
+- [Roadmap](ROADMAP.md) — current priorities, deferred designs, and non-goals.
+- [Publication and distribution](devel_docs/publication.md) — release copy, assets, and distribution decisions.
 
 ## Development
 
@@ -162,7 +125,7 @@ npm run lint
 npm run build
 ```
 
-Emend uses TypeScript, strict checks, Vitest, and esbuild. The plugin is desktop-only because its provider transport uses browser `fetch` with Server-Sent Events.
+Emend uses strict TypeScript, Vitest, and esbuild. Its desktop transport uses browser `fetch` with Server-Sent Events. See [CONTRIBUTING.md](CONTRIBUTING.md) before changing behavior, provider access, persistence, or note-writing paths.
 
 ## Attribution
 
