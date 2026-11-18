@@ -85,11 +85,6 @@ Emend has no separate Apply, Accept, Reject, or diff interface. Whether you acce
 
 1. Select exactly `This sentence have a small grammar problem.` in the editor.
 2. Focus Emend chat without clearing the Selection. It remains highlighted.
-
-   ![A live highlighted Selection beside the eight-item Writing and Web menu while chat retains focus](docs/images/emend-selection.png)
-
-   *The Selection remains visible while chat owns focus. The menu exposes Chat, Chat Selection, three Edit targets, and three Web choices.*
-
 3. Choose **Edit · Selection** in **Writing and web search**.
 4. Send:
 
