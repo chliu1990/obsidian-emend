@@ -25,6 +25,12 @@ Emend has no competing diff, Apply, Accept, or Reject interface. Track Changes i
 
 Chat needs no Track Changes because Chat has no note writer. Selection edits also preserve Obsidian's native undo, whether or not you review them first.
 
+![Conceptual comparison of writer-free Chat, Full-note Edit through guarded vault modify, and Selection-only native replacement, with Emend producing CriticMarkup and Track Changes providing separate review](../images/emend-edit-flow.svg)
+
+*Conceptual flow: Emend validates Operations and produces CriticMarkup; the separate Track Changes plugin presents review controls. Context never expands the write target.*
+
+**Text equivalent:** Chat streams an answer without a writer. Full-note Edit validates Operations and writes CriticMarkup through one guarded `vault.modify`. Selection Edit validates the candidate and composed note, then produces CriticMarkup through one exact native range replacement that preserves native undo. Both Edit paths end in separate Track Changes review cards with Accept/Reject controls; Emend has no competing diff or Apply interface.
+
 ## Choose an edit target
 
 Supporting context helps the model understand the request. It does not expand the permitted edit target.
@@ -60,6 +66,10 @@ A quick action uses the maintained target and Selection-context policy. It saves
 
 **Recipe recap:** You sent the complete note, applied validated CriticMarkup through one guarded vault write, and should observe a concise result plus Track Changes review cards.
 
+![A concise Full-note Edit result beside two complete Track Changes review cards and preserved café, Chinese, and emoji text](../images/emend-edit-review.png)
+
+*A guarded Full-note Edit produced two review cards. The chat stays concise while Track Changes owns Accept/Reject review; the synthetic Unicode remains intact.*
+
 ## Edit a Selection from the composer
 
 **Outcome:** Change only the captured Selection while using either bounded surroundings or the complete note as supporting context.
@@ -81,6 +91,14 @@ An empty, whitespace-only, or vanished Selection fails closed. Emend shows `Sele
 **Observable result:** The result identifies **Target: Selection.** Text outside the captured range remains unchanged. Native undo restores the complete original Selection; redo reapplies the CriticMarkup replacement.
 
 **Recipe recap:** You chose bounded or complete-note support, and should observe exactly one native Selection replacement with no outside-target edit or Full-note fallback.
+
+![A live highlighted Selection beside the eight-item Writing and Web menu while chat retains focus](../images/emend-selection.png)
+
+*The current Writing/Web menu and live Selection decoration remain visible together while chat owns focus.*
+
+![Selection Edit submission producing a concise Target Selection result and Track Changes cards, followed by native undo restoring the original sentence](../images/emend-edit-demo.gif)
+
+*Fifteen-second silent capture at 10 fps using a local delayed mock, with idle waits shortened: one genuine Selection replacement, Track Changes review, then native undo restores the exact original bytes.*
 
 ## Use Modify Selection
 

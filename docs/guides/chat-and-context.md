@@ -36,6 +36,10 @@ See [Write permissions](privacy-and-storage.md#write-permissions) for the other 
 
 **Recipe recap:** You asked with bounded note context, received a read-only answer, and should observe no note changes.
 
+![A completed Ordinary Chat answer beside its synthetic source note, with compact Chat and DeepSeek model controls and no note write](../images/emend-chat.png)
+
+*A completed Ordinary Chat with Web Off. The answer streams into the sidebar while the source note stays unchanged.*
+
 ## Focus on a Selection
 
 **Outcome:** Discuss one passage while giving the model the complete note for context.

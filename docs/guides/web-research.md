@@ -17,6 +17,12 @@ The main DeepSeek model receives the ordinary Chat context. It may derive search
 
 Successful retrieval may be billed separately. Extractor, verifier, and refine model rounds may also incur separate charges. A transient Search or Fetch failure may be retried once. A failed retrieval call still counts toward the configured call limit. Emend does not know your provider's prices or estimate charges. See [Web sharing and charges](privacy-and-storage.md#web-sharing-and-charges) for the canonical recipient and disclosure boundary.
 
+![Conceptual DeepSeek Web flow from default-Off opt-in through Review or Auto retrieval, extraction and verification, and a terminal answer with Sources, with no note writer](../images/emend-web-flow.svg)
+
+*Conceptual flow: Review pauses for editable arguments; Auto skips only that pause. Both paths enforce the same evidence and terminal-answer boundaries.*
+
+**Text equivalent:** Web is Off by default and limited to supported DeepSeek models in Chat or Chat Selection. After an explicit opt-in, the model may propose Search or Fetch arguments. Review allows editing and consent before retrieval; Auto skips only that review pause. Retrieval passes through extraction and verification before the main model produces a terminal answer with Sources and applicable warnings. Unsupported configurations fail without unsearched fallback, and no step has a note writer.
+
 ## Use Web Review or Auto
 
 **Outcome:** Review one proposed retrieval batch, run it, and receive a terminal answer, with citations when retrieved evidence supports them, without changing the note.

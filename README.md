@@ -6,6 +6,10 @@ Emend is a desktop Obsidian plugin for streaming AI chat and guarded, reviewable
 
 Emend supports DeepSeek, Kimi, and custom OpenAI-compatible providers. The separate **Track Changes** plugin reviews every edit. Emend makes no background AI requests.
 
+![A completed Ordinary Chat answer beside its synthetic source note, with compact Chat and DeepSeek model controls and no note write](docs/images/emend-chat.png)
+
+*Ordinary Chat with Web Off: the streamed answer and compact controls remain separate from the unchanged note.*
+
 ## Why Emend?
 
 A **Selection** is the exact text range captured when you submit. Edit requests use structured insert, remove, replace, and comment **Operations**.
