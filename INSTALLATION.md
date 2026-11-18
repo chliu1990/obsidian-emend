@@ -11,6 +11,8 @@ Emend is a desktop-only Obsidian plugin. Mobile Obsidian is not supported.
 
 > **Separate review plugin:** Emend validates edits and writes CriticMarkup. The separate [Track Changes community plugin](https://github.com/philphilphil/obsidian-track-changes) visualizes that markup and supplies Accept/Reject controls. Chat does not require Track Changes. Emend does not bundle or automatically install other plugins.
 
+Before installing BRAT or Track Changes, open **Settings → Community plugins** and turn off **Restricted mode** if it is enabled. Community plugins cannot be installed or enabled while Restricted mode is on.
+
 ## Install with BRAT
 
 **BRAT — Beta Reviewers Auto-update Tool** installs and updates plugins directly from GitHub releases.
@@ -99,9 +101,8 @@ On Windows, create the same folder and copy the three files with Explorer. Do no
 ## Enable Emend and prepare edit review
 
 1. If you will edit notes, open **Settings → Community plugins → Browse**. Install and enable the separate **Track Changes** plugin before enabling Emend. Skip this step if you will use only Chat.
-2. Open **Settings → Community plugins** and turn off Restricted mode if Obsidian asks.
-3. Select **Reload plugins** or restart Obsidian, then enable **Emend**.
-4. Open **Settings → Emend** and configure a provider as described in the [Quick Start](QUICK_START.md#2-configure-a-provider).
+2. Select **Reload plugins** or restart Obsidian, then enable **Emend**.
+3. Open **Settings → Emend** and configure a provider as described in the [Quick Start](QUICK_START.md#2-configure-a-provider).
 
 If Emend was already enabled, use **Reload app without saving** from the Command Palette after replacing its files. Track Changes is required only for edit review; its absence never changes Chat's read-only behavior.
 

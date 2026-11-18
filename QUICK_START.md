@@ -72,7 +72,7 @@ A quick action such as **Fix grammar**, **Make concise**, or **Add examples** us
 
 ## 5. Review in Track Changes
 
-Open the Track Changes review surface for the note. Inspect the inserted third idea, then use its **Accept** or **Reject** controls.
+Open the Command Palette and run **Open review panel** from Track Changes. Inspect the inserted third idea, then use its **Accept** or **Reject** controls.
 
 Emend and Track Changes have separate jobs:
 
