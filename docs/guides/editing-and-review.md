@@ -91,8 +91,8 @@ An empty, whitespace-only, or vanished Selection fails closed. Emend shows `Sele
 **Actions:**
 
 1. Run **Modify selected text with AI** from the Command Palette.
-2. For a typed instruction, enter your request. For a quick action instead, click **Fix grammar**, **Make concise**, or **Add examples**.
-3. Keep **Selection context** at Default, or choose **Full note**. The selector resets to Default each time the modal opens.
+2. Keep **Selection context** at Default, or choose **Full note**. The selector resets to Default each time the modal opens.
+3. For a typed instruction, enter your request. For a quick action instead, click **Fix grammar**, **Make concise**, or **Add examples**.
 4. If you typed an instruction, submit it once. If you clicked a quick action, that click already submitted it; do not submit again. Wait for the result notice.
 5. Review with Track Changes, or use native undo.
 
