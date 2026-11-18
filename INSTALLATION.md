@@ -21,7 +21,7 @@ Emend is a desktop-only Obsidian plugin. Mobile Obsidian is not supported.
    https://github.com/chliu1990/obsidian-emend
    ```
 
-4. Select the latest release, or choose `2.8.0` if BRAT asks for a specific version.
+4. Select the latest release if BRAT asks for a specific version.
 5. After BRAT installs Emend, enable **Emend** and **Track Changes** under **Settings → Community plugins**.
 6. Continue with **Enable the plugins** below, then configure a provider in [QUICK_START.md](QUICK_START.md).
 
@@ -131,7 +131,7 @@ Current editing always uses validated JSON Operations compiled into CriticMarkup
 
 - **Emend does not appear:** Confirm that `manifest.json` is directly inside `.obsidian/plugins/emend/`, the manifest ID is `emend`, and you reloaded plugins.
 - **Emend does not load:** Use desktop Obsidian 1.11.4 or newer and confirm that all three required files came from the same build.
-- **No review cards appear:** Enable Track Changes and use Edit mode or **Modify selected text with AI**. Ask, Discuss, and Brainstorm never edit notes.
+- **No review cards appear:** Enable Track Changes and use Edit mode or **Modify selected text with AI**. Chat never edits notes.
 - **Provider returns an error:** Check the base URL, model, API key, and provider support for streamed OpenAI-compatible responses. Emend appends `/chat/completions` to the base URL.
 - **Custom provider rejects usage requests:** Disable **Request token usage** for that provider. Emend does not retry rejected requests automatically.
 - **Local provider refuses the request:** Confirm that it accepts Obsidian's desktop `fetch` requests and any required CORS preflight. No alternate transport is used.

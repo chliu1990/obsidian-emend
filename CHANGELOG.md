@@ -182,7 +182,8 @@ Web retrieval remains default Off and available only for DeepSeek `deepseek-flas
 - Strict provider error redaction and bounded error output.
 - Validated anchors, ambiguity/overlap rejection, stale-source/target checks, and abort/unload protection for note writes.
 
-[Unreleased]: https://github.com/chliu1990/obsidian-emend/compare/2.8.0...HEAD
+[Unreleased]: https://github.com/chliu1990/obsidian-emend/compare/2.9.0...HEAD
+[2.9.0]: https://github.com/chliu1990/obsidian-emend/compare/2.8.0...2.9.0
 [2.8.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.8.0
 [2.7.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.7.0
 [2.6.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.6.0
