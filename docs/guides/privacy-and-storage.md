@@ -57,15 +57,21 @@ Web research remains read-only. Unsupported providers or models fail with an exp
 
 ## Local data
 
-| Data | Location, kept content, and lifetime |
+| Data | Kept content and lifetime |
 | --- | --- |
-| Provider API keys | **Location:** Obsidian SecretStorage under `emend-api-key-deepseek`, `emend-api-key-kimi`, and `emend-api-key-custom`.<br>**Kept:** The provider credentials. Plugin `data.json` always stores empty `apiKey` fields.<br>**Lifetime:** SecretStorage values survive reload and plugin-folder removal. An in-memory fallback, used when no stored secret is available, does not survive reload. |
-| Emend settings | **Location:** `<Vault>/.obsidian/plugins/emend/data.json`.<br>**Kept:** Non-secret provider configuration, privacy choices, history limits, capacity values, and other settings.<br>**Lifetime:** Settings survive reload. Removing the Emend plugin folder removes this file. |
-| Saved chats | **Location:** Versioned chat files under `<Vault>/.obsidian/emend/chats/`.<br>**Kept:** Completed, saved messages with source note paths, concise Edit results, main reasoning, usage, and sanitized Web citations and activity.<br>**Lifetime:** Saved sessions and their order survive reload. Drafts and unfinished responses are excluded. |
+| Provider API keys | **Kept:** The provider credentials. Plugin `data.json` always stores empty `apiKey` fields.<br>**Lifetime:** SecretStorage values survive reload and plugin-folder removal. An in-memory fallback, used when no stored secret is available, does not survive reload. |
+| Emend settings | **Kept:** Non-secret provider configuration, privacy choices, history limits, capacity values, and other settings.<br>**Lifetime:** Settings survive reload. Removing the Emend plugin folder removes this file. |
+| Saved chats | **Kept:** Completed, saved messages with source note paths, concise Edit results, main reasoning, usage, and sanitized Web citations and activity.<br>**Lifetime:** Saved sessions and their order survive reload. Drafts and unfinished responses are excluded. |
 | Drafts and unfinished responses | **Location:** Memory only.<br>**Kept:** Composer drafts, loading or stopped responses, errors, and provisional Web draft text.<br>**Lifetime:** Drafts survive note and session switches in the same view lifetime. Everything in this row clears on reload and is not written to saved chats. |
 | Additional-note selections and snapshots | **Location:** Memory only.<br>**Kept:** Selected paths, helper choices, and submission-time note snapshots.<br>**Lifetime:** Selections survive note switches for the same target. Snapshots are request-only. Selections clear on reload, and neither is persisted. |
 | Raw retrieval and temporary Web extraction and verification data | **Location:** Temporary request memory only.<br>**Kept:** Retrieved content, tool arguments and results, extracted evidence, processing reasoning, and transient failure details.<br>**Lifetime:** This data is discarded after the request. It is never written to saved chats. |
 | Buffered edit responses | **Location:** Temporary request memory only.<br>**Kept:** Raw JSON candidates, compiled responses, and correction feedback.<br>**Lifetime:** These artifacts are discarded after validation or failure. Only the concise Edit result can persist. |
+
+Exact locations:
+
+- Provider API keys: Obsidian SecretStorage under `emend-api-key-deepseek`, `emend-api-key-kimi`, and `emend-api-key-custom`.
+- Emend settings: `<Vault>/.obsidian/plugins/emend/data.json`.
+- Saved chats: versioned chat files under `<Vault>/.obsidian/emend/chats/`.
 
 Malformed conversation data is preserved. Before the first valid replacement, Emend writes the original bytes to a `.corrupt` backup if that backup does not already exist. Unsupported schema versions are not overwritten. [Stage 43](../../devel_docs/43-multiple-chat-sessions.md) records the exact storage and migration rules.
 
