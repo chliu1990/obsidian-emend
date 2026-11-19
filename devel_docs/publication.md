@@ -23,17 +23,17 @@ This launch checklist does not change the distribution decision above: no Commun
 - [x] A supported platform and provider matrix covers desktop requirements, Track Changes, DeepSeek/Kimi/custom support, Web availability, and known limitations.
 - [x] Current screenshots and a short demo match the release and show the guarded editing flow.
 - [x] Announcement and showcase copy is concise and evidence-backed, citing shipped behavior and verification records rather than deferred features.
-- [ ] A clean packaged installation and release verification pass from the release ZIP and release assets in an empty vault.
+- [x] A clean packaged installation and release verification pass from the release ZIP and release assets in an empty vault.
 - [x] Launch-relevant security and CI review is complete. Major TypeScript, lint, and action migrations remain separately tracked and do not block launch unless security- or release-breaking.
 - [x] Confirm the documented no-submission decision or record a new explicit decision.
 
 Complete this checklist alongside the release checklist; it records launch material and verification, not new runtime behavior.
 
-The packaged-install item stays open until the published release assets are downloaded and verified; [Stage 53](53-2-10-release.md) records the local packaged ZIP pass and the later asset pass.
+Every item is complete for 2.10.0. [Stage 53](53-2-10-release.md) records the released tag, workflow run, asset digests, and the downloaded-asset install check. Publishing the announcement below remains a separate decision.
 
 ## Reusable 2.10 launch materials
 
-**Status:** This copy is ready for the 2.10.0 announcement. Publish it only after the release assets and packaged-install verification are confirmed.
+**Status:** Emend 2.10.0 is released. This copy is ready for the announcement; publishing it remains a separate decision.
 
 ### Draft release summary
 

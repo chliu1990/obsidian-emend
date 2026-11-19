@@ -53,5 +53,21 @@ It extracts the ZIP into a fresh vault's `.obsidian/plugins/`, starts official O
 
 ## Published release
 
-The tag, workflow run, and downloaded release assets are verified after tagging and recorded in a follow-up commit to this record.
-Launch copy and the remaining checklist live in [publication](publication.md).
+- Tag: annotated `2.10.0`, without a leading `v`, on merge commit `d821b215f42f1118162b4cc1926c55a4140d3c91`, which is also `main`.
+- Workflow: [release run 44461974511](https://github.com/chliu1990/obsidian-emend/actions/runs/44461974511) completed with conclusion `success` for that commit.
+- Release: [Emend 2.10.0](https://github.com/chliu1990/obsidian-emend/releases/tag/2.10.0), published, not a draft, and not a prerelease.
+
+| Asset | Size and digest |
+| --- | --- |
+| `main.js` | 217,686 bytes · `7066d4356c9d4497986bde8df6e7ece6f7b46d95852bbfd09b897667e63701b9` |
+| `manifest.json` | 302 bytes · `309a763698441bf2e2276ed85dd92165c73ca6e79a44798aa8a842d4c1fe9794` |
+| `styles.css` | 17,663 bytes · `a9025ce094e90e43985bc0a78bc09a782740364ae6d418f9f2f68db3e204e312` |
+| `emend-2.10.0.zip` | 65,067 bytes · `165d9885de7f5d744e6bb4f843a3229e0f17aac6218662ba6956412bd9b8d89a` |
+
+The published `main.js`, `manifest.json`, and `styles.css` are byte-identical to the local release build above.
+The published ZIP has a different archive digest from the local package because it embeds the run's file timestamps, while its `emend/` entries are byte-identical to the published individual assets.
+
+The downloaded assets were installed by the same harness with `EMEND_SMOKE_ASSETS=assets-published`, and all **24 assertions passed** again in Obsidian 1.15.0.
+The publication checklist's packaged-install item is therefore complete.
+
+Launch copy still lives in [publication](publication.md). No announcement was published and no Community Directory submission was made.
