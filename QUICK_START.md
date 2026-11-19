@@ -29,7 +29,7 @@ Open **Settings → Emend**, choose **Active provider**, and enter its API key, 
 | --- | --- |
 | DeepSeek | `deepseek-flash` |
 | Kimi | `k3.1-pro` |
-| Custom | An available model |
+| Custom | A model available on that endpoint. |
 
 Base URLs: DeepSeek `https://api.deepseek.com`; Kimi `https://api.kimi.com/coding/v1`; Custom your OpenAI-compatible base URL. The endpoint must support streaming chat completions. Emend appends `/chat/completions` to the base URL.
 
