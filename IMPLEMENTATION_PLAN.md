@@ -12,7 +12,7 @@ Documentation has separate owners:
 - Numbered stage records own exact behavior, design decisions, verification matrices, historical evidence, and limitations. Historical records remain unchanged.
 - [ROADMAP.md](ROADMAP.md) owns recently shipped status, deferred work, and non-goals. [CHANGELOG.md](CHANGELOG.md) owns versioned release history.
 
-Files beginning `devel_docs/future-` describe deferred designs, not current behavior or approval. Stage 42 implements capacity accounting and hard safeguards; Stages 44–50 implement the compact composer, explicit Related notes, local model controls, live Selection, response continuity, Selection context, and native menu activation. Stage 51 records stabilization, and Stage 52 implements provisional Web drafts. Automatic compression, automatic linked/folder inclusion, background discovery, and automatic TOCs remain deferred.
+Files beginning `devel_docs/future-` describe deferred designs, not current behavior or approval. Stage 42 implements capacity accounting and hard safeguards; Stages 44–50 implement the compact composer, explicit Related notes, local model controls, live Selection, response continuity, Selection context, and native menu activation. Stage 51 records stabilization, and Stage 52 implements provisional Web drafts. Stage 53 records the 2.10.0 release. Automatic compression, automatic linked/folder inclusion, background discovery, and automatic TOCs remain deferred.
 
 ## Architecture contract
 
@@ -83,6 +83,7 @@ Files beginning `devel_docs/future-` describe deferred designs, not current beha
 50. [Native menu item activation](devel_docs/50-native-menu-activation.md) — native hide-before-click acceptance and stale guards.
 51. [2.10 bug hunt and stabilization](devel_docs/51-2-10-stabilization.md) — cross-cutting fixes, deferrals, review, and current evidence limits.
 52. [Web draft streaming](devel_docs/52-web-draft-streaming.md) — labelled provisional content, reset-before-tools, and terminal promotion.
+53. [2.10.0 release](devel_docs/53-2-10-release.md) — release-only changelog, version metadata, and packaged-install verification.
 
 ## Verification and release process
 

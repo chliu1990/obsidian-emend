@@ -18,20 +18,22 @@ Reference: [Obsidian developer policies](https://docs.obsidian.md/community-dire
 
 This launch checklist does not change the distribution decision above: no Community Directory submission happens unless that decision is deliberately revisited.
 
-- [ ] Public docs are current: [README](../README.md), [quick start](../QUICK_START.md), [installation](../INSTALLATION.md), [roadmap](../ROADMAP.md), and changelog match the packaged release.
-- [ ] User-facing privacy, permission, and write-safety material states what is sent, what is stored locally, and which actions can modify notes.
-- [ ] A supported platform and provider matrix covers desktop requirements, Track Changes, DeepSeek/Kimi/custom support, Web availability, and known limitations.
-- [ ] Current screenshots and a short demo match the release and show the guarded editing flow.
-- [ ] Announcement and showcase copy is concise and evidence-backed, citing shipped behavior and verification records rather than deferred features.
+- [x] Public docs are current: [README](../README.md), [quick start](../QUICK_START.md), [installation](../INSTALLATION.md), [roadmap](../ROADMAP.md), and changelog match the packaged release.
+- [x] User-facing privacy, permission, and write-safety material states what is sent, what is stored locally, and which actions can modify notes.
+- [x] A supported platform and provider matrix covers desktop requirements, Track Changes, DeepSeek/Kimi/custom support, Web availability, and known limitations.
+- [x] Current screenshots and a short demo match the release and show the guarded editing flow.
+- [x] Announcement and showcase copy is concise and evidence-backed, citing shipped behavior and verification records rather than deferred features.
 - [ ] A clean packaged installation and release verification pass from the release ZIP and release assets in an empty vault.
-- [ ] Launch-relevant security and CI review is complete. Major TypeScript, lint, and action migrations remain separately tracked and do not block launch unless security- or release-breaking.
-- [ ] Confirm the documented no-submission decision or record a new explicit decision.
+- [x] Launch-relevant security and CI review is complete. Major TypeScript, lint, and action migrations remain separately tracked and do not block launch unless security- or release-breaking.
+- [x] Confirm the documented no-submission decision or record a new explicit decision.
 
 Complete this checklist alongside the release checklist; it records launch material and verification, not new runtime behavior.
 
+The packaged-install item stays open until the published release assets are downloaded and verified; [Stage 53](53-2-10-release.md) records the local packaged ZIP pass and the later asset pass.
+
 ## Reusable 2.10 launch materials
 
-**Preparation status:** This copy is ready for a later release announcement. It does not mean that Emend 2.10.0 is released or downloadable. Publish it only after the separate release PR, tag, assets, and packaged-install verification are complete.
+**Status:** This copy is ready for the 2.10.0 announcement. Publish it only after the release assets and packaged-install verification are confirmed.
 
 ### Draft release summary
 
@@ -94,7 +96,7 @@ Canonical sources for the promotional claims are the [README](../README.md), [Ch
 
 ## Release checklist
 
-1. Open the separate release PR. Update `CHANGELOG.md` and all release-specific status, installation, and verification text. Remove or update the temporary pre-release status notes in `README.md` and `INSTALLATION.md`, and update this file's preparation status so no pre-release wording survives publication.
+1. Open the separate release PR. Update `CHANGELOG.md` and all release-specific status, installation, and verification text. Confirm that no temporary pre-release wording survives in `README.md`, `INSTALLATION.md`, current guides, or this file's status line.
 2. Run `npm version <patch|minor|major>`. Review the synchronized `package.json`, `package-lock.json`, `manifest.json`, and `versions.json`, then run clean install, lint, tests, production build, `git diff --check`, and the required security review. Merge the release PR only after these checks and reviews pass.
 3. From the merged release commit, create and push a tag exactly matching `manifest.json`, without a leading `v`, or dispatch the release workflow with that same version.
 4. Verify the GitHub Actions run and all four assets: `main.js`, `manifest.json`, `styles.css`, and `emend-<version>.zip`.

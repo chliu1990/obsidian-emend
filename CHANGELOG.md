@@ -2,6 +2,63 @@
 
 All notable changes to Emend are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.0] - 2026-11-19
+
+### Added
+
+- Explicit **Chat · Selection**: a read-only focus that sends the complete note plus the complete Selection, even above the ordinary context budget, and fails closed when the Selection is empty or has vanished.
+- Three composer Edit targets: **Edit · Selection**, **Edit · Selection · Full note**, and **Edit · Full note**. Full-note context never widens a Selection write.
+- A per-open **Selection context** choice of Default (Smart or Symmetric) or Full note in Modify selected text with AI.
+- One compact **Writing and web search** menu for the Chat, Chat Selection, Edit-target, and Web Off/Review/Auto choices, beside Edit-only quick actions.
+- A native provider/model/reasoning menu in the composer. Every choice saves locally and never submits the draft, reads note content, or contacts a provider.
+- A refreshable **Related notes** explorer with All and Links snapshots, path search, folder helpers, per-path removal, and one manual Refresh.
+- Live Selection highlighting that stays visible while chat or another control holds focus.
+- Ready and stopped answers that render immediately as text, so a finished response is never blank while Markdown layout settles.
+- Labelled provisional Web drafts: `Draft answer — research may continue` clears before Review or retrieval and is promoted unchanged into the terminal answer.
+- A documentation hub, five task-focused public guides, redrawn screenshots, a short demo capture, and two flow diagrams.
+
+### Changed
+
+- Chat is now the only read-only composer mode. Discuss and Brainstorm remain valid historical message modes only.
+- Web choices stay available in Chat, are disabled in Edit, and return with their previous value when you switch back.
+- Model and reasoning selections share one queued, sanitized settings save, so overlapping edits keep both values.
+- Chat's Related notes are selected through explicit All or Links snapshots instead of a flat picker, with metadata-only discovery and no note-body reads before submission. Modify Selection keeps its own flat Additional notes picker.
+- Web answers stream round by round. A round that requests tools clears its draft once, and the terminal round supplies the answer.
+
+### Fixed
+
+- Selection edits revalidate the composed note, so a Selection inside existing markup cannot produce nested CriticMarkup.
+- Full-note edits refuse to write when any pane of the captured note has unsaved changes, instead of comparing only one editor.
+- Insert, replace, and comment payloads are checked inside their CriticMarkup wrapper, so a payload cannot leave an unclosed fence or unpaired backticks.
+- A failed thread load now recovers a usable new chat, and the composer, sessions, and Send stay functional.
+- Invalid stored messages are backed up as `.corrupt` before the first rewrite, and the first backup survives later corruption.
+- A committed edit keeps its concise summary when Stop races the save, when another view deletes the session, and when a save is rejected.
+- Quick actions keep the typed draft, and a failed Selection capture restores the draft, caret, and capacity estimate.
+- The Writing and web search and model menus no longer mutate after dismissal, while a just-dismissed menu still accepts the click that closed it.
+- Renaming a note refreshes open chat views, so the next submission follows the new path.
+- Instruction loading tolerates an unreadable `AGENTS.md` or skill, and the total instruction text is capped at 20,000 characters with an exact marker.
+- Deleting a note or folder no longer leaves its own related-note selections behind.
+- Streaming updates only the text nodes, so an open reasoning panel keeps its state and an answer Selection survives.
+- Final rendered answers no longer use the streaming `pre-wrap` style, so Markdown whitespace rules apply. Streamed text keeps `pre-wrap`.
+- Provider and Web base URLs that carry `user:pass@` credentials are rejected before any request, and userinfo is redacted from errors.
+- A malformed Search/Fetch response is a non-retryable format failure, and a local configuration problem names itself instead of claiming a network failure.
+- Optional Search metadata is tolerated, and duplicate URLs collapse to one citation.
+- Inconsistent provider usage triplets fall back to **Estimated** in live answers; a reloaded thread drops the unusable triplet and shows no usage footer.
+- The skipped-Web-call warning reports the enforced call limit, settings fields display the canonical stored value, and a zero-result search is recorded as a failed empty search with its real attempt count.
+- Session switches are refused during a request, the session selector resyncs to the active session, and a load that finds a persisted session discards stale transient state.
+
+### Security
+
+- The writers, native Selection undo, per-note request exclusion, credential handling, and stale checks remain in force and were re-verified, with the write-freshness and credential-URL checks tightened.
+- Raw candidates, request bodies, snapshots, retrieved content, extractor artifacts, and provisional drafts remain transient; only ready content and sanitized metadata persist.
+- Web stays writer-free in Chat and is unavailable to Edit, quick actions, and Modify Selection, including throughout retrieval and extraction.
+
+### Documentation
+
+- Rewrote the README, quick start, and installation guide around current workflows, with short sentences and summary tables.
+- Added a documentation hub and focused guides for chat and context, editing and review, Web research, privacy and storage, and settings. The README and three guides carry captioned screenshots and diagrams.
+- Reduced the contributor guide to durable rules and moved behavior detail into the architecture contract and stage records.
+
 ## [2.9.0] - 2026-11-12
 
 ### Added
@@ -182,7 +239,8 @@ Web retrieval remains default Off and available only for DeepSeek `deepseek-flas
 - Strict provider error redaction and bounded error output.
 - Validated anchors, ambiguity/overlap rejection, stale-source/target checks, and abort/unload protection for note writes.
 
-[Unreleased]: https://github.com/chliu1990/obsidian-emend/compare/2.9.0...HEAD
+[Unreleased]: https://github.com/chliu1990/obsidian-emend/compare/2.10.0...HEAD
+[2.10.0]: https://github.com/chliu1990/obsidian-emend/compare/2.9.0...2.10.0
 [2.9.0]: https://github.com/chliu1990/obsidian-emend/compare/2.8.0...2.9.0
 [2.8.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.8.0
 [2.7.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.7.0

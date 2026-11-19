@@ -6,7 +6,7 @@ Features have no fixed deadlines. Each independently reviewable behavior gets it
 
 ## Now
 
-Maintain Emend 2.9.0 with bug fixes, security updates, documentation, and provider compatibility. The 2.10 documentation work does not advance the release version.
+Maintain Emend 2.10.0 with bug fixes, security updates, documentation, and provider compatibility. Feature and documentation PRs do not advance the released version.
 
 ### Recently shipped
 
@@ -30,7 +30,7 @@ Track Changes remains a separate companion plugin and Emend's only CriticMarkup 
 
 The public-launch path remains independent content PRs plus the normal separate release PR, which contains only CHANGELOG, version metadata, and release-only status/installation documentation and verification updates:
 
-1. **Public documentation and promotional launch materials — integrated:** the redesigned entry points and five public guides, contributor/technical documentation, six current visuals, and concise evidence-backed launch copy are integrated. The separate release PR, packaged-install verification, and any announcement remain pending. Keep Community Directory submission a separate explicit decision. Follow [publication and distribution](devel_docs/publication.md).
+1. **Public launch — release in progress:** the redesigned entry points and five public guides, contributor/technical documentation, six current visuals, and concise evidence-backed launch copy are integrated. The 2.10.0 release PR adds the changelog, synchronized version metadata, and packaged-install verification ([Stage 53](devel_docs/53-2-10-release.md)). Any announcement and Community Directory submission remain separate explicit decisions. Follow [publication and distribution](devel_docs/publication.md).
 
 ## Later
 
