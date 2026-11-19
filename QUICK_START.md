@@ -25,13 +25,13 @@ Keep the note open. The first edit adds an idea without changing this sentence, 
 
 Open **Settings → Emend**, choose **Active provider**, and enter its API key, base URL, and model.
 
-| Provider | Base URL | Preset model |
-| --- | --- | --- |
-| DeepSeek | `https://api.deepseek.com` | `deepseek-flash` |
-| Kimi | `https://api.kimi.com/coding/v1` | `k3.1-pro` |
-| Custom | Your OpenAI-compatible base URL | A model available on that endpoint |
+| Provider | Preset model |
+| --- | --- |
+| DeepSeek | `deepseek-flash` |
+| Kimi | `k3.1-pro` |
+| Custom | An available model |
 
-The endpoint must support streaming chat completions. Emend appends `/chat/completions` to the base URL.
+Base URLs: DeepSeek `https://api.deepseek.com`; Kimi `https://api.kimi.com/coding/v1`; Custom your OpenAI-compatible base URL. The endpoint must support streaming chat completions. Emend appends `/chat/completions` to the base URL.
 
 Reasoning effort defaults to **High**; choose a level your model supports. **Request token usage** defaults on for DeepSeek and Kimi, and off for Custom. Disable it if your provider rejects `stream_options`.
 

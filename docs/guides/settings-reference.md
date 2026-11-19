@@ -15,13 +15,13 @@ Open these controls in **Settings → Emend**. Non-secret settings persist local
 
 **Outcome:** Connect Emend to one streaming OpenAI-compatible chat endpoint.
 
-| Provider | Connection and token-usage defaults |
+| Provider | Model and usage |
 | --- | --- |
-| DeepSeek | **Base URL:** `https://api.deepseek.com`<br>**Model:** `deepseek-flash`<br>**Usage:** On |
-| Kimi | **Base URL:** `https://api.kimi.com/coding/v1`<br>**Model:** `k3.1-pro`<br>**Usage:** On |
-| Custom | **Base URL:** Empty; enter your endpoint<br>**Model:** Empty; enter your model<br>**Usage:** Off |
+| DeepSeek | **Model:** `deepseek-flash`<br>**Usage:** On |
+| Kimi | **Model:** `k3.1-pro`<br>**Usage:** On |
+| Custom | **Model:** Empty; enter your model<br>**Usage:** Off |
 
-DeepSeek also offers `deepseek-v4-pro` as a built-in model. Web research is available only for DeepSeek `deepseek-flash` and `deepseek-v4-pro`. Other providers and models do not silently fall back to unsearched Chat.
+Preset base URLs are `https://api.deepseek.com` for DeepSeek and `https://api.kimi.com/coding/v1` for Kimi. Custom starts empty; enter your endpoint. DeepSeek also offers `deepseek-v4-pro` as a built-in model. Web research is available only for DeepSeek `deepseek-flash` and `deepseek-v4-pro`. Other providers and models do not silently fall back to unsearched Chat.
 
 **Prerequisites:** [Install and enable Emend](../../INSTALLATION.md). Have an endpoint, API key, and model name from your provider.
 
@@ -42,12 +42,12 @@ Emend appends `/chat/completions` to the base URL. The endpoint must support str
 
 **Outcome:** Select an available model without confusing local selection with network discovery.
 
-| Task | Where to do it | Network behavior |
-| --- | --- | --- |
-| Choose a built-in, discovered, or current model | Composer model menu or Settings | A composer choice makes one local settings save. It makes no provider request. |
-| Enter a custom model name | Settings only | Saves the name locally. It does not validate the model with a request. |
-| Discover endpoint models | **Refresh models** in Settings only | Explicitly sends authenticated `GET <base URL>/models`. |
-| Choose reasoning effort | Composer model menu or Settings | Saves the choice locally. The next request uses it. |
+| Task | Location and network behavior |
+| --- | --- |
+| Choose a built-in, discovered, or current model | **Location:** Composer model menu or Settings<br>**Network:** A composer choice makes one local settings save. It makes no provider request. |
+| Enter a custom model name | **Location:** Settings only<br>**Network:** Saves the name locally. It does not validate the model with a request. |
+| Discover endpoint models | **Location:** **Refresh models** in Settings only<br>**Network:** Explicitly sends authenticated `GET <base URL>/models`. |
+| Choose reasoning effort | **Location:** Composer model menu or Settings<br>**Network:** Saves the choice locally. The next request uses it. |
 
 The composer lists providers only when they have a key and a usable model. Custom needs a key and a configured or discovered model. See [the composer recipe](chat-and-context.md#choose-a-provider-model-and-reasoning-effort) for its exact local-save boundary.
 
@@ -69,10 +69,10 @@ Discovery never runs automatically when chat or the composer menu opens. A faile
 
 **Outcome:** Control the requested reasoning level and whether the provider reports token usage.
 
-| Setting | Choices and default | Effect |
-| --- | --- | --- |
-| **Reasoning effort** | **Low**, **Medium**, or **High**; default **High** | Sends the configured `reasoning_effort` with requests. Choose a level your model supports. |
-| **Request token usage** | On for DeepSeek and Kimi; Off for Custom | Adds `stream_options: { include_usage: true }` when enabled. Completed responses show provider usage when valid data arrives. |
+| Setting | Choices and effect |
+| --- | --- |
+| **Reasoning effort** | **Choices:** **Low**, **Medium**, or **High**; default **High**<br>**Effect:** Sends the configured `reasoning_effort` with requests. Choose a level your model supports. |
+| **Request token usage** | **Choices:** On for DeepSeek and Kimi; Off for Custom<br>**Effect:** Adds `stream_options: { include_usage: true }` when enabled. Completed responses show provider usage when valid data arrives. |
 
 **Prerequisites:** Configure the active provider and check its model documentation.
 
@@ -93,13 +93,13 @@ A provider rejection of `stream_options` is an error. Emend does not retry the C
 
 **Outcome:** Decide how much prior conversation and note context each submission can include.
 
-| Setting | Default and range | Behavior |
-| --- | --- | --- |
-| **Default mode** | **Chat**; Chat or Edit | Sets the initial composer mode. It does not submit or write by itself. |
-| **Include note path** | Off | Adds vault-qualified active and Related-note paths to provider prompts when enabled. |
-| **Chat history messages** | `8`; integers `0`–`50` | Includes that many recent ready messages from the originating session. `0` disables history. |
-| **Context character limit** | `12000`; minimum `1000` characters | Bounds Ordinary Chat's long-note window, combined Related-note sources, and Default Selection surroundings. |
-| **Smart selection context** | On | Adds containing and adjacent blocks for Default Selection context. Off uses symmetric before/after context. |
+| Setting | Defaults and behavior |
+| --- | --- |
+| **Default mode** | **Default:** **Chat**; Chat or Edit<br>**Behavior:** Sets the initial composer mode. It does not submit or write by itself. |
+| **Include note path** | **Default:** Off<br>**Behavior:** Adds vault-qualified active and Related-note paths to provider prompts when enabled. |
+| **Chat history messages** | **Default:** `8`; integers `0`–`50`<br>**Behavior:** Includes that many recent ready messages from the originating session. `0` disables history. |
+| **Context character limit** | **Default:** `12000`; minimum `1000` characters<br>**Behavior:** Bounds Ordinary Chat's long-note window, combined Related-note sources, and Default Selection surroundings. |
+| **Smart selection context** | **Default:** On<br>**Behavior:** Adds containing and adjacent blocks for Default Selection context. Off uses symmetric before/after context. |
 
 The Modify Selection modal never sends chat history. Chat Selection and Full-note Edit still send the complete note. Selection targets remain complete, and Full-note Selection context never expands the edit target.
 

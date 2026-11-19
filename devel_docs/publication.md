@@ -69,14 +69,14 @@ Emend and Track Changes are separate plugins. Track Changes presents edit review
 
 The six release-matched assets below are the complete launch set. Captions are reusable; intended uses are recommendations, not additional verification claims.
 
-| Asset | Caption | Intended use |
-| --- | --- | --- |
-| [Chat PNG](../docs/images/emend-chat.png) | Ordinary Chat with Web Off: the streamed answer and compact controls remain separate from the unchanged note. | README, release, or showcase still introducing compact writer-free Chat. |
-| [Edit flow SVG](../docs/images/emend-edit-flow.svg) | Conceptual flow: Emend validates Operations and produces CriticMarkup; the separate Track Changes plugin presents review controls. Context never expands the write target. | Explanation of Chat, Full-note Edit, and Selection-only writer boundaries. |
-| [Edit review PNG](../docs/images/emend-edit-review.png) | A guarded Full-note Edit produced two review cards. The chat stays concise while Track Changes owns Accept/Reject review; the synthetic Unicode remains intact. | Full-note Edit result and separate Track Changes review demonstration. |
-| [Selection PNG](../docs/images/emend-selection.png) | The current Writing/Web menu and live Selection decoration remain visible together while chat owns focus. | Still image for explicit Selection targets, context choices, and live highlighting. |
-| [Selection Edit GIF](../docs/images/emend-edit-demo.gif) | Fifteen-second silent capture at 10 fps using a local delayed mock, with idle waits shortened: one genuine Selection replacement, Track Changes review, then native undo restores the exact original bytes. | The single motion asset for the short showcase or a Selection Edit demonstration. |
-| [Web flow SVG](../docs/images/emend-web-flow.svg) | Conceptual flow: Review pauses for editable arguments; Auto skips only that pause. Both paths enforce the same evidence and terminal-answer boundaries. | DeepSeek-only Web Review/Auto explanation; not generic provider artwork. |
+| Asset | Caption and intended use |
+| --- | --- |
+| [Chat PNG](../docs/images/emend-chat.png) | **Caption:** Ordinary Chat with Web Off: the streamed answer and compact controls remain separate from the unchanged note.<br>**Use:** README, release, or showcase still introducing compact writer-free Chat. |
+| [Edit flow SVG](../docs/images/emend-edit-flow.svg) | **Caption:** Conceptual flow: Emend validates Operations and produces CriticMarkup; the separate Track Changes plugin presents review controls. Context never expands the write target.<br>**Use:** Explanation of Chat, Full-note Edit, and Selection-only writer boundaries. |
+| [Edit review PNG](../docs/images/emend-edit-review.png) | **Caption:** A guarded Full-note Edit produced two review cards. The chat stays concise while Track Changes owns Accept/Reject review; the synthetic Unicode remains intact.<br>**Use:** Full-note Edit result and separate Track Changes review demonstration. |
+| [Selection PNG](../docs/images/emend-selection.png) | **Caption:** The current Writing/Web menu and live Selection decoration remain visible together while chat owns focus.<br>**Use:** Still image for explicit Selection targets, context choices, and live highlighting. |
+| [Selection Edit GIF](../docs/images/emend-edit-demo.gif) | **Caption:** Fifteen-second silent capture at 10 fps using a local delayed mock, with idle waits shortened: one genuine Selection replacement, Track Changes review, then native undo restores the exact original bytes.<br>**Use:** The single motion asset for the short showcase or a Selection Edit demonstration. |
+| [Web flow SVG](../docs/images/emend-web-flow.svg) | **Caption:** Conceptual flow: Review pauses for editable arguments; Auto skips only that pause. Both paths enforce the same evidence and terminal-answer boundaries.<br>**Use:** DeepSeek-only Web Review/Auto explanation; not generic provider artwork. |
 
 ### Verification evidence for maintainers
 

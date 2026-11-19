@@ -80,10 +80,10 @@ The extractor receives the current question, extraction goal, retrieval target, 
 
 Two independent settings bound Web work:
 
-| Limit | Default and accepted range | What to expect |
-| --- | --- | --- |
-| **Web tool call limit** | Default `8`; integers `1`–`20` | Caps executed Search/Fetch calls. Failed calls count. Calls beyond the remaining slots are skipped without retrieval or reader work. |
-| **Web output cap per call (characters)** | Default `20000`; integers `1000`–`100000` | Caps each complete serialized extraction payload independently. Total payload growth is at most cap × executed calls. |
+| Limit | Values and expected behavior |
+| --- | --- |
+| **Web tool call limit** | **Values:** Default `8`; integers `1`–`20`<br>**Expect:** Caps executed Search/Fetch calls. Failed calls count. Calls beyond the remaining slots are skipped without retrieval or reader work. |
+| **Web output cap per call (characters)** | **Values:** Default `20000`; integers `1000`–`100000`<br>**Expect:** Caps each complete serialized extraction payload independently. Total payload growth is at most cap × executed calls. |
 
 Change them through [Web research limits](settings-reference.md#set-web-research-limits). These are call and character limits, not exact token counts or billing estimates.
 

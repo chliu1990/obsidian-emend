@@ -68,13 +68,13 @@ These capabilities are implemented on `main`; they do not promise automatic cont
 - The separate [Track Changes community plugin](https://github.com/philphilphil/obsidian-track-changes) to review Emend edits. Chat works without it.
 - Node.js **24** and npm only when building from source.
 
-| Provider | Model, Chat/Edit, and Web support |
+| Provider | Capabilities |
 | --- | --- |
-| DeepSeek | **Preset:** `deepseek-flash` at `https://api.deepseek.com`; `deepseek-v4-pro` is also built in<br>**Chat/Edit:** Supported<br>**Web:** Only with exactly `deepseek-flash` or `deepseek-v4-pro` |
-| Kimi | **Preset:** `k3.1-pro` at `https://api.kimi.com/coding/v1`<br>**Chat/Edit:** Supported<br>**Web:** Not supported |
-| Custom | **Preset:** Your model and OpenAI-compatible base URL<br>**Chat/Edit:** Supported when the endpoint streams chat completions<br>**Web:** Not supported |
+| DeepSeek | **Preset:** `deepseek-flash`; `deepseek-v4-pro` is also built in<br>**Chat/Edit:** Supported<br>**Web:** Only with exactly `deepseek-flash` or `deepseek-v4-pro` |
+| Kimi | **Preset:** `k3.1-pro`<br>**Chat/Edit:** Supported<br>**Web:** Not supported |
+| Custom | **Preset:** Your model<br>**Chat/Edit:** Supported when the endpoint streams chat completions<br>**Web:** Not supported |
 
-Models and base URLs remain editable. Emend appends `/chat/completions`. **Refresh models** in Settings is the only model-discovery action; it sends an explicit authenticated `GET <base URL>/models` request. Opening chat or the model menu never discovers models automatically.
+Preset base URLs are `https://api.deepseek.com` for DeepSeek and `https://api.kimi.com/coding/v1` for Kimi; Custom uses your OpenAI-compatible base URL. Models and base URLs remain editable. Emend appends `/chat/completions`. **Refresh models** in Settings is the only model-discovery action; it sends an explicit authenticated `GET <base URL>/models` request. Opening chat or the model menu never discovers models automatically.
 
 Unsupported Web combinations fail explicitly. Emend never silently turns them into ordinary unsearched Chat or switches providers. Web research is Off by default, unavailable in Edit, and has no note writer.
 
