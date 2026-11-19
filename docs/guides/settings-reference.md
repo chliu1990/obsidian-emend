@@ -15,11 +15,11 @@ Open these controls in **Settings → Emend**. Non-secret settings persist local
 
 **Outcome:** Connect Emend to one streaming OpenAI-compatible chat endpoint.
 
-| Provider | Preset base URL | Preset model | Request token usage |
-| --- | --- | --- | --- |
-| DeepSeek | `https://api.deepseek.com` | `deepseek-flash` | On |
-| Kimi | `https://api.kimi.com/coding/v1` | `k3.1-pro` | On |
-| Custom | Empty; enter your endpoint | Empty; enter your model | Off |
+| Provider | Connection and token-usage defaults |
+| --- | --- |
+| DeepSeek | **Base URL:** `https://api.deepseek.com`<br>**Model:** `deepseek-flash`<br>**Usage:** On |
+| Kimi | **Base URL:** `https://api.kimi.com/coding/v1`<br>**Model:** `k3.1-pro`<br>**Usage:** On |
+| Custom | **Base URL:** Empty; enter your endpoint<br>**Model:** Empty; enter your model<br>**Usage:** Off |
 
 DeepSeek also offers `deepseek-v4-pro` as a built-in model. Web research is available only for DeepSeek `deepseek-flash` and `deepseek-v4-pro`. Other providers and models do not silently fall back to unsearched Chat.
 
@@ -122,10 +122,10 @@ Path sharing changes provider prompts, not what your local pickers display. Revi
 
 **Outcome:** Bound DeepSeek retrieval calls and the extracted content returned from each call.
 
-| Setting | Default | Accepted range | What it bounds |
-| --- | --- | --- | --- |
-| **Web tool call limit** | `8` | Integers `1`–`20` | Executed Search and Fetch calls for one answer. Failed calls also count. |
-| **Web output cap per call (characters)** | `20000` | Integers `1000`–`100000` | Each complete serialized Search/Fetch extraction payload. |
+| Setting | Default, range, and bound |
+| --- | --- |
+| **Web tool call limit** | **Default:** `8`<br>**Range:** Integers `1`–`20`<br>**Bounds:** Executed Search and Fetch calls for one answer. Failed calls also count. |
+| **Web output cap per call (characters)** | **Default:** `20000`<br>**Range:** Integers `1000`–`100000`<br>**Bounds:** Each complete serialized Search/Fetch extraction payload. |
 
 The output cap is independent for each executed call. Total tool-payload growth is at most cap × executed calls. These are character limits, not exact token counts or billing data.
 
@@ -156,11 +156,11 @@ Both values must be positive integers, and the window must exceed the reserve. T
 
 The following values come from model documentation. They are not account-specific responses from your provider.
 
-| Provider and exact model | Context window | Output reserve | Effective input |
-| --- | ---: | ---: | ---: |
-| DeepSeek `deepseek-flash` | `1048576` | `393216` | `655360` |
-| DeepSeek `deepseek-v4-pro` | `1048576` | `393216` | `655360` |
-| Kimi `k3.1-pro` | `1048576` | `131072` | `917504` |
+| Provider and exact model | Capacity values |
+| --- | --- |
+| DeepSeek `deepseek-flash` | **Window:** `1048576`<br>**Reserve:** `393216`<br>**Effective input:** `655360` |
+| DeepSeek `deepseek-v4-pro` | **Window:** `1048576`<br>**Reserve:** `393216`<br>**Effective input:** `655360` |
+| Kimi `k3.1-pro` | **Window:** `1048576`<br>**Reserve:** `131072`<br>**Effective input:** `917504` |
 
 DeepSeek documents 1M context and 384K maximum output for the listed models. Kimi documents up to 1M context on eligible plans and 131,072 default output. Lower-tier Kimi plans may need a smaller window.
 

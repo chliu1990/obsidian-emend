@@ -35,12 +35,12 @@ Chat needs no Track Changes because Chat has no note writer. Selection edits als
 
 Supporting context helps the model understand the request. It does not expand the permitted edit target.
 
-| Choice | Supporting context | Only edit target | Result |
-| --- | --- | --- | --- |
-| **Edit · Full note** | The complete active note. | The complete captured note. | One guarded vault write with validated CriticMarkup. |
-| **Edit · Selection** with Default Smart or Symmetric context | The complete Selection plus bounded surroundings. Smart uses containing and adjacent blocks; Symmetric uses before/after context. | Only the captured Selection. | One exact native range replacement with CriticMarkup and native undo. |
-| **Edit · Selection · Full note** | The complete note plus a separate, complete Selection target. | Only the captured Selection. | Full-note context, Selection-only write through exact native replacement. |
-| **Modify Selection** with Default or Full-note context | The complete Selection plus Default bounded surroundings or complete-note context. No chat history is sent. | Only the captured Selection. | One exact native range replacement with CriticMarkup, native undo, and a result notice. |
+| Choice | Context, target, and result |
+| --- | --- |
+| **Edit · Full note** | **Context:** The complete active note.<br>**Target:** The complete captured note.<br>**Result:** One guarded vault write with validated CriticMarkup. |
+| **Edit · Selection** with Default Smart or Symmetric context | **Context:** The complete Selection plus bounded surroundings. Smart uses containing and adjacent blocks; Symmetric uses before/after context.<br>**Target:** Only the captured Selection.<br>**Result:** One exact native range replacement with CriticMarkup and native undo. |
+| **Edit · Selection · Full note** | **Context:** The complete note plus a separate, complete Selection target.<br>**Target:** Only the captured Selection.<br>**Result:** Full-note context, Selection-only write through exact native replacement. |
+| **Modify Selection** with Default or Full-note context | **Context:** The complete Selection plus Default bounded surroundings or complete-note context. No chat history is sent.<br>**Target:** Only the captured Selection.<br>**Result:** One exact native range replacement with CriticMarkup, native undo, and a result notice. |
 
 Automatic Edit targeting chooses Selection only when usable selected text exists. Otherwise, it chooses Full note. You can also choose an explicit target in **Writing and web search**. Selecting text alone never chooses Chat Selection or grants a wider write target.
 

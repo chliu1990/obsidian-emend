@@ -16,10 +16,10 @@ You will learn how to:
 
 Ordinary Chat and Chat Selection are both read-only. Neither has a note writer. The difference is how much context you deliberately send.
 
-| Choice | Active-note context | Selection context | Write access |
-| --- | --- | --- | --- |
-| **Chat** (Ordinary Chat) | Bounded Markdown around the caret or selection in a long note. Smaller notes are sent whole. | No separate complete-focus section. | None. |
-| **Chat · Selection** | The complete note. | A separate copy of the complete captured Selection, used only as read-only focus. | None. |
+| Choice | Context and write access |
+| --- | --- |
+| **Chat** (Ordinary Chat) | **Active note:** Bounded Markdown around the caret or selection in a long note. Smaller notes are sent whole.<br>**Selection:** No separate complete-focus section.<br>**Write:** None. |
+| **Chat · Selection** | **Active note:** The complete note.<br>**Selection:** A separate copy of the complete captured Selection, used only as read-only focus.<br>**Write:** None. |
 
 See [Write permissions](privacy-and-storage.md#write-permissions) for the other workflows and their write boundaries.
 

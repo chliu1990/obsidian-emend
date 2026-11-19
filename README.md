@@ -29,14 +29,14 @@ A **Selection** is the exact text range captured when you submit. Edit requests 
 
 Supporting context helps the model understand a request. It does not grant write access or expand an edit target.
 
-| Workflow | Context sent | Write permission | Review or recovery |
-| --- | --- | --- | --- |
-| **Chat** | Bounded active-note Markdown. Small notes can be sent whole. | **None.** Chat has no note writer. | Read the streamed answer; the note stays unchanged. |
-| **Chat · Selection** | The complete note plus a separate, complete Selection as read-only focus. | **None.** Selecting text does not change this boundary. | Read the answer; no Track Changes review is needed. |
-| **Edit · Full note** | The complete active note. | The complete captured note, after atomic validation and freshness checks. | Review CriticMarkup in the separate Track Changes plugin. |
-| **Edit · Selection** | The complete Selection plus Default Smart or Symmetric surroundings. | **Only the captured Selection.** | Track Changes review or Obsidian's native undo. |
-| **Edit · Selection · Full note** | The complete note plus a separate, complete Selection target. | **Full-note context, Selection-only write.** | Track Changes review or native undo for the exact range. |
-| **Modify selected text with AI** | The complete Selection with Default or full-note context, without chat history. | **Only the captured Selection.** | A result notice, Track Changes review, or native undo. |
+| Workflow | Context, write, and review |
+| --- | --- |
+| **Chat** | **Context:** Bounded active-note Markdown. Small notes can be sent whole.<br>**Write:** **None.** Chat has no note writer.<br>**Review:** Read the streamed answer; the note stays unchanged. |
+| **Chat · Selection** | **Context:** The complete note plus a separate, complete Selection as read-only focus.<br>**Write:** **None.** Selecting text does not change this boundary.<br>**Review:** Read the answer; no Track Changes review is needed. |
+| **Edit · Full note** | **Context:** The complete active note.<br>**Write:** The complete captured note, after atomic validation and freshness checks.<br>**Review:** Review CriticMarkup in the separate Track Changes plugin. |
+| **Edit · Selection** | **Context:** The complete Selection plus Default Smart or Symmetric surroundings.<br>**Write:** **Only the captured Selection.**<br>**Review:** Track Changes review or Obsidian's native undo. |
+| **Edit · Selection · Full note** | **Context:** The complete note plus a separate, complete Selection target.<br>**Write:** **Full-note context, Selection-only write.**<br>**Review:** Track Changes review or native undo for the exact range. |
+| **Modify selected text with AI** | **Context:** The complete Selection with Default or full-note context, without chat history.<br>**Write:** **Only the captured Selection.**<br>**Review:** A result notice, Track Changes review, or native undo. |
 
 All Edit paths compile valid Operations into CriticMarkup. A failed candidate, stale source, or cancelled request produces no partial write. See [Editing and review](docs/guides/editing-and-review.md) for recipes and validation details.
 
@@ -68,11 +68,11 @@ These capabilities are implemented on `main`; they do not promise automatic cont
 - The separate [Track Changes community plugin](https://github.com/philphilphil/obsidian-track-changes) to review Emend edits. Chat works without it.
 - Node.js **24** and npm only when building from source.
 
-| Provider | Preset model and base URL | Chat and Edit | Web Review / Auto |
-| --- | --- | --- | --- |
-| DeepSeek | `deepseek-flash` at `https://api.deepseek.com`; `deepseek-v4-pro` is also built in | Supported | Only with exactly `deepseek-flash` or `deepseek-v4-pro` |
-| Kimi | `k3.1-pro` at `https://api.kimi.com/coding/v1` | Supported | Not supported |
-| Custom | Your model and OpenAI-compatible base URL | Supported when the endpoint streams chat completions | Not supported |
+| Provider | Model, Chat/Edit, and Web support |
+| --- | --- |
+| DeepSeek | **Preset:** `deepseek-flash` at `https://api.deepseek.com`; `deepseek-v4-pro` is also built in<br>**Chat/Edit:** Supported<br>**Web:** Only with exactly `deepseek-flash` or `deepseek-v4-pro` |
+| Kimi | **Preset:** `k3.1-pro` at `https://api.kimi.com/coding/v1`<br>**Chat/Edit:** Supported<br>**Web:** Not supported |
+| Custom | **Preset:** Your model and OpenAI-compatible base URL<br>**Chat/Edit:** Supported when the endpoint streams chat completions<br>**Web:** Not supported |
 
 Models and base URLs remain editable. Emend appends `/chat/completions`. **Refresh models** in Settings is the only model-discovery action; it sends an explicit authenticated `GET <base URL>/models` request. Opening chat or the model menu never discovers models automatically.
 

@@ -12,14 +12,14 @@ The table describes the note context for each workflow. Every workflow can also 
 
 Chat, Full-note Edit, and composer Selection can include recent ready messages from the originating chat session. Your history setting controls how many messages are included. Modify Selection sends no chat history.
 
-| Workflow | Context sent | Can write? | Where to review |
-| --- | --- | --- | --- |
-| Ordinary Chat | Bounded active-note Markdown. | **No.** Chat has no note writer. | Read the Chat response. The note remains unchanged. |
-| Chat Selection | The complete note plus the complete captured Selection as read-only focus. | **No.** Chat has no note writer. | Read the Chat response. The note remains unchanged. |
-| Full-note Edit | The complete active note. | **Yes.** Emend uses its guarded vault writer after validation and freshness checks. | Review CriticMarkup in the note with Track Changes. |
-| composer Selection with Default context (`Edit · Selection`) | The complete captured Selection plus bounded Smart or Symmetric surroundings. | **Yes, only the captured Selection.** Emend uses exact native range replacement. | Review CriticMarkup with Track Changes, or use native undo. |
-| Selection with Full-note context (`Edit · Selection · Full note`) | The complete note plus a separate, complete Selection target. | **Yes, only the captured Selection can change.** Full-note context never expands the write target. | Review CriticMarkup with Track Changes, or use native undo. |
-| Modify Selection | The complete captured Selection with Default bounded context or Full-note context. No chat history is sent. | **Yes, only the captured Selection can change.** Full-note context never expands the write target. Emend uses exact native range replacement. | Review CriticMarkup with Track Changes, or use native undo. The modal shows result notices. |
+| Workflow | Context, write, and review |
+| --- | --- |
+| Ordinary Chat | **Context:** Bounded active-note Markdown.<br>**Write:** **No.** Chat has no note writer.<br>**Review:** Read the Chat response. The note remains unchanged. |
+| Chat Selection | **Context:** The complete note plus the complete captured Selection as read-only focus.<br>**Write:** **No.** Chat has no note writer.<br>**Review:** Read the Chat response. The note remains unchanged. |
+| Full-note Edit | **Context:** The complete active note.<br>**Write:** **Yes.** Emend uses its guarded vault writer after validation and freshness checks.<br>**Review:** Review CriticMarkup in the note with Track Changes. |
+| composer Selection with Default context (`Edit · Selection`) | **Context:** The complete captured Selection plus bounded Smart or Symmetric surroundings.<br>**Write:** **Yes, only the captured Selection.** Emend uses exact native range replacement.<br>**Review:** Review CriticMarkup with Track Changes, or use native undo. |
+| Selection with Full-note context (`Edit · Selection · Full note`) | **Context:** The complete note plus a separate, complete Selection target.<br>**Write:** **Yes, only the captured Selection can change.** Full-note context never expands the write target.<br>**Review:** Review CriticMarkup with Track Changes, or use native undo. |
+| Modify Selection | **Context:** The complete captured Selection with Default bounded context or Full-note context. No chat history is sent.<br>**Write:** **Yes, only the captured Selection can change.** Full-note context never expands the write target. Emend uses exact native range replacement.<br>**Review:** Review CriticMarkup with Track Changes, or use native undo. The modal shows result notices. |
 
 Native range replacement preserves Obsidian's native undo for Selection edits. Full-note Edit instead checks the saved note and every open editor for that note before one guarded vault write.
 
@@ -29,13 +29,13 @@ Emend writes validated edits as CriticMarkup, a markup format for reviewing prop
 
 Your selected provider receives every ordinary Chat or Edit submission. The request contains your instruction and the context described in [Write permissions](#write-permissions). The configured API key authenticates the request.
 
-| Round or service | Recipient | Data shared | When it runs |
-| --- | --- | --- | --- |
-| Ordinary provider submission | Your selected DeepSeek, Kimi, or custom provider endpoint. | Your instruction, workflow context, permitted history, instructions and skills, and bounded Related-note snapshots. | Every explicit Chat or Edit submission. |
-| One Edit correction | The same provider and model. | The original request, the invalid candidate, and bounded validation feedback. | At most once after candidate validation fails. Provider, stale-note, and write failures do not trigger it. |
-| DeepSeek Search/Fetch | DeepSeek's retrieval endpoints. | Only the validated search query or fetch URL, plus authentication. | Only during an opted-in Web flow for a supported DeepSeek model. |
-| Extractor | The same DeepSeek provider and model. | The current typed question, extraction goal, retrieval target, source catalog, and bounded local inspection results. | Once for each readable Search or Fetch result. It has empty chat history and receives no note, instruction, or Related-note context. |
-| Verifier and refine rounds | The same DeepSeek provider and model. | The question, goal, claims, and exact quotes. Refine also receives the retrieval target and verifier reasons. | After extraction, to check or revise claims. These rounds have empty history and receive no note or chat context. |
+| Round or service | Recipient, shared data, and timing |
+| --- | --- |
+| Ordinary provider submission | **Recipient:** Your selected DeepSeek, Kimi, or custom provider endpoint.<br>**Shared:** Your instruction, workflow context, permitted history, instructions and skills, and bounded Related-note snapshots.<br>**When:** Every explicit Chat or Edit submission. |
+| One Edit correction | **Recipient:** The same provider and model.<br>**Shared:** The original request, the invalid candidate, and bounded validation feedback.<br>**When:** At most once after candidate validation fails. Provider, stale-note, and write failures do not trigger it. |
+| DeepSeek Search/Fetch | **Recipient:** DeepSeek's retrieval endpoints.<br>**Shared:** Only the validated search query or fetch URL, plus authentication.<br>**When:** Only during an opted-in Web flow for a supported DeepSeek model. |
+| Extractor | **Recipient:** The same DeepSeek provider and model.<br>**Shared:** The current typed question, extraction goal, retrieval target, source catalog, and bounded local inspection results.<br>**When:** Once for each readable Search or Fetch result. It has empty chat history and receives no note, instruction, or Related-note context. |
+| Verifier and refine rounds | **Recipient:** The same DeepSeek provider and model.<br>**Shared:** The question, goal, claims, and exact quotes. Refine also receives the retrieval target and verifier reasons.<br>**When:** After extraction, to check or revise claims. These rounds have empty history and receive no note or chat context. |
 
 The main answering model receives verified claims with quotes, or quotes-only evidence. It does not receive raw retrieved pages from the extraction loop. Retrieved text is untrusted data, not instructions.
 
@@ -57,15 +57,15 @@ Web research remains read-only. Unsupported providers or models fail with an exp
 
 ## Local data
 
-| Data | Location | What is kept | Lifetime and reload behavior |
-| --- | --- | --- | --- |
-| Provider API keys | Obsidian SecretStorage under `emend-api-key-deepseek`, `emend-api-key-kimi`, and `emend-api-key-custom`. | The provider credentials. Plugin `data.json` always stores empty `apiKey` fields. | SecretStorage values survive reload and plugin-folder removal. An in-memory fallback, used when no stored secret is available, does not survive reload. |
-| Emend settings | `<Vault>/.obsidian/plugins/emend/data.json`. | Non-secret provider configuration, privacy choices, history limits, capacity values, and other settings. | Settings survive reload. Removing the Emend plugin folder removes this file. |
-| Saved chats | Versioned chat files under `<Vault>/.obsidian/emend/chats/`. | Completed, saved messages with source note paths, concise Edit results, main reasoning, usage, and sanitized Web citations and activity. | Saved sessions and their order survive reload. Drafts and unfinished responses are excluded. |
-| Drafts and unfinished responses | Memory only. | Composer drafts, loading or stopped responses, errors, and provisional Web draft text. | Drafts survive note and session switches in the same view lifetime. Everything in this row clears on reload and is not written to saved chats. |
-| Additional-note selections and snapshots | Memory only. | Selected paths, helper choices, and submission-time note snapshots. | Selections survive note switches for the same target. Snapshots are request-only. Selections clear on reload, and neither is persisted. |
-| Raw retrieval and temporary Web extraction and verification data | Temporary request memory only. | Retrieved content, tool arguments and results, extracted evidence, processing reasoning, and transient failure details. | This data is discarded after the request. It is never written to saved chats. |
-| Buffered edit responses | Temporary request memory only. | Raw JSON candidates, compiled responses, and correction feedback. | These artifacts are discarded after validation or failure. Only the concise Edit result can persist. |
+| Data | Location, kept content, and lifetime |
+| --- | --- |
+| Provider API keys | **Location:** Obsidian SecretStorage under `emend-api-key-deepseek`, `emend-api-key-kimi`, and `emend-api-key-custom`.<br>**Kept:** The provider credentials. Plugin `data.json` always stores empty `apiKey` fields.<br>**Lifetime:** SecretStorage values survive reload and plugin-folder removal. An in-memory fallback, used when no stored secret is available, does not survive reload. |
+| Emend settings | **Location:** `<Vault>/.obsidian/plugins/emend/data.json`.<br>**Kept:** Non-secret provider configuration, privacy choices, history limits, capacity values, and other settings.<br>**Lifetime:** Settings survive reload. Removing the Emend plugin folder removes this file. |
+| Saved chats | **Location:** Versioned chat files under `<Vault>/.obsidian/emend/chats/`.<br>**Kept:** Completed, saved messages with source note paths, concise Edit results, main reasoning, usage, and sanitized Web citations and activity.<br>**Lifetime:** Saved sessions and their order survive reload. Drafts and unfinished responses are excluded. |
+| Drafts and unfinished responses | **Location:** Memory only.<br>**Kept:** Composer drafts, loading or stopped responses, errors, and provisional Web draft text.<br>**Lifetime:** Drafts survive note and session switches in the same view lifetime. Everything in this row clears on reload and is not written to saved chats. |
+| Additional-note selections and snapshots | **Location:** Memory only.<br>**Kept:** Selected paths, helper choices, and submission-time note snapshots.<br>**Lifetime:** Selections survive note switches for the same target. Snapshots are request-only. Selections clear on reload, and neither is persisted. |
+| Raw retrieval and temporary Web extraction and verification data | **Location:** Temporary request memory only.<br>**Kept:** Retrieved content, tool arguments and results, extracted evidence, processing reasoning, and transient failure details.<br>**Lifetime:** This data is discarded after the request. It is never written to saved chats. |
+| Buffered edit responses | **Location:** Temporary request memory only.<br>**Kept:** Raw JSON candidates, compiled responses, and correction feedback.<br>**Lifetime:** These artifacts are discarded after validation or failure. Only the concise Edit result can persist. |
 
 Malformed conversation data is preserved. Before the first valid replacement, Emend writes the original bytes to a `.corrupt` backup if that backup does not already exist. Unsupported schema versions are not overwritten. [Stage 43](../../devel_docs/43-multiple-chat-sessions.md) records the exact storage and migration rules.
 
