@@ -2,16 +2,22 @@
 
 Emend is a desktop-only Obsidian plugin. Mobile Obsidian is not supported.
 
+> **Pre-release status:** This guide tracks the upcoming 2.10 release on `main`. Until it is published, BRAT and the [latest release ZIP](https://github.com/chliu1990/obsidian-emend/releases) install the latest released feature set. [Build this branch from source](#build-from-source) to use the workflows described here.
+
 ## Requirements
 
 - Desktop Obsidian **1.11.4 or newer**.
-- The **Track Changes** community plugin for reviewing edits.
 - Node.js **24** and npm if building from source.
-- A DeepSeek, Kimi, or other OpenAI-compatible provider. You need an API key and an available model. A local OpenAI-compatible endpoint also works when it permits requests from Obsidian.
+- A DeepSeek, Kimi, or other OpenAI-compatible provider with an API key and available model. A local endpoint also works when it permits requests from Obsidian.
+- The separate **Track Changes** community plugin if you want to review Emend edits.
+
+> **Separate review plugin:** Emend validates edits and writes CriticMarkup. The separate [Track Changes community plugin](https://github.com/philphilphil/obsidian-track-changes) visualizes that markup and supplies Accept/Reject controls. Chat does not require Track Changes. Emend does not bundle or automatically install other plugins.
+
+Before installing BRAT or Track Changes, open **Settings → Community plugins** and turn off **Restricted mode** if it is enabled. Community plugins cannot be installed or enabled while Restricted mode is on.
 
 ## Install with BRAT
 
-**BRAT — Beta Reviewers Auto-update Tool** installs and updates plugins directly from GitHub releases, which is useful when a plugin is not listed in the Obsidian Community Directory.
+**BRAT — Beta Reviewers Auto-update Tool** installs and updates plugins directly from GitHub releases.
 
 1. Open **Settings → Community plugins → Browse**, search for **BRAT — Beta Reviewers Auto-update Tool**, then install and enable it.
 2. Open the BRAT settings and choose **Add beta plugin**.
@@ -21,18 +27,17 @@ Emend is a desktop-only Obsidian plugin. Mobile Obsidian is not supported.
    https://github.com/chliu1990/obsidian-emend
    ```
 
-4. Select the latest release, or choose `2.8.0` if BRAT asks for a specific version.
-5. After BRAT installs Emend, enable **Emend** and **Track Changes** under **Settings → Community plugins**.
-6. Continue with **Enable the plugins** below, then configure a provider in [QUICK_START.md](QUICK_START.md).
+4. Select the latest release if BRAT asks for a specific version.
+5. After BRAT installs Emend, continue with [Enable Emend and prepare edit review](#enable-emend-and-prepare-edit-review). BRAT installs Emend only, not Track Changes.
 
-For updates, use BRAT’s update check and review the release notes before updating. Provider settings remain in Obsidian SecretStorage and conversations remain in the vault. See the [official BRAT documentation](https://tfthacker.com/BRAT) for more options.
+For updates, use BRAT's update check and review the release notes first. Provider credentials remain in Obsidian SecretStorage, and saved chats remain in the vault. See the [official BRAT documentation](https://tfthacker.com/BRAT) for more options.
 
 ## Install from the release ZIP
 
-1. Open the [GitHub releases page](https://github.com/chliu1990/obsidian-emend/releases) and download the ZIP for the current version (named `emend-<version>.zip`).
+1. Open the [GitHub releases page](https://github.com/chliu1990/obsidian-emend/releases) and download `emend-<version>.zip` for the current release.
 2. Extract the ZIP into `<Vault>/.obsidian/plugins/`. The archive already contains a top-level `emend/` folder.
 3. Confirm that `main.js`, `manifest.json`, and `styles.css` are directly inside `<Vault>/.obsidian/plugins/emend/`.
-4. Continue with **Enable the plugins** below.
+4. Continue with [Enable Emend and prepare edit review](#enable-emend-and-prepare-edit-review).
 
 Do not extract into `<Vault>/.obsidian/plugins/emend/`; that would create an incorrect nested `emend/emend/` folder.
 
@@ -73,7 +78,7 @@ npm run lint
 
 ## Install into a vault
 
-Replace `/path/to/your/vault` with the vault you want to use for testing, then run:
+Replace `/path/to/your/vault` with the vault you want to use, then run:
 
 ```bash
 VAULT="/path/to/your/vault"
@@ -95,43 +100,53 @@ your-vault/
 
 On Windows, create the same folder and copy the three files with Explorer. Do not put the files in a nested `emend/emend/` folder.
 
-## Enable the plugins
+## Enable Emend and prepare edit review
 
-1. Open the vault in desktop Obsidian.
-2. Open **Settings → Community plugins** and turn off Restricted mode if Obsidian asks.
-3. Install and enable **Track Changes** from the community plugin directory.
-4. Select **Reload plugins** or restart Obsidian, then enable **Emend**.
-5. Open **Settings → Emend** and configure a provider as described in [QUICK_START.md](QUICK_START.md).
+1. If you will edit notes, open **Settings → Community plugins → Browse**. Install and enable the separate **Track Changes** plugin before enabling Emend. Skip this step if you will use only Chat.
+2. Select **Reload plugins** or restart Obsidian, then enable **Emend**.
+3. Open **Settings → Emend** and configure a provider as described in the [Quick Start](QUICK_START.md#2-configure-a-provider).
 
-If Emend was already enabled, use **Reload app without saving** from the Command Palette after replacing its files.
+If Emend was already enabled, use **Reload app without saving** from the Command Palette after replacing its files. Track Changes is required only for edit review; its absence never changes Chat's read-only behavior.
 
 ## Update a source installation
 
-From the repository:
+From the repository, replace `/path/to/your/vault` with the vault you want to update, then run:
 
 ```bash
 git pull --ff-only
 npm ci
 npm run build
+VAULT="/path/to/your/vault"
 cp main.js manifest.json styles.css "$VAULT/.obsidian/plugins/emend/"
 ```
 
-Reload Obsidian. Provider settings and saved conversations remain local to the vault.
+Confirm that the three files are directly inside `"$VAULT/.obsidian/plugins/emend/"` before reloading Obsidian. Provider settings and saved conversations remain local to the vault.
 
 ## Remove Emend
+
+Disabling Emend preserves its settings, credentials, and saved chats. Remove each kind of data separately when you want a complete cleanup.
+
+### API keys
+
+Clear each provider's API key in **Settings → Emend** before removing the plugin if you also want to remove its credential. API keys live separately in Obsidian SecretStorage under `emend-api-key-deepseek`, `emend-api-key-kimi`, and `emend-api-key-custom`. Removing the plugin folder alone does not clear those secrets.
+
+### Plugin settings and files
 
 1. Disable **Emend** under **Settings → Community plugins**.
 2. Remove `<Vault>/.obsidian/plugins/emend/` from the vault.
 
-Disabling Emend preserves its settings and chats. Removing `<Vault>/.obsidian/plugins/emend/` removes its `data.json` and non-secret provider settings, but API keys live separately in Obsidian SecretStorage under `emend-api-key-deepseek`, `emend-api-key-kimi`, and `emend-api-key-custom`. Clear each provider's API key in Emend settings before removal if you also want to remove its stored credential; uninstalling the plugin folder alone does not clear those secrets. Saved conversations remain under `<Vault>/.obsidian/emend/`; remove that directory separately if you want to delete them. Do not share either location.
+Removing that folder removes Emend's `data.json` and non-secret provider settings. Do not share this folder or its settings with untrusted recipients.
 
-Current editing always uses validated JSON Operations compiled into CriticMarkup for Track Changes; there is no strategy setting to migrate or select. DeepSeek and Kimi presets remain editable. Supported DeepSeek models include default-off read-only web research. Deferred context-management and other-provider search designs are linked from the [README](README.md#documentation) and are not installed features.
+### Saved chats
+
+Saved conversations remain under `<Vault>/.obsidian/emend/`. Remove that directory separately if you want to delete them. Deleting a note does not automatically delete its saved chat aggregate.
 
 ## Troubleshooting
 
 - **Emend does not appear:** Confirm that `manifest.json` is directly inside `.obsidian/plugins/emend/`, the manifest ID is `emend`, and you reloaded plugins.
 - **Emend does not load:** Use desktop Obsidian 1.11.4 or newer and confirm that all three required files came from the same build.
-- **No review cards appear:** Enable Track Changes and use Edit mode or **Modify selected text with AI**. Ask, Discuss, and Brainstorm never edit notes.
-- **Provider returns an error:** Check the base URL, model, API key, and provider support for streamed OpenAI-compatible responses. Emend appends `/chat/completions` to the base URL.
-- **Custom provider rejects usage requests:** Disable **Request token usage** for that provider. Emend does not retry rejected requests automatically.
-- **Local provider refuses the request:** Confirm that it accepts Obsidian's desktop `fetch` requests and any required CORS preflight. No alternate transport is used.
+- **Emend still does not appear after extraction:** Check for an incorrect nested `emend/emend/` directory and move the complete inner `emend/` folder into `.obsidian/plugins/`.
+- **No review cards appear after an Edit:** Install and enable the separate Track Changes plugin, then review the note again. Chat never edits notes and does not produce review cards.
+- **An update does not appear in Obsidian:** Confirm that BRAT updated the release or that the three manually copied files came from the new build. Reload plugins or restart Obsidian.
+
+For provider configuration, see the [settings reference](docs/guides/settings-reference.md#configure-a-provider). For Edit and review problems, see [Editing and review](docs/guides/editing-and-review.md). For research-specific behavior, see [Web research](docs/guides/web-research.md).

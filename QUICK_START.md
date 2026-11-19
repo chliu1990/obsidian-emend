@@ -1,10 +1,12 @@
 # Emend quick start
 
-Use this guide after installing Emend with [INSTALLATION.md](INSTALLATION.md). It uses a small test note so you can verify chat, guarded editing, Track Changes, and selection editing on your machine.
+Complete this path once to verify your provider, read-only Chat, guarded editing, Track Changes review, Selection-only writing, and native undo. Use a disposable note so every result is safe to inspect or discard.
 
-## 1. Prepare a safe test note
+**Prerequisites:** [Install and enable Emend](INSTALLATION.md). Install and enable the separate **Track Changes** plugin for the edit-review steps. Chat does not require Track Changes.
 
-Create a separate test vault or a disposable note in an existing vault. Start with:
+## 1. Prepare a disposable note
+
+Create a separate test vault or a disposable note in an existing vault. Add:
 
 ```markdown
 # Emend test
@@ -17,180 +19,117 @@ This sentence have a small grammar problem.
 - Second idea
 ```
 
-Keep another copy if you want to compare results. Emend's **Chat** composer never edits notes; **Edit** and Modify Selection write validated CriticMarkup for Track Changes review.
+Keep the note open. The first edit adds an idea without changing this sentence, so you can use the sentence for the later Selection exercise.
 
 ## 2. Configure a provider
 
-Open **Settings → Emend**, choose a provider, and fill in its settings.
+Open **Settings → Emend**, choose **Active provider**, and enter its API key, base URL, and model.
 
-### DeepSeek
+| Provider | Preset model |
+| --- | --- |
+| DeepSeek | `deepseek-flash` |
+| Kimi | `k3.1-pro` |
+| Custom | A model available on that endpoint. |
 
-- Base URL: `https://api.deepseek.com`
-- API key: your DeepSeek key
-- Model: `deepseek-flash`; replace the preset if your account uses a different name
+Base URLs: DeepSeek `https://api.deepseek.com`; Kimi `https://api.kimi.com/coding/v1`; Custom your OpenAI-compatible base URL. The endpoint must support streaming chat completions. Emend appends `/chat/completions` to the base URL.
 
-### Kimi
+Reasoning effort defaults to **High**; choose a level your model supports. **Request token usage** defaults on for DeepSeek and Kimi, and off for Custom. Disable it if your provider rejects `stream_options`.
 
-- Base URL: `https://api.kimi.com/coding/v1`
-- API key: your Kimi Code key
-- Model: `k3.1-pro`; replace the preset if needed
+API keys are stored in Obsidian SecretStorage, not plaintext Emend settings. Use a preset or enter a model directly; optional discovery stays in Settings.
 
-### Custom OpenAI-compatible provider
+For compatibility details, see [Configure a provider](docs/guides/settings-reference.md#configure-a-provider).
 
-- Base URL: the provider's OpenAI-compatible root, such as `http://localhost:11434/v1`
-- API key: the provider key, or a dummy value if your local server only requires a nonempty key
-- Model: a model available on that server
+## 3. Ask a question in ordinary Chat
 
-Emend appends `/chat/completions` to the base URL. The provider must support streaming. Reasoning effort defaults to **High**; choose another level if the model does not support it. **Request token usage** is enabled for DeepSeek/Kimi and disabled for custom providers. Disable it if your provider rejects `stream_options`.
-
-API keys are stored in Obsidian SecretStorage, not as plaintext in Emend's `data.json`. Existing plaintext keys migrate automatically on load. Clearing a key in settings removes that provider's stored credential; removing the plugin folder alone does not. Do not use a real key in screenshots or shared test files.
-
-The editable presets above are DeepSeek `deepseek-flash` and Kimi `k3.1-pro`. Operations is the only editing protocol; there is no CriticMarkup strategy selector. DeepSeek `deepseek-flash` and `deepseek-v4-pro` support default-off **Web Review / Web Auto** research through Chat's **Writing and web search** menu; other providers and editing paths do not. Automatic context compression and other-provider search adapters remain deferred; see the [context-management roadmap](devel_docs/future-context-management.md) and [remaining web-search work](devel_docs/future-web-search.md).
-
-**Refresh models** is available only in **Settings → Emend**. Clicking it explicitly sends an authenticated `GET <base URL>/models`; discovery never runs automatically, and failures preserve the previous list. Custom model names remain editable as text in Settings. In chat, click the provider/model/reasoning button between **Writing and web search** and Send. The **Model** section lists only providers with a nonempty API key and a usable built-in, discovered, or current model; Custom needs both key and model, and disabled **No available models** appears when none qualify. The separate **Reasoning effort** section applies only to the active provider. Choosing a model preserves that provider's effort; choosing effort preserves its latest current model. Availability uses SecretStorage rather than plaintext settings, and adding/removing a key in Settings refreshes open views through the existing save path without discovery. Opening or selecting from that menu performs no provider request or note read/write; a selection makes one sanitized local settings save and refreshes open chat views and capacity estimates.
-
-### Context capacity (optional)
-
-Set **Context window (tokens)** and **Output reserve (tokens)** manually, or explicitly click **Use documented defaults** when that action is available. Both are required together, must be positive integers, and the window must be larger than the reserve; effective input capacity is `window − reserve`. Leave both empty, or use **Clear capacity settings**, to turn capacity checks off. An invalid pair shows a warning in settings and blocks requests until you fix it. The reserve is local accounting only — it is never sent as `max_tokens`.
-
-Emend does not infer or fetch limits. The documented-defaults catalog contains only DeepSeek `deepseek-flash` and `deepseek-v4-pro` at window `1048576` / reserve `393216` (1M context, 384K maximum output), and Kimi `k3.1-pro` at window `1048576` / reserve `131072` (up to 1M context on eligible plans and 131,072 default output; lower-tier plans may need a smaller window). These are model documentation values, not a response from your account. The button overwrites existing values only when clicked; model selection and settings loading apply nothing automatically, custom and unknown models remain manual, and no provider metadata call is added.
-
-A slim capacity bar then appears directly below the compact chat header; the selection modal uses the same bar below its title. Its known-input and free-input segments share the window with a right-hand output allowance. For window `W`, reserve `R`, and estimated known input `I`, remaining input is `max(0, W − R − I)` and remaining output is `max(0, min(R, W − I))`, so the output partition shrinks when input grows past effective capacity. Hover or keyboard-focus the bar for estimated input, remaining input/output, window/reserve, and per-category tokens. Category text matches its segment color, and the meter's accessible name comes from its summary without a separate native **Context capacity** hover tag. Click to pin the details, and use outside click or **Escape** to dismiss them. The bar updates as you type, move the caret, change Chat/Edit or its target, select Related notes, or change settings. There is no composer meter, gray unknown segment, or compact-context button.
-
-Draft estimates leave out loaded instructions/skills, additional-note contents, the first Web round's system prompt and tool declarations, and later Web or correction rounds. The floating details call remaining input a lower-bound estimate and list those exclusions; Emend does not read additional-note contents or estimate instructions to fill the bar. Unconfigured and invalid settings show text without a fabricated proportional partition, and the exact check at submission still decides.
-
-When a draft is at or above capacity, Send and the affected quick actions are disabled and **Enter**/**Mod+Enter** show a notice instead of submitting; nothing is sent and nothing is written. A request rejected by the exact check shows a capacity error with guidance (reduce context, history, additional notes, or Web output, use a smaller selection, or select a smaller target), adds no answer, writes nothing, and can be retried after you reduce the request or raise the limit. Emend never compresses, summarizes, or truncates context to make a request fit.
-
-## 3. Test read-only chat
-
-1. Open the test note.
-2. Select the Emend ribbon icon or run **Open Emend chat** from the Command Palette.
-3. Choose **Chat** in **Writing and web search** and send:
+1. Open Emend chat from the ribbon or run **Open Emend chat** from the Command Palette.
+2. Choose **Chat** in **Writing and web search**.
+3. Send:
 
    ```text
-   What is the main topic of this note? Reply with one sentence and show $x^2$ as inline math.
+   What is the main topic of this note? Reply with one sentence.
    ```
 
-4. Confirm that the answer streams into chat, reasoning is folded when present, and the note does not change. Chat has no Edit quick actions. The provider/model/reasoning button beside Send opens the model menu without submitting or saving; an actual selection performs one sanitized local settings save, preserves your draft, and takes effect on the next actual request.
-5. Click **Related notes** and explicitly choose another Markdown note in the explorer. Use **All** for current vault Markdown paths or **Links** for resolved outgoing/incoming links; search full paths, select individual notes or folders, and try Select-all. Folder and Select-all helpers apply to the complete current All/Links scope, including search-hidden results. The trigger shows the selected count; expand **Selected notes** to review full paths and use **Remove** or **Clear all**. Opening, searching, selecting, removing or clearing selections, and switching notes send no provider request and read no additional-note content before submission.
-6. Submit another question and confirm that the response can use the selected note while neither the active note nor the additional note changes. Additional-note content is read-only context in Chat, Edit, and Modify Selection.
-7. Select multiline text and choose **Chat · Selection**. Submit a question and confirm that the request uses the complete note as supporting context plus a separate complete selection as read-only focus, even when both exceed the ordinary bounded context budget. The note remains unchanged. Empty, whitespace-only, or vanished selections show `Select non-whitespace text first.` with no message, save, request, retrieval, or ordinary-Chat fallback. Supported DeepSeek models retain Review/Auto with **Chat · Selection · Review search** or **Chat · Selection · Auto search** summaries.
+4. Wait for the streamed answer. Use **Stop** if you want to cancel it.
 
-Selections are independent for each active target note, survive switching between notes during the current plugin session, and clear when the Emend plugin or Obsidian reloads. They are not saved in conversations or plugin settings. Renaming a selected note or folder updates true path descendants without changing sibling-prefix paths; deleting removes affected selections and helpers. If a selected path goes missing before capture, the request fails safely before contacting the provider, so remove the missing entry and retry.
+**Expected result:** The answer appears in chat, and the note remains unchanged. Ordinary Chat sends bounded note context and has no note writer. No Track Changes review is needed.
 
-Opening captures one path/metadata snapshot; All/Links switching and search do not update it. Click **Refresh** explicitly after adding, deleting, renaming, or linking notes. One Refresh preserves manual paths, removes stale helper-only paths, adds current helper matches, and re-adds individually removed paths whose helpers remain active. Deselecting a folder or Select-all removes only that helper and preserves manual or overlapping-helper membership; removed helpers never return on Refresh. Links uses Obsidian's resolved-link/file-cache metadata only and displays a limitation while indexing is incomplete—Emend does not scan bodies to find links. Automatic linked/folder inclusion, background indexing, and automatic TOCs are not part of this workflow.
+Press **Enter** to send, or **Shift+Enter** for a newline. **Cmd+Enter** on macOS and **Ctrl+Enter** on Windows/Linux also send.
 
-The current **Context size** setting is a separate combined source-character budget for all additional notes. Emend divides the remaining budget fairly in selection order and gives unused capacity from shorter notes to later notes. Large notes are included from their beginnings with `[...]` at omitted edges. Selection alone does not read content; submission resolves and reads the selected notes freshly. The active-note and selection-context budgets behave as before.
+## 4. Make a Full-note Edit
 
-Useful controls:
-
-- **Enter** or **Cmd+Enter** sends on macOS; **Ctrl+Enter** sends on Windows/Linux.
-- **Shift+Enter** inserts a newline.
-- **Cmd+Shift+A/E** on macOS or **Ctrl+Shift+A/E** on Windows/Linux selects Chat/Edit without sending.
-- **Stop** aborts an in-flight request. **Copy** copies a completed answer.
-
-### Multiple chat sessions
-
-Use the **Chat session** selector and its icon actions directly below the capacity bar and above messages to manage independent conversations for the active note:
-
-1. Send a question, then use **New chat session** to start another conversation. Switch among at least three sessions and confirm that each restores its own messages and unsent draft. Provider history comes only from the active session; another session's messages are not sent.
-2. Use **Rename chat session** to pin a manual title. Automatic titles derive locally from the prompt only after a successful assistant response; stopped, failed, aborted, and management-only actions do not set them. No AI naming or summarization request is made.
-3. **Delete chat session** asks for confirmation; deleting the active session selects its next sibling, otherwise its previous sibling. Deleting the last session leaves an empty saved aggregate and a runtime-only New chat. Reordering is deferred to a future session management page; the current chat has no Move controls.
-4. Switch sessions and confirm that the Chat/Edit choice, Chat target, retained Chat Web choice, automatic or explicit Edit target, Selection-context policy, and Related notes selections remain unchanged, while the capacity estimate uses the newly active session's draft and history. An actual target-note change resets Chat Selection to ordinary Chat and Selection context to Default. A pending request still locks the whole note, including its other sessions and Modify Selection.
-5. Reload Obsidian and confirm that the last active session, manual order, ready messages, usage, and sanitized Web/Edit results restore. Unsent drafts and loading, stopped, or error content do not persist.
-6. Existing schema 1/2 threads open as one legacy session without an eager rewrite and become schema 3 on the first valid mutation. Malformed files stay unchanged until a valid mutation creates the `.corrupt` backup; unsupported future versions reject every mutation without overwriting bytes.
-
-### Capacity bar and blocked requests
-
-When capacity is configured, the compact bar directly below the chat header carries the accessible summary `Estimated input: N tokens of M effective capacity.` and updates on typing, caret or selection moves, Chat/Edit and target changes, Related notes changes, and settings changes. Hover or focus the bar for estimated and remaining input/output, window, reserve, and per-category tokens. Click to pin the floating details; pointer exit or focus loss hides an unpinned panel, while outside click or **Escape** dismisses it. No capacity meter appears below the composer.
-
-The estimate leaves out loaded instructions and skills, additional-note contents, the first Web round's system prompt and tool declarations, and later Web or correction rounds. The details identify remaining input as a lower-bound estimate and list these exclusions; there is no unknown-input segment or compact-context button. A passing draft can therefore still be rejected by the exact submission check. With no configured window, or with invalid settings, Emend shows text and details without inventing a proportional bar or output partition.
-
-At or above capacity, or with an invalid window/reserve pair, Send and the affected quick actions are disabled and **Enter**/**Mod+Enter** show a notice instead of sending. A rejected request shows a capacity error naming the required input and the effective capacity, adds no answer, and writes nothing; reduce the draft, chat history, target, or additional notes, or raise the limit, then retry. The Command Palette selection modal shows the same compact bar and floating details for its captured selection.
-
-## 4. Test a full-note edit
-
-1. Choose **Edit · Full note** in **Writing and web search**, then send:
+1. Choose **Edit · Full note** in **Writing and web search**.
+2. Send:
 
    ```text
-   Correct the grammar mistake and add one short third idea.
+   Add one short third idea under Ideas. Do not change the existing text.
    ```
 
-2. Confirm that chat shows an edit confirmation rather than the full rewritten note.
-3. Open the Track Changes review surface. You should see the correction and insertion as reviewable changes. Even if the model replaces a whole sentence or paragraph, Emend reduces the review markup to deterministic word/segment-level hunks where practical; it does not produce character-minimal fragments.
-4. Accept or reject the changes in Track Changes. Emend itself has no Apply/Reject buttons.
+3. Wait for the concise result in chat. It should identify `Target: Full note.` and summarize the proposed change.
 
-In Edit, select **Fix grammar**, **Make concise**, or **Add examples** above the composer. Each submits one visible request through the same guarded path and displayed target. Chat hides these Edit-only actions.
+**Expected result:** Emend sends the complete note, validates the model's Operations, and writes CriticMarkup through its guarded full-note path. CriticMarkup is the review markup understood by Track Changes. Chat shows a result summary rather than a raw rewritten note.
 
-An invalid candidate causes exactly one automatic correction request to the same provider, so one submission can make at most two provider calls. The correction includes the unchanged original request, the invalid response, and bounded actionable validation feedback. A second invalid response writes nothing and shows the final diagnostic. Provider errors, Stop, stale notes, and write failures do not trigger another correction round. Composer Edit token usage, including Selection, covers every attempted round.
+A quick action such as **Fix grammar**, **Make concise**, or **Add examples** uses the same displayed target and guarded path. Do not use one for this exercise because the next step needs the original sentence.
 
-## 5. Test selection-only editing
+## 5. Review in Track Changes
 
-1. Select only `This sentence have a small grammar problem.` and focus Emend chat. The maintained automatic target is **Selection** with usable selected text and **Full note** otherwise; choosing **Edit · Selection** makes that target explicit. Automatic targeting resets when the actual target note changes, while an explicit choice survives same-note renders, session switches, and Chat/Edit switches.
-2. Choose **Edit · Selection** in **Writing and web search** and enter:
+Open the Command Palette and run **Open review panel** from Track Changes. Inspect the inserted third idea, then use its **Accept** or **Reject** controls.
+
+Emend and Track Changes have separate jobs:
+
+- **Emend** validates Operations and writes CriticMarkup.
+- **Track Changes** displays that markup and supplies Accept/Reject controls.
+
+Emend has no separate Apply, Accept, Reject, or diff interface. Whether you accept or reject the inserted idea, leave the original grammar sentence available for the next exercise.
+
+## 6. Edit only a Selection
+
+1. Select exactly `This sentence have a small grammar problem.` in the editor.
+2. Focus Emend chat without clearing the Selection. It remains highlighted.
+3. Choose **Edit · Selection** in **Writing and web search**.
+4. Send:
 
    ```text
    Correct the grammar without changing the meaning.
    ```
 
-   Alternatively, use **Fix grammar**, **Make concise**, or **Add examples** above the composer. Each quick action submits once through the same displayed target. Choose **Edit · Selection · Full note** to send complete-note supporting context while retaining the selection as the only edit target, or **Edit · Full note** whenever you want the ordinary whole-note path instead.
-3. Confirm that only the selected sentence receives CriticMarkup. The heading and idea list must remain unchanged under either Selection-context policy. Selection replacements use the same word-aware multi-hunk minimization and single validation-correction round as full-note Edit, with the originating session's configured recent ready history and complete selection. Default retains Smart/Symmetric surrounding context; Full note includes the complete note as context without expanding Operation anchors or the replacement range. Other sessions' ready messages are not included.
-4. Confirm that chat shows the concise tracked-change result, its `Target: Selection.` line, any model-written summary, reasoning, and token usage rather than the annotated selection. Review it in Track Changes, or press **Cmd+Z** on macOS (**Ctrl+Z** on Windows/Linux) to undo the native editor replacement.
-5. Try submitting with **Selection** explicitly chosen but no selection, a whitespace-only selection, or a selection that vanished before submission. Emend shows `Select non-whitespace text first.` and adds no chat message, saves no message, makes no provider request, and performs neither a selection nor full-note write.
+5. Wait for the concise result and inspect the CriticMarkup in Track Changes.
 
-The separate **Modify selected text with AI** Command Palette workflow retains its instruction modal, quick actions, additional-note controls, and notice-only results. Its **Selection context** selector shows **Default (Smart)** or **Default (Symmetric)** from current settings and offers **Full note** with the disclosure `Full note sends the complete note; only the selection is edited.` It resets to Default on every open and disables while pending. Full note shares the composer's complete-note/target prompt policy but sends no chat history. The modal privately buffers the response and shows its normal result/error notices without adding a composer chat result, usage footer, or retry-status display. It uses the same guarded selection coordinator and native undo.
+**Expected result:** The result identifies `Target: Selection.` Only the captured sentence receives review markup. The heading and idea list remain unchanged.
 
-**Smart selection context** is enabled by default. Default Selection Edit can send the containing paragraph for context, or Symmetric before/after context when smart context is disabled; explicit Full note ignores that surrounding-context budget. Neither policy expands the replacement target.
+Default Selection context includes bounded surroundings. **Edit · Selection · Full note** instead sends the complete note as supporting context, but still means **full-note context, Selection-only write**. Neither choice expands the captured range.
 
-## 6. Understand operation-based editing
+If the Selection is empty, whitespace-only, or vanished, Emend stops before contacting the provider. It never falls back to Full-note Edit.
 
-Every full-note and selection edit asks the model for a closed JSON array of `insert`, `remove`, `replace`, and `comment` commands. Emend validates exact anchors and occurrences, rejects ambiguous or overlapping commands, compiles valid commands into CriticMarkup, and uses the same Track Changes review path. Typed diagnostics identify precise failure codes, operation numbers, and bounded match details. Existing declared-range overlap and insertion-ambiguity checks remain conservative after minimization. Operations are the only model-facing edit protocol; there is no edit-strategy setting.
+## 7. Restore the Selection with native undo
 
-Structural guards reject partial inline-code targets (`inline-code-range`), fenced-code edits (`fenced-code-edit`), and table structure changes (`table-structure-edit`) before any write. Backtick-containing replacements use whole-target markup so delimiters stay reviewable. Tables allow only text edits within one existing header/body cell; escaped pipes and safe cell insert/remove/replace/comment Operations remain available. Selection classifies structure against the full note without expanding its target.
+Return focus to the note editor. Press **Cmd+Z** on macOS or **Ctrl+Z** on Windows/Linux.
 
-Raw markup shown while the cursor is inside a table cell is upstream Obsidian/Track Changes presentation behavior. Use exact accept/reject results—not that live presentation—to verify correctness.
+**Expected result:** Native undo removes the Selection replacement, including its CriticMarkup, and restores the complete original sentence. Redo reapplies the replacement. This recovery path is separate from Track Changes Accept/Reject review.
 
-The minimizer shares a bounded work budget across each response and falls back to one substitution for the changed middle when a detailed diff would be too expensive. Correction requests are transient implementation details: raw operations, rejected candidates, and diagnostic feedback do not appear in ready chats or stored sessions. After a retry, composer Edit chat—including Selection—keeps only the successful attempt's reasoning and shows all-round usage in the originating session. The separate selection modal still has no usage footer or retry-status UI.
+## 8. Recap your first success
 
-## 7. Test instructions and skills
+You have verified the core boundaries:
 
-Create `<Vault>/AGENTS.md`:
+- Ordinary Chat streamed a response without writing to the note.
+- Full-note Edit sent the complete note and produced reviewable CriticMarkup.
+- The separate Track Changes plugin provided Accept/Reject controls.
+- Selection Edit changed only the captured range, even though it could use surrounding context.
+- Native undo restored the exact original Selection.
+- Chat and Edit requests occurred only after explicit submission. Preparing the note, choosing workflows, and changing model selections made no request; **Refresh models** makes a request only if you explicitly click it.
 
-```markdown
-Follow the user's language and keep edits minimal.
+If a step fails, check the provider message in chat and the [provider settings reference](docs/guides/settings-reference.md). For installation or missing-review-plugin problems, use [installation troubleshooting](INSTALLATION.md#troubleshooting).
 
-A test skill is installed at `skills/test-skill`.
-```
+## Next steps
 
-Create `<Vault>/skills/test-skill/SKILL.md`:
+These optional workflows have their own complete recipes and expected results:
 
-```markdown
-When editing, prefer concise sentences.
-```
-
-Send another request. Emend rereads these files on every request and places skill instructions before `AGENTS.md` in the system prompt. Only vault-root `AGENTS.md` and referenced Markdown files beneath `skills/` are loaded.
-
-## 8. Verify persistence and privacy behavior
-
-- Ask different questions in two notes and in multiple sessions of one note, switch among them, and reload the Emend plugin or Obsidian. Each note should restore its own ordered sessions and last active session, while its additional-note selections and unsent drafts are empty after either reload.
-- Saved chats are under `<Vault>/.obsidian/emend/chats/` as schema-3 per-note session aggregates. They contain ready chat messages with their session metadata, not API keys, unsent drafts, unknown message artifacts, active/additional-note snapshots, captured selection text or offsets, additional-note selections/snapshots, or buffered edit responses. Schema 1/2 threads migrate lazily; malformed and unsupported files are not overwritten during loading.
-- Additional-note paths are always shown locally in the picker controls so you can review what is selected. With **Include note path** off, provider prompts use only generic labels such as `Additional note 1`; with it on, each section includes `Path: <vault>/<note path>`. Selected content is sent with either setting when you explicitly submit.
-- Enable **Include note path** only if you want the vault/note path sent to the provider for both active and additional notes.
-- Full-note Edit always sends the complete active note. Ordinary Chat sends bounded active-note context; Chat Selection sends the complete note and a separate complete read-only focus selection. Composer Selection sends the complete selection and active session's recent ready history with Default Smart/Symmetric surrounding context or explicit complete-note supporting context; Modify Selection offers the same policies without history. Full-note/focus prompts duplicate the selection intentionally and capacity accounts for that duplicate text. All can include separate bounded, read-only additional-note snapshots, but Operations can target only the captured active note or selection. **Chat history messages** defaults to 8 and accepts 0–50; 0 disables history. Other sessions' messages are never included.
-- Capacity window and reserve values, and the invalid marker, are ordinary non-secret provider settings that persist across restarts. Draft estimates are never stored, and they are approximations rather than provider billing data.
-- Deleting a note does not delete its saved session aggregate automatically. Note-rename history migration is not implemented.
-
-## Verification checklist
-
-You have completed the quick start when:
-
-- Chat and Chat Selection stream answers without changing the note; Chat Selection includes complete full-note/focus sections and fails closed without a usable selection. The Writing/Web menu retains the Chat Web choice while Edit disables Web items.
-- Edit writes reviewable CriticMarkup, not an in-plugin diff.
-- Track Changes can accept or reject the edit.
-- Composer Selection and Modify Selection change only the captured selection, native undo works, and Selection capture failures never fall back to Full note.
-- Explicitly selected additional notes appear with their paths, remain read-only, respect context/path limits, and never leak between target notes.
-- Multiple sessions preserve independent drafts, messages, and provider history; management actions make no provider calls; and the last active session and manual order return after reload.
-- If you configured capacity, the header bar updates live for the active session, hover/focus reveals its lower-bound estimate and exclusions, and an over-capacity or invalid configuration blocks submission with no provider request and no note write.
-- Conversations return after switching notes and reloading Obsidian, while additional-note selections and runtime drafts clear on Emend plugin or Obsidian reload.
-
-If a scenario fails, see the troubleshooting section in [INSTALLATION.md](INSTALLATION.md) and check the provider error shown in chat before retrying.
+- [Focus a read-only Chat Selection](docs/guides/chat-and-context.md#focus-on-a-selection)
+- [Add explicit Related notes](docs/guides/chat-and-context.md#add-related-notes)
+- [Use independent chat sessions](docs/guides/chat-and-context.md#use-multiple-chat-sessions)
+- [Choose models and reasoning](docs/guides/chat-and-context.md#choose-a-provider-model-and-reasoning-effort)
+- [Check optional context capacity](docs/guides/chat-and-context.md#check-context-capacity)
+- [Use vault instructions and skills](docs/guides/chat-and-context.md#use-vault-instructions-and-skills)
+- [Use Modify Selection from the Command Palette](docs/guides/editing-and-review.md#use-modify-selection)
+- [Understand edit validation](docs/guides/editing-and-review.md#how-emend-validates-edits)
+- [Opt into DeepSeek Web research](docs/guides/web-research.md#use-web-review-or-auto)
+- [Review privacy, recipients, and local storage](docs/guides/privacy-and-storage.md)

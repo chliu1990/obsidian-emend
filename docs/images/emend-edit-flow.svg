@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="edit-flow-title edit-flow-desc">
+  <title id="edit-flow-title">Conceptual flow of Chat, Full-note Edit, and Selection Edit</title>
+  <desc id="edit-flow-desc">Chat returns an answer without a writer. Full-note Edit validates Operations and uses Emend's guarded vault writer. Selection Edit validates the composed note and replaces only the captured range with native undo. Both Edit paths produce CriticMarkup in Emend, then the separate Track Changes plugin presents review cards and Accept or Reject controls.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
+    </marker>
+    <style>
+      .title { font-size: 28px; font-weight: 700; font-family: system-ui, sans-serif; fill: #172033; }
+      .subtitle { font-size: 16px; font-weight: 500; font-family: system-ui, sans-serif; fill: #475569; }
+      .column-title { font-size: 21px; font-weight: 700; font-family: system-ui, sans-serif; fill: #172033; }
+      .box-title { font-size: 17px; font-weight: 700; font-family: system-ui, sans-serif; fill: #172033; }
+      .body { font-size: 15px; font-weight: 500; font-family: system-ui, sans-serif; fill: #334155; }
+      .small { font-size: 14px; font-weight: 500; font-family: system-ui, sans-serif; fill: #475569; }
+      .badge { font-size: 13px; font-weight: 700; font-family: system-ui, sans-serif; letter-spacing: .4px; }
+      .arrow { stroke: #475569; stroke-width: 2; fill: none; }
+      .arrowhead { fill: #475569; }
+      .box { stroke-width: 2; rx: 12; }
+    </style>
+  </defs>
+  <rect width="1200" height="720" fill="#f8fafc"/>
+  <text x="40" y="48" class="title">From request to review — conceptual flow</text>
+  <text x="40" y="78" class="subtitle">Supporting context informs the model; only the named Edit target grants write permission.</text>
+  <rect x="40" y="98" width="190" height="28" rx="14" fill="#e0e7ff"/>
+  <text x="54" y="117" class="badge" fill="#3730a3">EMEND PRODUCTION</text>
+  <rect x="244" y="98" width="206" height="28" rx="14" fill="#d1fae5"/>
+  <text x="258" y="117" class="badge" fill="#065f46">SEPARATE REVIEW</text>
+
+  <text x="40" y="164" class="column-title">Chat</text>
+  <text x="440" y="164" class="column-title">Full-note Edit</text>
+  <text x="840" y="164" class="column-title">Selection Edit</text>
+
+  <rect x="40" y="184" width="320" height="100" class="box" fill="#ffffff" stroke="#94a3b8"/>
+  <text x="60" y="214" class="box-title">Declared read-only context</text>
+  <text x="60" y="241" class="body">Bounded note, or complete note</text>
+  <text x="60" y="264" class="body">plus complete Selection focus</text>
+  <path d="M 200 284 L 200 308" class="arrow" stroke="#475569" stroke-width="2" fill="none"/>
+  <path d="M 194 304 L 200 314 L 206 304 Z" class="arrowhead"/>
+  <rect x="40" y="324" width="320" height="92" class="box" fill="#eef2ff" stroke="#6366f1"/>
+  <text x="60" y="354" class="box-title">Model answer</text>
+  <text x="60" y="381" class="body">Streamed into chat</text>
+  <text x="60" y="403" class="body">No Operations or note writer</text>
+  <path d="M 200 416 L 200 440" class="arrow" stroke="#475569" stroke-width="2" fill="none"/>
+  <path d="M 194 436 L 200 446 L 206 436 Z" class="arrowhead"/>
+  <rect x="40" y="456" width="320" height="100" class="box" fill="#f1f5f9" stroke="#64748b"/>
+  <text x="60" y="486" class="box-title">Terminal chat answer</text>
+  <text x="60" y="513" class="body">Note remains unchanged</text>
+  <text x="60" y="536" class="body">No Track Changes review needed</text>
+
+  <rect x="440" y="184" width="320" height="100" class="box" fill="#ffffff" stroke="#94a3b8"/>
+  <text x="460" y="214" class="box-title">Complete active note</text>
+  <text x="460" y="241" class="body">Model proposes closed Operations</text>
+  <text x="460" y="264" class="body">against the captured source</text>
+  <path d="M 600 284 L 600 308" class="arrow" stroke="#475569" stroke-width="2" fill="none"/>
+  <path d="M 594 304 L 600 314 L 606 304 Z" class="arrowhead"/>
+  <rect x="440" y="324" width="320" height="92" class="box" fill="#eef2ff" stroke="#6366f1"/>
+  <text x="460" y="354" class="box-title">Emend validates atomically</text>
+  <text x="460" y="381" class="body">Anchors, structure, freshness</text>
+  <text x="460" y="403" class="body">One guarded vault.modify</text>
+  <path d="M 600 416 L 600 440" class="arrow" stroke="#475569" stroke-width="2" fill="none"/>
+  <path d="M 594 436 L 600 446 L 606 436 Z" class="arrowhead"/>
+  <rect x="440" y="456" width="320" height="100" class="box" fill="#eef2ff" stroke="#6366f1"/>
+  <text x="460" y="486" class="box-title">Emend produces CriticMarkup</text>
+  <text x="460" y="513" class="body">Concise Full-note result in chat</text>
+  <text x="460" y="536" class="body">No raw rewritten note in chat</text>
+  <path d="M 600 556 L 600 580" class="arrow" stroke="#475569" stroke-width="2" fill="none"/>
+  <path d="M 594 576 L 600 586 L 606 576 Z" class="arrowhead"/>
+  <rect x="440" y="596" width="320" height="88" class="box" fill="#ecfdf5" stroke="#059669"/>
+  <text x="460" y="626" class="box-title">Track Changes reviews</text>
+  <text x="460" y="653" class="body">Separate cards + Accept / Reject</text>
+  <text x="460" y="675" class="body">Not an Emend diff or Apply UI</text>
+
+  <rect x="840" y="184" width="320" height="100" class="box" fill="#ffffff" stroke="#94a3b8"/>
+  <text x="860" y="214" class="box-title">Complete Selection target</text>
+  <text x="860" y="241" class="body">Bounded or full-note support</text>
+  <text x="860" y="264" class="body">Context never widens the target</text>
+  <path d="M 1000 284 L 1000 308" class="arrow" stroke="#475569" stroke-width="2" fill="none"/>
+  <path d="M 994 304 L 1000 314 L 1006 304 Z" class="arrowhead"/>
+  <rect x="840" y="324" width="320" height="92" class="box" fill="#eef2ff" stroke="#6366f1"/>
+  <text x="860" y="354" class="box-title">Emend validates atomically</text>
+  <text x="860" y="381" class="body">Candidate + composed full note</text>
+  <text x="860" y="403" class="body">Freshness and exact-range guards</text>
+  <path d="M 1000 416 L 1000 440" class="arrow" stroke="#475569" stroke-width="2" fill="none"/>
+  <path d="M 994 436 L 1000 446 L 1006 436 Z" class="arrowhead"/>
+  <rect x="840" y="456" width="320" height="100" class="box" fill="#eef2ff" stroke="#6366f1"/>
+  <text x="860" y="486" class="box-title">Emend produces CriticMarkup</text>
+  <text x="860" y="513" class="body">One exact native range replacement</text>
+  <text x="860" y="536" class="body">Native undo restores original bytes</text>
+  <path d="M 1000 556 L 1000 580" class="arrow" stroke="#475569" stroke-width="2" fill="none"/>
+  <path d="M 994 576 L 1000 586 L 1006 576 Z" class="arrowhead"/>
+  <rect x="840" y="596" width="320" height="88" class="box" fill="#ecfdf5" stroke="#059669"/>
+  <text x="860" y="626" class="box-title">Track Changes reviews</text>
+  <text x="860" y="653" class="body">Separate cards + Accept / Reject</text>
+  <text x="860" y="675" class="body">Undo remains a separate recovery path</text>
+
+  <text x="40" y="624" class="small">Writer boundary</text>
+  <text x="40" y="650" class="body">Chat: none</text>
+  <text x="40" y="674" class="body">Edits: CriticMarkup only</text>
+</svg>

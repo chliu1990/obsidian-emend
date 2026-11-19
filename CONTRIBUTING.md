@@ -2,6 +2,8 @@
 
 Emend welcomes focused bug reports, documentation improvements, and independently scoped features. The project is maintained primarily by one developer, so clear reproduction steps and small PRs matter more than volume or speed.
 
+This guide covers the human contribution and PR process. Coding agents and contributors should read [AGENTS.md](AGENTS.md) for durable development rules and [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the architecture contract and canonical stage records.
+
 ## Development principles
 
 - Keep `main` releasable. Create feature branches from `main`; do not commit feature work directly to it.
