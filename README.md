@@ -48,9 +48,7 @@ All Edit paths compile valid Operations into CriticMarkup. A failed candidate, s
 
 *Fifteen-second silent 10 fps capture with a local delayed mock and shortened idle waits: one genuine Selection replacement, Track Changes review, then native undo restores exact original bytes.*
 
-## 2.10 highlights
-
-> **Pre-release status:** These docs track the upcoming 2.10 release on `main`. Until it is published, BRAT and the [latest release ZIP](https://github.com/chliu1990/obsidian-emend/releases) install the latest released feature set. [Build this branch from source](INSTALLATION.md#build-from-source) to use the workflows described here.
+## What's new in 2.10.0
 
 - **Selection-focused conversation:** Explicit Chat Selection keeps the complete Selection intact above the ordinary context budget while remaining read-only.
 - **Full-note context without a wider Selection write:** The composer and Modify Selection can share the complete note while replacing only the captured Selection.
@@ -59,7 +57,7 @@ All Edit paths compile valid Operations into CriticMarkup. A failed candidate, s
 - **Clearer Web progression:** Provisional research text is labelled `Draft answer — research may continue`, clears before retrieval, and never replaces the terminal answer.
 - **Stabilized editing and persistence:** Composed-note validation, multi-pane freshness checks, session recovery, and sanitized saved results reinforce existing write and privacy boundaries.
 
-These capabilities are implemented on `main`; they do not promise automatic context compression, background discovery, or Web support for every provider. The [changelog](CHANGELOG.md) records shipped releases and the [roadmap](ROADMAP.md) separates current behavior from deferred work.
+These capabilities ship in Emend 2.10.0. They do not promise automatic context compression, background discovery, or Web support for every provider. The [changelog](CHANGELOG.md) records shipped releases and the [roadmap](ROADMAP.md) separates current behavior from deferred work.
 
 ## Requirements and providers
 
@@ -80,7 +78,7 @@ Unsupported Web combinations fail explicitly. Emend never silently turns them in
 
 ## Installation
 
-For the upcoming 2.10 workflows, [build this branch from source](INSTALLATION.md#build-from-source). To install the latest released feature set instead, choose BRAT or the release ZIP below, or follow the [complete installation guide](INSTALLATION.md). In **Settings → Community plugins**, turn off **Restricted mode** if it is enabled.
+For the current 2.10.0 workflows, choose BRAT or the release ZIP below, or follow the [complete installation guide](INSTALLATION.md). To build from source instead, see [Build from source](INSTALLATION.md#build-from-source). In **Settings → Community plugins**, turn off **Restricted mode** if it is enabled.
 
 **Recommended: use BRAT.** Install and enable **BRAT — Beta Reviewers Auto-update Tool**, choose **Add beta plugin**, and enter:
 
