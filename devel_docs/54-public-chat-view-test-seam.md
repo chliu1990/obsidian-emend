@@ -15,6 +15,7 @@ The implementation commits are:
 | `4f3d110` | `test: migrate modification behavior to public chat-view seam` | Five submission/persistence migrations. |
 | `59d90c5` | `test: migrate streaming and scroll behavior to public seam` | Six rendering/scroll migrations. |
 | `2b61bc0` | `test: cover dismissed chat controls through real view wiring` | Three net-new real-view menu cases. |
+| `4f06439` | `test: strengthen public chat-view characterization` | Final-review assertion restoration without a test-count or production change. |
 
 ## Production seam and fixture boundary
 
@@ -58,7 +59,7 @@ The following 18 public cases replace their named legacy equivalents. Names belo
 17. `restores the reader position when an unrelated render follows a completion`
 18. `aligns a real completion only after its own Markdown generation settles` (formerly `wires a real completion to its own render generation before aligning`)
 
-The migrations retain or strengthen the original observations. In particular, automatic displayed Selection is observed before any explicit target-menu choice; per-session Chat/Web/Edit policies, Related notes, exact capacity text, drafts, and originating-session history remain asserted; and concise Edit persistence continues to exclude private candidates and rejected reasoning.
+The migrations retain or strengthen the original observations. In particular, automatic displayed Selection is observed before any explicit target-menu choice; per-session Chat/Web/Edit policies, Related notes, exact capacity text, drafts, and originating-session history remain asserted; rapid stale loads retain a publicly selected non-default Edit mode; stale stream completion emits no new Notice; and concise Edit persistence continues to exclude private candidates, raw Operations, and rejected reasoning through direct persisted content/reasoning checks.
 
 Three additional cases are not migrations:
 
@@ -118,6 +119,16 @@ npx vitest run tests/chat-view-public.test.ts tests/chat-view.test.ts \
 It passed **4 files / 331 tests**: 21 public, 260 legacy, 30 composer-control, and 20 model-control. The required search for private-prototype retrofit patterns in `tests/chat-view-public.test.ts` and `tests/helpers/chat-view-public-fixture.ts` returned no matches.
 
 The canonical-documentation commit changes the build identity because the bundle embeds `HEAD`. Its exact-head `npm ci`, full test, lint, build, diff gate, rebuilt real-Obsidian confirmation, and resulting bundle identity are recorded in the Task 7 report and PR evidence rather than recursively editing this committed record after its own head changes.
+
+## Final-review fix-wave evidence
+
+Final review restored two dropped legacy observations and strengthened the raw-Operations privacy checks in commit `4f064396728749aeffc87fde937a66c4ccd95b92`. The rapid-load case now selects Edit through public `setMode` while both loads are pending and asserts the final `Edit · Full note` trigger after stale First settles. The stale A → B → A case snapshots the Notice count before the old callback and asserts no later Notice after `oldSubmission`. The corrected-Edit case inspects joined persisted message content and reasoning directly for private candidates, raw Operations, and rejected reasoning; its exact snapshot assertions are unchanged. No test case was added or removed and no production file changed.
+
+At that test-fix code head, the focused public-plus-legacy run passed **2 files / 281 tests** (21 public and 260 legacy). The exact-head gate passed **54 files / 1,880 tests**, lint, strict TypeScript/production build, `git diff --check`, and a clean tracked diff. Dependencies were already installed and the lockfile was unchanged, so `npm ci` was omitted.
+
+The same head passed all three established real-Obsidian groups: `--public-chat-view` **2 scenarios / 19 assertions**, `--stabilization` **6 / 55**, and `--sessions` **9 / 156**, for **17 scenarios / 230 assertions** with no failures. Root and loaded bundle SHA-256 were both `a488e1fc39722bd5905c802770e2e5bb90ba9ca1ba05af4d873aea44446bb84b`; every summary recorded `loadedBundleMatchedRoot: true`. The environment and evidence limits below are unchanged.
+
+The evidence-documentation commit containing this section changes the embedded head again. Its ultimate exact-head gate, repeated real-Obsidian confirmation, final bundle identity, and preserved summary paths are recorded in `final-fix-report.md`, avoiding another recursive Stage 54 edit.
 
 ## Deterministic real-Obsidian evidence at code head
 
