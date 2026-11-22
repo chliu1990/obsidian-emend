@@ -7,11 +7,24 @@ import {
 } from '../src/context-capacity-ui';
 import type { LoadedChatConversation } from '../src/conversation-store';
 import type EmendPlugin from '../src/main';
+import { operationEditStrategy } from '../src/operation-edit-strategy';
 import type {
-	ChatStreamResult,
-	ReadOnlySubmission,
+	AiProviderRequest,
+	StreamEvent,
+	StreamResult,
+} from '../src/provider-stream';
+import { QUICK_ACTIONS } from '../src/quick-actions';
+import {
+	EditRequestCoordinator,
+	type ChatStreamResult,
+	type EditSubmission,
+	type ReadOnlySubmission,
 } from '../src/request-coordinator';
-import type { ChatMessage, ProviderHistoryMessage } from '../src/types';
+import type {
+	ChatMessage,
+	ProviderConfig,
+	ProviderHistoryMessage,
+} from '../src/types';
 import { WEB_SEARCH_DISCLOSURE } from '../src/web-search';
 import {
 	closePublicChatViewFixtures,
@@ -101,6 +114,49 @@ function findCapacitySummary(contentEl: FakeElement): FakeElement | undefined {
 		contentEl,
 		(element) => element.className.split(' ').includes('emend-context-capacity-summary'),
 	)[0];
+}
+
+function findQuickActionButton(
+	contentEl: FakeElement,
+	id: string,
+): FakeElement | undefined {
+	return findElements(
+		contentEl,
+		(element) => element.attributes['data-action-id'] === id,
+	)[0];
+}
+
+function setChatInput(fixture: PublicChatViewFixture, value: string): FakeElement {
+	const input = findChatInput(fixture.contentEl);
+	if (!input) {
+		throw new Error('Chat input missing.');
+	}
+	input.value = value;
+	input.dispatch('input');
+	return input;
+}
+
+function captureReadyMessageSaves(
+	fixture: PublicChatViewFixture,
+	session: ChatSession,
+): ChatMessage[][] {
+	const savedMessages = session.messages.map((item) => ({ ...item }));
+	const savedSnapshots: ChatMessage[][] = [];
+	fixture.conversationStore.loadConversation.mockResolvedValue(
+		loadedConversation([session]),
+	);
+	fixture.conversationStore.appendReadyMessage.mockImplementation(
+		async (_notePath, _sessionId, appended, appendOptions) => {
+			appendOptions?.signal?.throwIfAborted();
+			savedMessages.push({ ...appended });
+			savedSnapshots.push(savedMessages.map((item) => ({ ...item })));
+			return {
+				...session,
+				messages: savedMessages.map((item) => ({ ...item })),
+			};
+		},
+	);
+	return savedSnapshots;
 }
 
 function relatedNotePaths(contentEl: FakeElement): string[] {
@@ -602,5 +658,469 @@ describe('EmendChatView public session and stream generation', () => {
 		expect(answer?.className.split(' ')).toContain('is-ready');
 		expect(textOf(answer!)).toContain('Streamed answer');
 		expect(findSessionSelect(fixture.contentEl)?.value).toBe('a1');
+	});
+});
+
+
+describe('EmendChatView public modification submission and persistence', () => {
+	beforeEach(() => {
+		vi.stubGlobal('window', { setTimeout, clearTimeout });
+		vi.spyOn(MarkdownRenderer, 'render').mockImplementation(
+			async (_app, markdown, element) => {
+				element.textContent = markdown;
+			},
+		);
+		noticeMessages().length = 0;
+		chatViewMenus.instances.length = 0;
+	});
+
+	afterEach(async () => {
+		await closePublicChatViewFixtures();
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+	});
+
+	it('saves the ready user message and completed assistant message with usage', async () => {
+		const fixture = createPublicChatViewFixture();
+		const savedSnapshots = captureReadyMessageSaves(fixture, makeSession());
+		fixture.requestChatCompletion.mockImplementation((async (
+			submission: ReadOnlySubmission,
+		) => {
+			submission.callbacks.onContent('Answer');
+			return {
+				content: 'Answer',
+				reasoning: '',
+				usage: {
+					promptTokens: 3,
+					completionTokens: 1,
+					totalTokens: 4,
+					source: 'provider',
+				},
+			};
+		}) as unknown as EmendPlugin['requestChatCompletion']);
+		await fixture.open();
+
+		setChatInput(fixture, 'Question');
+		findSendButton(fixture.contentEl)?.dispatch('click');
+		await vi.waitFor(() => expect(savedSnapshots).toHaveLength(2));
+
+		expect(savedSnapshots.map((snapshot) => snapshot.map(
+			({ role, status, content }) => ({ role, status, content }),
+		))).toEqual([
+			[{ role: 'user', status: 'ready', content: 'Question' }],
+			[
+				{ role: 'user', status: 'ready', content: 'Question' },
+				{ role: 'assistant', status: 'ready', content: 'Answer' },
+			],
+		]);
+		expect(savedSnapshots[1]?.[1]?.usage).toEqual({
+			promptTokens: 3,
+			completionTokens: 1,
+			totalTokens: 4,
+			source: 'provider',
+		});
+		expect(savedSnapshots.flat().every((item) => item.timestamp > 0)).toBe(true);
+		const usageFooters = findElements(
+			fixture.contentEl,
+			(element) => element.className.split(' ').includes('emend-chat-message-usage'),
+		);
+		expect(usageFooters).toHaveLength(1);
+		expect(usageFooters[0]?.textContent).toBe(
+			'Provider usage · 4 total · 3 prompt · 1 completion',
+		);
+	});
+
+	it('persists one concise corrected Edit summary with aggregate usage and clean later history', async () => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			defaultMode: 'edit',
+		});
+		const savedSnapshots = captureReadyMessageSaves(fixture, makeSession());
+		const validResponse = JSON.stringify([
+			{ type: 'replace', target: 'beta', replacement: 'delta' },
+		]);
+		const invalidReasoning = 'INVALID_ROUND_REASONING';
+		const validReasoning = 'VALID_ROUND_REASONING';
+		const request = vi.fn(async (
+			_request: AiProviderRequest,
+			callbacks: { onEvent(event: StreamEvent): void },
+		): Promise<StreamResult> => {
+			callbacks.onEvent({ type: 'reasoning', text: invalidReasoning });
+			return { content: 'private invalid response', reasoning: invalidReasoning };
+		});
+		request
+			.mockImplementationOnce(async (_request, callbacks) => {
+				callbacks.onEvent({ type: 'reasoning', text: invalidReasoning });
+				return {
+					content: 'private invalid response',
+					reasoning: invalidReasoning,
+					usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12 },
+				};
+			})
+			.mockImplementationOnce(async (_request, callbacks) => {
+				callbacks.onEvent({ type: 'reasoning', text: validReasoning });
+				return {
+					content: validResponse,
+					reasoning: validReasoning,
+					usage: { promptTokens: 20, completionTokens: 5, totalTokens: 25 },
+				};
+			});
+		const editProvider: ProviderConfig = {
+			name: 'Local test provider',
+			baseUrl: 'http://127.0.0.1:8787/v1',
+			apiKey: 'dummy-test-key',
+			model: 'dummy-model',
+			reasoningEffort: 'low',
+			requestUsage: true,
+			discoveredModels: [],
+			contextWindowTokens: null,
+			outputReserveTokens: null,
+			contextCapacityInvalid: false,
+		};
+		const writer = {
+			readCurrentText: vi.fn(async () => 'Alpha beta.'),
+			write: vi.fn(async () => undefined),
+			isTargetCurrent: vi.fn(() => true),
+		};
+		const editCoordinator = new EditRequestCoordinator({
+			provider: editProvider,
+			loadAdditionalNotes: async () => [],
+			loadInstructions: async () => ({ skillTexts: new Map() }),
+			request,
+			writer,
+			editStrategy: operationEditStrategy,
+		});
+		fixture.requestChatCompletion.mockImplementation((async (
+			submission: EditSubmission | ReadOnlySubmission,
+		) => {
+			if (submission.mode === 'edit') {
+				return editCoordinator.submit(submission);
+			}
+			submission.callbacks.onContent('Answer');
+			return {
+				content: 'Answer',
+				reasoning: '',
+				usage: {
+					promptTokens: 3,
+					completionTokens: 1,
+					totalTokens: 4,
+					source: 'provider',
+				},
+			};
+		}) as unknown as EmendPlugin['requestChatCompletion']);
+		const summary = 'Edit applied — 1 changes tracked. Review in Track Changes.\nTarget: Full note.\n\n- Replaced line 1.';
+		await fixture.open();
+
+		setChatInput(fixture, 'Edit note');
+		await fixture.view.submitPrompt();
+
+		expect(request).toHaveBeenCalledTimes(2);
+		const editSubmission = fixture.requestChatCompletion.mock.calls[0]?.[0];
+		if (!editSubmission || editSubmission.mode !== 'edit') {
+			throw new Error('Full-note Edit submission missing.');
+		}
+		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
+			editSubmission.context.file,
+			'Alpha {~~beta~>delta~~}.',
+		);
+		expect(savedSnapshots).toHaveLength(2);
+		const savedUser = savedSnapshots[0]?.[0];
+		const savedEdit = savedSnapshots[1]?.[1];
+		if (!savedUser || !savedEdit) {
+			throw new Error('Corrected Edit persistence snapshots missing.');
+		}
+		const expectedUser = {
+			id: savedUser.id,
+			role: 'user',
+			content: 'Edit note',
+			reasoning: '',
+			mode: 'edit',
+			sourcePath: 'Note.md',
+			status: 'ready',
+			timestamp: savedUser.timestamp,
+		};
+		const expectedEdit = {
+			id: savedEdit.id,
+			role: 'assistant',
+			content: summary,
+			reasoning: validReasoning,
+			mode: 'edit',
+			sourcePath: 'Note.md',
+			status: 'ready',
+			timestamp: savedEdit.timestamp,
+			usage: {
+				promptTokens: 30,
+				completionTokens: 7,
+				totalTokens: 37,
+				source: 'provider',
+			},
+		};
+		expect(savedSnapshots[0]).toEqual([expectedUser]);
+		expect(savedSnapshots[1]).toEqual([expectedUser, expectedEdit]);
+		const persistedEdit = JSON.stringify(savedSnapshots);
+		expect(persistedEdit).not.toContain('private invalid response');
+		expect(persistedEdit).not.toContain(validResponse);
+		expect(persistedEdit).not.toContain(invalidReasoning);
+		const editMessageId = savedSnapshots[1]?.[1]?.id;
+		if (!editMessageId) {
+			throw new Error('Persisted Edit assistant message missing.');
+		}
+		await vi.waitFor(() => {
+			expect(textOf(findMessageNode(fixture.contentEl, editMessageId)!)).toContain(summary);
+		});
+		const renderedEdit = textOf(findMessageNode(fixture.contentEl, editMessageId)!);
+		expect(renderedEdit).toContain(validReasoning);
+		expect(renderedEdit).not.toContain('private invalid response');
+		expect(renderedEdit).not.toContain(validResponse);
+		expect(renderedEdit).not.toContain(invalidReasoning);
+
+		chooseWritingMenuItem(fixture.contentEl, 'Chat');
+		setChatInput(fixture, 'Next question');
+		await fixture.view.submitPrompt();
+
+		const nextSubmission = fixture.requestChatCompletion.mock.calls[1]?.[0];
+		expect(nextSubmission?.history.map((item) => item.content)).toEqual([
+			'Edit note',
+			summary,
+		]);
+		expect(nextSubmission?.history.map((item) => item.content).join('\n')).not.toContain(
+			'invalid-json',
+		);
+		const finalSnapshot = savedSnapshots.at(-1);
+		expect(finalSnapshot?.filter((item) => item.role === 'assistant').map(
+			(item) => item.content,
+		)).toEqual([summary, 'Answer']);
+		const persisted = JSON.stringify(savedSnapshots);
+		expect(persisted).not.toContain('private invalid response');
+		expect(persisted).not.toContain(validResponse);
+		expect(persisted).not.toContain(invalidReasoning);
+	});
+
+	it('routes automatic displayed Selection through the exact native-editor request and normal saves', async () => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			selectedText: 'beta',
+			defaultMode: 'edit',
+		});
+		const savedSnapshots = captureReadyMessageSaves(fixture, makeSession());
+		fixture.additionalNotesStore.add('Note.md', 'Reference.md');
+		fixture.requestSelectionEdit.mockImplementation(async (
+			_snapshot,
+			_prompt,
+			_signal,
+			_editor,
+			_additionalNotePaths,
+			_history,
+			callbacks,
+		) => {
+			callbacks?.onReasoning?.('REJECTED raw JSON and diagnostics');
+			callbacks?.onRetry?.();
+			callbacks?.onReasoning?.('Successful reasoning');
+			return {
+				applied: true,
+				changeCount: 2,
+				summaryItems: [{ type: 'replace', start: 0, end: 4 }],
+				usage: {
+					promptTokens: 30,
+					completionTokens: 7,
+					totalTokens: 37,
+					source: 'provider',
+				},
+			};
+		});
+		fixture.requestChatCompletion.mockImplementation((async (
+			submission: ReadOnlySubmission,
+		) => {
+			submission.callbacks.onContent('Answer');
+			return {
+				content: 'Answer',
+				reasoning: '',
+				usage: {
+					promptTokens: 3,
+					completionTokens: 1,
+					totalTokens: 4,
+					source: 'provider',
+				},
+			};
+		}) as unknown as EmendPlugin['requestChatCompletion']);
+		const summary = 'Edit applied — 2 changes tracked. Review in Track Changes.\nTarget: Selection.\n\n- Replaced line 1.';
+		const captureTarget = fixture.captureSelectionEditTarget.getMockImplementation();
+		if (!captureTarget) {
+			throw new Error('Selection capture double missing.');
+		}
+		const capturedTargets: Array<ReturnType<typeof captureTarget>> = [];
+		fixture.captureSelectionEditTarget.mockImplementation(() => {
+			const target = captureTarget();
+			capturedTargets.push(target);
+			return target;
+		});
+		await fixture.open();
+
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Selection');
+		setChatInput(fixture, 'Edit selection');
+		findSendButton(fixture.contentEl)?.dispatch('click');
+		await vi.waitFor(() => expect(savedSnapshots).toHaveLength(2));
+
+		expect(fixture.captureSelectionEditTarget).toHaveBeenCalled();
+		expect(fixture.captureChatContext).not.toHaveBeenCalled();
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(fixture.requestSelectionEdit).toHaveBeenCalledOnce();
+		const args = fixture.requestSelectionEdit.mock.calls[0];
+		const capturedTarget = capturedTargets.find(
+			(target) => target.snapshot === args?.[0],
+		);
+		if (!capturedTarget || !args) {
+			throw new Error('Selection target or request missing.');
+		}
+		expect(capturedTarget.snapshot).toMatchObject({
+			fullText: 'Alpha beta.',
+			selectedText: 'beta',
+			from: 6,
+			to: 10,
+		});
+		expect(capturedTarget.snapshot.file.path).toBe('Note.md');
+		expect(args[0]).toBe(capturedTarget.snapshot);
+		expect(args[1]).toBe('Edit selection');
+		expect(args[2]).toBeInstanceOf(AbortSignal);
+		expect(args[2].aborted).toBe(false);
+		expect(args[3]).toBe(capturedTarget.editor);
+		expect(args[4]).toEqual(['Reference.md']);
+		expect(args[5]).toEqual([]);
+		expect(typeof args[6]?.onReasoning).toBe('function');
+		expect(typeof args[6]?.onRetry).toBe('function');
+		expect(args[7]).toBe('default');
+		expect(savedSnapshots[1]?.[1]).toMatchObject({
+			status: 'ready',
+			content: summary,
+			reasoning: 'Successful reasoning',
+			usage: {
+				promptTokens: 30,
+				completionTokens: 7,
+				totalTokens: 37,
+				source: 'provider',
+			},
+		});
+		const persisted = JSON.stringify(savedSnapshots);
+		expect(persisted).not.toContain('REJECTED raw JSON');
+		expect(persisted).not.toContain('Alpha beta.');
+		expect(persisted).not.toContain('"from":6');
+		expect(persisted).not.toContain('"to":10');
+
+		chooseWritingMenuItem(fixture.contentEl, 'Chat');
+		setChatInput(fixture, 'Next question');
+		await fixture.view.submitPrompt();
+
+		expect(fixture.requestChatCompletion.mock.calls[0]?.[0].history.map(
+			(item) => item.content,
+		)).toEqual([
+			'Edit selection',
+			summary,
+		]);
+	});
+
+	it('preserves the typed draft after a successful quick action', async () => {
+		const fixture = createPublicChatViewFixture({ defaultMode: 'edit' });
+		fixture.requestChatCompletion.mockResolvedValue({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+			usage: {
+				promptTokens: 3,
+				completionTokens: 1,
+				totalTokens: 4,
+				source: 'provider',
+			},
+		});
+		await fixture.open();
+
+		setChatInput(fixture, 'Keep this');
+		const quickAction = findQuickActionButton(fixture.contentEl, 'fix-grammar');
+		expect(quickAction).toBeDefined();
+		quickAction?.dispatch('click');
+		await vi.waitFor(() => expect(fixture.requestChatCompletion).toHaveBeenCalledOnce());
+		await vi.waitFor(() => {
+			const readyAssistants = findMessageElements(fixture.contentEl).filter(
+				(element) => element.className.split(' ').includes('is-assistant')
+					&& element.className.split(' ').includes('is-ready'),
+			);
+			expect(readyAssistants).toHaveLength(1);
+		});
+
+		expect(fixture.requestChatCompletion.mock.calls[0]?.[0]).toMatchObject({
+			mode: 'edit',
+			prompt: QUICK_ACTIONS[0].prompt,
+		});
+		expect(findChatInput(fixture.contentEl)?.value).toBe('Keep this');
+	});
+
+	it('persists an applied edit result when Stop races the ready snapshot', async () => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			selectedText: 'beta',
+			defaultMode: 'edit',
+		});
+		const session = makeSession('session-1');
+		const savedSnapshots = captureReadyMessageSaves(fixture, session);
+		let requestSignal: AbortSignal | undefined;
+		let stopClicked = false;
+		fixture.requestSelectionEdit.mockImplementationOnce(async (
+			_snapshot,
+			_prompt,
+			signal,
+		) => {
+			requestSignal = signal;
+			queueMicrotask(() => {
+				const stop = findSubmissionButton(fixture.contentEl, 'Stop');
+				if (!stop) {
+					throw new Error('Stop button missing when the Selection result settled.');
+				}
+				stop.dispatch('click');
+				stopClicked = true;
+			});
+			return {
+				applied: true,
+				changeCount: 1,
+				summaryItems: [{ type: 'replace', start: 0, end: 4 }],
+				summary: 'Tightened the wording.',
+				usage: {
+					promptTokens: 4,
+					completionTokens: 2,
+					totalTokens: 6,
+					source: 'provider',
+				},
+			};
+		});
+		await fixture.open();
+
+		setChatInput(fixture, 'Edit selection');
+		await fixture.view.submitPrompt();
+
+		expect(stopClicked).toBe(true);
+		expect(requestSignal?.aborted).toBe(true);
+		expect(savedSnapshots.map((snapshot) => snapshot.at(-1)).map(
+			(entry) => [entry?.role, entry?.status],
+		)).toEqual([
+			['user', 'ready'],
+			['assistant', 'ready'],
+		]);
+		const assistant = savedSnapshots[1]?.[1];
+		expect(assistant?.content).toContain('Edit applied — 1 changes tracked.');
+		expect(assistant?.content).toContain('Tightened the wording.');
+		expect(assistant?.status).toBe('ready');
+		const assistantSave = fixture.conversationStore.appendReadyMessage.mock.calls[1];
+		expect(assistantSave?.[2].role).toBe('assistant');
+		expect(assistantSave?.[3]).toEqual({
+			titlePrompt: 'Edit selection',
+			signal: undefined,
+		});
+		expect(assistantSave?.[3]?.signal).toBeUndefined();
+		if (!assistant?.id) {
+			throw new Error('Committed assistant message missing.');
+		}
+		const committed = findMessageNode(fixture.contentEl, assistant.id);
+		expect(committed?.className.split(' ')).toContain('is-ready');
+		expect(textOf(committed!)).toContain('Tightened the wording.');
+		expect(findSubmissionButton(fixture.contentEl, 'Send')?.disabled).toBe(false);
+		expect(findSubmissionButton(fixture.contentEl, 'Stopping')).toBeUndefined();
 	});
 });
