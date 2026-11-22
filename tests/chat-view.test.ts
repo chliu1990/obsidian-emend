@@ -3977,26 +3977,6 @@ describe('EmendChatView terminal response continuity', () => {
 		expect(render).toHaveBeenCalledOnce();
 	});
 
-	it('keeps the plain answer when Markdown rendering fails', async () => {
-		const pendingMarkdown = deferred<void>();
-		vi.spyOn(MarkdownRenderer, 'render').mockReturnValue(pendingMarkdown.promise);
-		const { body, context } = createMessageBodyHarness();
-		const content = 'Plain **answer** that survives a render failure.';
-
-		viewPrototype.renderMessageBody.call(context, {
-			...message('answer', 'Note.md'),
-			content,
-		});
-		expect(textOf(body)).toContain(content);
-		expect(messageContentElements(body)).toHaveLength(1);
-
-		pendingMarkdown.reject(new Error('Markdown failed'));
-		await vi.waitFor(() => expect(context.settleMarkdownRender).toHaveBeenCalledOnce());
-
-		expect(textOf(body)).toContain(content);
-		expect(messageContentElements(body)).toHaveLength(1);
-	});
-
 	it('shows a web incompleteness warning before Markdown rendering settles', () => {
 		const pendingMarkdown = deferred<void>();
 		const render = vi.spyOn(MarkdownRenderer, 'render').mockReturnValue(pendingMarkdown.promise);
@@ -4040,46 +4020,6 @@ describe('EmendChatView terminal response continuity', () => {
 		expect(
 			findElements(body, (element) => element.className.split(' ').includes('emend-chat-web-activity')),
 		).toHaveLength(0);
-	});
-
-	it('keeps the streamed answer through the terminal Markdown transition', async () => {
-		const pendingMarkdown = deferred<void>();
-		const render = vi.spyOn(MarkdownRenderer, 'render').mockImplementation(
-			(_app, markdown, element) => {
-				(element as unknown as FakeElement).textContent = `Rendered:${markdown}`;
-				return pendingMarkdown.promise;
-			},
-		);
-		const fixture = createEditTargetView();
-		fixture.requestChatCompletion.mockImplementation(async ({ callbacks }) => {
-			callbacks.onContent('Streamed **full** answer');
-			return { content: 'Streamed **full** answer', reasoning: '' };
-		});
-		await viewPrototype.refreshTargetNote.call(fixture.context);
-		if (fixture.context.inputEl) {
-			fixture.context.inputEl.value = 'Question';
-		}
-
-		await viewPrototype.submitPrompt.call(fixture.context);
-
-		const assistantId = fixture.context.messages[1]?.id;
-		if (!assistantId) {
-			throw new Error('Assistant message missing.');
-		}
-		const assistant = findMessageNode(fixture.contentEl, assistantId);
-		if (!assistant) {
-			throw new Error('Assistant element missing.');
-		}
-		expect(assistant.className).toContain('is-ready');
-		expect(render).toHaveBeenCalledOnce();
-		expect(textOf(assistant)).toContain('Streamed **full** answer');
-		expect(messageContentElements(assistant)).toHaveLength(1);
-
-		pendingMarkdown.resolve();
-		await vi.waitFor(() =>
-			expect(textOf(assistant)).toContain('Rendered:Streamed **full** answer')
-		);
-		expect(messageContentElements(assistant)).toHaveLength(1);
 	});
 
 	it('renders a finalized answer without the streaming pre-wrap class', async () => {
@@ -4201,100 +4141,6 @@ describe('EmendChatView web draft rendering', () => {
 
 			expect(webDraftLabelElements(body)).toHaveLength(0);
 		}
-	});
-});
-
-describe('EmendChatView streaming DOM identity', () => {
-	function streamingFrames() {
-		const { body, context } = createMessageBodyHarness();
-		let nextFrame: (() => void) | null = null;
-		const frames = {
-			...context,
-			pendingMessages: new Set<ChatMessage>(),
-			pendingRenderFrame: null as number | null,
-			contentEl: {
-				ownerDocument: {
-					defaultView: {
-						requestAnimationFrame: (callback: () => void) => {
-							nextFrame = callback;
-							return 1;
-						},
-					},
-				},
-			},
-			scrollMessagesToBottomIfFollowing: vi.fn(),
-			renderMessageBody: (pending: ChatMessage) =>
-				viewPrototype.renderMessageBody.call(frames, pending),
-		};
-		const flushFrame = () => {
-			const callback = nextFrame;
-			nextFrame = null;
-			callback?.();
-		};
-		return { body, frames, flushFrame };
-	}
-
-	function reasoningParts(body: FakeElement) {
-		const details = findElements(body, (element) => element.tagName === 'details')[0];
-		const content = findElements(
-			body,
-			(element) => element.className.split(' ').includes('emend-chat-reasoning-content'),
-		)[0];
-		if (!details || !content) {
-			throw new Error('Reasoning panel missing.');
-		}
-		return { details, content };
-	}
-
-	it('keeps an opened reasoning panel and its scroll while streaming', () => {
-		const { body, frames, flushFrame } = streamingFrames();
-		const loading = {
-			...message('answer', 'Note.md'),
-			status: 'loading' as const,
-			reasoning: 'First thought',
-			content: 'First delta',
-		};
-
-		viewPrototype.renderMessageBody.call(frames, loading);
-		const { details, content } = reasoningParts(body);
-		details.open = true;
-		content.scrollTop = 120;
-
-		loading.content = 'First delta and second';
-		viewPrototype.scheduleMessageRender.call(frames, loading);
-		flushFrame();
-		loading.content = 'First delta and second and third';
-		viewPrototype.scheduleMessageRender.call(frames, loading);
-		flushFrame();
-
-		expect(reasoningParts(body).details).toBe(details);
-		expect(details.open).toBe(true);
-		expect(content.scrollTop).toBe(120);
-		expect(textOf(body)).toContain('First delta and second and third');
-	});
-
-	it('keeps the opened reasoning panel when the first answer content arrives', () => {
-		const { body, frames, flushFrame } = streamingFrames();
-		const loading = {
-			...message('answer', 'Note.md'),
-			status: 'loading' as const,
-			reasoning: 'Thinking',
-			content: '',
-		};
-
-		viewPrototype.renderMessageBody.call(frames, loading);
-		const { details, content } = reasoningParts(body);
-		details.open = true;
-		content.scrollTop = 64;
-
-		loading.content = 'The answer starts here.';
-		viewPrototype.scheduleMessageRender.call(frames, loading);
-		flushFrame();
-
-		expect(reasoningParts(body).details).toBe(details);
-		expect(details.open).toBe(true);
-		expect(content.scrollTop).toBe(64);
-		expect(textOf(body)).toContain('The answer starts here.');
 	});
 });
 
@@ -5496,42 +5342,6 @@ describe('EmendChatView latest-message scrolling', () => {
 		expect(renderTargetStates).toEqual([null, context.messages[1]?.id]);
 	});
 
-	it('restores the reader position when an unrelated render follows a completion', () => {
-		const messagesEl = renderForFooter(message('answer', 'Note.md'));
-		const responseEl = messagesEl.children[0];
-		if (!responseEl) {
-			throw new Error('Response element missing.');
-		}
-		Object.assign(messagesEl, {
-			scrollTop: 40,
-			getBoundingClientRect: () => ({ top: 100 }),
-			querySelector: () => findElements(
-				messagesEl,
-				(element) => element.attributes['data-message-id'] === 'answer',
-			)[0] ?? null,
-		});
-		Object.assign(responseEl, {
-			getBoundingClientRect: () => ({ top: 260 }),
-		});
-		const context = {
-			closed: false,
-			renderGeneration: 6,
-			pendingMarkdownRenders: 0,
-			pendingScrollRestore: { previousScrollTop: 275, wasFollowing: false },
-			responseStartMessageId: 'answer' as string | null,
-			responseStartRenderGeneration: 5 as number | null,
-			followLatestMessages: false,
-			messagesEl,
-			restoreMessageScroll: (previousScrollTop: number, wasFollowing: boolean) =>
-				viewPrototype.restoreMessageScroll.call(context, previousScrollTop, wasFollowing),
-		};
-
-		viewPrototype.settleMarkdownRender.call(context, 6);
-
-		expect(messagesEl.scrollTop).toBe(275);
-		expect(context.responseStartMessageId).toBeNull();
-	});
-
 	it('aligns the targeted response after Markdown layouts and clears the target', () => {
 		const messagesEl = renderForFooter(message('answer', 'Note.md'));
 		const responseEl = messagesEl.children[0];
@@ -5567,51 +5377,6 @@ describe('EmendChatView latest-message scrolling', () => {
 		expect(context.responseStartMessageId).toBeNull();
 	});
 
-	it('wires a real completion to its own render generation before aligning', async () => {
-		const fixture = createEditTargetView();
-		const pendingMarkdown = deferred<void>();
-		vi.spyOn(MarkdownRenderer, 'render').mockReturnValue(pendingMarkdown.promise);
-		fixture.requestChatCompletion.mockImplementation(async ({ callbacks }) => {
-			callbacks.onContent('Streamed **answer**');
-			return { content: 'Streamed **answer**', reasoning: '' };
-		});
-		await viewPrototype.refreshTargetNote.call(fixture.context);
-		if (fixture.context.inputEl) {
-			fixture.context.inputEl.value = 'Question';
-		}
-
-		await viewPrototype.submitPrompt.call(fixture.context);
-
-		const generation = fixture.context.renderGeneration;
-		expect(fixture.context.responseStartMessageId).not.toBeNull();
-		expect(fixture.context.responseStartRenderGeneration).toBe(generation);
-		expect(fixture.context.pendingScrollRestore).not.toBeNull();
-
-		const messagesEl = (fixture.context as unknown as { messagesEl: FakeElement }).messagesEl;
-		const assistantId = fixture.context.messages[1]?.id;
-		if (!messagesEl || !assistantId) {
-			throw new Error('Completed answer missing.');
-		}
-		const responseEl = findMessageNode(messagesEl, assistantId);
-		if (!responseEl) {
-			throw new Error('Completed answer element missing.');
-		}
-		Object.assign(messagesEl, {
-			scrollTop: 40,
-			getBoundingClientRect: () => ({ top: 100 }),
-			querySelector: () => responseEl,
-		});
-		Object.assign(responseEl, {
-			getBoundingClientRect: () => ({ top: 260 }),
-		});
-
-		viewPrototype.settleMarkdownRender.call(fixture.context, generation);
-
-		expect(messagesEl.scrollTop).toBe(200);
-		expect(fixture.context.responseStartMessageId).toBeNull();
-		expect(fixture.context.responseStartRenderGeneration).toBeNull();
-		expect(fixture.context.pendingScrollRestore).not.toBeNull();
-	});
 });
 
 

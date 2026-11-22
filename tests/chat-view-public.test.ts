@@ -35,6 +35,7 @@ import {
 	findElements,
 	findMessageElements,
 	findMessageNode,
+	findMessagesScroller,
 	findSendButton,
 	findSessionButton,
 	findSessionSelect,
@@ -1122,5 +1123,282 @@ describe('EmendChatView public modification submission and persistence', () => {
 		expect(textOf(committed!)).toContain('Tightened the wording.');
 		expect(findSubmissionButton(fixture.contentEl, 'Send')?.disabled).toBe(false);
 		expect(findSubmissionButton(fixture.contentEl, 'Stopping')).toBeUndefined();
+	});
+});
+
+
+describe('EmendChatView public streaming rendering and completion scroll', () => {
+	beforeEach(() => {
+		vi.stubGlobal('window', { setTimeout, clearTimeout });
+		vi.spyOn(MarkdownRenderer, 'render').mockImplementation(
+			async (_app, markdown, element) => {
+				element.textContent = markdown;
+			},
+		);
+		noticeMessages().length = 0;
+	});
+
+	afterEach(async () => {
+		await closePublicChatViewFixtures();
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+	});
+
+	function savedAssistantId(fixture: PublicChatViewFixture): string {
+		const assistant = fixture.conversationStore.appendReadyMessage.mock.calls
+			.map((call) => call[2])
+			.find((entry) => entry.role === 'assistant');
+		if (!assistant) {
+			throw new Error('Saved assistant message missing.');
+		}
+		return assistant.id;
+	}
+
+	function reasoningParts(container: FakeElement) {
+		const details = findElements(container, (element) => element.tagName === 'details')[0];
+		const content = findElements(
+			container,
+			(element) => element.className.split(' ').includes('emend-chat-reasoning-content'),
+		)[0];
+		if (!details || !content) {
+			throw new Error('Reasoning panel missing.');
+		}
+		return { details, content };
+	}
+
+	it('keeps the streamed answer through the terminal Markdown transition', async () => {
+		const pendingMarkdown = deferred<void>();
+		vi.spyOn(MarkdownRenderer, 'render').mockImplementation(
+			(_app, markdown, element) => {
+				(element as unknown as FakeElement).textContent = `Rendered:${markdown}`;
+				return pendingMarkdown.promise;
+			},
+		);
+		const fixture = createPublicChatViewFixture();
+		fixture.requestChatCompletion.mockImplementation((async (
+			submission: ReadOnlySubmission,
+		) => {
+			submission.callbacks.onContent('Streamed **full** answer');
+			return { content: 'Streamed **full** answer', reasoning: '' };
+		}) as unknown as EmendPlugin['requestChatCompletion']);
+		await fixture.open();
+
+		await fixture.view.submitPrompt('Question');
+
+		const assistantId = savedAssistantId(fixture);
+		const assistant = findMessageNode(fixture.contentEl, assistantId);
+		if (!assistant) {
+			throw new Error('Assistant element missing.');
+		}
+		expect(assistant.className.split(' ')).toContain('is-ready');
+		expect(textOf(assistant)).toContain('Streamed **full** answer');
+		expect(messageContentElements(assistant)).toHaveLength(1);
+
+		pendingMarkdown.resolve();
+		await vi.waitFor(() => {
+			expect(textOf(assistant)).toContain('Rendered:Streamed **full** answer');
+		});
+		const rendered = messageContentElements(assistant);
+		expect(rendered).toHaveLength(1);
+		expect(rendered[0]?.className.split(' ')).toContain('emend-chat-message-markdown');
+	});
+
+	it('keeps the plain answer when Markdown rendering fails', async () => {
+		const pendingMarkdown = deferred<void>();
+		vi.spyOn(MarkdownRenderer, 'render').mockReturnValue(pendingMarkdown.promise);
+		const content = 'Plain **answer** that survives a render failure.';
+		const fixture = createPublicChatViewFixture();
+		fixture.conversationStore.loadConversation.mockResolvedValue(loadedConversation([
+			makeSession('session-1', [{
+				...message('ready-answer', 'Note.md'),
+				content,
+			}]),
+		]));
+
+		await fixture.open();
+
+		const assistant = findMessageNode(fixture.contentEl, 'ready-answer');
+		if (!assistant) {
+			throw new Error('Ready assistant element missing.');
+		}
+		expect(textOf(assistant)).toContain(content);
+		expect(messageContentElements(assistant)).toHaveLength(1);
+
+		pendingMarkdown.reject(new Error('Markdown failed'));
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(textOf(assistant)).toContain(content);
+		expect(messageContentElements(assistant)).toHaveLength(1);
+	});
+
+	it('keeps an opened reasoning panel and its scroll while streaming', async () => {
+		const fixture = createPublicChatViewFixture();
+		const response = deferred<SessionChatResult>();
+		let callbacks: ReadOnlySubmission['callbacks'] | undefined;
+		fixture.requestChatCompletion.mockImplementation((async (
+			submission: ReadOnlySubmission,
+		) => {
+			callbacks = submission.callbacks;
+			return response.promise;
+		}) as unknown as EmendPlugin['requestChatCompletion']);
+		await fixture.open();
+
+		const submission = fixture.view.submitPrompt('Streaming question');
+		await vi.waitFor(() => expect(fixture.requestChatCompletion).toHaveBeenCalledOnce());
+		if (!callbacks) {
+			throw new Error('Provider callbacks missing.');
+		}
+		callbacks.onReasoning('First thought');
+		callbacks.onContent('First delta');
+		fixture.flushAnimationFrame();
+		const assistant = findMessageElements(fixture.contentEl).find(
+			(element) => element.className.split(' ').includes('is-assistant')
+				&& element.className.split(' ').includes('is-loading'),
+		);
+		if (!assistant) {
+			throw new Error('Streaming assistant element missing.');
+		}
+		const { details, content } = reasoningParts(assistant);
+		details.open = true;
+		content.scrollTop = 120;
+
+		callbacks.onContent('First delta and second');
+		fixture.flushAnimationFrame();
+		callbacks.onContent('First delta and second and third');
+		fixture.flushAnimationFrame();
+
+		const current = reasoningParts(assistant);
+		expect(current.details).toBe(details);
+		expect(current.content).toBe(content);
+		expect(details.open).toBe(true);
+		expect(content.scrollTop).toBe(120);
+		expect(textOf(assistant)).toContain('First delta and second and third');
+
+		response.resolve({
+			content: 'First delta and second and third',
+			reasoning: 'First thought',
+		});
+		await submission;
+	});
+
+	it('keeps the opened reasoning panel when the first answer content arrives', async () => {
+		const fixture = createPublicChatViewFixture();
+		const response = deferred<SessionChatResult>();
+		let callbacks: ReadOnlySubmission['callbacks'] | undefined;
+		fixture.requestChatCompletion.mockImplementation((async (
+			submission: ReadOnlySubmission,
+		) => {
+			callbacks = submission.callbacks;
+			return response.promise;
+		}) as unknown as EmendPlugin['requestChatCompletion']);
+		await fixture.open();
+
+		const submission = fixture.view.submitPrompt('Streaming question');
+		await vi.waitFor(() => expect(fixture.requestChatCompletion).toHaveBeenCalledOnce());
+		if (!callbacks) {
+			throw new Error('Provider callbacks missing.');
+		}
+		callbacks.onReasoning('Thinking');
+		fixture.flushAnimationFrame();
+		const assistant = findMessageElements(fixture.contentEl).find(
+			(element) => element.className.split(' ').includes('is-assistant')
+				&& element.className.split(' ').includes('is-loading'),
+		);
+		if (!assistant) {
+			throw new Error('Streaming assistant element missing.');
+		}
+		const { details, content } = reasoningParts(assistant);
+		details.open = true;
+		content.scrollTop = 64;
+
+		callbacks.onContent('The answer starts here.');
+		fixture.flushAnimationFrame();
+
+		const current = reasoningParts(assistant);
+		expect(current.details).toBe(details);
+		expect(current.content).toBe(content);
+		expect(details.open).toBe(true);
+		expect(content.scrollTop).toBe(64);
+		expect(textOf(assistant)).toContain('The answer starts here.');
+
+		response.resolve({ content: 'The answer starts here.', reasoning: 'Thinking' });
+		await submission;
+	});
+
+	it('restores the reader position when an unrelated render follows a completion', async () => {
+		const completionMarkdown = deferred<void>();
+		const unrelatedMarkdown = deferred<void>();
+		vi.spyOn(MarkdownRenderer, 'render')
+			.mockImplementationOnce(() => completionMarkdown.promise)
+			.mockImplementationOnce(() => unrelatedMarkdown.promise);
+		const fixture = createPublicChatViewFixture();
+		fixture.requestChatCompletion.mockImplementation((async (
+			submission: ReadOnlySubmission,
+		) => {
+			submission.callbacks.onContent('Streamed **answer**');
+			return { content: 'Streamed **answer**', reasoning: '' };
+		}) as unknown as EmendPlugin['requestChatCompletion']);
+		await fixture.open();
+
+		await fixture.view.submitPrompt('Question');
+		const assistantId = savedAssistantId(fixture);
+		const previousScroller = findMessagesScroller(fixture.contentEl);
+		if (!previousScroller) {
+			throw new Error('Messages scroller missing before mode change.');
+		}
+		previousScroller.scrollTop = 275;
+
+		fixture.view.setMode('edit');
+
+		const scroller = findMessagesScroller(fixture.contentEl);
+		const assistant = findMessageNode(fixture.contentEl, assistantId);
+		if (!scroller || !assistant) {
+			throw new Error('Current completion elements missing after mode change.');
+		}
+		scroller.scrollTop = 275;
+		Object.assign(scroller, { getBoundingClientRect: () => ({ top: 100 }) });
+		Object.assign(assistant, { getBoundingClientRect: () => ({ top: 25 }) });
+
+		completionMarkdown.resolve();
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(scroller.scrollTop).toBe(275);
+
+		unrelatedMarkdown.resolve();
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(scroller.scrollTop).toBe(275);
+	});
+
+	it('aligns a real completion only after its own Markdown generation settles', async () => {
+		const pendingMarkdown = deferred<void>();
+		vi.spyOn(MarkdownRenderer, 'render').mockReturnValue(pendingMarkdown.promise);
+		const fixture = createPublicChatViewFixture();
+		fixture.requestChatCompletion.mockImplementation((async (
+			submission: ReadOnlySubmission,
+		) => {
+			submission.callbacks.onContent('Streamed **answer**');
+			return { content: 'Streamed **answer**', reasoning: '' };
+		}) as unknown as EmendPlugin['requestChatCompletion']);
+		await fixture.open();
+
+		await fixture.view.submitPrompt('Question');
+
+		const assistantId = savedAssistantId(fixture);
+		const scroller = findMessagesScroller(fixture.contentEl);
+		const assistant = findMessageNode(fixture.contentEl, assistantId);
+		if (!scroller || !assistant) {
+			throw new Error('Completed answer elements missing.');
+		}
+		scroller.scrollTop = 40;
+		Object.assign(scroller, { getBoundingClientRect: () => ({ top: 100 }) });
+		Object.assign(assistant, { getBoundingClientRect: () => ({ top: 260 }) });
+
+		await Promise.resolve();
+		expect(scroller.scrollTop).toBe(40);
+
+		pendingMarkdown.resolve();
+		await vi.waitFor(() => expect(scroller.scrollTop).toBe(200));
 	});
 });
