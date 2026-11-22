@@ -347,6 +347,7 @@ describe('EmendChatView public session and stream generation', () => {
 		const firstLoad = fixture.open();
 		fixture.setActivePath('Second.md');
 		const secondLoad = fixture.view.refreshTargetNote();
+		fixture.view.setMode('edit');
 		second.resolve(loadedConversation([
 			makeSession('second-session', [message('second', 'Second.md')]),
 			makeSession('second-other'),
@@ -370,6 +371,7 @@ describe('EmendChatView public session and stream generation', () => {
 		expect(input?.disabled).toBe(false);
 		expect(findSessionSelect(fixture.contentEl)?.disabled).toBe(false);
 		expect(findWritingTrigger(fixture.contentEl)?.disabled).toBe(false);
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Full note');
 		expect(findSendButton(fixture.contentEl)?.disabled).toBe(false);
 	});
 
@@ -581,11 +583,13 @@ describe('EmendChatView public session and stream generation', () => {
 		expect(messageContentElements(oldNodeBeforeStaleCallback!)).toHaveLength(1);
 		expect(findMessageNode(fixture.contentEl, newLoadingId)).toBeDefined();
 
+		const noticeStart = noticeMessages().length;
 		oldCallbacks?.onContent('STALE_STREAM_CONTENT');
 		fixture.flushAnimationFrame();
 		oldResponse.resolve({ content: 'STALE_STREAM_CONTENT', reasoning: '' });
 		await oldSubmission;
 
+		expect(noticeMessages().slice(noticeStart)).toEqual([]);
 		const oldNode = findMessageNode(fixture.contentEl, oldLoadingId);
 		const newNode = findMessageNode(fixture.contentEl, newLoadingId);
 		expect(textOf(oldNode!)).not.toContain('STALE_STREAM_CONTENT');
@@ -869,7 +873,9 @@ describe('EmendChatView public modification submission and persistence', () => {
 		};
 		expect(savedSnapshots[0]).toEqual([expectedUser]);
 		expect(savedSnapshots[1]).toEqual([expectedUser, expectedEdit]);
-		const persistedEdit = JSON.stringify(savedSnapshots);
+		const persistedEdit = savedSnapshots.flat()
+			.map((item) => `${item.content}\n${item.reasoning}`)
+			.join('\n');
 		expect(persistedEdit).not.toContain('private invalid response');
 		expect(persistedEdit).not.toContain(validResponse);
 		expect(persistedEdit).not.toContain(invalidReasoning);
@@ -902,7 +908,9 @@ describe('EmendChatView public modification submission and persistence', () => {
 		expect(finalSnapshot?.filter((item) => item.role === 'assistant').map(
 			(item) => item.content,
 		)).toEqual([summary, 'Answer']);
-		const persisted = JSON.stringify(savedSnapshots);
+		const persisted = savedSnapshots.flat()
+			.map((item) => `${item.content}\n${item.reasoning}`)
+			.join('\n');
 		expect(persisted).not.toContain('private invalid response');
 		expect(persisted).not.toContain(validResponse);
 		expect(persisted).not.toContain(invalidReasoning);
