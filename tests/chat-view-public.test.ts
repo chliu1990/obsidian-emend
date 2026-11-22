@@ -84,6 +84,13 @@ function findWritingTrigger(contentEl: FakeElement): FakeElement | undefined {
 	)[0];
 }
 
+function findModelTrigger(contentEl: FakeElement): FakeElement | undefined {
+	return findElements(
+		contentEl,
+		(element) => element.className.split(' ').includes('emend-chat-active-model'),
+	)[0];
+}
+
 function findSubmissionButton(
 	contentEl: FakeElement,
 	label: 'Send' | 'Stop' | 'Stopping',
@@ -94,20 +101,24 @@ function findSubmissionButton(
 	)[0];
 }
 
+function findChatViewMenuItem(menu: ChatViewMenu, title: string): ChatViewMenuItem {
+	const item = menu.items.find(
+		(candidate): candidate is ChatViewMenuItem =>
+			candidate instanceof MenuItem && candidate.title === title,
+	);
+	if (!item) {
+		throw new Error(`Missing menu item: ${title}`);
+	}
+	return item;
+}
+
 function chooseWritingMenuItem(contentEl: FakeElement, title: string): void {
 	findWritingTrigger(contentEl)?.dispatch('click');
 	const menu = chatViewMenus.instances.at(-1);
 	if (!menu) {
 		throw new Error('The writing trigger did not open a menu.');
 	}
-	const item = menu.items.find(
-		(candidate): candidate is ChatViewMenuItem =>
-			candidate instanceof MenuItem && candidate.title === title,
-	);
-	if (!item) {
-		throw new Error(`Missing writing menu item: ${title}`);
-	}
-	item.clickHandler({} as MouseEvent);
+	findChatViewMenuItem(menu, title).clickHandler({} as MouseEvent);
 }
 
 function findCapacitySummary(contentEl: FakeElement): FakeElement | undefined {
@@ -1123,6 +1134,88 @@ describe('EmendChatView public modification submission and persistence', () => {
 		expect(textOf(committed!)).toContain('Tightened the wording.');
 		expect(findSubmissionButton(fixture.contentEl, 'Send')?.disabled).toBe(false);
 		expect(findSubmissionButton(fixture.contentEl, 'Stopping')).toBeUndefined();
+	});
+});
+
+
+describe('EmendChatView public dismissed controls', () => {
+	beforeEach(() => {
+		vi.stubGlobal('window', { setTimeout, clearTimeout });
+		vi.spyOn(MarkdownRenderer, 'render').mockImplementation(
+			async (_app, markdown, element) => {
+				element.textContent = markdown;
+			},
+		);
+		noticeMessages().length = 0;
+		chatViewMenus.instances.length = 0;
+	});
+
+	afterEach(async () => {
+		await closePublicChatViewFixtures();
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+	});
+
+	it.each(['writing', 'model'] as const)(
+		'does not mutate dismissed %s menus through real view refreshes',
+		async (surface) => {
+			const fixture = createPublicChatViewFixture();
+			await fixture.open();
+			const trigger = surface === 'writing'
+				? findWritingTrigger(fixture.contentEl)
+				: findModelTrigger(fixture.contentEl);
+			if (!trigger) {
+				throw new Error(`Missing ${surface} trigger.`);
+			}
+			trigger.dispatch('click');
+			const menu = chatViewMenus.instances.at(-1);
+			if (!menu) {
+				throw new Error(`The ${surface} trigger did not open a menu.`);
+			}
+			const item = findChatViewMenuItem(
+				menu,
+				surface === 'writing' ? 'Chat' : 'deepseek-flash',
+			);
+			const setChecked = vi.spyOn(item, 'setChecked');
+			const setDisabled = vi.spyOn(item, 'setDisabled');
+			expect(trigger.attributes['aria-expanded']).toBe('true');
+
+			menu.hide();
+			setChecked.mockClear();
+			setDisabled.mockClear();
+			if (surface === 'writing') {
+				fixture.view.refreshCapacityEstimate();
+			} else {
+				fixture.settings.activeProvider = 'kimi';
+				fixture.view.refreshModelControl();
+			}
+
+			expect(setChecked).not.toHaveBeenCalled();
+			expect(setDisabled).not.toHaveBeenCalled();
+			expect(trigger.attributes['aria-expanded']).toBe('false');
+		},
+	);
+
+	it('accepts a just-hidden writing menu item through real view wiring', async () => {
+		const fixture = createPublicChatViewFixture();
+		await fixture.open();
+		const trigger = findWritingTrigger(fixture.contentEl);
+		if (!trigger) {
+			throw new Error('Writing trigger missing.');
+		}
+		trigger.dispatch('click');
+		const menu = chatViewMenus.instances.at(-1);
+		if (!menu) {
+			throw new Error('The writing trigger did not open a menu.');
+		}
+		const item = findChatViewMenuItem(menu, 'Edit · Full note');
+
+		menu.hide();
+		item.clickHandler({} as MouseEvent);
+
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Full note');
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
 	});
 });
 
