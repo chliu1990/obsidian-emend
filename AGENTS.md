@@ -169,6 +169,12 @@ Unit tests use Vitest under `tests/`, with Obsidian mocked by `tests/mocks/obsid
 They must not access a real vault or network. Add focused regression tests for behavior changes, including failure, abort,
 stale-source, privacy, and persistence boundaries where relevant.
 
+Chat-view behavioral tests construct real `EmendChatView` instances and use public lifecycle, submission, session, target,
+and refresh methods together with rendered DOM and provider/conversation-store boundaries. Use the shared public fixture;
+do not add private-prototype access, hand-built view contexts, private-field casts, or test-only production accessors.
+Unmigrated cases in `tests/chat-view.test.ts` remain legacy coverage, not a pattern to extend; migrate any legacy case
+touched by later work to the public seam. See [Stage 54](devel_docs/54-public-chat-view-test-seam.md).
+
 Run the standard local gate:
 
 ```bash

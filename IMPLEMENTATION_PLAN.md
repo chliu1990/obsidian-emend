@@ -12,7 +12,7 @@ Documentation has separate owners:
 - Numbered stage records own exact behavior, design decisions, verification matrices, historical evidence, and limitations. Historical records remain unchanged.
 - [ROADMAP.md](ROADMAP.md) owns recently shipped status, deferred work, and non-goals. [CHANGELOG.md](CHANGELOG.md) owns versioned release history.
 
-Files beginning `devel_docs/future-` describe deferred designs, not current behavior or approval. Stage 42 implements capacity accounting and hard safeguards; Stages 44–50 implement the compact composer, explicit Related notes, local model controls, live Selection, response continuity, Selection context, and native menu activation. Stage 51 records stabilization, and Stage 52 implements provisional Web drafts. Stage 53 records the 2.10.0 release. Automatic compression, automatic linked/folder inclusion, background discovery, and automatic TOCs remain deferred.
+Files beginning `devel_docs/future-` describe deferred designs, not current behavior or approval. Stage 42 implements capacity accounting and hard safeguards; Stages 44–50 implement the compact composer, explicit Related notes, local model controls, live Selection, response continuity, Selection context, and native menu activation. Stage 51 records stabilization, and Stage 52 implements provisional Web drafts. Stage 53 records the 2.10.0 release, and Stage 54 establishes the public chat-view behavioral test seam. Automatic compression, automatic linked/folder inclusion, background discovery, and automatic TOCs remain deferred.
 
 ## Architecture contract
 
@@ -32,6 +32,7 @@ Files beginning `devel_docs/future-` describe deferred designs, not current beha
 - Each provider has optional context-window/output-reserve settings. Effective input is window minus reserve; the reserve is local and never sent as `max_tokens`. Character-based estimates are not tokenization or billing data. Submission preflight and every provider fetch enforce valid capacity terminally, without compression, silent truncation, partial answers, or writes. See [Stage 42](devel_docs/42-context-accounting-capacity.md).
 - Ready conversations persist as schema-3 ordered per-note session aggregates with exact IDs, manual order, last-active restore, and automatic/manual titles. Schema 1/2 migrates lazily; malformed data is preserved and unsupported versions refuse mutation. Only ready sanitized content/metadata persists in the originating session. Drafts, request bodies, snapshots, raw retrieval, transient Web artifacts, and full edit responses do not. See [Stage 43](devel_docs/43-multiple-chat-sessions.md).
 - Provider history uses only the originating session's configured ready-message window. Requests for one note are serialized across sessions and Modify Selection; different notes are independent. Note/session/generation, abort, target, and freshness guards reject stale work. Session management and automatic titles make no provider calls.
+- Chat-view behavioral tests use real `EmendChatView` instances through public lifecycle, submission, session, target, and refresh methods, with observations at the rendered DOM and provider/conversation-store boundaries. New tests must not retrofit private prototypes or hand-built view contexts. The explicitly unmigrated legacy suite remains without expansion, and later work migrates any legacy case it touches. See [Stage 54](devel_docs/54-public-chat-view-test-seam.md).
 - Live Selection highlighting is a focused CodeMirror decoration over normalized current ranges. It performs no I/O, persistence, focus change, selection/document mutation, provider request, or note write. See [Stage 47](devel_docs/47-selection-highlight.md) and [Stage 49](devel_docs/49-selection-focus-and-context.md).
 
 ### Edit and review boundaries
@@ -84,6 +85,7 @@ Files beginning `devel_docs/future-` describe deferred designs, not current beha
 51. [2.10 bug hunt and stabilization](devel_docs/51-2-10-stabilization.md) — cross-cutting fixes, deferrals, review, and current evidence limits.
 52. [Web draft streaming](devel_docs/52-web-draft-streaming.md) — labelled provisional content, reset-before-tools, and terminal promotion.
 53. [2.10.0 release](devel_docs/53-2-10-release.md) — release-only changelog, version metadata, and packaged-install verification.
+54. [Public chat-view behavioral test seam](devel_docs/54-public-chat-view-test-seam.md) — real-instance public tests, scoped legacy migration, and characterization evidence.
 
 ## Verification and release process
 

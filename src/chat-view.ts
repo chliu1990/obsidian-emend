@@ -261,7 +261,7 @@ export class EmendChatView extends ItemView {
 		return 'messages-square';
 	}
 
-	protected async onOpen() {
+	public async onOpen() {
 		this.closed = false;
 		this.registerComposerScope();
 		this.registerCapacityRefreshSources();
@@ -269,7 +269,7 @@ export class EmendChatView extends ItemView {
 		await this.refreshTargetNote();
 	}
 
-	protected async onClose() {
+	public async onClose() {
 		this.closed = true;
 		this.conversationGeneration++;
 		this.clearCapacityRefreshTimer();
@@ -1656,7 +1656,7 @@ export class EmendChatView extends ItemView {
 		await this.submitPrompt(action.prompt, { fromQuickAction: true });
 	}
 
-	private async submitPrompt(
+	public async submitPrompt(
 		prompt = this.inputEl?.value.trim() ?? '',
 		options?: { fromQuickAction?: boolean },
 	) {

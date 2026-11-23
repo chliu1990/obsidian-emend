@@ -29,6 +29,12 @@ export class ItemView {
 	contentEl = {};
 
 	constructor(_leaf: WorkspaceLeaf) {}
+
+	register<T>(disposable: T): T {
+		return disposable;
+	}
+
+	registerEvent(_eventRef: unknown): void {}
 }
 
 export class MarkdownRenderer {
