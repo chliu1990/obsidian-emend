@@ -703,7 +703,7 @@ describe('EmendPlugin Markdown target lookup', () => {
 			callbacks: { onReasoning: vi.fn() },
 			signal: new AbortController().signal,
 		})).rejects.toThrow(
-			'The note changed while Emend was responding. No edits were applied.',
+			/^The note changed while Emend was responding\. No edits were applied\.$/,
 		);
 
 		expect(fetchMock).toHaveBeenCalledOnce();
