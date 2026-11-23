@@ -7,6 +7,7 @@ import {
 	scanMarkdown,
 	scanMarkdownContext,
 	scanMarkdownEditStructure,
+	splitMarkdownTableRow,
 } from '../src/markdown-scanner';
 
 describe('scanMarkdownContext', () => {
@@ -549,6 +550,194 @@ describe('scanMarkdownEditStructure', () => {
 
 	it('preserves UTF-16 offsets around inline spans', () => {
 		expect(inlineSpans('🙂 前 `café 值` 后')).toEqual([{ start: 5, end: 13 }]);
+	});
+
+	describe('tables', () => {
+		function tables(source: string) {
+			return scanMarkdownEditStructure(scanMarkdown(source)).tables;
+		}
+
+		it.each([0, 1, 2, 3])('projects outer and no-outer-pipe rows with %i-space indentation and CRLF', (spaces) => {
+			for (const outerPipes of [true, false]) {
+				const indent = ' '.repeat(spaces);
+				const headerText = `${indent}${outerPipes ? '| Alpha | Beta |' : 'Alpha | Beta'} \t`;
+				const delimiterText = `${indent}${outerPipes ? '| --- | --- |' : '--- | ---'}\t`;
+				const bodyText = `${indent}${outerPipes ? '| one | two |' : 'one | two'}  `;
+				const source = `${headerText}\r\n${delimiterText}\r\n${bodyText}`;
+				const delimiterStart = headerText.length + 2;
+				const bodyStart = delimiterStart + delimiterText.length + 2;
+
+				expect(tables(source)).toEqual([{
+					start: 0,
+					end: source.length,
+					header: {
+						start: 0,
+						end: delimiterStart,
+						contentStart: 0,
+						contentEnd: headerText.length,
+						cells: outerPipes
+							? [
+								{ start: spaces + 1, end: spaces + 8 },
+								{ start: spaces + 9, end: spaces + 15 },
+							]
+							: [
+								{ start: 0, end: spaces + 6 },
+								{ start: spaces + 7, end: headerText.length },
+							],
+					},
+					delimiter: { start: delimiterStart, end: bodyStart },
+					body: [{
+						start: bodyStart,
+						end: source.length,
+						contentStart: bodyStart,
+						contentEnd: source.length,
+						cells: outerPipes
+							? [
+								{ start: bodyStart + spaces + 1, end: bodyStart + spaces + 6 },
+								{ start: bodyStart + spaces + 7, end: bodyStart + spaces + 12 },
+							]
+							: [
+								{ start: bodyStart, end: bodyStart + spaces + 4 },
+								{ start: bodyStart + spaces + 5, end: source.length },
+							],
+					}],
+				}]);
+			}
+		});
+
+		it('splits escaped pipes by backslash parity and preserves literal Unicode UTF-16 offsets', () => {
+			const source = '| Café \\| 茶 | Cafe\u0301 \\\\| 😀 |\n| --- | --- |\n| 值 | e\u0301 |';
+
+			expect(splitMarkdownTableRow(source.split('\n')[0] ?? '')).toEqual([
+				{ start: 1, end: 12 },
+				{ start: 13, end: 22 },
+				{ start: 23, end: 27 },
+			]);
+			expect(tables(source)).toEqual([{
+				start: 0,
+				end: 53,
+				header: {
+					start: 0,
+					end: 29,
+					contentStart: 0,
+					contentEnd: 28,
+					cells: [
+						{ start: 1, end: 12 },
+						{ start: 13, end: 22 },
+						{ start: 23, end: 27 },
+					],
+				},
+				delimiter: { start: 29, end: 43 },
+				body: [{
+					start: 43,
+					end: 53,
+					contentStart: 43,
+					contentEnd: 53,
+					cells: [
+						{ start: 44, end: 47 },
+						{ start: 48, end: 52 },
+					],
+				}],
+			}]);
+			expect(source.slice(44, 47)).toBe(' 值 ');
+			expect(source.slice(48, 52)).toBe(' e\u0301 ');
+		});
+
+		it.each([
+			{
+				name: 'quote',
+				source: 'Before\n> | Alpha | Beta |\n> | --- | --- |\n>| one | two |',
+				table: {
+					start: 7,
+					end: 56,
+					header: { start: 7, end: 26, contentStart: 9, contentEnd: 25, cells: [{ start: 10, end: 17 }, { start: 18, end: 24 }] },
+					delimiter: { start: 26, end: 42 },
+					body: [{ start: 42, end: 56, contentStart: 43, contentEnd: 56, cells: [{ start: 44, end: 49 }, { start: 50, end: 55 }] }],
+				},
+			},
+			{
+				name: 'list',
+				source: '- | Alpha | Beta |\n  | --- | --- |\n  | one | two |',
+				table: {
+					start: 0,
+					end: 50,
+					header: { start: 0, end: 19, contentStart: 2, contentEnd: 18, cells: [{ start: 3, end: 10 }, { start: 11, end: 17 }] },
+					delimiter: { start: 19, end: 35 },
+					body: [{ start: 35, end: 50, contentStart: 37, contentEnd: 50, cells: [{ start: 38, end: 43 }, { start: 44, end: 49 }] }],
+				},
+			},
+			{
+				name: 'nested quote and list',
+				source: '> - | Alpha | Beta |\n>   | --- | --- |\n>   | one | two |',
+				table: {
+					start: 0,
+					end: 56,
+					header: { start: 0, end: 21, contentStart: 4, contentEnd: 20, cells: [{ start: 5, end: 12 }, { start: 13, end: 19 }] },
+					delimiter: { start: 21, end: 39 },
+					body: [{ start: 39, end: 56, contentStart: 43, contentEnd: 56, cells: [{ start: 44, end: 49 }, { start: 50, end: 55 }] }],
+				},
+			},
+		])('retains absolute cells in a $name container', ({ source, table }) => {
+			expect(tables(source)).toEqual([table]);
+		});
+
+		it.each([
+			['quote to top level', '> Alpha | Beta\n--- | ---\none | two'],
+			['top level to quote', 'Alpha | Beta\n> --- | ---\none | two'],
+			['list to quote', '- Alpha | Beta\n> | --- | --- |\nAfter'],
+			['quote to list', '> Alpha | Beta\n- | --- | --- |\nAfter'],
+			['missing list continuation', '> - Alpha | Beta\n> | --- | --- |\nAfter'],
+			['delimiter cell without a hyphen', 'Alpha | Beta\n: | ---\none | two'],
+			['empty internal delimiter cell', 'Alpha | Beta\n--- |  | ---\none | two'],
+			['malformed delimiter suffix', 'Alpha | Beta\n:---: | ---x\none | two'],
+			['header without an unescaped pipe', 'Alpha Beta\n--- | ---\none | two'],
+			['prose pipes', 'Alpha | Beta\nordinary prose\none | two'],
+		])('does not project %s as a table', (_name, source) => {
+			expect(tables(source)).toEqual([]);
+		});
+
+		it.each([
+			['blank line', ''],
+			['backtick fence', '```'],
+			['tilde fence', '~~~'],
+			['heading', '# heading'],
+			['blockquote', '> quote'],
+			['unordered list', '- item'],
+			['ordered list', '1. item'],
+			['thematic break', '---'],
+		])('ends the table body at a %s', (_name, terminator) => {
+			const completeTable = '| Alpha | Beta |\n| --- | --- |\n| one | two |\n';
+			const source = `${completeTable}${terminator}\nAfter | prose`;
+
+			expect(tables(source)).toHaveLength(1);
+			expect(tables(source)[0]).toMatchObject({
+				start: 0,
+				end: completeTable.length,
+				body: [{ start: 31, end: 45 }],
+			});
+			expect(source.slice(0, completeTable.length)).toBe(completeTable);
+		});
+
+		it('excludes semantic fences but retains table recognition inside frontmatter', () => {
+			const fenced = '```\n| A | B |\n| - | - |\n| c | d |\n```\n| X | Y |\n| - | - |\n| x | y |';
+			const projectedFence = tables(fenced);
+			expect(projectedFence).toHaveLength(1);
+			expect(projectedFence[0]).toMatchObject({
+				start: 38,
+				end: fenced.length,
+				header: { cells: [{ start: 39, end: 42 }, { start: 43, end: 46 }] },
+				body: [{ cells: [{ start: 59, end: 62 }, { start: 63, end: 66 }] }],
+			});
+
+			const frontmatter = '---\ntitle: x\n| A | B |\n| - | - |\n| c | d |\n---';
+			expect(tables(frontmatter)).toEqual([{
+				start: 13,
+				end: 43,
+				header: { start: 13, end: 23, contentStart: 13, contentEnd: 22, cells: [{ start: 14, end: 17 }, { start: 18, end: 21 }] },
+				delimiter: { start: 23, end: 33 },
+				body: [{ start: 33, end: 43, contentStart: 33, contentEnd: 42, cells: [{ start: 34, end: 37 }, { start: 38, end: 41 }] }],
+			}]);
+		});
 	});
 });
 

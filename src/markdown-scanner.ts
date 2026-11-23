@@ -67,8 +67,21 @@ export interface MarkdownScan {
 	readonly payloadFenceRanges: readonly MarkdownPayloadFenceRange[];
 }
 
+export interface MarkdownTableRow extends MarkdownRange {
+	readonly contentStart: number;
+	readonly contentEnd: number;
+	readonly cells: readonly MarkdownRange[];
+}
+
+export interface MarkdownTable extends MarkdownRange {
+	readonly header: MarkdownTableRow;
+	readonly delimiter: MarkdownRange;
+	readonly body: readonly MarkdownTableRow[];
+}
+
 export interface MarkdownEditStructure {
 	readonly inlineCodeSpans: readonly MarkdownRange[];
+	readonly tables: readonly MarkdownTable[];
 }
 
 interface FenceOpening {
@@ -223,7 +236,10 @@ export function scanMarkdown(source: string): MarkdownScan {
 }
 
 export function scanMarkdownEditStructure(scan: MarkdownScan): MarkdownEditStructure {
-	return { inlineCodeSpans: scanInlineCode(scan) };
+	return {
+		inlineCodeSpans: scanInlineCode(scan),
+		tables: scanTables(scan.lines, scan.semanticFences),
+	};
 }
 
 export function markdownLineNumberAt(lines: readonly MarkdownLine[], offset: number): number {
@@ -509,6 +525,117 @@ function isFenceClose(text: string, character: string, minimumLength: number): b
 
 function isExactReviewFenceClose(text: string, run: string): boolean {
 	return /^ {0,3}(`+|~+)[ \t]*$/.exec(text)?.[1] === run;
+}
+
+function scanTables(
+	lines: readonly MarkdownLine[],
+	fences: readonly MarkdownRange[],
+): MarkdownTable[] {
+	const tables: MarkdownTable[] = [];
+	for (let index = 0; index + 1 < lines.length; index += 1) {
+		const headerLine = lines[index];
+		const delimiterLine = lines[index + 1];
+		if (!headerLine || !delimiterLine || inAnyRange(headerLine, fences) || inAnyRange(delimiterLine, fences)) {
+			continue;
+		}
+		const container = headerLine.container;
+		if (!hasUnescapedPipe(headerLine.text.slice(container.contentStart))) {
+			continue;
+		}
+		const delimiterStart = matchContainer(delimiterLine.text, container.segments);
+		if (delimiterStart === undefined || !isDelimiterRow(delimiterLine, delimiterStart)) {
+			continue;
+		}
+
+		const header = tableRow(headerLine, container.contentStart);
+		const body: MarkdownTableRow[] = [];
+		let end = delimiterLine.end;
+		let bodyIndex = index + 2;
+		for (; bodyIndex < lines.length; bodyIndex += 1) {
+			const line = lines[bodyIndex];
+			if (!line || line.text.trim().length === 0 || inAnyRange(line, fences)) {
+				break;
+			}
+			const contentStart = matchContainer(line.text, container.segments);
+			if (contentStart === undefined || isTableBodyTerminator(line.text.slice(contentStart))) {
+				break;
+			}
+			body.push(tableRow(line, contentStart));
+			end = line.end;
+		}
+		tables.push({
+			start: headerLine.start,
+			end,
+			header,
+			delimiter: { start: delimiterLine.start, end: delimiterLine.end },
+			body,
+		});
+		index = bodyIndex - 1;
+	}
+	return tables;
+}
+
+function isDelimiterRow(line: MarkdownLine, contentStart: number): boolean {
+	const cells = splitMarkdownTableRow(line.text, contentStart);
+	return cells.length > 0 && cells.every((cell) =>
+		/^:?-+:?$/.test(line.text.slice(cell.start, cell.end).trim())
+	);
+}
+
+function tableRow(line: MarkdownLine, contentStart = 0): MarkdownTableRow {
+	return {
+		start: line.start,
+		end: line.end,
+		contentStart: line.start + contentStart,
+		contentEnd: line.contentEnd,
+		cells: splitMarkdownTableRow(line.text, contentStart).map((cell) => ({
+			start: line.start + cell.start,
+			end: line.start + cell.end,
+		})),
+	};
+}
+
+export function splitMarkdownTableRow(text: string, contentStart = 0): readonly MarkdownRange[] {
+	const pipes: number[] = [];
+	for (let index = contentStart; index < text.length; index += 1) {
+		if (text[index] === '|' && !isMarkdownEscaped(text, index)) {
+			pipes.push(index);
+		}
+	}
+	if (pipes.length === 0) {
+		return [{ start: contentStart, end: text.length }];
+	}
+	let trimmedStart = contentStart;
+	while (text[trimmedStart] === ' ' || text[trimmedStart] === '\t') {
+		trimmedStart += 1;
+	}
+	let trimmedEnd = text.length;
+	while (trimmedEnd > trimmedStart && (text[trimmedEnd - 1] === ' ' || text[trimmedEnd - 1] === '\t')) {
+		trimmedEnd -= 1;
+	}
+	const starts = [contentStart, ...pipes.map((pipe) => pipe + 1)];
+	const ends = [...pipes, text.length];
+	const cells = starts.map((start, index) => ({ start, end: ends[index] ?? text.length }));
+	if (pipes[0] === trimmedStart) {
+		cells.shift();
+	}
+	if (pipes[pipes.length - 1] === trimmedEnd - 1) {
+		cells.pop();
+	}
+	return cells;
+}
+
+function hasUnescapedPipe(text: string): boolean {
+	for (let index = 0; index < text.length; index += 1) {
+		if (text[index] === '|' && !isMarkdownEscaped(text, index)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+function inAnyRange(line: MarkdownLine, ranges: readonly MarkdownRange[]): boolean {
+	return ranges.some((range) => line.start < range.end && range.start < line.end);
 }
 
 function scanInlineCode(scan: MarkdownScan): MarkdownRange[] {

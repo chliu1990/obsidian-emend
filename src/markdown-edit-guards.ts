@@ -5,29 +5,14 @@ import {
 	markdownLineNumberAt,
 	scanMarkdown,
 	scanMarkdownEditStructure,
-	type MarkdownLine,
+	splitMarkdownTableRow,
+	type MarkdownTableRow,
 } from './markdown-scanner';
 import type { EditOperation } from './types';
 
 interface SourceRange {
 	start: number;
 	end: number;
-}
-
-type SourceLine = Pick<MarkdownLine, 'start' | 'end' | 'contentEnd' | 'text'>;
-
-type TableCell = SourceRange;
-
-interface TableRow extends SourceRange {
-	contentStart: number;
-	contentEnd: number;
-	cells: TableCell[];
-}
-
-interface MarkdownTable extends SourceRange {
-	header: TableRow;
-	delimiter: SourceRange;
-	body: TableRow[];
 }
 
 export interface GuardedMarkdownOperation extends SourceRange {
@@ -54,8 +39,7 @@ export function findMarkdownEditViolation(
 ): MarkdownEditViolation | undefined {
 	const scan = scanMarkdown(fullText);
 	const { lines, semanticFences: fences, reviewFenceRanges } = scan;
-	const { inlineCodeSpans: inlineSpans } = scanMarkdownEditStructure(scan);
-	const tables = scanTables(lines, fences);
+	const { inlineCodeSpans: inlineSpans, tables } = scanMarkdownEditStructure(scan);
 
 	for (const operation of operations) {
 		const field: MarkdownEditViolation['field'] = operation.operationType === 'insert' ? 'anchor' : 'target';
@@ -304,146 +288,9 @@ function hasPairedBacktickRuns(
 	return true;
 }
 
-type ContainerSegment =
-	| { type: 'quote' }
-	| { type: 'indent'; width: number };
-
-interface ContainerOpening {
-	contentStart: number;
-	segments: ContainerSegment[];
-}
-
-function readContainerOpening(text: string): ContainerOpening {
-	let contentStart = 0;
-	const segments: ContainerSegment[] = [];
-	while (contentStart < text.length) {
-		const remaining = text.slice(contentStart);
-		const quote = /^ {0,3}>[ \t]?/.exec(remaining)?.[0];
-		if (quote) {
-			contentStart += quote.length;
-			segments.push({ type: 'quote' });
-			continue;
-		}
-		const list = /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]+/.exec(remaining)?.[0];
-		if (!list) {
-			break;
-		}
-		contentStart += list.length;
-		segments.push({ type: 'indent', width: visualWidth(list) });
-	}
-	return { contentStart, segments };
-}
-
-function matchContainer(text: string, segments: readonly ContainerSegment[]): number | undefined {
-	let contentStart = 0;
-	for (const segment of segments) {
-		if (segment.type === 'quote') {
-			const quote = /^ {0,3}>[ \t]?/.exec(text.slice(contentStart))?.[0];
-			if (!quote) {
-				return undefined;
-			}
-			contentStart += quote.length;
-			continue;
-		}
-		let width = 0;
-		while (width < segment.width) {
-			const character = text[contentStart];
-			if (character === ' ') {
-				width += 1;
-			} else if (character === '\t') {
-				width += 4 - (width % 4);
-			} else {
-				return undefined;
-			}
-			contentStart += 1;
-		}
-	}
-	return contentStart;
-}
-
-function visualWidth(text: string): number {
-	let width = 0;
-	for (const character of text) {
-		width = character === '\t' ? width + 4 - (width % 4) : width + 1;
-	}
-	return width;
-}
-
-function scanTables(lines: readonly SourceLine[], fences: readonly SourceRange[]): MarkdownTable[] {
-	const tables: MarkdownTable[] = [];
-	for (let index = 0; index + 1 < lines.length; index += 1) {
-		const headerLine = lines[index];
-		const delimiterLine = lines[index + 1];
-		if (!headerLine || !delimiterLine || inAnyRange(headerLine, fences) || inAnyRange(delimiterLine, fences)) {
-			continue;
-		}
-		const container = readContainerOpening(headerLine.text);
-		if (!hasUnescapedPipe(headerLine.text.slice(container.contentStart))) {
-			continue;
-		}
-		const delimiterStart = matchContainer(delimiterLine.text, container.segments);
-		if (delimiterStart === undefined || !isDelimiterRow(delimiterLine, delimiterStart)) {
-			continue;
-		}
-
-		const header = tableRow(headerLine, container.contentStart);
-		const body: TableRow[] = [];
-		let end = delimiterLine.end;
-		let bodyIndex = index + 2;
-		for (; bodyIndex < lines.length; bodyIndex += 1) {
-			const line = lines[bodyIndex];
-			if (!line || line.text.trim().length === 0 || inAnyRange(line, fences)) {
-				break;
-			}
-			const contentStart = matchContainer(line.text, container.segments);
-			if (contentStart === undefined || isTableBodyTerminator(line.text.slice(contentStart))) {
-				break;
-			}
-			body.push(tableRow(line, contentStart));
-			end = line.end;
-		}
-		tables.push({
-			start: headerLine.start,
-			end,
-			header,
-			delimiter: { start: delimiterLine.start, end: delimiterLine.end },
-			body,
-		});
-		index = bodyIndex - 1;
-	}
-	return tables;
-}
-
-function isDelimiterRow(line: SourceLine, contentStart: number): boolean {
-	const cells = splitTableRow(line, contentStart);
-	return cells.length > 0 && cells.every((cell) =>
-		/^:?-+:?$/.test(line.text.slice(cell.start, cell.end).trim())
-	);
-}
-
-function isTableBodyTerminator(text: string): boolean {
-	return /^ {0,3}#{1,6}(?:[ \t]+|$)/.test(text) ||
-		/^ {0,3}>/.test(text) ||
-		/^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]+/.test(text) ||
-		/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(text);
-}
-
-function tableRow(line: SourceLine, contentStart = 0): TableRow {
-	return {
-		start: line.start,
-		end: line.end,
-		contentStart: line.start + contentStart,
-		contentEnd: line.contentEnd,
-		cells: splitTableRow(line, contentStart).map((cell) => ({
-			start: line.start + cell.start,
-			end: line.start + cell.end,
-		})),
-	};
-}
-
 function preservesTableRowStructure(
 	fullText: string,
-	row: TableRow,
+	row: MarkdownTableRow,
 	operations: readonly GuardedMarkdownOperation[],
 ): boolean {
 	const original = fullText.slice(row.start, row.contentEnd);
@@ -494,8 +341,7 @@ function fallbackCompiledText(operation: GuardedMarkdownOperation, target: strin
 }
 
 function tableRowViewSignature(text: string, contentStart: number): string {
-	const line: SourceLine = { start: 0, end: text.length, contentEnd: text.length, text };
-	const cellCount = splitTableRow(line, contentStart).length;
+	const cellCount = splitMarkdownTableRow(text, contentStart).length;
 	let trimmedStart = contentStart;
 	while (text[trimmedStart] === ' ' || text[trimmedStart] === '\t') {
 		trimmedStart += 1;
@@ -519,36 +365,6 @@ function hasTrailingLineBreak(text: string): boolean {
 	return text.endsWith('\n') || text.endsWith('\r');
 }
 
-function splitTableRow(line: SourceLine, contentStart = 0): SourceRange[] {
-	const pipes: number[] = [];
-	for (let index = contentStart; index < line.text.length; index += 1) {
-		if (line.text[index] === '|' && !isMarkdownEscaped(line.text, index)) {
-			pipes.push(index);
-		}
-	}
-	if (pipes.length === 0) {
-		return [{ start: contentStart, end: line.text.length }];
-	}
-	let trimmedStart = contentStart;
-	while (line.text[trimmedStart] === ' ' || line.text[trimmedStart] === '\t') {
-		trimmedStart += 1;
-	}
-	let trimmedEnd = line.text.length;
-	while (trimmedEnd > trimmedStart && (line.text[trimmedEnd - 1] === ' ' || line.text[trimmedEnd - 1] === '\t')) {
-		trimmedEnd -= 1;
-	}
-	const starts = [contentStart, ...pipes.map((pipe) => pipe + 1)];
-	const ends = [...pipes, line.text.length];
-	const cells = starts.map((start, index) => ({ start, end: ends[index] ?? line.text.length }));
-	if (pipes[0] === trimmedStart) {
-		cells.shift();
-	}
-	if (pipes[pipes.length - 1] === trimmedEnd - 1) {
-		cells.pop();
-	}
-	return cells;
-}
-
 function hasUnescapedPipe(text: string): boolean {
 	for (let index = 0; index < text.length; index += 1) {
 		if (text[index] === '|' && !isMarkdownEscaped(text, index)) {
@@ -563,10 +379,6 @@ function hasTableStructureCharacters(text: string): boolean {
 		return true;
 	}
 	return hasUnescapedPipe(text);
-}
-
-function inAnyRange(line: SourceLine, ranges: readonly SourceRange[]): boolean {
-	return ranges.some((range) => intersects(line, range));
 }
 
 function intersects(left: SourceRange, right: SourceRange): boolean {
