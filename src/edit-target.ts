@@ -6,16 +6,6 @@ export type EditTargetState =
 	| { readonly choice: 'full-note'; readonly resolved: 'full-note' }
 	| { readonly choice: 'selection'; readonly resolved: 'selection' };
 
-export function resolveEditTarget(
-	choice: EditTargetChoice,
-	hasUsableSelection: boolean,
-): ResolvedEditTarget {
-	if (choice !== 'auto') {
-		return choice;
-	}
-	return hasUsableSelection ? 'selection' : 'full-note';
-}
-
 export function resolveEditTargetState(
 	choice: EditTargetChoice,
 	hasUsableSelection: boolean,

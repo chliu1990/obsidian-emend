@@ -57,6 +57,8 @@ export interface PublicChatViewFixture {
 	open(): Promise<void>;
 	close(): Promise<void>;
 	setActivePath(path: string | null): void;
+	setSelectedText(text: string): void;
+	emitWorkspaceEvent(name: 'editor-change' | 'editor-selection-change'): void;
 	flushAnimationFrame(): void;
 }
 
@@ -157,10 +159,22 @@ export function createPublicChatViewFixture(
 ): PublicChatViewFixture {
 	let activePath = options.activePath === undefined ? 'Note.md' : options.activePath;
 	const sourceText = options.sourceText ?? 'Source text';
-	const selectedText = options.selectedText ?? '';
-	const selectedFrom = selectedText ? sourceText.indexOf(selectedText) : -1;
-	const selectionFrom = selectedFrom >= 0 ? selectedFrom : 0;
-	const selectionTo = selectedFrom >= 0 ? selectedFrom + selectedText.length : selectionFrom;
+	let selectedText = options.selectedText ?? '';
+	const currentSelection = () => {
+		const from = selectedText ? sourceText.indexOf(selectedText) : -1;
+		return {
+			from: from >= 0 ? from : 0,
+			to: from >= 0 ? from + selectedText.length : 0,
+		};
+	};
+	const requireSelection = () => {
+		const from = selectedText ? sourceText.indexOf(selectedText) : -1;
+		const to = from >= 0 ? from + selectedText.length : from;
+		if (!selectedText.trim() || from < 0 || to <= from) {
+			throw new Error('Select non-whitespace text first.');
+		}
+		return { from, to };
+	};
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	if (options.defaultMode) {
 		settings.defaultMode = options.defaultMode;
@@ -222,7 +236,7 @@ export function createPublicChatViewFixture(
 		return {
 			file,
 			sourceText,
-			selection: { from: selectionFrom, to: selectionTo },
+			selection: currentSelection(),
 			noteLabel: file.path,
 			markdown: sourceText,
 		};
@@ -230,13 +244,14 @@ export function createPublicChatViewFixture(
 	const captureSelectionEditTarget = vi.fn<() => SelectionEditTarget>(() => {
 		const file = new TFile();
 		file.path = activePath ?? 'Note.md';
+		const { from, to } = requireSelection();
 		return {
 			snapshot: {
 				file,
 				fullText: sourceText,
 				selectedText,
-				from: selectionFrom,
-				to: selectionTo,
+				from,
+				to,
 			},
 			editor: {
 				readCurrentText: () => sourceText,
@@ -263,22 +278,27 @@ export function createPublicChatViewFixture(
 		},
 		scope: new Scope(),
 	};
-	const pluginDouble = {
+	const pluginDouble = Object.assign(Object.create(EmendPlugin.prototype) as EmendPlugin, {
 		settings,
 		additionalNotesStore,
 		conversationStore,
 		getApiKey: vi.fn(() => 'test-key'),
 		getActiveNotePath: vi.fn(() => activePath),
 		getActiveNoteLabel: vi.fn(() => activePath ?? 'No Markdown note is open'),
-		hasUsableSelection: vi.fn(() => Boolean(selectedText.trim())),
+		hasUsableSelection: vi.fn(() => {
+			const from = selectedText ? sourceText.indexOf(selectedText) : -1;
+			return Boolean(selectedText.trim()) && from >= 0;
+		}),
 		captureChatContext,
-		captureChatSelectionContext: vi.fn(() => captureChatContext()),
+		captureChatSelectionContext: vi.fn(() => {
+			requireSelection();
+			return captureChatContext();
+		}),
 		captureSelectionEditTarget,
 		requestChatCompletion,
 		requestSelectionEdit,
-		saveSettings: vi.fn(async () => undefined),
-	};
-	const plugin = pluginDouble as unknown as EmendPlugin;
+	});
+	const plugin = pluginDouble;
 	const view = new EmendChatView(new WorkspaceLeaf(), plugin);
 	Object.assign(view, { app, contentEl });
 	const fixture: PublicChatViewFixture = {
@@ -303,6 +323,14 @@ export function createPublicChatViewFixture(
 		close: () => view.onClose(),
 		setActivePath: (path) => {
 			activePath = path;
+		},
+		setSelectedText: (text) => {
+			selectedText = text;
+		},
+		emitWorkspaceEvent: (name) => {
+			for (const registration of workspaceEvents.filter((event) => event.name === name)) {
+				registration.callback();
+			}
 		},
 		flushAnimationFrame: () => flushAnimationFrame(contentEl),
 	};
