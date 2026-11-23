@@ -538,6 +538,331 @@ describe('Markdown container identity regressions', () => {
 	});
 });
 
+describe('Markdown scanner lossless boundaries', () => {
+	it('uses exact absolute ranges and strict lines for lone CR and mixed endings', () => {
+		const fullText = 'A\rB\r\n`alpha\nbeta`\r| H | I |\n| - | - |\r| c | d |';
+		const insertion = insertionOperation(fullText, 'alpha\nbeta', 'after', { operation: 4 });
+		expect(insertion).toEqual({
+			operation: 4,
+			operationType: 'insert',
+			start: 6,
+			end: 16,
+			insertionPoint: 16,
+			text: 'added',
+		});
+		expect(findMarkdownEditViolation(fullText, [insertion])).toEqual({
+			code: 'inline-code-range',
+			operation: 4,
+			operationType: 'insert',
+			field: 'anchor',
+			line: 4,
+		});
+
+		const target = targetOperation(fullText, 'c', {
+			operation: 7,
+			operationType: 'replace',
+			replacement: 'c | changed',
+		});
+		expect(target).toEqual({
+			operation: 7,
+			operationType: 'replace',
+			start: 40,
+			end: 41,
+			replacement: 'c | changed',
+		});
+		expect(findMarkdownEditViolation(fullText, [target])).toEqual({
+			code: 'table-structure-edit',
+			operation: 7,
+			operationType: 'replace',
+			field: 'replacement',
+			line: 7,
+		});
+	});
+
+	it('handles empty input and trailing line endings without synthetic source lines', () => {
+		const emptyInsertion: GuardedMarkdownOperation = {
+			operation: 1,
+			operationType: 'insert',
+			start: 0,
+			end: 0,
+			insertionPoint: 0,
+			text: 'added',
+		};
+		expect(findMarkdownEditViolation('', [])).toBeUndefined();
+		expect(findMarkdownEditViolation('', [emptyInsertion])).toBeUndefined();
+		expect(findPayloadStructureViolation('', [])).toBeUndefined();
+		expect(findPayloadStructureViolation('', [{ ...emptyInsertion, text: '`' }])).toEqual({
+			code: 'fenced-code-edit',
+			operation: 1,
+			operationType: 'insert',
+			field: 'text',
+			line: 1,
+		});
+
+		const unclosed = 'Before\r```\rinside\r';
+		expect(findMarkdownEditViolation(unclosed, [
+			insertionOperation(unclosed, 'inside\r', 'after'),
+		])).toEqual({
+			code: 'fenced-code-edit',
+			operation: 1,
+			operationType: 'insert',
+			field: 'anchor',
+			line: 4,
+		});
+		const trailing = 'Alpha\r';
+		expect(findPayloadStructureViolation(trailing, [
+			insertionOperation(trailing, trailing, 'after', { text: '`' }),
+		])).toEqual({
+			code: 'fenced-code-edit',
+			operation: 1,
+			operationType: 'insert',
+			field: 'text',
+			line: 2,
+		});
+	});
+
+	it('retains fence and table edit exclusions inside frontmatter', () => {
+		const fullText = '---\n```\ninside\n```\n| A | B |\n| - | - |\n| c | d |\n---';
+		expect(findMarkdownEditViolation(fullText, [
+			targetOperation(fullText, 'inside'),
+		])).toEqual({
+			code: 'fenced-code-edit',
+			operation: 1,
+			operationType: 'remove',
+			field: 'target',
+			line: 3,
+		});
+		expect(findMarkdownEditViolation(fullText, [
+			targetOperation(fullText, 'c', { operationType: 'replace', replacement: 'c | changed' }),
+		])).toEqual({
+			code: 'table-structure-edit',
+			operation: 1,
+			operationType: 'replace',
+			field: 'replacement',
+			line: 7,
+		});
+	});
+
+	it('preserves literal Unicode and UTF-16 offsets in inline code and table cells', () => {
+		const inline = '😀 前 `café 值` 后';
+		const inlineTarget = targetOperation(inline, 'café 值', {
+			operationType: 'replace',
+			replacement: 'café 新',
+		});
+		expect(inlineTarget.start).toBe(6);
+		expect(inlineTarget.end).toBe(12);
+		expect(findMarkdownEditViolation(inline, [inlineTarget])).toEqual({
+			code: 'inline-code-range',
+			operation: 1,
+			operationType: 'replace',
+			field: 'target',
+			line: 1,
+		});
+
+		const table = '| Café | Cafe\u0301 | 😀 |\n| --- | --- | --- |\n| 值 | e\u0301 | 🧪 |';
+		const composed = targetOperation(table, 'Café', {
+			operationType: 'replace',
+			replacement: '茶',
+		});
+		const decomposed = targetOperation(table, 'Cafe\u0301', {
+			operation: 2,
+			operationType: 'replace',
+			replacement: 'NFD 值',
+		});
+		const emoji = targetOperation(table, '😀', {
+			operation: 3,
+			operationType: 'replace',
+			replacement: '🙂',
+		});
+		expect([composed.start, composed.end, decomposed.start, decomposed.end, emoji.start, emoji.end])
+			.toEqual([2, 6, 9, 14, 17, 19]);
+		expect(findMarkdownEditViolation(table, [composed, decomposed, emoji])).toBeUndefined();
+		expect(findMarkdownEditViolation(table, [
+			targetOperation(table, 'Café', {
+				operationType: 'replace',
+				replacement: 'Cafe\u0301 | 值',
+			}),
+		])).toEqual({
+			code: 'table-structure-edit',
+			operation: 1,
+			operationType: 'replace',
+			field: 'replacement',
+			line: 1,
+		});
+	});
+
+	it.each([1, 2, 3, 4])('uses odd/even backslash parity for table pipes with %i backslashes', (count) => {
+		const slashes = '\\'.repeat(count);
+		const escaped = count % 2 === 1;
+		const fullText = [
+			`| Alpha${slashes}| Beta | Gamma |`,
+			escaped ? '| --- | --- |' : '| --- | --- | --- |',
+			escaped ? '| one | two |' : '| one | two | three |',
+		].join('\n');
+		const operation = targetOperation(fullText, `Alpha${slashes}| Beta`, {
+			operationType: 'replace',
+			replacement: `First${slashes}| Second`,
+		});
+		const violation = findMarkdownEditViolation(fullText, [operation]);
+		if (escaped) {
+			expect(violation).toBeUndefined();
+		} else {
+			expect(violation).toEqual({
+				code: 'table-structure-edit',
+				operation: 1,
+				operationType: 'replace',
+				field: 'target',
+				line: 1,
+			});
+		}
+	});
+
+	it('combines escaped pipes, no outer pipes, and nested table containers', () => {
+		const fullText = '> - Alpha\\|Beta | Gamma\n>   --- | ---\n>   one | two';
+		expect(findMarkdownEditViolation(fullText, [
+			targetOperation(fullText, 'Alpha\\|Beta', {
+				operationType: 'replace',
+				replacement: 'First\\|Value',
+			}),
+		])).toBeUndefined();
+		expect(findMarkdownEditViolation(fullText, [
+			targetOperation(fullText, 'Alpha\\|Beta | Gamma'),
+		])).toEqual({
+			code: 'table-structure-edit',
+			operation: 1,
+			operationType: 'remove',
+			field: 'target',
+			line: 1,
+		});
+	});
+
+	it('retains legacy short dash runs as table delimiter cells', () => {
+		const fullText = '| Alpha | Beta |\n| -- | --- |\n| one | two |';
+		expect(findMarkdownEditViolation(fullText, [
+			targetOperation(fullText, 'Alpha | Beta'),
+		])).toEqual({
+			code: 'table-structure-edit',
+			operation: 1,
+			operationType: 'remove',
+			field: 'target',
+			line: 1,
+		});
+	});
+
+	it.each([
+		'| --- | nope |',
+		'| : | --- |',
+		'| --- | --- | trailing |',
+	])('does not promote prose beside malformed delimiter row %j into a table', (delimiter) => {
+		const fullText = `| Alpha | Beta |\n${delimiter}\n| one | two |`;
+		expect(findMarkdownEditViolation(fullText, [
+			targetOperation(fullText, 'Alpha | Beta', {
+				operationType: 'replace',
+				replacement: 'Changed | prose',
+			}),
+			targetOperation(fullText, delimiter, { operation: 2 }),
+		])).toBeUndefined();
+	});
+
+	it('does not treat mismatched or unequal backtick runs as inline-code pairs', () => {
+		for (const fullText of ['Before ``alpha` after', 'Before `alpha`` after']) {
+			expect(findMarkdownEditViolation(fullText, [
+				targetOperation(fullText, 'alpha', { operationType: 'replace', replacement: 'beta' }),
+			])).toBeUndefined();
+		}
+		const mismatchedFence = 'Before\n~~~\ninside\n```\nAfter';
+		expect(findMarkdownEditViolation(mismatchedFence, [
+			targetOperation(mismatchedFence, 'After'),
+		])).toEqual({
+			code: 'fenced-code-edit',
+			operation: 1,
+			operationType: 'remove',
+			field: 'target',
+			line: 5,
+		});
+	});
+
+	it.each(['replacement', 'comment'] as const)(
+		'requires a payload newline after a closing fence in %s wrappers',
+		(field) => {
+			const fullText = 'Alpha beta.';
+			const operation = (payload: string): GuardedMarkdownOperation => targetOperation(
+				fullText,
+				'beta',
+				field === 'replacement'
+					? { operationType: 'replace', replacement: payload }
+					: { operationType: 'comment', comment: payload },
+			);
+			expect(findPayloadStructureViolation(fullText, [
+				operation('\n```\ncode\n```'),
+			])).toEqual({
+				code: 'fenced-code-edit',
+				operation: 1,
+				operationType: field === 'replacement' ? 'replace' : 'comment',
+				field,
+				line: 1,
+			});
+			expect(findPayloadStructureViolation(fullText, [
+				operation('\n```\ncode\n```\n'),
+			])).toBeUndefined();
+		},
+	);
+
+	it('pins review-shadow offsets and the same-opening exemption directly', () => {
+		const shadow = 'Before\n```alpha```\ninside\n```\nAfter';
+		const beforeShadow = insertionOperation(shadow, 'Before', 'after', { text: 'added\n' });
+		expect(beforeShadow).toEqual({
+			operation: 1,
+			operationType: 'insert',
+			start: 0,
+			end: 6,
+			insertionPoint: 6,
+			text: 'added\n',
+		});
+		expect(findMarkdownEditViolation(shadow, [beforeShadow])).toBeUndefined();
+		const atOpening = insertionOperation(shadow, '```alpha```', 'before', { text: 'added\n' });
+		expect(atOpening).toEqual({
+			operation: 1,
+			operationType: 'insert',
+			start: 7,
+			end: 18,
+			insertionPoint: 7,
+			text: 'added\n',
+		});
+		expect(findMarkdownEditViolation(shadow, [atOpening])).toEqual({
+			code: 'fenced-code-edit',
+			operation: 1,
+			operationType: 'insert',
+			field: 'anchor',
+			line: 2,
+		});
+
+		const semantic = 'Before\n~~~info\ninside\n~~~\nAfter';
+		const sameOpening = insertionOperation(semantic, '~~~info', 'before', { text: 'added\n' });
+		expect(sameOpening.insertionPoint).toBe(7);
+		expect(findMarkdownEditViolation(semantic, [sameOpening])).toBeUndefined();
+	});
+
+	it('uses actual compiledText rather than fallback whole-target markup for affected rows', () => {
+		const fullText = '| Left | Right |\n| --- | --- |\n| \\| two | three |';
+		const operation = targetOperation(fullText, '\\|', {
+			operationType: 'replace',
+			replacement: `${'\\'.repeat(3)}|`,
+		});
+		expect(findMarkdownEditViolation(fullText, [operation])).toBeUndefined();
+		expect(findMarkdownEditViolation(fullText, [{
+			...operation,
+			compiledText: '\\{++\\\\++}|',
+		}])).toEqual({
+			code: 'table-structure-edit',
+			operation: 1,
+			operationType: 'replace',
+			field: 'replacement',
+			line: 3,
+		});
+	});
+});
+
 describe('violation ordering', () => {
 	it('returns the first unsafe operation in request order', () => {
 		const fullText = '`alpha`\n\n| A | B |\n| - | - |\n| c | d |';
