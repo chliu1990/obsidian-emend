@@ -6,7 +6,13 @@ import {
 	createVaultNoteWriter,
 	type NoteWriter,
 } from '../src/note-writer';
+import { canWriteToNote } from '../src/permissions';
 import type { Mode } from '../src/types';
+
+vi.mock('../src/permissions', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../src/permissions')>();
+	return { ...actual, canWriteToNote: vi.fn(actual.canWriteToNote) };
+});
 
 const STALE_ERROR =
 	'The note changed while Emend was responding. No edits were applied.';
@@ -423,6 +429,67 @@ describe('applyPreparedEdit', () => {
 			context.file,
 			'# Note\n{~~Original~>Edited~~} text',
 		);
+	});
+
+	it('checks second Edit permission after freshness and before final abort and write', async () => {
+		const context = makeContext();
+		const { writer } = makeWriter();
+		const controller = new AbortController();
+		const events: string[] = [];
+		let targetChecked = false;
+		vi.mocked(canWriteToNote).mockClear();
+		vi.mocked(canWriteToNote)
+			.mockImplementationOnce((mode) => {
+				events.push('initial permission');
+				return mode === 'edit';
+			})
+			.mockImplementationOnce((mode) => {
+				events.push('second permission');
+				return mode === 'edit';
+			});
+		writer.readCurrentText = vi.fn(async () => {
+			events.push('disk read');
+			return context.sourceText;
+		});
+		writer.readEditorTexts = vi.fn(() => {
+			events.push('editor snapshot');
+			return [context.sourceText];
+		});
+		writer.isTargetCurrent = vi.fn(() => {
+			events.push('target check');
+			targetChecked = true;
+			return true;
+		});
+		vi.spyOn(controller.signal, 'throwIfAborted').mockImplementation(() => {
+			if (targetChecked) {
+				events.push('final abort');
+			}
+		});
+		writer.write = vi.fn(async () => {
+			events.push('vault write');
+		});
+
+		await applyPreparedEdit(
+			'edit',
+			context,
+			{
+				annotatedMarkdown: '# Note\n{~~Original~>Edited~~} text',
+				changeCount: 1,
+				summaryItems: SUMMARY_ITEMS,
+			},
+			writer,
+			controller.signal,
+		);
+
+		expect(events).toEqual([
+			'initial permission',
+			'disk read',
+			'editor snapshot',
+			'target check',
+			'second permission',
+			'final abort',
+			'vault write',
+		]);
 	});
 
 	it.each(['ask', 'discuss', 'brainstorm'] as const)(

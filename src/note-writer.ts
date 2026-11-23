@@ -65,7 +65,6 @@ export async function applyPreparedEdit(
 		},
 		signal,
 	);
-	signal?.throwIfAborted();
 
 	if (!canWriteToNote(mode)) {
 		return {
@@ -75,6 +74,7 @@ export async function applyPreparedEdit(
 			summary: undefined,
 		};
 	}
+	signal?.throwIfAborted();
 	await writer.write(snapshot.file, prepared.annotatedMarkdown);
 	return {
 		applied: true,
