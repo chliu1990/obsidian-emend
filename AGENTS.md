@@ -68,6 +68,18 @@ The short request-flow map is:
 Keep capture, coordination, transport, writing, persistence, and UI separate.
 Put new feature logic in focused modules rather than adding unrelated responsibilities to large modules.
 
+`edit-target.ts` owns the maintained `EditTargetState`; `chat-view.ts` uses its resolved value for display, capacity,
+quick actions, and submission capture. Only real note changes reset the choice to automatic, initially as Full note
+without eager host I/O before the normal maintained refresh. Same-note refreshes re-resolve automatic availability;
+session and Chat/Edit switches do not reset targeting. Capture the existing `CapturedDraftTarget` synchronously once
+before the initial save and never resolve it again after an await. Explicit Selection remains explicit, and explicit
+or maintained automatic Selection that vanishes fails closed rather than falling back to Full note.
+
+Markdown target lookup is pure: it reads the active view, the explicitly remembered still-open view, or the first open
+Markdown view without changing last-active state. Only explicit lifecycle tracking updates that memory. Target-state
+unification does not merge or relax the separate Full-note and Selection writer/freshness contracts. See
+[Stage 55](devel_docs/55-edit-target-flow.md).
+
 Ordinary Chat uses bounded note context. Chat Selection sends the complete note plus a complete read-only focus Selection.
 Full-note Edit sends the complete note. Selection Edit sends the complete Selection with Default Smart/Symmetric
 or full-note supporting context. Context never expands the edit target.
