@@ -334,6 +334,97 @@ describe('applyPreparedEdit', () => {
 		expect(writer.write).not.toHaveBeenCalled();
 	});
 
+	it('does not write when the target check triggers the final abort', async () => {
+		const context = makeContext();
+		const { writer } = makeWriter();
+		const controller = new AbortController();
+		writer.isTargetCurrent = vi.fn(() => {
+			controller.abort();
+			return true;
+		});
+
+		await expect(
+			applyPreparedEdit(
+				'edit',
+				context,
+				{
+					annotatedMarkdown: '# Note\n{~~Original~>Edited~~} text',
+					changeCount: 1,
+					summaryItems: SUMMARY_ITEMS,
+				},
+				writer,
+				controller.signal,
+			),
+		).rejects.toMatchObject({ name: 'AbortError' });
+
+		expect(writer.readCurrentText).toHaveBeenCalledExactlyOnceWith(context.file);
+		expect(writer.write).not.toHaveBeenCalled();
+	});
+
+	it('writes exact matching CRLF source without normalization or a second disk read', async () => {
+		const context = makeContext('# Note\r\nOriginal text\r\n');
+		const { writer } = makeWriter(context.sourceText, [context.sourceText]);
+		const annotatedMarkdown = '# Note\r\n{~~Original~>Edited~~} text\r\n';
+
+		const result = await applyPreparedEdit(
+			'edit',
+			context,
+			{ annotatedMarkdown, changeCount: 1, summaryItems: SUMMARY_ITEMS },
+			writer,
+		);
+
+		expect(result.applied).toBe(true);
+		expect(writer.readCurrentText).toHaveBeenCalledExactlyOnceWith(context.file);
+		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
+			context.file,
+			annotatedMarkdown,
+		);
+	});
+
+	it('hands off disk, editors, target, and one guarded write in order', async () => {
+		const context = makeContext();
+		const { writer } = makeWriter();
+		const events: string[] = [];
+		writer.readCurrentText = vi.fn(async () => {
+			events.push('disk read');
+			return context.sourceText;
+		});
+		writer.readEditorTexts = vi.fn(() => {
+			events.push('editor snapshot');
+			return [context.sourceText];
+		});
+		writer.isTargetCurrent = vi.fn(() => {
+			events.push('target check');
+			return true;
+		});
+		writer.write = vi.fn(async () => {
+			events.push('vault write');
+		});
+
+		await applyPreparedEdit(
+			'edit',
+			context,
+			{
+				annotatedMarkdown: '# Note\n{~~Original~>Edited~~} text',
+				changeCount: 1,
+				summaryItems: SUMMARY_ITEMS,
+			},
+			writer,
+		);
+
+		expect(events).toEqual([
+			'disk read',
+			'editor snapshot',
+			'target check',
+			'vault write',
+		]);
+		expect(writer.readCurrentText).toHaveBeenCalledExactlyOnceWith(context.file);
+		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
+			context.file,
+			'# Note\n{~~Original~>Edited~~} text',
+		);
+	});
+
 	it.each(['ask', 'discuss', 'brainstorm'] as const)(
 		'never reads or writes annotated text in %s mode',
 		async (mode: Mode) => {
