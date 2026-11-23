@@ -1,12 +1,15 @@
-import { MarkdownRenderer, Menu, MenuItem, Notice } from 'obsidian';
+import { MarkdownRenderer, Menu, MenuItem, Notice, Scope } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatSession } from '../src/chat-sessions';
 import {
 	buildFullNoteDraftEstimate,
+	buildReadOnlyDraftEstimate,
+	buildSelectionDraftEstimate,
 	formatDraftCapacitySummary,
 } from '../src/context-capacity-ui';
+import { formatVaultQualifiedPath, type RequestContext } from '../src/context';
 import type { LoadedChatConversation } from '../src/conversation-store';
-import type EmendPlugin from '../src/main';
+import EmendPlugin from '../src/main';
 import { operationEditStrategy } from '../src/operation-edit-strategy';
 import type {
 	AiProviderRequest,
@@ -14,6 +17,9 @@ import type {
 	StreamResult,
 } from '../src/provider-stream';
 import { QUICK_ACTIONS } from '../src/quick-actions';
+import type { SelectionEditResult, SelectionEditTarget } from '../src/selection-editor';
+import type { SelectionContextPolicy } from '../src/selection-focus';
+import { normalizeContextLimit } from '../src/settings';
 import {
 	EditRequestCoordinator,
 	type ChatStreamResult,
@@ -24,6 +30,7 @@ import type {
 	ChatMessage,
 	ProviderConfig,
 	ProviderHistoryMessage,
+	SelectionSnapshot,
 } from '../src/types';
 import { WEB_SEARCH_DISCLOSURE } from '../src/web-search';
 import {
@@ -72,6 +79,8 @@ type ChatViewMenu = Menu & {
 
 type ChatViewMenuItem = MenuItem & {
 	title: string;
+	checked: boolean | null;
+	disabled: boolean;
 	clickHandler: (event: MouseEvent | KeyboardEvent) => unknown;
 };
 
@@ -112,13 +121,28 @@ function findChatViewMenuItem(menu: ChatViewMenu, title: string): ChatViewMenuIt
 	return item;
 }
 
-function chooseWritingMenuItem(contentEl: FakeElement, title: string): void {
+function openWritingMenu(contentEl: FakeElement): ChatViewMenu {
 	findWritingTrigger(contentEl)?.dispatch('click');
 	const menu = chatViewMenus.instances.at(-1);
 	if (!menu) {
 		throw new Error('The writing trigger did not open a menu.');
 	}
-	findChatViewMenuItem(menu, title).clickHandler({} as MouseEvent);
+	return menu;
+}
+
+function chooseWritingMenuItem(contentEl: FakeElement, title: string): void {
+	findChatViewMenuItem(openWritingMenu(contentEl), title).clickHandler({} as MouseEvent);
+}
+
+function chooseModelMenuItem(contentEl: FakeElement, title: string): ChatViewMenuItem {
+	findModelTrigger(contentEl)?.dispatch('click');
+	const menu = chatViewMenus.instances.at(-1);
+	if (!menu) {
+		throw new Error('The model trigger did not open a menu.');
+	}
+	const item = findChatViewMenuItem(menu, title);
+	item.clickHandler({} as MouseEvent);
+	return item;
 }
 
 function findCapacitySummary(contentEl: FakeElement): FakeElement | undefined {
@@ -199,6 +223,53 @@ function expectedFullNoteCapacity(
 		prompt,
 		history,
 	}));
+}
+
+function selectionCapacityEstimate(
+	fixture: PublicChatViewFixture,
+	snapshot: SelectionSnapshot,
+	prompt: string,
+	selectionContext: SelectionContextPolicy = 'default',
+) {
+	return buildSelectionDraftEstimate({
+		provider: fixture.settings.providers[fixture.settings.activeProvider],
+		snapshot,
+		prompt,
+		maxContextCharacters: normalizeContextLimit(fixture.settings.maxContextCharacters),
+		smartSelectionContext: fixture.settings.smartSelectionContext,
+		selectionContext,
+		notePath: fixture.settings.includeNotePathInContext
+			? formatVaultQualifiedPath('TestVault', snapshot.file.path)
+			: undefined,
+		history: [],
+	});
+}
+
+function expectedSelectionCapacity(
+	fixture: PublicChatViewFixture,
+	snapshot: SelectionSnapshot,
+	prompt: string,
+	selectionContext: SelectionContextPolicy = 'default',
+): string {
+	return formatDraftCapacitySummary(selectionCapacityEstimate(
+		fixture,
+		snapshot,
+		prompt,
+		selectionContext,
+	));
+}
+
+function capturedSelectionTargets(fixture: PublicChatViewFixture): SelectionEditTarget[] {
+	return fixture.captureSelectionEditTarget.mock.results.flatMap((result) =>
+		result.type === 'return' ? [result.value] : []
+	);
+}
+
+function expectNoRequestsOrReads(fixture: PublicChatViewFixture): void {
+	expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+	expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
+	// eslint-disable-next-line @typescript-eslint/unbound-method -- Inspect the adapter mock without invoking it.
+	expect(fixture.view.app.vault.adapter.read).not.toHaveBeenCalled();
 }
 
 describe('EmendChatView public thread-load recovery', () => {
@@ -1142,6 +1213,1068 @@ describe('EmendChatView public modification submission and persistence', () => {
 		expect(textOf(committed!)).toContain('Tightened the wording.');
 		expect(findSubmissionButton(fixture.contentEl, 'Send')?.disabled).toBe(false);
 		expect(findSubmissionButton(fixture.contentEl, 'Stopping')).toBeUndefined();
+	});
+});
+
+
+describe('EmendChatView public edit target controls', () => {
+	beforeEach(() => {
+		vi.stubGlobal('window', { setTimeout, clearTimeout });
+		vi.spyOn(MarkdownRenderer, 'render').mockImplementation(
+			async (_app, markdown, element) => {
+				element.textContent = markdown;
+			},
+		);
+		noticeMessages().length = 0;
+		chatViewMenus.instances.length = 0;
+	});
+
+	afterEach(async () => {
+		await closePublicChatViewFixtures();
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+	});
+
+	it.each([
+		['Edit · Selection', 'selection'],
+		['Edit · Full note', 'full-note'],
+	] as const)('applies %s atomically with one render and capacity calculation', async (title, target) => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			selectedText: 'beta',
+		});
+		await fixture.open();
+		const render = vi.spyOn(fixture.contentEl, 'empty');
+		fixture.captureChatContext.mockClear();
+		fixture.captureSelectionEditTarget.mockClear();
+
+		chooseWritingMenuItem(fixture.contentEl, title);
+
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe(title);
+		expect(render).toHaveBeenCalledOnce();
+		const capture = target === 'selection'
+			? fixture.captureSelectionEditTarget
+			: fixture.captureChatContext;
+		const otherCapture = target === 'selection'
+			? fixture.captureChatContext
+			: fixture.captureSelectionEditTarget;
+		expect(capture).toHaveBeenCalledOnce();
+		expect(otherCapture).not.toHaveBeenCalled();
+		expectNoRequestsOrReads(fixture);
+	});
+
+	it.each([
+		{
+			title: 'Chat · Selection',
+			capture: 'chat',
+		},
+		{
+			title: 'Edit · Selection · Full note',
+			capture: 'selection',
+		},
+	] as const)('applies $title atomically with its targeting policy', async (scenario) => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			selectedText: 'beta',
+		});
+		await fixture.open();
+		const render = vi.spyOn(fixture.contentEl, 'empty');
+		fixture.captureChatContext.mockClear();
+		fixture.captureSelectionEditTarget.mockClear();
+
+		chooseWritingMenuItem(fixture.contentEl, scenario.title);
+
+		const trigger = findWritingTrigger(fixture.contentEl);
+		expect(trigger?.textContent).toBe(scenario.title);
+		if (scenario.title === 'Edit · Selection · Full note') {
+			expect(trigger?.title).toBe(
+				`Full note is sent; only the selection is edited.\n${WEB_SEARCH_DISCLOSURE}`,
+			);
+		}
+		expect(render).toHaveBeenCalledOnce();
+		const capture = scenario.capture === 'selection'
+			? fixture.captureSelectionEditTarget
+			: fixture.captureChatContext;
+		const otherCapture = scenario.capture === 'selection'
+			? fixture.captureChatContext
+			: fixture.captureSelectionEditTarget;
+		expect(capture).toHaveBeenCalledOnce();
+		expect(otherCapture).not.toHaveBeenCalled();
+		expectNoRequestsOrReads(fixture);
+	});
+
+	it('retains the explicit target and maintained Web choice through Edit and Chat', async () => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			selectedText: 'beta',
+		});
+		await fixture.open();
+		chooseWritingMenuItem(fixture.contentEl, 'Web Review');
+		chooseWritingMenuItem(fixture.contentEl, 'Edit · Full note');
+		fixture.setSelectedText('');
+		await fixture.view.refreshTargetNote();
+
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Full note');
+		const editMenu = openWritingMenu(fixture.contentEl);
+		expect(findChatViewMenuItem(editMenu, 'Web Off').checked).toBe(true);
+		for (const title of ['Web Off', 'Web Review', 'Web Auto']) {
+			expect(findChatViewMenuItem(editMenu, title).disabled).toBe(true);
+		}
+		editMenu.hide();
+
+		chooseWritingMenuItem(fixture.contentEl, 'Chat');
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Chat · Review search');
+		fixture.view.setMode('edit');
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Full note');
+	});
+
+	it('retains Chat and Edit targeting policies across unrelated writing and mode choices', async () => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			selectedText: 'beta',
+		});
+		await fixture.open();
+		chooseWritingMenuItem(fixture.contentEl, 'Chat · Selection');
+		chooseWritingMenuItem(fixture.contentEl, 'Edit · Selection · Full note');
+
+		chooseWritingMenuItem(fixture.contentEl, 'Chat · Selection');
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Chat · Selection');
+		fixture.view.setMode('edit');
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe(
+			'Edit · Selection · Full note',
+		);
+		fixture.view.setMode('ask');
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Chat · Selection');
+
+		chooseWritingMenuItem(fixture.contentEl, 'Chat');
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Chat');
+		fixture.view.setMode('edit');
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe(
+			'Edit · Selection · Full note',
+		);
+	});
+
+	it('rejects stale menu and submission callbacks after rerender and close', async () => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			selectedText: 'beta',
+		});
+		await fixture.open();
+		setChatInput(fixture, 'Must not submit');
+		const staleMenu = openWritingMenu(fixture.contentEl);
+		const staleChoice = findChatViewMenuItem(staleMenu, 'Edit · Selection');
+		const staleSend = findSubmissionButton(fixture.contentEl, 'Send');
+		fixture.view.setMode('ask');
+		staleChoice.clickHandler({} as MouseEvent);
+		staleSend?.dispatch('click');
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Chat');
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+
+		const closedMenu = openWritingMenu(fixture.contentEl);
+		const closedChoice = findChatViewMenuItem(closedMenu, 'Edit · Full note');
+		const closedSend = findSubmissionButton(fixture.contentEl, 'Send');
+		await fixture.close();
+		closedChoice.clickHandler({} as MouseEvent);
+		closedSend?.dispatch('click');
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+
+		await fixture.open();
+		fixture.view.setMode('edit');
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Selection');
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+	});
+
+	it('blocks submissions and duplicate choices during a deferred save without rerendering', async () => {
+		const scopeRegister = vi.spyOn(Scope.prototype, 'register');
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			selectedText: 'beta',
+		});
+		await fixture.open();
+		chooseWritingMenuItem(fixture.contentEl, 'Web Review');
+		chooseWritingMenuItem(fixture.contentEl, 'Edit · Full note');
+		fixture.additionalNotesStore.add('Note.md', 'Related.md');
+		const input = findChatInput(fixture.contentEl);
+		if (!input) {
+			throw new Error('Chat input missing.');
+		}
+		input.value = 'Preserve this draft';
+		input.setSelectionRange(4, 11);
+		input.focus();
+		const sessionId = findSessionSelect(fixture.contentEl)?.value;
+		const messages = findMessagesScroller(fixture.contentEl);
+		const pendingSave = deferred<void>();
+		const saveSettings = vi.spyOn(EmendPlugin.prototype, 'saveSettings')
+			.mockImplementationOnce(() => pendingSave.promise);
+		const render = vi.spyOn(fixture.contentEl, 'empty');
+		fixture.captureChatContext.mockClear();
+		const writingMenu = openWritingMenu(fixture.contentEl);
+		const selectedItem = chooseModelMenuItem(fixture.contentEl, 'deepseek-v4-pro');
+
+		expect(saveSettings).toHaveBeenCalledOnce();
+		expect(findModelTrigger(fixture.contentEl)?.disabled).toBe(true);
+		expect(findWritingTrigger(fixture.contentEl)?.disabled).toBe(true);
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(true);
+		for (const title of [
+			'Chat',
+			'Chat · Selection',
+			'Edit · Selection',
+			'Edit · Selection · Full note',
+			'Edit · Full note',
+			'Web Off',
+			'Web Review',
+			'Web Auto',
+		]) {
+			expect(findChatViewMenuItem(writingMenu, title).disabled).toBe(true);
+		}
+		for (const action of QUICK_ACTIONS) {
+			expect(findQuickActionButton(fixture.contentEl, action.id)?.disabled).toBe(true);
+		}
+		selectedItem.clickHandler({} as MouseEvent);
+		expect(saveSettings).toHaveBeenCalledOnce();
+		const shortcut = scopeRegister.mock.calls.find(
+			([modifiers, key]) => modifiers?.includes('Mod') && key === 'Enter',
+		)?.[2];
+		if (!shortcut) {
+			throw new Error('Composer shortcut registration missing.');
+		}
+		for (const modifiers of [{}, { metaKey: true }, { ctrlKey: true }]) {
+			const preventDefault = vi.fn();
+			shortcut({
+				key: 'Enter',
+				target: input,
+				metaKey: false,
+				ctrlKey: false,
+				shiftKey: false,
+				altKey: false,
+				...modifiers,
+				preventDefault,
+			} as unknown as KeyboardEvent, { vkey: 'Enter', modifiers: 'Mod', key: 'Enter' });
+			expect(preventDefault).toHaveBeenCalledOnce();
+		}
+		findQuickActionButton(fixture.contentEl, 'fix-grammar')?.dispatch('click');
+		await fixture.view.submitPrompt();
+
+		expect(fixture.captureChatContext).not.toHaveBeenCalled();
+		expectNoRequestsOrReads(fixture);
+		expect(fixture.conversationStore.createSession).not.toHaveBeenCalled();
+		expect(fixture.conversationStore.appendReadyMessage).not.toHaveBeenCalled();
+		expect(findMessageElements(fixture.contentEl)).toEqual([]);
+		expect(findMessagesScroller(fixture.contentEl)).toBe(messages);
+		expect(input.disabled).toBe(false);
+		expect(input.value).toBe('Preserve this draft');
+		expect(input.selectionStart).toBe(4);
+		expect(input.selectionEnd).toBe(11);
+		expect(input.focused).toBe(true);
+		expect(findSessionSelect(fixture.contentEl)?.value).toBe(sessionId);
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Full note');
+		expect(fixture.additionalNotesStore.list('Note.md')).toEqual(['Related.md']);
+		expect(render).not.toHaveBeenCalled();
+
+		pendingSave.resolve();
+		await vi.waitFor(() => expect(findModelTrigger(fixture.contentEl)?.disabled).toBe(false));
+
+		expect(saveSettings).toHaveBeenCalledOnce();
+		expect(findWritingTrigger(fixture.contentEl)?.disabled).toBe(false);
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(false);
+		for (const action of QUICK_ACTIONS) {
+			expect(findQuickActionButton(fixture.contentEl, action.id)?.disabled).toBe(false);
+		}
+		expect(render).not.toHaveBeenCalled();
+		chooseWritingMenuItem(fixture.contentEl, 'Chat');
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Chat · Review search');
+		fixture.view.setMode('edit');
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Full note');
+	});
+
+	it('initially displays Selection when automatic targeting has usable text', async () => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			selectedText: 'beta',
+		});
+
+		await fixture.open();
+		fixture.view.setMode('edit');
+
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Selection');
+	});
+
+	it.each(['', ' \n\t'])(
+		'initially displays Full note for an empty or whitespace selection: %j',
+		async (selectedText) => {
+			const fixture = createPublicChatViewFixture({
+				sourceText: 'Alpha beta.',
+				selectedText,
+			});
+
+			await fixture.open();
+			fixture.view.setMode('edit');
+
+			expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Full note');
+		},
+	);
+
+	it.each([
+		{ choice: 'full-note', selectedText: 'beta' },
+		{ choice: 'selection', selectedText: '' },
+	] as const)(
+		'preserves explicit $choice targeting across renders and Chat/Edit switches',
+		async ({ choice, selectedText }) => {
+			const fixture = createPublicChatViewFixture({
+				sourceText: 'Alpha beta.',
+				selectedText,
+			});
+			await fixture.open();
+			setChatInput(fixture, 'Keep this draft');
+			chooseWritingMenuItem(
+				fixture.contentEl,
+				choice === 'selection' ? 'Edit · Selection' : 'Edit · Full note',
+			);
+			fixture.setSelectedText(choice === 'selection' ? 'beta' : '');
+			await fixture.view.refreshTargetNote();
+
+			expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe(
+				choice === 'selection' ? 'Edit · Selection' : 'Edit · Full note',
+			);
+			chooseWritingMenuItem(fixture.contentEl, 'Chat');
+			expect(findChatInput(fixture.contentEl)?.value).toBe('Keep this draft');
+			fixture.view.setMode('edit');
+			expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe(
+				choice === 'selection' ? 'Edit · Selection' : 'Edit · Full note',
+			);
+			fixture.view.setMode('ask');
+			fixture.view.setMode('edit');
+			expect(findChatInput(fixture.contentEl)?.value).toBe('Keep this draft');
+			expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe(
+				choice === 'selection' ? 'Edit · Selection' : 'Edit · Full note',
+			);
+		},
+	);
+
+	it('resets to auto only for real note changes while preserving per-note drafts', async () => {
+		const fixture = createPublicChatViewFixture({
+			activePath: 'A.md',
+			sourceText: 'Alpha beta.',
+		});
+		const first = makeSession('a1');
+		const second = makeSession('a2');
+		fixture.conversationStore.loadConversation.mockImplementation(async (notePath) =>
+			notePath === 'A.md'
+				? loadedConversation([first, second], 'a1')
+				: loadedConversation([])
+		);
+		await fixture.open();
+		setChatInput(fixture, 'A draft');
+		fixture.setSelectedText('Alpha');
+		await fixture.view.refreshTargetNote();
+		fixture.view.setMode('edit');
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Selection');
+
+		await fixture.view.switchActiveSession('a2');
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Selection');
+		await fixture.view.switchActiveSession('a1');
+		expect(findChatInput(fixture.contentEl)?.value).toBe('A draft');
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Selection');
+
+		chooseWritingMenuItem(fixture.contentEl, 'Chat · Selection');
+		chooseWritingMenuItem(fixture.contentEl, 'Edit · Selection · Full note');
+		chooseWritingMenuItem(fixture.contentEl, 'Edit · Full note');
+		fixture.setActivePath('B.md');
+		fixture.setSelectedText('beta');
+		await fixture.view.refreshTargetNote();
+
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Selection');
+		expect(findChatInput(fixture.contentEl)?.value).toBe('');
+		fixture.view.setMode('ask');
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Chat');
+		fixture.view.setMode('edit');
+		setChatInput(fixture, 'B draft');
+		chooseWritingMenuItem(fixture.contentEl, 'Edit · Full note');
+
+		fixture.setActivePath('A.md');
+		fixture.setSelectedText('');
+		await fixture.view.refreshTargetNote();
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Full note');
+		expect(findChatInput(fixture.contentEl)?.value).toBe('A draft');
+		fixture.setActivePath('B.md');
+		await fixture.view.refreshTargetNote();
+		expect(findChatInput(fixture.contentEl)?.value).toBe('B draft');
+	});
+
+	it('updates automatic Selection-first targeting without replacing composer DOM or reloading chat', async () => {
+		const fixture = createPublicChatViewFixture({ sourceText: 'Alpha beta.' });
+		await fixture.open();
+		fixture.view.setMode('edit');
+		const composer = findChatInput(fixture.contentEl);
+		const writingTrigger = findWritingTrigger(fixture.contentEl);
+		setChatInput(fixture, 'Unsubmitted draft');
+		const render = vi.spyOn(fixture.contentEl, 'empty');
+		fixture.setSelectedText('beta');
+
+		await fixture.view.refreshTargetNote();
+
+		expect(findWritingTrigger(fixture.contentEl)).toBe(writingTrigger);
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Selection');
+		expect(findChatInput(fixture.contentEl)).toBe(composer);
+		expect(findChatInput(fixture.contentEl)?.value).toBe('Unsubmitted draft');
+		expect(render).not.toHaveBeenCalled();
+		expect(fixture.conversationStore.loadConversation).toHaveBeenCalledOnce();
+		expectNoRequestsOrReads(fixture);
+	});
+
+	it('keeps Related notes available in Chat and enables every quick action in Edit', async () => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			selectedText: 'beta',
+		});
+		await fixture.open();
+
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Chat');
+		expect(findWritingTrigger(fixture.contentEl)?.disabled).toBe(false);
+		expect(findElements(fixture.contentEl, (element) =>
+			element.className.split(' ').includes('emend-chat-related-notes-trigger')
+		)).toHaveLength(1);
+		expect(findElements(fixture.contentEl, (element) =>
+			element.className.split(' ').includes('emend-chat-quick-action')
+		)).toHaveLength(0);
+
+		fixture.view.setMode('edit');
+		const quickActions = findElements(
+			fixture.contentEl,
+			(element) => element.className.split(' ').includes('emend-chat-quick-action'),
+		);
+		expect(quickActions).toHaveLength(3);
+		expect(quickActions.every((button) => !button.disabled)).toBe(true);
+	});
+
+	it('changes target state without requests or content reads and preserves the draft', async () => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			selectedText: 'beta',
+		});
+		await fixture.open();
+		setChatInput(fixture, 'Draft survives target choices');
+		chooseWritingMenuItem(fixture.contentEl, 'Edit · Full note');
+		fixture.setSelectedText('');
+		await fixture.view.refreshTargetNote();
+
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Full note');
+		expect(findChatInput(fixture.contentEl)?.value).toBe('Draft survives target choices');
+		expectNoRequestsOrReads(fixture);
+	});
+
+	it('synchronizes Edit controls after quick-action Selection capture fails and preserves the draft', async () => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			selectedText: 'beta',
+		});
+		const savedSnapshots = captureReadyMessageSaves(fixture, makeSession());
+		const capture = fixture.captureSelectionEditTarget.getMockImplementation();
+		if (!capture) {
+			throw new Error('Selection capture double missing.');
+		}
+		fixture.requestSelectionEdit.mockResolvedValue({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+			usage: {
+				promptTokens: 2,
+				completionTokens: 1,
+				totalTokens: 3,
+				source: 'provider',
+			},
+		});
+		await fixture.open();
+		chooseWritingMenuItem(fixture.contentEl, 'Web Review');
+		chooseWritingMenuItem(fixture.contentEl, 'Edit · Selection');
+		setChatInput(fixture, 'Preserve this draft');
+		fixture.captureSelectionEditTarget.mockImplementation(() => {
+			throw new Error('Select non-whitespace text first.');
+		});
+
+		findQuickActionButton(fixture.contentEl, 'fix-grammar')?.dispatch('click');
+		await vi.waitFor(() => expect(noticeMessages()).toContain(
+			'Emend: Select non-whitespace text first.',
+		));
+
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Selection');
+		expect(findWritingTrigger(fixture.contentEl)?.disabled).toBe(false);
+		const editMenu = openWritingMenu(fixture.contentEl);
+		expect(findChatViewMenuItem(editMenu, 'Web Off').checked).toBe(true);
+		expect(findChatViewMenuItem(editMenu, 'Web Review').disabled).toBe(true);
+		editMenu.hide();
+		expect(findChatInput(fixture.contentEl)?.value).toBe('Preserve this draft');
+		expect(findChatInput(fixture.contentEl)?.attributes.placeholder).toContain(
+			'Edit the note or selection...',
+		);
+		expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(findMessageElements(fixture.contentEl)).toEqual([]);
+		expect(fixture.conversationStore.appendReadyMessage).not.toHaveBeenCalled();
+		for (const target of capturedSelectionTargets(fixture)) {
+			expect(target.editor.replaceRange).not.toHaveBeenCalled();
+		}
+
+		fixture.captureSelectionEditTarget.mockImplementation(capture);
+		setChatInput(fixture, 'Send using the visible mode');
+		findSubmissionButton(fixture.contentEl, 'Send')?.dispatch('click');
+		await vi.waitFor(() => expect(fixture.requestSelectionEdit).toHaveBeenCalledOnce());
+		await vi.waitFor(() => expect(savedSnapshots).toHaveLength(2));
+
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Selection');
+	});
+});
+
+
+describe('EmendChatView public edit submission and capacity', () => {
+	beforeEach(() => {
+		vi.stubGlobal('window', { setTimeout, clearTimeout });
+		vi.spyOn(MarkdownRenderer, 'render').mockImplementation(
+			async (_app, markdown, element) => {
+				element.textContent = markdown;
+			},
+		);
+		noticeMessages().length = 0;
+		chatViewMenus.instances.length = 0;
+	});
+
+	afterEach(async () => {
+		await closePublicChatViewFixtures();
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+	});
+
+	it('formats full-note summaries against the captured note source', async () => {
+		const sourceText = 'Intro line.\nSecond line.\nThird line.\nTarget line.\nOutro line.';
+		const targetStart = sourceText.indexOf('Target line.');
+		const fixture = createPublicChatViewFixture({
+			sourceText,
+			defaultMode: 'edit',
+		});
+		const savedSnapshots = captureReadyMessageSaves(fixture, makeSession());
+		const capture = fixture.captureChatContext.getMockImplementation();
+		if (!capture) {
+			throw new Error('Chat context capture double missing.');
+		}
+		fixture.captureChatContext.mockImplementation(() => ({
+			...capture(),
+			markdown: 'Window line.\nTarget line.',
+		}));
+		fixture.requestChatCompletion.mockResolvedValue({
+			applied: true,
+			changeCount: 1,
+			summaryItems: [{
+				type: 'replace',
+				start: targetStart,
+				end: targetStart + 'Target line.'.length,
+			}],
+			summary: 'Sharpened the target line.',
+			usage: {
+				promptTokens: 3,
+				completionTokens: 1,
+				totalTokens: 4,
+				source: 'provider',
+			},
+		});
+		await fixture.open();
+		setChatInput(fixture, 'Edit note');
+
+		await fixture.view.submitPrompt();
+
+		const expected = [
+			'Edit applied — 1 changes tracked. Review in Track Changes.',
+			'Target: Full note.',
+			'',
+			'Sharpened the target line.',
+			'',
+			'- Replaced line 4.',
+		].join('\n');
+		expect(savedSnapshots[1]?.[1]?.content).toBe(expected);
+		expect(textOf(fixture.contentEl)).toContain('Sharpened the target line.');
+		expect(textOf(fixture.contentEl)).toContain('- Replaced line 4.');
+	});
+
+	it('renders a full-note summary with no bullets', async () => {
+		const fixture = createPublicChatViewFixture({ defaultMode: 'edit' });
+		const savedSnapshots = captureReadyMessageSaves(fixture, makeSession());
+		fixture.requestChatCompletion.mockResolvedValue({
+			applied: true,
+			changeCount: 0,
+			summaryItems: [],
+			summary: 'Reviewed without changing the note.',
+			usage: {
+				promptTokens: 3,
+				completionTokens: 1,
+				totalTokens: 4,
+				source: 'provider',
+			},
+		});
+		await fixture.open();
+		setChatInput(fixture, 'Edit note');
+
+		await fixture.view.submitPrompt();
+
+		const expected = [
+			'Edit applied — 0 changes tracked. Review in Track Changes.',
+			'Target: Full note.',
+			'',
+			'Reviewed without changing the note.',
+		].join('\n');
+		expect(savedSnapshots[1]?.[1]?.content).toBe(expected);
+		expect(textOf(fixture.contentEl)).toContain('Reviewed without changing the note.');
+		expect(savedSnapshots[1]?.[1]?.content).not.toContain('\n- ');
+	});
+
+	it('keeps explicit Full note on the ordinary request despite a usable selection', async () => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			selectedText: 'beta',
+			defaultMode: 'edit',
+		});
+		fixture.requestChatCompletion.mockResolvedValue({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+			usage: {
+				promptTokens: 3,
+				completionTokens: 1,
+				totalTokens: 4,
+				source: 'provider',
+			},
+		});
+		await fixture.open();
+		chooseWritingMenuItem(fixture.contentEl, 'Edit · Full note');
+		fixture.captureChatContext.mockClear();
+		fixture.captureSelectionEditTarget.mockClear();
+		setChatInput(fixture, 'Edit note');
+		const captureIndex = fixture.captureChatContext.mock.calls.length;
+
+		await fixture.view.submitPrompt();
+
+		const submittedContext = fixture.captureChatContext.mock.results[captureIndex]
+			?.value as RequestContext | undefined;
+		expect(fixture.captureChatContext).toHaveBeenCalled();
+		expect(fixture.requestChatCompletion).toHaveBeenCalledOnce();
+		expect(fixture.requestChatCompletion.mock.calls[0]?.[0].context).toBe(submittedContext);
+		expect(fixture.captureSelectionEditTarget).not.toHaveBeenCalled();
+		expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
+	});
+
+	it.each(['auto', 'selection'] as const)(
+		'fails closed without messages, saves, or fallback when %s Selection capture fails',
+		async (choice) => {
+			const fixture = createPublicChatViewFixture({
+				sourceText: 'Alpha beta.',
+				selectedText: 'beta',
+				defaultMode: 'edit',
+			});
+			await fixture.open();
+			if (choice === 'selection') {
+				chooseWritingMenuItem(fixture.contentEl, 'Edit · Selection');
+			}
+			const selectionCapture = fixture.captureSelectionEditTarget.getMockImplementation();
+			const chatCapture = fixture.captureChatContext.getMockImplementation();
+			if (!selectionCapture || !chatCapture) {
+				throw new Error('Submission capture doubles missing.');
+			}
+			const failureNotice = 'Emend: Select non-whitespace text first.';
+			let selectionCapturesBeforeNotice = 0;
+			let fullNoteCapturesBeforeNotice = 0;
+			fixture.captureSelectionEditTarget.mockImplementation(() => {
+				if (!noticeMessages().includes(failureNotice)) {
+					selectionCapturesBeforeNotice++;
+				}
+				return selectionCapture();
+			});
+			fixture.captureChatContext.mockImplementation(() => {
+				if (!noticeMessages().includes(failureNotice)) {
+					fullNoteCapturesBeforeNotice++;
+				}
+				return chatCapture();
+			});
+			fixture.captureChatContext.mockClear();
+			fixture.captureSelectionEditTarget.mockClear();
+			fixture.setSelectedText('');
+			setChatInput(fixture, 'Edit the vanished selection');
+
+			await fixture.view.submitPrompt();
+
+			expect(noticeMessages()).toEqual([failureNotice]);
+			expect(selectionCapturesBeforeNotice).toBe(1);
+			expect(fullNoteCapturesBeforeNotice).toBe(0);
+			expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
+			expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+			expect(findMessageElements(fixture.contentEl)).toEqual([]);
+			expect(fixture.conversationStore.createSession).not.toHaveBeenCalled();
+			expect(fixture.conversationStore.appendReadyMessage).not.toHaveBeenCalled();
+			expect(findSubmissionButton(fixture.contentEl, 'Stop')).toBeUndefined();
+			for (const target of capturedSelectionTargets(fixture)) {
+				expect(target.editor.replaceRange).not.toHaveBeenCalled();
+			}
+		},
+	);
+
+	it.each(['full-note', 'selection'] as const)(
+		'rejects captured %s source-path mismatches before messages or saves',
+		async (target) => {
+			const fixture = createPublicChatViewFixture({
+				sourceText: 'Alpha beta.',
+				selectedText: target === 'selection' ? 'beta' : '',
+				defaultMode: 'edit',
+			});
+			await fixture.open();
+			if (target === 'selection') {
+				const capture = fixture.captureSelectionEditTarget.getMockImplementation();
+				if (!capture) {
+					throw new Error('Selection capture double missing.');
+				}
+				fixture.captureSelectionEditTarget.mockImplementation(() => {
+					const captured = capture();
+					captured.snapshot.file.path = 'Other.md';
+					return captured;
+				});
+			} else {
+				const capture = fixture.captureChatContext.getMockImplementation();
+				if (!capture) {
+					throw new Error('Chat context capture double missing.');
+				}
+				fixture.captureChatContext.mockImplementation(() => {
+					const captured = capture();
+					captured.file.path = 'Other.md';
+					return captured;
+				});
+			}
+			setChatInput(fixture, 'Edit mismatched source');
+
+			await fixture.view.submitPrompt();
+
+			expect(noticeMessages()).toEqual([
+				'Emend: The active note changed before the request started. Try again.',
+			]);
+			expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+			expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
+			expect(findMessageElements(fixture.contentEl)).toEqual([]);
+			expect(fixture.conversationStore.createSession).not.toHaveBeenCalled();
+			expect(fixture.conversationStore.appendReadyMessage).not.toHaveBeenCalled();
+		},
+	);
+
+	it('aborts Chat Selection on a note switch and resets all target policies', async () => {
+		const fixture = createPublicChatViewFixture({
+			activePath: 'A.md',
+			sourceText: 'Alpha beta.',
+			selectedText: 'beta',
+		});
+		await fixture.open();
+		chooseWritingMenuItem(fixture.contentEl, 'Chat · Selection');
+		fixture.captureSelectionEditTarget.mockClear();
+		const response = deferred<SessionChatResult>();
+		let requestSignal: AbortSignal | undefined;
+		fixture.requestChatCompletion.mockImplementationOnce((async (
+			submission: ReadOnlySubmission,
+		) => {
+			requestSignal = submission.signal;
+			return response.promise;
+		}) as unknown as EmendPlugin['requestChatCompletion']);
+		setChatInput(fixture, 'Focused question');
+		const submission = fixture.view.submitPrompt();
+		await vi.waitFor(() => expect(fixture.requestChatCompletion).toHaveBeenCalledOnce());
+		expect(fixture.captureSelectionEditTarget).not.toHaveBeenCalled();
+		expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
+
+		fixture.setSelectedText('');
+		fixture.setActivePath('B.md');
+		await fixture.view.refreshTargetNote();
+		expect(requestSignal?.aborted).toBe(true);
+		response.resolve({ content: 'Late answer', reasoning: '' });
+		await submission;
+
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Chat');
+		expect(textOf(fixture.contentEl)).not.toContain('Late answer');
+		expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
+		fixture.setSelectedText('beta');
+		fixture.view.setMode('edit');
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Selection');
+	});
+
+	it('uses the complete full-note source instead of the bounded Markdown window', async () => {
+		const sourceText = `Intro.\n${'Long paragraph. '.repeat(300)}`;
+		const fixture = createPublicChatViewFixture({
+			sourceText,
+			defaultMode: 'edit',
+		});
+		const capture = fixture.captureChatContext.getMockImplementation();
+		if (!capture) {
+			throw new Error('Chat context capture double missing.');
+		}
+		fixture.captureChatContext.mockImplementation(() => ({
+			...capture(),
+			markdown: 'Window only.',
+		}));
+		await fixture.open();
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Full note');
+		const provider = fixture.settings.providers[fixture.settings.activeProvider];
+		const context = fixture.captureChatContext();
+		const fullTokens = buildFullNoteDraftEstimate({
+			provider,
+			context,
+			prompt: '',
+			history: [],
+		}).categories.estimatedInputTokens;
+		const windowTokens = buildReadOnlyDraftEstimate({
+			provider,
+			context,
+			mode: 'ask',
+			chatTarget: 'note',
+			prompt: '',
+			history: [],
+		}).categories.estimatedInputTokens;
+		expect(windowTokens).toBeLessThan(fullTokens);
+
+		provider.contextWindowTokens = fullTokens + 1;
+		provider.outputReserveTokens = 1;
+		fixture.view.refreshCapacityEstimate();
+
+		const estimate = buildFullNoteDraftEstimate({
+			provider,
+			context,
+			prompt: '',
+			history: [],
+		});
+		expect(estimate.capacity).toMatchObject({ effectiveInputTokens: fullTokens });
+		expect(estimate.overCapacity).toBe(true);
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			`Estimated input: ${fullTokens} tokens of ${fullTokens} effective capacity. This draft is over capacity.`,
+		);
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(true);
+		expect(fixture.captureSelectionEditTarget).not.toHaveBeenCalled();
+	});
+
+	it('uses the captured Selection snapshot and updates when the Edit target changes', async () => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			selectedText: 'beta',
+			defaultMode: 'edit',
+		});
+		fixture.settings.includeNotePathInContext = true;
+		fixture.settings.providers.custom.contextWindowTokens = 1000;
+		fixture.settings.providers.custom.outputReserveTokens = 100;
+		await fixture.open();
+		const snapshot = fixture.captureSelectionEditTarget().snapshot;
+
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Selection');
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedSelectionCapacity(fixture, snapshot, ''),
+		);
+		expect(snapshot).toMatchObject({
+			fullText: 'Alpha beta.',
+			selectedText: 'beta',
+			from: 6,
+			to: 10,
+		});
+		expect(fixture.captureChatContext).not.toHaveBeenCalled();
+
+		chooseWritingMenuItem(fixture.contentEl, 'Edit · Full note');
+
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Full note');
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedFullNoteCapacity(fixture, makeSession(), ''),
+		);
+		expect(fixture.captureChatContext).toHaveBeenCalled();
+	});
+
+	it('keeps small Selection quick actions enabled while the full note is over capacity', async () => {
+		const sourceText = `Intro.\n${'x'.repeat(20000)}\nbeta\n${'y'.repeat(20000)}`;
+		const fixture = createPublicChatViewFixture({
+			sourceText,
+			selectedText: 'beta',
+			defaultMode: 'edit',
+		});
+		await fixture.open();
+		const snapshot = fixture.captureSelectionEditTarget().snapshot;
+		const provider = fixture.settings.providers[fixture.settings.activeProvider];
+		const selectionTokens = Math.max(
+			...QUICK_ACTIONS.map((action) => selectionCapacityEstimate(
+				fixture,
+				snapshot,
+				action.prompt,
+			).categories.estimatedInputTokens),
+		);
+		const fullNoteTokens = buildFullNoteDraftEstimate({
+			provider,
+			context: fixture.captureChatContext(),
+			prompt: QUICK_ACTIONS[1].prompt,
+			history: [],
+		}).categories.estimatedInputTokens;
+		expect(fullNoteTokens).toBeGreaterThan(selectionTokens);
+		provider.contextWindowTokens = selectionTokens + 2;
+		provider.outputReserveTokens = 1;
+		fixture.view.refreshCapacityEstimate();
+
+		expect(buildFullNoteDraftEstimate({
+			provider,
+			context: fixture.captureChatContext(),
+			prompt: '',
+			history: [],
+		}).overCapacity).toBe(true);
+		expect(selectionCapacityEstimate(fixture, snapshot, '').overCapacity).toBe(false);
+		expect(findSendButton(fixture.contentEl)?.disabled).toBe(false);
+		for (const action of QUICK_ACTIONS) {
+			expect(findQuickActionButton(fixture.contentEl, action.id)?.disabled).toBe(false);
+		}
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
+	});
+
+	it('refreshes the automatic Edit target when the selection appears', async () => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			defaultMode: 'edit',
+		});
+		fixture.settings.providers.custom.contextWindowTokens = 1000;
+		fixture.settings.providers.custom.outputReserveTokens = 100;
+		await fixture.open();
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Full note');
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedFullNoteCapacity(fixture, makeSession(), ''),
+		);
+
+		fixture.setSelectedText('beta');
+		fixture.emitWorkspaceEvent('editor-selection-change');
+		await vi.waitFor(() => expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe(
+			'Edit · Selection',
+		));
+		const snapshot = fixture.captureSelectionEditTarget().snapshot;
+		expect(findCapacitySummary(fixture.contentEl)?.textContent).toBe(
+			expectedSelectionCapacity(fixture, snapshot, ''),
+		);
+		expectNoRequestsOrReads(fixture);
+		for (const target of capturedSelectionTargets(fixture)) {
+			expect(target.editor.replaceRange).not.toHaveBeenCalled();
+		}
+	});
+
+	it('captures the selection and additional-note paths before a deferred initial save', async () => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			selectedText: 'beta',
+			defaultMode: 'edit',
+		});
+		const savedSnapshots = captureReadyMessageSaves(fixture, makeSession());
+		fixture.additionalNotesStore.add('Note.md', 'Selected.md');
+		fixture.requestSelectionEdit.mockResolvedValue({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+			usage: {
+				promptTokens: 2,
+				completionTokens: 1,
+				totalTokens: 3,
+				source: 'provider',
+			},
+		});
+		await fixture.open();
+		const firstSave = deferred<void>();
+		const append = fixture.conversationStore.appendReadyMessage.getMockImplementation();
+		if (!append) {
+			throw new Error('Ready-message save double missing.');
+		}
+		fixture.conversationStore.appendReadyMessage.mockImplementationOnce(async (...args) => {
+			await firstSave.promise;
+			return append(...args);
+		});
+		setChatInput(fixture, 'Edit selection');
+
+		const captureIndex = fixture.captureSelectionEditTarget.mock.calls.length;
+		const submission = fixture.view.submitPrompt();
+		await vi.waitFor(() => expect(
+			fixture.conversationStore.appendReadyMessage,
+		).toHaveBeenCalledOnce());
+		const originalTarget = fixture.captureSelectionEditTarget.mock.results[captureIndex]
+			?.value as SelectionEditTarget | undefined;
+		if (!originalTarget) {
+			throw new Error('Submitted Selection target missing.');
+		}
+		expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
+
+		fixture.setSelectedText('');
+		await fixture.view.refreshTargetNote();
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Full note');
+		fixture.additionalNotesStore.clear('Note.md');
+		fixture.additionalNotesStore.add('Note.md', 'Later.md');
+		firstSave.resolve();
+		await vi.waitFor(() => expect(fixture.requestSelectionEdit).toHaveBeenCalledOnce());
+
+		const args = fixture.requestSelectionEdit.mock.calls[0];
+		expect(args?.[0]).toBe(originalTarget.snapshot);
+		expect(args?.[0]).toMatchObject({
+			fullText: 'Alpha beta.',
+			selectedText: 'beta',
+			from: 6,
+			to: 10,
+		});
+		expect(args?.[3]).toBe(originalTarget.editor);
+		expect(args?.[4]).toEqual(['Selected.md']);
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		await submission;
+		expect(savedSnapshots[1]?.[1]?.content).toBe('No changes were needed.');
+	});
+
+	it('aborts the captured selection request on a note switch without saving it to the new thread', async () => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			selectedText: 'beta',
+			defaultMode: 'edit',
+		});
+		const session = makeSession();
+		const savedSnapshots = captureReadyMessageSaves(fixture, session);
+		fixture.conversationStore.loadConversation.mockImplementation(async (notePath) =>
+			notePath === 'Note.md'
+				? loadedConversation([session])
+				: loadedConversation([])
+		);
+		const response = deferred<SelectionEditResult>();
+		let requestSignal: AbortSignal | undefined;
+		fixture.requestSelectionEdit.mockImplementationOnce((
+			_snapshot,
+			_prompt,
+			signal,
+		) => {
+			requestSignal = signal;
+			return response.promise;
+		});
+		await fixture.open();
+		setChatInput(fixture, 'Edit selection');
+		const submission = fixture.view.submitPrompt();
+		await vi.waitFor(() => expect(fixture.requestSelectionEdit).toHaveBeenCalledOnce());
+		expect(savedSnapshots).toHaveLength(1);
+
+		fixture.setSelectedText('');
+		fixture.setActivePath('Other.md');
+		await fixture.view.refreshTargetNote();
+		expect(requestSignal?.aborted).toBe(true);
+		response.resolve({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+			usage: {
+				promptTokens: 2,
+				completionTokens: 1,
+				totalTokens: 3,
+				source: 'provider',
+			},
+		});
+		await submission;
+
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Full note');
+		expect(findMessageElements(fixture.contentEl)).toEqual([]);
+		expect(findSubmissionButton(fixture.contentEl, 'Stop')).toBeUndefined();
+		expect(savedSnapshots).toHaveLength(1);
+		expect(savedSnapshots.flat().some((message) => message.status === 'stopped')).toBe(false);
+		expect(fixture.conversationStore.appendReadyMessage).toHaveBeenCalledOnce();
+		expect(fixture.conversationStore.appendReadyMessage.mock.calls[0]?.[0]).toBe('Note.md');
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
 	});
 });
 

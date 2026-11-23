@@ -1,6 +1,7 @@
 import { Notice, TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { EmendChatView } from '../src/chat-view';
+import type { EditTargetState } from '../src/edit-target';
 import { areQuickActionsDisabled, QUICK_ACTIONS } from '../src/quick-actions';
 import type {
 	SelectionEditCallbacks,
@@ -69,6 +70,7 @@ describe('quick action submission', () => {
 		const context = {
 			inputEl: { value: 'Unrelated composer text' },
 			selectedMode: 'ask' as Mode,
+			editTarget: { choice: 'auto', resolved: 'full-note' } as EditTargetState,
 			notePath: 'Note.md',
 			conversationGeneration: 0,
 			sessions: [session],
@@ -169,7 +171,7 @@ describe('quick action submission', () => {
 			inputEl: { value: 'Unrelated composer text' },
 			selectedMode: 'ask' as Mode,
 			webSearchMode: 'auto' as const,
-			displayedEditTarget: 'selection' as const,
+			editTarget: { choice: 'auto', resolved: 'selection' } as EditTargetState,
 			notePath: 'Note.md',
 			conversationGeneration: 0,
 			sessions: [session],

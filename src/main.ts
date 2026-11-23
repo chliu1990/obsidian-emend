@@ -571,7 +571,6 @@ export default class EmendPlugin extends Plugin {
 	private getTargetMarkdownView() {
 		const activeMarkdownView = this.getActiveMarkdownView();
 		if (activeMarkdownView) {
-			this.lastMarkdownView = activeMarkdownView;
 			return activeMarkdownView;
 		}
 
@@ -586,7 +585,6 @@ export default class EmendPlugin extends Plugin {
 			}
 		});
 
-		this.lastMarkdownView = foundView;
 		return foundView;
 	}
 

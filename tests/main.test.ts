@@ -146,6 +146,7 @@ describe('EmendPlugin workspace conversation events', () => {
 			addCommand: vi.fn(),
 			addSettingTab: vi.fn(),
 			getActiveNotePath: () => activeNotePath,
+			hasUsableSelection: () => false,
 			captureChatContext: () => ({ file: { path: activeNotePath } }),
 			requestChatCompletion,
 			settings: structuredClone(DEFAULT_SETTINGS),
@@ -295,6 +296,7 @@ describe('EmendPlugin note rename refresh', () => {
 			addCommand: vi.fn(),
 			addSettingTab: vi.fn(),
 			getActiveNotePath: () => activeNotePath,
+			hasUsableSelection: () => false,
 			captureChatContext: () => ({ file: { path: activeNotePath } }),
 			requestChatCompletion,
 			settings: structuredClone(DEFAULT_SETTINGS),
@@ -396,6 +398,7 @@ describe('EmendPlugin note rename refresh', () => {
 			addCommand: vi.fn(),
 			addSettingTab: vi.fn(),
 			getActiveNotePath: () => 'A.md',
+			hasUsableSelection: () => false,
 			captureChatContext: () => ({ file: { path: 'A.md' } }),
 			requestChatCompletion,
 			settings: structuredClone(DEFAULT_SETTINGS),
@@ -540,6 +543,184 @@ describe('EmendPlugin discovered model cache invalidation', () => {
 		expect(persisted?.providers.deepseek.apiKey).toBe('');
 		expect(persisted?.providers.kimi.apiKey).toBe('');
 		expect(persisted?.providers.custom.apiKey).toBe('');
+	});
+});
+
+describe('EmendPlugin Markdown target lookup', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	function makeTargetView(path: string, text = `# ${path}\nAlpha beta.`) {
+		const file = new TFile();
+		file.path = path;
+		const replaceRange = vi.fn();
+		const getValue = vi.fn(() => text);
+		const view = Object.assign(
+			Object.create(MarkdownView.prototype) as MarkdownView,
+			{ file, editor: { getValue, replaceRange } },
+		);
+		return { file, getValue, replaceRange, text, view };
+	}
+
+	function createTargetHarness(
+		initialActiveView: MarkdownView | null,
+		openViews: readonly MarkdownView[],
+		vaultOverrides: Record<string, unknown> = {},
+	) {
+		let activeView = initialActiveView;
+		const handlers = new Map<string, () => void>();
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, {
+			app: {
+				vault: {
+					adapter: new MemoryAdapter(),
+					configDir: '.test-config',
+					on: () => ({}),
+					getAbstractFileByPath: () => null,
+					...vaultOverrides,
+				},
+				workspace: {
+					on: (event: string, handler: () => void) => {
+						handlers.set(event, handler);
+						return {};
+					},
+					getActiveViewOfType: () => activeView,
+					getLeavesOfType: () => [],
+					iterateAllLeaves: (
+						callback: (leaf: { view: MarkdownView }) => void,
+					) => {
+						for (const view of openViews) {
+							callback({ view });
+						}
+					},
+				},
+			},
+			settings: structuredClone(DEFAULT_SETTINGS),
+			loadSettings: vi.fn().mockResolvedValue(undefined),
+			registerView: vi.fn(),
+			registerEditorExtension: vi.fn(),
+			registerEvent: vi.fn(),
+			addRibbonIcon: vi.fn(),
+			addCommand: vi.fn(),
+			addSettingTab: vi.fn(),
+			getApiKey: () => 'dummy-key',
+		});
+		return {
+			handlers,
+			plugin,
+			setActiveView: (view: MarkdownView | null) => {
+				activeView = view;
+			},
+		};
+	}
+
+	it('keeps repeated target reads from replacing the explicitly remembered view', async () => {
+		const a = makeTargetView('A.md');
+		const b = makeTargetView('B.md');
+		const harness = createTargetHarness(a.view, [a.view, b.view]);
+		await harness.plugin.onload();
+
+		harness.setActiveView(b.view);
+		expect(harness.plugin.getActiveNotePath()).toBe('B.md');
+		expect(harness.plugin.getActiveNotePath()).toBe('B.md');
+
+		harness.setActiveView(null);
+		expect(harness.plugin.getActiveNotePath()).toBe('A.md');
+	});
+
+	it.each(['active-leaf-change', 'file-open'])(
+		'updates the non-active target through %s',
+		async (event) => {
+			const a = makeTargetView('A.md');
+			const b = makeTargetView('B.md');
+			const harness = createTargetHarness(a.view, [a.view, b.view]);
+			await harness.plugin.onload();
+
+			harness.setActiveView(b.view);
+			harness.handlers.get(event)?.();
+			harness.setActiveView(null);
+
+			expect(harness.plugin.getActiveNotePath()).toBe('B.md');
+		},
+	);
+
+	it('prefers the remembered still-open target over leaf iteration order when chat has focus', async () => {
+		const a = makeTargetView('A.md');
+		const b = makeTargetView('B.md');
+		const harness = createTargetHarness(b.view, [a.view, b.view]);
+		await harness.plugin.onload();
+
+		harness.setActiveView(null);
+
+		expect(harness.plugin.getActiveNotePath()).toBe('B.md');
+	});
+
+	it('rejects a full-note edit when the actual target changes from A to B', async () => {
+		const sourceA = '# A\nAlpha beta.';
+		const sourceB = '# B\nUnchanged.';
+		const a = makeTargetView('A.md', sourceA);
+		const secondA = makeTargetView('A.md', sourceA);
+		secondA.file = a.file;
+		const b = makeTargetView('B.md', sourceB);
+		const disk = new Map([
+			['A.md', sourceA],
+			['B.md', sourceB],
+		]);
+		const vaultModify = vi.fn(async (file: TFile, text: string) => {
+			disk.set(file.path, text);
+		});
+		const harness = createTargetHarness(b.view, [a.view, secondA.view, b.view], {
+			read: async (file: TFile) => disk.get(file.path),
+			modify: vaultModify,
+		});
+		await harness.plugin.onload();
+		const response = JSON.stringify([
+			{ type: 'replace', target: 'beta', replacement: 'delta' },
+		]);
+		const event = JSON.stringify({ choices: [{ delta: { content: response } }] });
+		const encoder = new TextEncoder();
+		const fetchMock = vi.fn().mockImplementation(async () => {
+			const stream = new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(encoder.encode(`data: ${event}\n\n`));
+					controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+					controller.close();
+				},
+			});
+			return new Response(stream);
+		});
+		vi.stubGlobal('fetch', fetchMock);
+
+		await expect(harness.plugin.requestChatCompletion({
+			context: {
+				file: a.file,
+				sourceText: sourceA,
+				selection: { from: 0, to: 0 },
+				noteLabel: a.file.path,
+				markdown: sourceA,
+			},
+			mode: 'edit',
+			prompt: 'Replace beta with delta.',
+			history: [],
+			callbacks: { onReasoning: vi.fn() },
+			signal: new AbortController().signal,
+		})).rejects.toThrow(
+			/^The note changed while Emend was responding\. No edits were applied\.$/,
+		);
+
+		expect(fetchMock).toHaveBeenCalledOnce();
+		expect(vaultModify).not.toHaveBeenCalled();
+		expect(a.replaceRange).not.toHaveBeenCalled();
+		expect(secondA.replaceRange).not.toHaveBeenCalled();
+		expect(b.replaceRange).not.toHaveBeenCalled();
+		expect(disk).toEqual(new Map([
+			['A.md', sourceA],
+			['B.md', sourceB],
+		]));
+		expect(a.getValue()).toBe(sourceA);
+		expect(secondA.getValue()).toBe(sourceA);
+		expect(b.getValue()).toBe(sourceB);
 	});
 });
 

@@ -1,12 +1,33 @@
 export type EditTargetChoice = 'auto' | 'full-note' | 'selection';
 export type ResolvedEditTarget = Exclude<EditTargetChoice, 'auto'>;
 
-export function resolveEditTarget(
+export type EditTargetState =
+	| { readonly choice: 'auto'; readonly resolved: ResolvedEditTarget }
+	| { readonly choice: 'full-note'; readonly resolved: 'full-note' }
+	| { readonly choice: 'selection'; readonly resolved: 'selection' };
+
+export function resolveEditTargetState(
 	choice: EditTargetChoice,
 	hasUsableSelection: boolean,
-): ResolvedEditTarget {
-	if (choice !== 'auto') {
-		return choice;
+): EditTargetState {
+	if (choice === 'auto') {
+		return {
+			choice,
+			resolved: hasUsableSelection ? 'selection' : 'full-note',
+		};
 	}
-	return hasUsableSelection ? 'selection' : 'full-note';
+	if (choice === 'full-note') {
+		return { choice, resolved: choice };
+	}
+	return { choice, resolved: choice };
+}
+
+export function refreshEditTargetState(
+	state: EditTargetState,
+	hasUsableSelection: boolean,
+): EditTargetState {
+	if (state.choice === 'auto') {
+		return resolveEditTargetState(state.choice, hasUsableSelection);
+	}
+	return state;
 }

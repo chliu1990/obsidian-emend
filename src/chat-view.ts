@@ -43,9 +43,9 @@ import {
 import { formatEditSummary, formatNoChangeSummary } from './edit-summary';
 import { formatVaultQualifiedPath, type RequestContext } from './context';
 import {
-	resolveEditTarget,
-	type EditTargetChoice,
-	type ResolvedEditTarget,
+	refreshEditTargetState,
+	resolveEditTargetState,
+	type EditTargetState,
 } from './edit-target';
 import { isSelectableMode, MODES, type SelectableMode } from './mode';
 import {
@@ -215,8 +215,7 @@ export class EmendChatView extends ItemView {
 	private chatTarget: ChatTarget = 'note';
 	private selectionContext: SelectionContextPolicy = 'default';
 	private webSearchMode: WebSearchMode = 'off';
-	private editTargetChoice: EditTargetChoice = 'auto';
-	private displayedEditTarget: ResolvedEditTarget = 'full-note';
+	private editTarget: EditTargetState = resolveEditTargetState('auto', false);
 	private webReviewModal: WebSearchModal | null = null;
 	private activeController: AbortController | null = null;
 	private pendingRenderFrame: number | null = null;
@@ -457,7 +456,10 @@ export class EmendChatView extends ItemView {
 			if (choice.mode === 'ask') {
 				this.chatTarget = choice.chatTarget;
 			} else {
-				this.editTargetChoice = choice.editTarget;
+				this.editTarget = resolveEditTargetState(
+					choice.editTarget,
+					this.plugin.hasUsableSelection(),
+				);
 				if (choice.editTarget === 'selection') {
 					this.selectionContext = choice.selectionContext;
 				}
@@ -506,7 +508,7 @@ export class EmendChatView extends ItemView {
 		return {
 			mode: this.selectedMode,
 			chatTarget: this.chatTarget,
-			editTarget: this.displayedEditTarget,
+			editTarget: this.editTarget.resolved,
 			selectionContext: this.selectionContext,
 			webSearchMode: this.webSearchMode,
 			disabled: this.isModelSelectionSaving ||
@@ -545,7 +547,7 @@ export class EmendChatView extends ItemView {
 		this.abortActiveRequest();
 		this.chatTarget = 'note';
 		this.selectionContext = 'default';
-		this.editTargetChoice = 'auto';
+		this.editTarget = resolveEditTargetState('auto', false);
 		this.followLatestMessages = true;
 		this.responseStartMessageId = null;
 		this.isThreadLoading = notePath !== null;
@@ -983,13 +985,13 @@ export class EmendChatView extends ItemView {
 	}
 
 	private refreshEditTargetControl() {
+		this.editTarget = refreshEditTargetState(
+			this.editTarget,
+			this.plugin.hasUsableSelection(),
+		);
 		if (!this.composerControls) {
 			return;
 		}
-		this.displayedEditTarget = resolveEditTarget(
-			this.editTargetChoice,
-			this.plugin.hasUsableSelection(),
-		);
 		this.updateComposerControls();
 	}
 
@@ -1024,7 +1026,7 @@ export class EmendChatView extends ItemView {
 		mode: Mode,
 	): DraftCapacityTarget | undefined {
 		if (mode === 'edit') {
-			if (this.displayedEditTarget === 'selection') {
+			if (this.editTarget.resolved === 'selection') {
 				const snapshot = this.captureSelectionSnapshot();
 				return snapshot
 					? {
@@ -1080,7 +1082,7 @@ export class EmendChatView extends ItemView {
 		if (this.selectedMode === 'ask' && this.chatTarget === 'selection') {
 			return undefined;
 		}
-		if (this.displayedEditTarget === 'selection') {
+		if (this.editTarget.resolved === 'selection') {
 			return this.selectedMode === 'edit'
 				? draftTarget
 				: this.captureDraftCapacityTarget('edit');
@@ -1680,7 +1682,7 @@ export class EmendChatView extends ItemView {
 		let capturedTarget: CapturedDraftTarget;
 		try {
 			if (requestedMode === 'edit') {
-				capturedTarget = this.displayedEditTarget === 'selection'
+				capturedTarget = this.editTarget.resolved === 'selection'
 					? {
 						type: 'selection',
 						mode: requestedMode,
