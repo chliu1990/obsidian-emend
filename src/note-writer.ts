@@ -1,5 +1,6 @@
 import type { TFile, Vault } from 'obsidian';
 import type { RequestContext } from './context';
+import { assertEditFreshness } from './edit-freshness';
 import type { EditPreparation, EditSummaryItem } from './edit-strategy';
 import { canWriteToNote } from './permissions';
 import type { Mode } from './types';
@@ -17,9 +18,6 @@ export interface EditResult {
 	summaryItems: readonly EditSummaryItem[];
 	summary?: string;
 }
-
-const STALE_NOTE_ERROR =
-	'The note changed while Emend was responding. No edits were applied.';
 
 export function createVaultNoteWriter(
 	vault: Vault,
@@ -58,17 +56,15 @@ export async function applyPreparedEdit(
 		};
 	}
 
-	const currentText = await writer.readCurrentText(snapshot.file);
-	const editorTexts = writer.readEditorTexts?.(snapshot.file);
-	signal?.throwIfAborted();
-	if (
-		currentText !== snapshot.sourceText ||
-		(editorTexts !== undefined &&
-			editorTexts.some((text) => text !== snapshot.sourceText)) ||
-		!writer.isTargetCurrent(snapshot.file)
-	) {
-		throw new Error(STALE_NOTE_ERROR);
-	}
+	await assertEditFreshness(
+		{
+			capturedText: snapshot.sourceText,
+			readDiskText: () => writer.readCurrentText(snapshot.file),
+			readEditorTexts: () => writer.readEditorTexts?.(snapshot.file),
+			isTargetCurrent: () => writer.isTargetCurrent(snapshot.file),
+		},
+		signal,
+	);
 
 	if (!canWriteToNote(mode)) {
 		return {
@@ -78,6 +74,7 @@ export async function applyPreparedEdit(
 			summary: undefined,
 		};
 	}
+	signal?.throwIfAborted();
 	await writer.write(snapshot.file, prepared.annotatedMarkdown);
 	return {
 		applied: true,

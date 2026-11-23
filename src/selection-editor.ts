@@ -1,4 +1,4 @@
-import type { MarkdownView } from 'obsidian';
+import type { MarkdownView, TFile } from 'obsidian';
 import {
 	formatAdditionalNotesPrompt,
 	type AdditionalNoteSnapshot,
@@ -9,6 +9,7 @@ import {
 	resolveContextCapacity,
 } from './context-accounting';
 import { prepareCriticMarkupEdit } from './critic-markup';
+import { assertEditFreshness } from './edit-freshness';
 import { prepareEditResponse } from './edit-response';
 import type { EditPreparation, EditStrategy } from './edit-strategy';
 import { EditResponseValidationError } from './edit-validation';
@@ -28,9 +29,6 @@ import type {
 	ProviderHistoryMessage,
 	SelectionSnapshot,
 } from './types';
-
-const STALE_NOTE_ERROR =
-	'The note changed while Emend was responding. No edits were applied.';
 
 const COMPOSED_MARKUP_ERROR =
 	'Compiled operations produce invalid CriticMarkup in the complete note. Preserve existing CriticMarkup tokens and do not nest markup.';
@@ -55,8 +53,15 @@ interface SymmetricSelectionContext {
 	after: string;
 }
 
+export interface SelectionFreshnessReaders {
+	readDiskText(file: TFile): Promise<string>;
+	readEditorTexts(file: TFile): readonly string[] | undefined;
+}
+
 export interface SelectionEditorAdapter {
 	readCurrentText: () => string;
+	readDiskText: () => Promise<string>;
+	readEditorTexts: () => readonly string[] | undefined;
 	isTargetCurrent: () => boolean;
 	replaceRange: (replacement: string, from: number, to: number) => void;
 }
@@ -154,10 +159,23 @@ export function getSelectionContext(
 export function createSelectionEditorAdapter(
 	markdownView: MarkdownView,
 	isTargetCurrent: (view: MarkdownView) => boolean,
+	readers: SelectionFreshnessReaders,
 ): SelectionEditorAdapter {
 	const file = markdownView.file;
 	return {
 		readCurrentText: () => markdownView.editor.getValue(),
+		readDiskText: () => {
+			if (!file) {
+				return Promise.reject(new Error('Open a saved Markdown note first.'));
+			}
+			return readers.readDiskText(file);
+		},
+		readEditorTexts: () => {
+			if (!file) {
+				throw new Error('Open a saved Markdown note first.');
+			}
+			return readers.readEditorTexts(file);
+		},
 		isTargetCurrent: () =>
 			file !== null && markdownView.file === file && isTargetCurrent(markdownView),
 		replaceRange: (replacement, from, to) => {
@@ -179,20 +197,21 @@ export interface SelectionEditTarget {
 export function captureSelectionEditTarget(
 	view: MarkdownView,
 	isTargetCurrent: (view: MarkdownView) => boolean,
+	readers: SelectionFreshnessReaders,
 ): SelectionEditTarget {
 	return {
 		snapshot: captureSelectionSnapshot(view),
-		editor: createSelectionEditorAdapter(view, isTargetCurrent),
+		editor: createSelectionEditorAdapter(view, isTargetCurrent, readers),
 	};
 }
 
-export function applyPreparedSelectionEdit(
+export async function applyPreparedSelectionEdit(
 	mode: Mode,
 	snapshot: SelectionSnapshot,
 	prepared: EditPreparation,
 	editor: SelectionEditorAdapter,
 	signal?: AbortSignal,
-): EditResult {
+): Promise<EditResult> {
 	const annotatedFullText = `${snapshot.fullText.slice(0, snapshot.from)}${prepared.annotatedMarkdown}${snapshot.fullText.slice(snapshot.to)}`;
 	if (!canWriteToNote(mode)) {
 		return {
@@ -211,10 +230,15 @@ export function applyPreparedSelectionEdit(
 		};
 	}
 
-	signal?.throwIfAborted();
-	if (editor.readCurrentText() !== snapshot.fullText || !editor.isTargetCurrent()) {
-		throw new Error(STALE_NOTE_ERROR);
-	}
+	await assertEditFreshness({
+		capturedText: snapshot.fullText,
+		readDiskText: editor.readDiskText,
+		readEditorTexts: () => [
+			editor.readCurrentText(),
+			...(editor.readEditorTexts() ?? []),
+		],
+		isTargetCurrent: editor.isTargetCurrent,
+	}, signal);
 	if (!canWriteToNote(mode)) {
 		return {
 			applied: false,
@@ -280,13 +304,13 @@ export class SelectionEditRequestCoordinator {
 			onRetry: submission.callbacks?.onRetry,
 		});
 		return {
-			...applyPreparedSelectionEdit(
+			...(await applyPreparedSelectionEdit(
 				'edit',
 				submission.snapshot,
 				prepared,
 				this.dependencies.editor,
 				submission.signal,
-			),
+			)),
 			usage,
 		};
 	}

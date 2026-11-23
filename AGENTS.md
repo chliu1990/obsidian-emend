@@ -61,7 +61,7 @@ The short request-flow map is:
 3. `context.ts`, `selection-context.ts`, `selection-focus.ts`, and `additional-notes-context.ts` assemble declared context.
 4. `request-coordinator.ts` separates writer-free Chat and full-note Edit; `selection-editor.ts` coordinates Selection-only edits.
 5. `provider-stream.ts` owns SSE transport; `deepseek-web.ts` and `web-*.ts` isolate DeepSeek retrieval and grounded extraction.
-6. `operation-edit-strategy.ts`, `markdown-edit-guards.ts`, `replacement-diff.ts`, and `critic-markup.ts` validate and compile edits.
+6. `operation-edit-strategy.ts`, `markdown-edit-guards.ts`, `replacement-diff.ts`, and `critic-markup.ts` validate and compile edits; `edit-freshness.ts` owns their shared exact-source freshness guard.
 7. `note-writer.ts` and the native Selection adapter are the only writers. `conversation-store.ts` owns sanitized local conversations.
 8. `settings.ts` normalizes non-secret settings; `secret-storage.ts` resolves provider credentials.
 
@@ -77,8 +77,8 @@ or maintained automatic Selection that vanishes fails closed rather than falling
 
 Markdown target lookup is pure: it reads the active view, the explicitly remembered still-open view, or the first open
 Markdown view without changing last-active state. Only explicit lifecycle tracking updates that memory. Target-state
-unification does not merge or relax the separate Full-note and Selection writer/freshness contracts. See
-[Stage 55](devel_docs/55-edit-target-flow.md).
+unification does not merge or relax the separate Full-note and Selection writer contracts or their shared freshness
+requirements. See [Stage 55](devel_docs/55-edit-target-flow.md) and [Stage 56](devel_docs/56-edit-freshness.md).
 
 Ordinary Chat uses bounded note context. Chat Selection sends the complete note plus a complete read-only focus Selection.
 Full-note Edit sends the complete note. Selection Edit sends the complete Selection with Default Smart/Symmetric
@@ -105,8 +105,12 @@ Live Selection highlighting uses current editor state without I/O, persistence, 
   Never route them through an editing coordinator.
 - Full-note Edit alone may call guarded `vault.modify`. Selection Edit and Modify Selection may only call native
   `editor.replaceRange` on the captured range, preserving undo. Add no other writer.
-- Writers require unchanged source, the same active target, no abort, and Edit permission immediately before writing.
-  Full-note writes also compare disk bytes and every open editor. Stale state fails closed.
+- Both writers use `edit-freshness.ts` to require exact disk, captured-editor, and every-open-editor full-document
+  equality with the captured source, plus the same active target and no abort. They recheck Edit permission and abort
+  immediately before writing; stale state fails closed. The guard's absent/empty editor list permits disk-only
+  comparison but never bypasses the independent target check. Do not normalize line endings, Unicode, or whitespace.
+- Full-note retains guarded `vault.modify`. After its freshness await, Selection rechecks permission and abort, then
+  synchronously hands the captured offsets to native `editor.replaceRange` without another `await`, preserving undo.
 - Operations are the only model-facing edit protocol, as a closed bare array or `{summary, operations}` envelope.
   Resolve exact original anchors atomically; reject ambiguity, overlap, out-of-target ranges, and additional-note-only anchors.
 - Preserve inline-code, fence, table, payload, and CriticMarkup guards. Revalidate compiled markup and the composed

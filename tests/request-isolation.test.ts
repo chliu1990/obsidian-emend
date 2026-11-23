@@ -196,6 +196,8 @@ function makeSelection(
 	};
 	const editor: SelectionEditorAdapter = {
 		readCurrentText: () => fixture.getText(path),
+		readDiskText: async () => fixture.getText(path),
+		readEditorTexts: () => [fixture.getText(path)],
 		isTargetCurrent: () => fixture.isActive(path),
 		replaceRange: vi.fn((replacement: string, start: number, end: number) => {
 			const current = fixture.getText(path);

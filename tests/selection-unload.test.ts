@@ -172,6 +172,8 @@ describe('selection request plugin unload', () => {
 			new AbortController().signal,
 			{
 				readCurrentText: () => currentText,
+				readDiskText: async () => currentText,
+				readEditorTexts: () => [currentText],
 				isTargetCurrent: () => true,
 				replaceRange,
 			},

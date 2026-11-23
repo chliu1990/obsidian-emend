@@ -144,6 +144,8 @@ describe('quick action submission', () => {
 		};
 		const editor = {
 			readCurrentText: () => snapshot.fullText,
+			readDiskText: async () => snapshot.fullText,
+			readEditorTexts: () => [snapshot.fullText],
 			isTargetCurrent: () => true,
 			replaceRange: vi.fn(),
 		};

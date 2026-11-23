@@ -1675,6 +1675,8 @@ describe('operation strategy coordinator integration', () => {
 		};
 		const editor: SelectionEditorAdapter = {
 			readCurrentText: vi.fn(() => fullText),
+			readDiskText: vi.fn(async () => fullText),
+			readEditorTexts: vi.fn(() => [fullText]),
 			isTargetCurrent: vi.fn(() => true),
 			replaceRange: vi.fn(),
 		};
@@ -1718,6 +1720,8 @@ describe('operation strategy coordinator integration', () => {
 		};
 		const editor: SelectionEditorAdapter = {
 			readCurrentText: vi.fn(() => fullText),
+			readDiskText: vi.fn(async () => fullText),
+			readEditorTexts: vi.fn(() => [fullText]),
 			isTargetCurrent: vi.fn(() => true),
 			replaceRange: vi.fn(),
 		};

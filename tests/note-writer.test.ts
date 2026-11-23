@@ -6,7 +6,13 @@ import {
 	createVaultNoteWriter,
 	type NoteWriter,
 } from '../src/note-writer';
+import { canWriteToNote } from '../src/permissions';
 import type { Mode } from '../src/types';
+
+vi.mock('../src/permissions', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../src/permissions')>();
+	return { ...actual, canWriteToNote: vi.fn(actual.canWriteToNote) };
+});
 
 const STALE_ERROR =
 	'The note changed while Emend was responding. No edits were applied.';
@@ -332,6 +338,158 @@ describe('applyPreparedEdit', () => {
 
 		await expect(application).rejects.toMatchObject({ name: 'AbortError' });
 		expect(writer.write).not.toHaveBeenCalled();
+	});
+
+	it('does not write when the target check triggers the final abort', async () => {
+		const context = makeContext();
+		const { writer } = makeWriter();
+		const controller = new AbortController();
+		writer.isTargetCurrent = vi.fn(() => {
+			controller.abort();
+			return true;
+		});
+
+		await expect(
+			applyPreparedEdit(
+				'edit',
+				context,
+				{
+					annotatedMarkdown: '# Note\n{~~Original~>Edited~~} text',
+					changeCount: 1,
+					summaryItems: SUMMARY_ITEMS,
+				},
+				writer,
+				controller.signal,
+			),
+		).rejects.toMatchObject({ name: 'AbortError' });
+
+		expect(writer.readCurrentText).toHaveBeenCalledExactlyOnceWith(context.file);
+		expect(writer.write).not.toHaveBeenCalled();
+	});
+
+	it('writes exact matching CRLF source without normalization or a second disk read', async () => {
+		const context = makeContext('# Note\r\nOriginal text\r\n');
+		const { writer } = makeWriter(context.sourceText, [context.sourceText]);
+		const annotatedMarkdown = '# Note\r\n{~~Original~>Edited~~} text\r\n';
+
+		const result = await applyPreparedEdit(
+			'edit',
+			context,
+			{ annotatedMarkdown, changeCount: 1, summaryItems: SUMMARY_ITEMS },
+			writer,
+		);
+
+		expect(result.applied).toBe(true);
+		expect(writer.readCurrentText).toHaveBeenCalledExactlyOnceWith(context.file);
+		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
+			context.file,
+			annotatedMarkdown,
+		);
+	});
+
+	it('hands off disk, editors, target, and one guarded write in order', async () => {
+		const context = makeContext();
+		const { writer } = makeWriter();
+		const events: string[] = [];
+		writer.readCurrentText = vi.fn(async () => {
+			events.push('disk read');
+			return context.sourceText;
+		});
+		writer.readEditorTexts = vi.fn(() => {
+			events.push('editor snapshot');
+			return [context.sourceText];
+		});
+		writer.isTargetCurrent = vi.fn(() => {
+			events.push('target check');
+			return true;
+		});
+		writer.write = vi.fn(async () => {
+			events.push('vault write');
+		});
+
+		await applyPreparedEdit(
+			'edit',
+			context,
+			{
+				annotatedMarkdown: '# Note\n{~~Original~>Edited~~} text',
+				changeCount: 1,
+				summaryItems: SUMMARY_ITEMS,
+			},
+			writer,
+		);
+
+		expect(events).toEqual([
+			'disk read',
+			'editor snapshot',
+			'target check',
+			'vault write',
+		]);
+		expect(writer.readCurrentText).toHaveBeenCalledExactlyOnceWith(context.file);
+		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
+			context.file,
+			'# Note\n{~~Original~>Edited~~} text',
+		);
+	});
+
+	it('checks second Edit permission after freshness and before final abort and write', async () => {
+		const context = makeContext();
+		const { writer } = makeWriter();
+		const controller = new AbortController();
+		const events: string[] = [];
+		let targetChecked = false;
+		vi.mocked(canWriteToNote).mockClear();
+		vi.mocked(canWriteToNote)
+			.mockImplementationOnce((mode) => {
+				events.push('initial permission');
+				return mode === 'edit';
+			})
+			.mockImplementationOnce((mode) => {
+				events.push('second permission');
+				return mode === 'edit';
+			});
+		writer.readCurrentText = vi.fn(async () => {
+			events.push('disk read');
+			return context.sourceText;
+		});
+		writer.readEditorTexts = vi.fn(() => {
+			events.push('editor snapshot');
+			return [context.sourceText];
+		});
+		writer.isTargetCurrent = vi.fn(() => {
+			events.push('target check');
+			targetChecked = true;
+			return true;
+		});
+		vi.spyOn(controller.signal, 'throwIfAborted').mockImplementation(() => {
+			if (targetChecked) {
+				events.push('final abort');
+			}
+		});
+		writer.write = vi.fn(async () => {
+			events.push('vault write');
+		});
+
+		await applyPreparedEdit(
+			'edit',
+			context,
+			{
+				annotatedMarkdown: '# Note\n{~~Original~>Edited~~} text',
+				changeCount: 1,
+				summaryItems: SUMMARY_ITEMS,
+			},
+			writer,
+			controller.signal,
+		);
+
+		expect(events).toEqual([
+			'initial permission',
+			'disk read',
+			'editor snapshot',
+			'target check',
+			'second permission',
+			'final abort',
+			'vault write',
+		]);
 	});
 
 	it.each(['ask', 'discuss', 'brainstorm'] as const)(

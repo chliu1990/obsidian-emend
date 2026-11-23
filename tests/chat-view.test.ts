@@ -2418,6 +2418,8 @@ function createSelectionEditSubmission(options: SelectionSubmissionOptions = {})
 	};
 	const editor: SelectionEditorAdapter = {
 		readCurrentText: vi.fn(() => snapshot.fullText),
+		readDiskText: vi.fn(async () => snapshot.fullText),
+		readEditorTexts: vi.fn(() => [snapshot.fullText]),
 		isTargetCurrent: vi.fn(() => true),
 		replaceRange: vi.fn(),
 	};
@@ -5038,6 +5040,8 @@ function createCapacityView(options: CapacityViewOptions = {}) {
 	};
 	const editor = {
 		readCurrentText: () => sourceText,
+		readDiskText: async () => sourceText,
+		readEditorTexts: () => [sourceText],
 		isTargetCurrent: () => true,
 		replaceRange: vi.fn(),
 	};
