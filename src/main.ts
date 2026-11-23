@@ -33,6 +33,7 @@ import {
 	type SelectionEditCallbacks,
 	type SelectionEditResult,
 	type SelectionEditTarget,
+	type SelectionFreshnessReaders,
 } from './selection-editor';
 import type { SelectionContextPolicy } from './selection-focus';
 import { SelectionModal } from './selection-modal';
@@ -176,6 +177,7 @@ export default class EmendPlugin extends Plugin {
 					const { snapshot, editor } = captureSelectionEditTarget(
 						view,
 						(candidate) => this.getTargetMarkdownView() === candidate,
+						this.getSelectionFreshnessReaders(),
 					);
 					const modal = new SelectionModal(
 						this.app,
@@ -379,6 +381,7 @@ export default class EmendPlugin extends Plugin {
 		return captureSelectionEditTarget(
 			markdownView,
 			(candidate) => this.getTargetMarkdownView() === candidate,
+			this.getSelectionFreshnessReaders(),
 		);
 	}
 
@@ -593,6 +596,13 @@ export default class EmendPlugin extends Plugin {
 		if (markdownView) {
 			this.lastMarkdownView = markdownView;
 		}
+	}
+
+	private getSelectionFreshnessReaders(): SelectionFreshnessReaders {
+		return {
+			readDiskText: (file) => this.app.vault.read(file),
+			readEditorTexts: (file) => this.readNoteEditorTexts(file),
+		};
 	}
 
 	private readNoteEditorTexts(file: TFile): readonly string[] | undefined {

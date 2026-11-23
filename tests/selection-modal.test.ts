@@ -515,6 +515,8 @@ describe('SelectionModal quick actions', () => {
 			};
 			const editor: SelectionEditorAdapter = {
 				readCurrentText: vi.fn(() => fullText),
+				readDiskText: vi.fn(async () => fullText),
+				readEditorTexts: vi.fn(() => [fullText]),
 				isTargetCurrent: vi.fn(() => true),
 				replaceRange: vi.fn(),
 			};
@@ -571,6 +573,8 @@ describe('SelectionModal quick actions', () => {
 		};
 		const editor: SelectionEditorAdapter = {
 			readCurrentText: vi.fn(() => fullText),
+			readDiskText: vi.fn(async () => fullText),
+			readEditorTexts: vi.fn(() => [fullText]),
 			isTargetCurrent: vi.fn(() => true),
 			replaceRange: vi.fn(),
 		};
@@ -792,6 +796,8 @@ describe('SelectionModal selection context', () => {
 		};
 		const editor: SelectionEditorAdapter = {
 			readCurrentText: vi.fn(() => fullText),
+			readDiskText: vi.fn(async () => fullText),
+			readEditorTexts: vi.fn(() => [fullText]),
 			isTargetCurrent: vi.fn(() => true),
 			replaceRange: vi.fn(),
 		};

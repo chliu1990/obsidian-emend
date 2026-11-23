@@ -126,9 +126,13 @@ function makeSnapshot(
 
 function makeAdapter(snapshot: SelectionSnapshot) {
 	let currentText = snapshot.fullText;
+	let diskText = snapshot.fullText;
+	let editorTexts: readonly string[] | undefined = [];
 	let targetCurrent = true;
 	const adapter: SelectionEditorAdapter = {
 		readCurrentText: vi.fn(() => currentText),
+		readDiskText: vi.fn(async () => diskText),
+		readEditorTexts: vi.fn(() => editorTexts),
 		isTargetCurrent: vi.fn(() => targetCurrent),
 		replaceRange: vi.fn(),
 	};
@@ -137,11 +141,25 @@ function makeAdapter(snapshot: SelectionSnapshot) {
 		setCurrentText: (text: string) => {
 			currentText = text;
 		},
+		setDiskText: (text: string) => {
+			diskText = text;
+		},
+		setEditorTexts: (texts: readonly string[] | undefined) => {
+			editorTexts = texts;
+		},
 		setTargetCurrent: (current: boolean) => {
 			targetCurrent = current;
 		},
 	};
 }
+
+function makeFreshnessReaders(sourceText: string) {
+	return {
+		readDiskText: vi.fn(async (_file: TFile) => sourceText),
+		readEditorTexts: vi.fn((_file: TFile) => [sourceText]),
+	};
+}
+
 
 describe('captureSelectionSnapshot', () => {
 	it('captures exact selection offsets and text synchronously', () => {
@@ -199,14 +217,15 @@ describe('captureSelectionSnapshot', () => {
 });
 
 describe('captureSelectionEditTarget', () => {
-	it('returns the exact snapshot and an adapter bound to the same view', () => {
+	it('returns the exact snapshot and an adapter bound to the same view', async () => {
 		const fullText = '# Note\nAlpha beta gamma.\nEnd';
 		const from = fullText.indexOf('beta');
 		const to = from + 4;
 		const { editor, file, view } = makeView(fullText, from, to);
 		const isTargetCurrent = vi.fn(() => true);
+		const readers = makeFreshnessReaders(fullText);
 
-		const target = captureSelectionEditTarget(view, isTargetCurrent);
+		const target = captureSelectionEditTarget(view, isTargetCurrent, readers);
 
 		expect(target.snapshot).toEqual({
 			file,
@@ -218,6 +237,10 @@ describe('captureSelectionEditTarget', () => {
 		expect(target.editor.readCurrentText()).toBe(fullText);
 		expect(target.editor.isTargetCurrent()).toBe(true);
 		expect(isTargetCurrent).toHaveBeenCalledExactlyOnceWith(view);
+		await expect(target.editor.readDiskText()).resolves.toBe(fullText);
+		expect(target.editor.readEditorTexts()).toEqual([fullText]);
+		expect(readers.readDiskText).toHaveBeenCalledExactlyOnceWith(file);
+		expect(readers.readEditorTexts).toHaveBeenCalledExactlyOnceWith(file);
 		target.editor.replaceRange('{~~beta~>delta~~}', from, to);
 		expect(editor.replaceRange).toHaveBeenCalledExactlyOnceWith(
 			'{~~beta~>delta~~}',
@@ -233,18 +256,22 @@ describe('captureSelectionEditTarget', () => {
 		const fullText = `Before${selectedText}After`;
 		const { view } = makeView(fullText, 6, 6 + selectedText.length);
 
-		expect(() => captureSelectionEditTarget(view, () => true)).toThrow(
-			'Select non-whitespace text first.',
-		);
+		expect(() => captureSelectionEditTarget(
+			view,
+			() => true,
+			makeFreshnessReaders(fullText),
+		)).toThrow('Select non-whitespace text first.');
 	});
 
 	it('retains the saved-file error', () => {
 		const { view } = makeView('Alpha beta', 0, 5);
 		view.file = null;
 
-		expect(() => captureSelectionEditTarget(view, () => true)).toThrow(
-			'Open a saved Markdown note first.',
-		);
+		expect(() => captureSelectionEditTarget(
+			view,
+			() => true,
+			makeFreshnessReaders('Alpha beta'),
+		)).toThrow('Open a saved Markdown note first.');
 	});
 });
 
@@ -293,7 +320,7 @@ describe('getSelectionContext', () => {
 });
 
 describe('applyPreparedSelectionEdit', () => {
-	it('replaces only the captured selection offsets and returns its summary items and summary', () => {
+	it('replaces only the captured selection offsets and returns its summary items and summary', async () => {
 		const snapshot = makeSnapshot();
 		const { adapter } = makeAdapter(snapshot);
 		const summaryItems = [{ type: 'replace', start: 0, end: 4 }] as const;
@@ -304,7 +331,7 @@ describe('applyPreparedSelectionEdit', () => {
 			summary: 'Renamed beta to delta.',
 		};
 
-		const result = applyPreparedSelectionEdit(
+		const result = await applyPreparedSelectionEdit(
 			'edit',
 			snapshot,
 			prepared,
@@ -319,6 +346,8 @@ describe('applyPreparedSelectionEdit', () => {
 		});
 		expect(result.summaryItems).toBe(summaryItems);
 		expect(adapter.readCurrentText).toHaveBeenCalledOnce();
+		expect(adapter.readDiskText).toHaveBeenCalledOnce();
+		expect(adapter.readEditorTexts).toHaveBeenCalledOnce();
 		expect(adapter.isTargetCurrent).toHaveBeenCalledOnce();
 		expect(adapter.replaceRange).toHaveBeenCalledExactlyOnceWith(
 			'{~~beta~>delta~~}',
@@ -327,12 +356,12 @@ describe('applyPreparedSelectionEdit', () => {
 		);
 	});
 
-	it('replaces a complete multiline selection without changing its neighbors', () => {
+	it('replaces a complete multiline selection without changing its neighbors', async () => {
 		const fullText = 'Before\nFirst\nSecond\nAfter';
 		const snapshot = makeSnapshot(fullText, 'First\nSecond');
 		const { adapter } = makeAdapter(snapshot);
 
-		applyPreparedSelectionEdit(
+		await applyPreparedSelectionEdit(
 			'edit',
 			snapshot,
 			{ annotatedMarkdown: '{~~First\nSecond~>Combined lines~~}', changeCount: 1, summaryItems: [] },
@@ -346,11 +375,11 @@ describe('applyPreparedSelectionEdit', () => {
 		);
 	});
 
-	it('does not re-read or replace an unchanged selection and returns no items but keeps the summary', () => {
+	it('does not re-read or replace an unchanged selection and returns no items but keeps the summary', async () => {
 		const snapshot = makeSnapshot();
 		const { adapter } = makeAdapter(snapshot);
 
-		const result = applyPreparedSelectionEdit(
+		const result = await applyPreparedSelectionEdit(
 			'edit',
 			snapshot,
 			{
@@ -369,15 +398,17 @@ describe('applyPreparedSelectionEdit', () => {
 			summary: 'Reviewed without changing the selection.',
 		});
 		expect(adapter.readCurrentText).not.toHaveBeenCalled();
+		expect(adapter.readDiskText).not.toHaveBeenCalled();
+		expect(adapter.readEditorTexts).not.toHaveBeenCalled();
 		expect(adapter.replaceRange).not.toHaveBeenCalled();
 	});
 
-	it('applies a valid comment-only selection edit with zero text changes and its comment item', () => {
+	it('applies a valid comment-only selection edit with zero text changes and its comment item', async () => {
 		const snapshot = makeSnapshot();
 		const { adapter } = makeAdapter(snapshot);
 		const commentItems = [{ type: 'comment', start: 0, end: 4 }] as const;
 
-		const result = applyPreparedSelectionEdit(
+		const result = await applyPreparedSelectionEdit(
 			'edit',
 			snapshot,
 			{
@@ -396,7 +427,7 @@ describe('applyPreparedSelectionEdit', () => {
 		expect(adapter.replaceRange).toHaveBeenCalledOnce();
 	});
 
-	it('rejects without a result when the editor replacement fails', () => {
+	it('rejects without a result when the editor replacement fails', async () => {
 		const snapshot = makeSnapshot();
 		const { adapter } = makeAdapter(snapshot);
 		const replaceError = new Error('Editor unavailable');
@@ -404,81 +435,160 @@ describe('applyPreparedSelectionEdit', () => {
 			throw replaceError;
 		});
 
-		expect(() =>
-			applyPreparedSelectionEdit(
-				'edit',
-				snapshot,
-				{
-					annotatedMarkdown: '{~~beta~>delta~~}',
-					changeCount: 1,
-					summaryItems: [{ type: 'replace', start: 0, end: 4 }],
-				},
-				adapter,
-			),
-		).toThrow(replaceError);
+		await expect(applyPreparedSelectionEdit(
+			'edit',
+			snapshot,
+			{
+				annotatedMarkdown: '{~~beta~>delta~~}',
+				changeCount: 1,
+				summaryItems: [{ type: 'replace', start: 0, end: 4 }],
+			},
+			adapter,
+		)).rejects.toBe(replaceError);
 	});
 
-	it('rejects stale full text without replacing the selection', () => {
+	it('rejects a captured-editor change outside the Selection even with a clean sibling', async () => {
 		const snapshot = makeSnapshot();
-		const { adapter, setCurrentText } = makeAdapter(snapshot);
+		const { adapter, setCurrentText, setEditorTexts } = makeAdapter(snapshot);
 		setCurrentText('# Note\nAlpha beta changed while waiting.\nEnd');
+		setEditorTexts([snapshot.fullText]);
 
-		expect(() =>
-			applyPreparedSelectionEdit(
-				'edit',
-				snapshot,
-				{ annotatedMarkdown: '{~~beta~>delta~~}', changeCount: 1, summaryItems: [] },
-				adapter,
-			),
-		).toThrow(STALE_ERROR);
+		await expect(applyPreparedSelectionEdit(
+			'edit',
+			snapshot,
+			{ annotatedMarkdown: '{~~beta~>delta~~}', changeCount: 1, summaryItems: [] },
+			adapter,
+		)).rejects.toThrow(STALE_ERROR);
 		expect(adapter.replaceRange).not.toHaveBeenCalled();
 	});
 
-	it('rejects a target-view switch without replacing the selection', () => {
+	it('rejects disk-only divergence without replacing the selection', async () => {
+		const snapshot = makeSnapshot();
+		const { adapter, setDiskText } = makeAdapter(snapshot);
+		setDiskText('# Note\nAlpha beta changed on disk.\nEnd');
+
+		await expect(applyPreparedSelectionEdit(
+			'edit',
+			snapshot,
+			{ annotatedMarkdown: '{~~beta~>delta~~}', changeCount: 1, summaryItems: [] },
+			adapter,
+		)).rejects.toThrow(STALE_ERROR);
+		expect(adapter.replaceRange).not.toHaveBeenCalled();
+	});
+
+	it('rejects secondary-editor-only divergence without replacing the selection', async () => {
+		const snapshot = makeSnapshot();
+		const { adapter, setEditorTexts } = makeAdapter(snapshot);
+		setEditorTexts([snapshot.fullText, `${snapshot.fullText}\nUnsaved sibling`]);
+
+		await expect(applyPreparedSelectionEdit(
+			'edit',
+			snapshot,
+			{ annotatedMarkdown: '{~~beta~>delta~~}', changeCount: 1, summaryItems: [] },
+			adapter,
+		)).rejects.toThrow(STALE_ERROR);
+		expect(adapter.replaceRange).not.toHaveBeenCalled();
+	});
+
+	it('rejects a target-view switch without replacing the selection', async () => {
 		const snapshot = makeSnapshot();
 		const { adapter, setTargetCurrent } = makeAdapter(snapshot);
 		setTargetCurrent(false);
 
-		expect(() =>
-			applyPreparedSelectionEdit(
-				'edit',
-				snapshot,
-				{ annotatedMarkdown: '{~~beta~>delta~~}', changeCount: 1, summaryItems: [] },
-				adapter,
-			),
-		).toThrow(STALE_ERROR);
+		await expect(applyPreparedSelectionEdit(
+			'edit',
+			snapshot,
+			{ annotatedMarkdown: '{~~beta~>delta~~}', changeCount: 1, summaryItems: [] },
+			adapter,
+		)).rejects.toThrow(STALE_ERROR);
 		expect(adapter.replaceRange).not.toHaveBeenCalled();
 	});
 
-	it('does not replace when aborted immediately before application', () => {
+	it('does not replace when aborted immediately before application', async () => {
 		const snapshot = makeSnapshot();
 		const { adapter } = makeAdapter(snapshot);
 		const controller = new AbortController();
 		controller.abort();
 
-		let thrown: unknown;
-		try {
-			applyPreparedSelectionEdit(
-				'edit',
-				snapshot,
-				{ annotatedMarkdown: '{~~beta~>delta~~}', changeCount: 1, summaryItems: [] },
-				adapter,
-				controller.signal,
-			);
-		} catch (error) {
-			thrown = error;
-		}
-		expect(thrown).toMatchObject({ name: 'AbortError' });
+		await expect(applyPreparedSelectionEdit(
+			'edit',
+			snapshot,
+			{ annotatedMarkdown: '{~~beta~>delta~~}', changeCount: 1, summaryItems: [] },
+			adapter,
+			controller.signal,
+		)).rejects.toMatchObject({ name: 'AbortError' });
+		expect(adapter.readDiskText).not.toHaveBeenCalled();
 		expect(adapter.replaceRange).not.toHaveBeenCalled();
+	});
+
+	it('does not replace when aborted while the disk read is pending', async () => {
+		const snapshot = makeSnapshot();
+		const { adapter } = makeAdapter(snapshot);
+		const controller = new AbortController();
+		let resolveDisk!: (text: string) => void;
+		adapter.readDiskText = vi.fn(() => new Promise<string>((resolve) => {
+			resolveDisk = resolve;
+		}));
+
+		const applying = applyPreparedSelectionEdit(
+			'edit',
+			snapshot,
+			{ annotatedMarkdown: '{~~beta~>delta~~}', changeCount: 1, summaryItems: [] },
+			adapter,
+			controller.signal,
+		);
+		await vi.waitFor(() => expect(adapter.readDiskText).toHaveBeenCalledOnce());
+		controller.abort();
+		resolveDisk(snapshot.fullText);
+
+		await expect(applying).rejects.toMatchObject({ name: 'AbortError' });
+		expect(adapter.replaceRange).not.toHaveBeenCalled();
+	});
+
+	it('rechecks abort after the final target check without an intervening await', async () => {
+		const snapshot = makeSnapshot();
+		const { adapter } = makeAdapter(snapshot);
+		const controller = new AbortController();
+		adapter.isTargetCurrent = vi.fn(() => {
+			controller.abort();
+			return true;
+		});
+
+		await expect(applyPreparedSelectionEdit(
+			'edit',
+			snapshot,
+			{ annotatedMarkdown: '{~~beta~>delta~~}', changeCount: 1, summaryItems: [] },
+			adapter,
+			controller.signal,
+		)).rejects.toMatchObject({ name: 'AbortError' });
+		expect(adapter.replaceRange).not.toHaveBeenCalled();
+	});
+
+	it('preserves matching CRLF text and captured offsets exactly', async () => {
+		const snapshot = makeSnapshot('Before\r\nbeta\r\nAfter', 'beta');
+		const { adapter, setEditorTexts } = makeAdapter(snapshot);
+		setEditorTexts([snapshot.fullText]);
+
+		await expect(applyPreparedSelectionEdit(
+			'edit',
+			snapshot,
+			{ annotatedMarkdown: '{~~beta~>delta~~}', changeCount: 1, summaryItems: [] },
+			adapter,
+		)).resolves.toMatchObject({ applied: true, changeCount: 1 });
+		expect(adapter.replaceRange).toHaveBeenCalledExactlyOnceWith(
+			'{~~beta~>delta~~}',
+			snapshot.from,
+			snapshot.to,
+		);
 	});
 
 	it.each(['ask', 'discuss', 'brainstorm'] as const)(
 		'has no selection write path in %s mode',
-		(mode) => {
+		async (mode) => {
 			const snapshot = makeSnapshot();
 			const { adapter } = makeAdapter(snapshot);
 
-			const result = applyPreparedSelectionEdit(
+			const result = await applyPreparedSelectionEdit(
 				mode,
 				snapshot,
 				{
@@ -498,27 +608,34 @@ describe('applyPreparedSelectionEdit', () => {
 			});
 			expect(result.summary).toBeUndefined();
 			expect(adapter.readCurrentText).not.toHaveBeenCalled();
+			expect(adapter.readDiskText).not.toHaveBeenCalled();
+			expect(adapter.readEditorTexts).not.toHaveBeenCalled();
 			expect(adapter.replaceRange).not.toHaveBeenCalled();
 		},
 	);
 });
 
 describe('createSelectionEditorAdapter', () => {
-	it('checks captured view/file identity and converts offsets for editor.replaceRange', () => {
+	it('binds freshness readers to the captured file and converts offsets for editor.replaceRange', async () => {
 		const snapshot = makeSnapshot();
-		const { editor, view } = makeView(
+		const { editor, file, view } = makeView(
 			snapshot.fullText,
 			snapshot.from,
 			snapshot.to,
 		);
 		const isTargetCurrent = vi.fn(() => true);
-		const adapter = createSelectionEditorAdapter(view, isTargetCurrent);
+		const readers = makeFreshnessReaders(snapshot.fullText);
+		const adapter = createSelectionEditorAdapter(view, isTargetCurrent, readers);
 
 		expect(adapter.readCurrentText()).toBe(snapshot.fullText);
 		expect(adapter.isTargetCurrent()).toBe(true);
+		await expect(adapter.readDiskText()).resolves.toBe(snapshot.fullText);
+		expect(adapter.readEditorTexts()).toEqual([snapshot.fullText]);
 		adapter.replaceRange('{~~beta~>delta~~}', snapshot.from, snapshot.to);
 
 		expect(isTargetCurrent).toHaveBeenCalledExactlyOnceWith(view);
+		expect(readers.readDiskText).toHaveBeenCalledExactlyOnceWith(file);
+		expect(readers.readEditorTexts).toHaveBeenCalledExactlyOnceWith(file);
 		expect(editor.offsetToPos).toHaveBeenCalledWith(snapshot.from);
 		expect(editor.offsetToPos).toHaveBeenCalledWith(snapshot.to);
 		expect(editor.replaceRange).toHaveBeenCalledExactlyOnceWith(
@@ -531,7 +648,11 @@ describe('createSelectionEditorAdapter', () => {
 	it('rejects identity when the captured view now points at another file', () => {
 		const snapshot = makeSnapshot();
 		const { view } = makeView(snapshot.fullText, snapshot.from, snapshot.to);
-		const adapter = createSelectionEditorAdapter(view, () => true);
+		const adapter = createSelectionEditorAdapter(
+			view,
+			() => true,
+			makeFreshnessReaders(snapshot.fullText),
+		);
 		view.file = markdownFile('other.md');
 
 		expect(adapter.isTargetCurrent()).toBe(false);
@@ -620,7 +741,13 @@ function makeSelectionCoordinator(
 	instructions: InstructionPromptParts = { skillTexts: new Map() },
 	providerConfig: ProviderConfig = provider,
 ) {
-	const { adapter, setCurrentText, setTargetCurrent } = makeAdapter(snapshot);
+	const {
+		adapter,
+		setCurrentText,
+		setDiskText,
+		setEditorTexts,
+		setTargetCurrent,
+	} = makeAdapter(snapshot);
 	const loadInstructions = vi.fn(async () => instructions);
 	const loadAdditionalNotes = vi.fn(
 		async (
@@ -644,6 +771,8 @@ function makeSelectionCoordinator(
 		loadInstructions,
 		request,
 		setCurrentText,
+		setDiskText,
+		setEditorTexts,
 		setTargetCurrent,
 	};
 }
@@ -937,6 +1066,31 @@ describe('SelectionEditRequestCoordinator', () => {
 			snapshot.to,
 		);
 	});
+
+	it.each(['disk', 'secondary editor'] as const)(
+		'keeps %s divergence terminal without a correction request',
+		async (divergence) => {
+			const snapshot = makeSnapshot();
+			const {
+				adapter,
+				coordinator,
+				request,
+				setDiskText,
+				setEditorTexts,
+			} = makeSelectionCoordinator(selectionRequest(replaceBetaResponse), snapshot);
+			if (divergence === 'disk') {
+				setDiskText('# Note\nAlpha beta changed on disk.\nEnd');
+			} else {
+				setEditorTexts([`${snapshot.fullText}\nUnsaved sibling`]);
+			}
+
+			await expect(
+				coordinator.submit(makeSelectionSubmission(snapshot)),
+			).rejects.toThrow(STALE_ERROR);
+			expect(request).toHaveBeenCalledOnce();
+			expect(adapter.replaceRange).not.toHaveBeenCalled();
+		},
+	);
 
 	it('returns the successful candidate summary and never the rejected one', async () => {
 		const snapshot = makeSnapshot();

@@ -1248,6 +1248,8 @@ describe('EmendPlugin Selection history', () => {
 		const fullText = 'BeforebetaAfter';
 		const editor: SelectionEditorAdapter = {
 			readCurrentText: () => fullText,
+			readDiskText: async () => fullText,
+			readEditorTexts: () => [fullText],
 			isTargetCurrent: () => true,
 			replaceRange: vi.fn(),
 		};
@@ -1334,6 +1336,8 @@ describe('EmendPlugin Selection history', () => {
 		};
 		const editor: SelectionEditorAdapter = {
 			readCurrentText: () => fullText,
+			readDiskText: async () => fullText,
+			readEditorTexts: () => [fullText],
 			isTargetCurrent: () => true,
 			replaceRange: vi.fn(),
 		};
@@ -1584,6 +1588,146 @@ describe('EmendPlugin edit freshness', () => {
 		});
 		return { file, sourceText, plugin, vaultModify };
 	}
+
+	function makeSelectionFreshnessFixture(options: {
+		diskText?: string;
+		targetText?: string;
+		siblingTexts?: readonly string[];
+		unrelatedText?: string;
+	} = {}) {
+		const sourceText = 'BeforebetaAfter';
+		const diskText = options.diskText ?? sourceText;
+		const targetText = options.targetText ?? sourceText;
+		const response = JSON.stringify([
+			{ type: 'replace', target: 'beta', replacement: 'delta' },
+		]);
+		const event = JSON.stringify({ choices: [{ delta: { content: response } }] });
+		const encoder = new TextEncoder();
+		const fetchMock = vi.fn().mockImplementation(async () => {
+			const stream = new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(encoder.encode(`data: ${event}\n\n`));
+					controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+					controller.close();
+				},
+			});
+			return new Response(stream);
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		const file = new TFile();
+		file.path = 'Selection.md';
+		const replaceRange = vi.fn();
+		const targetView = Object.assign(
+			Object.create(MarkdownView.prototype) as MarkdownView,
+			{
+				file,
+				editor: {
+					getSelection: () => 'beta',
+					getValue: () => targetText,
+					getCursor: (which: 'from' | 'to') => ({
+						offset: which === 'from' ? 6 : 10,
+					}),
+					posToOffset: (position: { offset: number }) => position.offset,
+					offsetToPos: (offset: number) => ({ offset }),
+					replaceRange,
+				},
+			},
+		);
+		const siblingViews = (options.siblingTexts ?? []).map((text) => Object.assign(
+			Object.create(MarkdownView.prototype) as MarkdownView,
+			{ file, editor: { getValue: () => text } },
+		));
+		const unrelatedFile = new TFile();
+		unrelatedFile.path = 'Unrelated.md';
+		const unrelatedGetValue = vi.fn(() => options.unrelatedText ?? 'Unrelated');
+		const unrelatedView = Object.assign(
+			Object.create(MarkdownView.prototype) as MarkdownView,
+			{ file: unrelatedFile, editor: { getValue: unrelatedGetValue } },
+		);
+		const vaultModify = vi.fn(async () => undefined);
+		const vaultRead = vi.fn(async (_file: TFile) => diskText);
+		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
+		Object.assign(plugin, {
+			settings: structuredClone(DEFAULT_SETTINGS),
+			getTargetMarkdownView: () => targetView,
+			app: {
+				vault: {
+					getAbstractFileByPath: () => null,
+					read: vaultRead,
+					modify: vaultModify,
+				},
+				workspace: {
+					iterateAllLeaves: (
+						callback: (leaf: { view: MarkdownView }) => void,
+					) => {
+						for (const view of [...siblingViews, unrelatedView]) {
+							callback({ view });
+						}
+					},
+				},
+			},
+			getApiKey: () => 'dummy-key',
+		});
+		const submit = () => {
+			const target = plugin.captureSelectionEditTarget();
+			return plugin.requestSelectionEdit(
+				target.snapshot,
+				'Replace beta with delta.',
+				new AbortController().signal,
+				target.editor,
+			);
+		};
+		return {
+			file,
+			fetchMock,
+			plugin,
+			replaceRange,
+			submit,
+			unrelatedGetValue,
+			vaultModify,
+			vaultRead,
+		};
+	}
+
+	it('uses disk and same-file open editors for a native Selection replacement', async () => {
+		const fixture = makeSelectionFreshnessFixture({
+			siblingTexts: ['BeforebetaAfter'],
+			unrelatedText: 'Unrelated unsaved typing',
+		});
+
+		await expect(fixture.submit()).resolves.toMatchObject({
+			applied: true,
+			changeCount: 1,
+		});
+
+		expect(fixture.vaultRead).toHaveBeenCalledExactlyOnceWith(fixture.file);
+		expect(fixture.unrelatedGetValue).not.toHaveBeenCalled();
+		expect(fixture.replaceRange).toHaveBeenCalledExactlyOnceWith(
+			'{~~beta~>delta~~}',
+			{ offset: 6 },
+			{ offset: 10 },
+		);
+		expect(fixture.vaultModify).not.toHaveBeenCalled();
+		expect(fixture.fetchMock).toHaveBeenCalledOnce();
+	});
+
+	it.each(['disk', 'secondary editor'] as const)(
+		'rejects Selection %s divergence without writes or correction',
+		async (divergence) => {
+			const fixture = makeSelectionFreshnessFixture(
+				divergence === 'disk'
+					? { diskText: 'BeforebetaAfter\nDisk typing' }
+					: { siblingTexts: ['BeforebetaAfter\nSibling typing'] },
+			);
+
+			await expect(fixture.submit()).rejects.toThrow(
+				'The note changed while Emend was responding. No edits were applied.',
+			);
+			expect(fixture.replaceRange).not.toHaveBeenCalled();
+			expect(fixture.vaultModify).not.toHaveBeenCalled();
+			expect(fixture.fetchMock).toHaveBeenCalledOnce();
+		},
+	);
 
 	it('rejects an edit when the target pane is dirty and another pane matches the snapshot', async () => {
 		const fixture = makeFreshnessFixture(
@@ -2045,6 +2189,8 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 		try {
 			const editor: SelectionEditorAdapter = {
 				readCurrentText: () => fullText,
+				readDiskText: async () => fullText,
+				readEditorTexts: () => [fullText],
 				isTargetCurrent: () => true,
 				replaceRange: vi.fn(),
 			};
@@ -2103,6 +2249,7 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 		const { view, editor } = makeSelectionView('beta');
 		const getValue = vi.fn(editor.getValue);
 		editor.getValue = getValue;
+		const vaultRead = vi.fn(async (_file: TFile) => 'BeforebetaAfter');
 		const plugin = Object.create(EmendPlugin.prototype) as EmendPlugin;
 		Object.assign(plugin, {
 			app: {
@@ -2112,10 +2259,12 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 					on: () => ({}),
 					getAbstractFileByPath: () => null,
 					getName: () => 'Vault',
+					read: vaultRead,
 				},
 				workspace: {
 					on: () => ({}),
 					getLeavesOfType: () => [],
+					iterateAllLeaves: () => undefined,
 				},
 				secretStorage: { setSecret: vi.fn(), getSecret: vi.fn(() => null) },
 			},
@@ -2213,6 +2362,13 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 				'full-note',
 			);
 			expect(requestSelectionEdit.mock.calls[0]).toHaveLength(8);
+			const requestArguments = requestSelectionEdit.mock.calls[0] as unknown as
+				| [SelectionSnapshot, string, AbortSignal, SelectionEditorAdapter, ...unknown[]]
+				| undefined;
+			const capturedEditor = requestArguments?.[3];
+			if (!capturedEditor) {
+				throw new Error('Captured Selection editor missing.');
+			}
 			expect(estimateSelectionDraft).toHaveBeenCalledOnce();
 			expect(estimateSelectionDraft).toHaveBeenCalledWith(
 				snapshot,
@@ -2221,6 +2377,9 @@ describe('EmendPlugin Selection modal capacity estimate', () => {
 			);
 			expect(estimate).toBe(estimateResult);
 			expect(getValue).toHaveBeenCalledTimes(1);
+			await expect(capturedEditor.readDiskText()).resolves.toBe('BeforebetaAfter');
+			expect(capturedEditor.readEditorTexts()).toEqual(['BeforebetaAfter']);
+			expect(vaultRead).toHaveBeenCalledExactlyOnceWith(view.file);
 		} finally {
 			if (originalOpen) {
 				prototype.open = originalOpen;

@@ -255,6 +255,8 @@ export function createPublicChatViewFixture(
 			},
 			editor: {
 				readCurrentText: () => sourceText,
+				readDiskText: async () => sourceText,
+				readEditorTexts: () => [sourceText],
 				isTargetCurrent: () => true,
 				replaceRange: vi.fn(),
 			},
