@@ -88,7 +88,7 @@ A quick action uses the maintained target and Selection-context policy. It saves
 
 An empty, whitespace-only, or vanished Selection fails closed. Emend shows `Select non-whitespace text first.` before adding messages, saving chats, reading additional context, or contacting a provider. It never falls back to Full-note Edit.
 
-**Observable result:** The result identifies **Target: Selection.** Text outside the captured range remains unchanged. Native undo restores the complete original Selection; redo reapplies the CriticMarkup replacement.
+**Observable result:** The result identifies **Target: Selection.** Text outside the captured range remains unchanged. If the saved note or any open editor diverges from the complete captured note, Emend shows `The note changed while Emend was responding. No edits were applied.` and replaces nothing. After a successful replacement, native undo restores the complete original Selection; redo reapplies the CriticMarkup replacement.
 
 **Recipe recap:** You chose bounded or complete-note support, and should observe exactly one native Selection replacement with no outside-target edit or Full-note fallback.
 
@@ -129,12 +129,12 @@ The model does not write arbitrary response text into your note. It returns Oper
 - **Atomic validation:** Every Operation must pass before anything is written. One invalid Operation prevents the entire edit.
 - **Structural safeguards:** Checks protect inline code, fenced code, table structure, and existing CriticMarkup. Selection candidates are also checked in the composed full note.
 - **CriticMarkup compilation:** Valid replacements become deterministic review markup. Emend minimizes replacement ranges where safe rather than rewriting the whole target by default.
-- **Freshness checks:** Full-note Edit requires the saved note and every open editor for that note to match the captured source. Selection Edit requires the current editor and active target to match before replacement.
+- **Freshness checks:** Full-note and Selection Edit require the saved note, the captured editor, and every open editor for that note to match the complete captured note before writing. The original target must still be active and the request must not be cancelled. Comparisons are exact; line-ending or other normalization cannot make a changed source writable.
 - **One candidate correction:** A candidate-validation failure can trigger one automatic correction request to the same provider and model. It includes the original request, invalid candidate, and bounded feedback. A second invalid candidate writes nothing.
 
 Provider errors, cancellation, stale sources, and write failures do not start that candidate-validation correction. No failure path applies a partial candidate.
 
-For technical details, see [Stage 37: Minimal edit ranges and guarded correction](../../devel_docs/37-minimal-edit-ranges.md), [Stage 38: Markdown edit safeguards](../../devel_docs/38-markdown-edit-safeguards.md), and [Stage 51: 2.10 stabilization](../../devel_docs/51-2-10-stabilization.md).
+For technical details, see [Stage 37: Minimal edit ranges and guarded correction](../../devel_docs/37-minimal-edit-ranges.md), [Stage 38: Markdown edit safeguards](../../devel_docs/38-markdown-edit-safeguards.md), [Stage 51: 2.10 stabilization](../../devel_docs/51-2-10-stabilization.md), and [Stage 56: Shared edit freshness](../../devel_docs/56-edit-freshness.md).
 
 ## Review and undo
 

@@ -21,7 +21,7 @@ Chat, Full-note Edit, and composer Selection can include recent ready messages f
 | Selection with Full-note context (`Edit · Selection · Full note`) | **Context:** The complete note plus a separate, complete Selection target.<br>**Write:** **Yes, only the captured Selection can change.** Full-note context never expands the write target.<br>**Review:** Review CriticMarkup with Track Changes, or use native undo. |
 | Modify Selection | **Context:** The complete captured Selection with Default bounded context or Full-note context. No chat history is sent.<br>**Write:** **Yes, only the captured Selection can change.** Full-note context never expands the write target. Emend uses exact native range replacement.<br>**Review:** Review CriticMarkup with Track Changes, or use native undo. The modal shows result notices. |
 
-Native range replacement preserves Obsidian's native undo for Selection edits. Full-note Edit instead checks the saved note and every open editor for that note before one guarded vault write.
+Before either Edit writer runs, the saved note, captured editor, and every open editor for that note must exactly match the complete captured note, and the original target must still be active. Selection divergence shows `The note changed while Emend was responding. No edits were applied.` and replaces nothing. Only a successful native Selection replacement preserves Obsidian's native undo; Full-note Edit instead uses one guarded vault write. See [Stage 56](../../devel_docs/56-edit-freshness.md).
 
 Emend writes validated edits as CriticMarkup, a markup format for reviewing proposed changes. The separate **Track Changes** community plugin visualizes that markup and supplies Accept/Reject controls. Chat does not require Track Changes. Emend does not bundle Track Changes or install it automatically. See the [installation requirements](../../INSTALLATION.md#requirements).
 
@@ -77,7 +77,7 @@ Malformed conversation data is preserved. Before the first valid replacement, Em
 
 Deleting a note does not delete the note's saved sessions. Renaming a note does not migrate its saved chats to the new path; the old saved data remains under the old note identity. Disabling Emend also preserves its settings and chats. To remove everything, clear each provider's API key in Emend settings, remove the plugin folder, and delete `<Vault>/.obsidian/emend/` separately. The [removal steps](../../INSTALLATION.md#remove-emend) explain this cleanup.
 
-[Stage 51](../../devel_docs/51-2-10-stabilization.md) records the current edit freshness checks, composed-note validation, and storage-resilience fixes.
+[Stage 51](../../devel_docs/51-2-10-stabilization.md) records composed-note validation and storage-resilience fixes; [Stage 56](../../devel_docs/56-edit-freshness.md) records the current shared edit freshness checks.
 
 ## Recap
 
