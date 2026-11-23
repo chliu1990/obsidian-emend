@@ -1010,4 +1010,27 @@ describe('payload structure guards', () => {
 			targetOperation(fullText, 'gamma', { operation: 2 }),
 		])).toBeUndefined();
 	});
+
+	it('pairs sequential payload fences and rejects any later unclosed opener', () => {
+		const fullText = 'Alpha beta.';
+		const operation = (text: string): GuardedMarkdownOperation => insertionOperation(
+			fullText,
+			'beta.',
+			'after',
+			{ text },
+		);
+
+		expect(findPayloadStructureViolation(fullText, [
+			operation('\n```\na\n```\n\n~~~\nb\n~~~\n'),
+		])).toBeUndefined();
+		expect(findPayloadStructureViolation(fullText, [
+			operation('\n```\na\n```\n\n~~~\nb\n'),
+		])).toEqual({
+			code: 'fenced-code-edit',
+			operation: 1,
+			operationType: 'insert',
+			field: 'text',
+			line: 1,
+		});
+	});
 });
