@@ -58,13 +58,16 @@ The short request-flow map is:
 
 1. `main.ts` maintains the Markdown target, captures synchronous context, registers resources, and owns per-note pending requests.
 2. `chat-view.ts` and focused controls manage sessions, drafts, targets, rendering, and submission state.
-3. `context.ts`, `selection-context.ts`, `selection-focus.ts`, and `additional-notes-context.ts` assemble declared context.
-4. `markdown-scanner.ts` owns lossless lines and named lexical projections only. `scanMarkdownContext` is for Selection context only; `scanMarkdown` plus `scanMarkdownEditStructure` are for edit guards only.
-5. `request-coordinator.ts` separates writer-free Chat and full-note Edit; `selection-editor.ts` coordinates Selection-only edits.
-6. `provider-stream.ts` owns SSE transport; `deepseek-web.ts` and `web-*.ts` isolate DeepSeek retrieval and grounded extraction.
-7. `operation-edit-strategy.ts`, `markdown-edit-guards.ts`, `replacement-diff.ts`, and `critic-markup.ts` validate and compile edits; `edit-freshness.ts` owns their shared exact-source freshness guard.
-8. `note-writer.ts` and the native Selection adapter are the only writers. `conversation-store.ts` owns sanitized local conversations.
-9. `settings.ts` normalizes non-secret settings; `secret-storage.ts` resolves provider credentials.
+3. `modification-controller.ts` is the Edit-only interaction between the view's captured target and the existing plugin request methods.
+4. `context.ts`, `selection-context.ts`, `selection-focus.ts`, and `additional-notes-context.ts` assemble declared context.
+5. `markdown-scanner.ts` owns lossless lines and named lexical projections only. `scanMarkdownContext` is for Selection context only; `scanMarkdown` plus `scanMarkdownEditStructure` are for edit guards only.
+6. `request-coordinator.ts` separates writer-free Chat and full-note Edit; `selection-editor.ts` coordinates Selection-only edits.
+7. `provider-stream.ts` owns SSE transport; `deepseek-web.ts` and `web-*.ts` isolate DeepSeek retrieval and grounded extraction.
+8. `operation-edit-strategy.ts`, `markdown-edit-guards.ts`, `replacement-diff.ts`, and `critic-markup.ts` validate and compile edits; `edit-freshness.ts` owns their shared exact-source freshness guard.
+9. `note-writer.ts` and the native Selection adapter are the only writers. `conversation-store.ts` owns sanitized local conversations.
+10. `settings.ts` normalizes non-secret settings; `secret-storage.ts` resolves provider credentials.
+
+`modification-controller.ts` is stateless and constructed per Edit request. It forwards the view's reasoning/retry callbacks to exactly one existing plugin Edit request method and formats concise applied/no-op results. It has no target-capture, request-identity, Web, persistence, freshness, correction, rendering, or writer ownership. The view retains capture, sessions, drafts, capacity, Chat/Web, abort/stale handling, rendering, and saves; existing coordinators, correction, freshness, and writers remain unchanged. See [Stage 58](devel_docs/58-modification-controller.md).
 
 `selection-context.ts` retains Selection expansion and budget policy; `markdown-edit-guards.ts` retains all edit-violation policy.
 Sharing these projections does not change Stage 38 conservative guards or separate Track Changes compatibility shadows,
