@@ -152,20 +152,11 @@ Executed verification available through production head `5f93724` is:
 
 Tasks 1–3 received their assigned independent reviews with clean gates recorded in the SDD ledger. Task 3's review explicitly covered writer routing, lifecycle/save behavior, read-only isolation, concise persistence, and privacy. These are unit/mock and static-build results, not real-Obsidian results.
 
-## Planned real-Obsidian matrix — not executed at Task 4
+## Observed pre-final-documentation-head real-Obsidian evidence
 
-Task 5 owns all PR 05 runtime verification. **None of the following PR 05 runtime scenarios or inherited-group reruns has been executed as of this documentation record.** No runtime pass total, note-byte result, native-undo result, screenshot, bundle identity, or loaded-bundle match is claimed here.
+Task 5 provisioned the current PR 04 verifier, mock provider, model-control support, Obsidian/Xvfb tools, and separately installed Track Changes companion into this worktree's ignored `test_vault/`. Each run created a fresh synthetic runtime and vault; no saved chat or earlier evidence was reused as a PR 05 result. **This section records pre-final-documentation-head evidence at `a231445b2badc70687ef136ad5baf5807bed08d0`, before this Stage 58 evidence commit.** Final exact-head gate and runtime evidence belongs to the SDD Task 5 report rather than another recursive documentation commit.
 
-The focused ignored-harness group will be `--modification-controller`, with these planned scenarios:
-
-1. `01-full-note-correction-summary-history-privacy` — one invalid candidate and one valid correction, exactly two same-provider requests, one guarded vault write, concise history/persistence, aggregate usage, successful-only reasoning, and private-artifact/credential audits.
-2. `02-selection-full-note-context-native-undo` — complete-note supporting context with Selection-only target, no Web tools, exact native offsets and summary lines, zero vault writes, unchanged outside-Selection bytes, and actual native undo/redo.
-3. `03-quick-action-draft-and-capacity-preflight` — controller-backed quick action preserving a separate typed draft, followed by an over-capacity draft with no message, request, save, write, or note-byte change.
-4. `04-session-lock-note-switch-and-stale-callback-isolation` — pending-request locks, A-to-B abort, late non-applied A completion and callbacks after newer B activity, and no stale DOM/save/Notice or wrong-note/late write.
-5. `05-applied-stop-save-race` — one applied native Selection replacement followed by Stop racing the final save, ready concise committed-save persistence with usage/reasoning, restored controls, and native undo.
-6. `06-web-review-auto-writer-free-isolation` — editable Web Review arguments, Web Auto without a review pause, terminal-only persistence, and no controller result, writer call, raw retrieval artifact, or credential leakage.
-
-The planned commands are:
+The executed build and runtime commands were:
 
 ```bash
 npm run build
@@ -177,7 +168,44 @@ node test_vault/emend-selection-chat-verify/verify.mjs --stabilization
 node test_vault/emend-selection-chat-verify/verify.mjs --sessions
 ```
 
-The inherited groups are planned regression coverage for scanner guards, multi-pane/disk/CRLF freshness, wrong-target and abort behavior, no-op/writer-free paths, target flow, sessions/drafts/history/capacity/Web, native undo, and streaming reasoning. Task 5 will also use a harness-only negative control, then remove it before evidence runs. The runtime must use only the ignored synthetic vault, loopback OpenAI-compatible SSE/CORS and DeepSeek Search/Fetch mocks, and dummy credentials. Task 5 will record actual scenario/assertion totals, process statuses, environment, provider limits, root/loaded bundle identities, privacy audits, and any harness-development failures without presenting those later results as Task 4 evidence.
+Every evidence-run command exited `0`. The six summaries reported the exact head above, zero failed scenarios, equal root and loaded `main.js` SHA-256 values, setup bundle identity matched, and final `loadedBundleMatchedRoot: true`. The common root and loaded hash was `61c632e2222958e551567aa80373e14afe1c8bd271865f844e97c6db1446b349`.
+
+| Ignored summary under `test_vault/emend-selection-chat-verify/evidence-pr05-pre/` | Passed scenarios | Assertions | Result |
+| --- | ---: | ---: | --- |
+| `modification-controller/summary.json` | 6/6 | 73 | Pass |
+| `markdown-scanner/summary.json` | 10/10 | 318 | Pass |
+| `edit-freshness/summary.json` | 24/24 | 227 | Pass |
+| `edit-target-flow/summary.json` | 5/5 | 95 | Pass |
+| `stabilization/summary.json` | 6/6 | 55 | Pass |
+| `sessions/summary.json` | 9/9 | 156 | Pass |
+| **Total** | **60/60** | **924** | **Pass** |
+
+### Focused modification-controller observations
+
+1. `01-full-note-correction-summary-history-privacy` — **23 assertions**. One ambiguous candidate and one valid correction made exactly two requests to the same loopback model. The second request alone contained the private candidate and bounded typed ambiguity feedback. Exactly one guarded `vault.modify` wrote the expected CriticMarkup and no native replacement occurred. The result and schema-3 aggregate retained aggregate usage of 46 tokens, successful-only reasoning, and the concise line-4 result. A following ordinary Chat request contained only the annotated original user prompt and concise local Edit result. Follow-up history excluded rejected artifacts, diagnostics, and the captured full-note snapshot; saved-chat audits excluded rejected reasoning/candidates/summaries, Operations payloads, diagnostics, and request/source snapshots. Request evidence and saved chats excluded headers, authorization, and the dummy credential.
+2. `02-selection-full-note-context-native-undo` — **8 assertions**. `Edit · Selection · Full note` sent the complete note as supporting context and named only the Selection as edit target, with no Web tools. One native `replaceRange` used captured offsets 35–70 and exact annotated Selection bytes; guarded vault writes stayed at zero and outside-Selection Unicode/source bytes stayed exact. The concise result reported note-absolute lines 5–6. Actual native undo and redo restored the complete original and annotated documents.
+3. `03-quick-action-draft-and-capacity-preflight` — **8 assertions**. Fix grammar completed through the controller-backed Selection path while preserving the independent typed draft. The next over-capacity draft added no runtime or persisted message, provider request, chat save, writer call, or note-byte change.
+4. `04-session-lock-note-switch-and-stale-callback-isolation` — **12 assertions**. A held Full-note Edit disabled and refused a session switch, and the same-note registry refused a second request while the first remained pending. Switching to B aborted A. Releasing A's held non-applied response and invoking its retained reasoning/retry callbacks after newer B Chat started caused no stale DOM content, save, Notice, or B-thread contamination. A retained only its ready user prompt; A and B note bytes and both writers remained untouched.
+5. `05-applied-stop-save-race` — **8 assertions**. One native Selection replacement completed before a harness-held final assistant save. Stop raced that save; the assistant save options had no abort signal, then committed successfully as a ready concise result with usage and successful reasoning. Controls returned to Send, no second write occurred, and native undo/redo restored exact original/annotated bytes.
+6. `06-web-review-auto-writer-free-isolation` — **14 assertions**. A real Review modal exposed a transient labelled Web draft with no Copy action. The edited URL reached the actual loopback Fetch request, and the continuation request preserved the edited URL and extraction goal in its tool-call arguments. Auto completed without a review pause. Both modes persisted only terminal answers, sanitized activity, user badges, and aggregate usage of 33 tokens. Provisional content was absent from later history, Copy, and persistence; raw tool/retrieval artifacts and credentials were absent from saved chats. No Edit result appeared and neither writer ran.
+
+The inherited groups passed their actual scanner/fence/table/CRLF guards, disk/captured-editor/secondary-pane freshness and wrong/no-open-target refusals, held-read and immediate aborts, no-op and writer-free Chat/Chat Selection controls, stale-after-correction behavior, target/session/draft/history/capacity/Web flows, native undo, streaming reasoning, multi-pane behavior, and schema/persistence privacy checks. These were new executions against the PR 05 bundle, not inherited pass claims.
+
+### Negative control and harness-only development failures
+
+A temporary harness-only negative control ran once with `node test_vault/emend-selection-chat-verify/verify.mjs --modification-controller`. It exited `1` and wrote `0 passed, 1 failed; 0 assertions` for `harness-only-negative-control`, with `loadedBundleMatchedRoot: true`. The control was removed before evidence runs; its summary is preserved at `test_vault/emend-selection-chat-verify/evidence-pr05-negative-control/summary.json`. This was a verifier self-check, not a product failure.
+
+Three focused development runs also failed before the green evidence run; their summaries are under `test_vault/emend-selection-chat-verify/evidence-pr05-development/`. All were diagnosed as harness defects and none required a production change:
+
+- `focused-dev1-summary.json`: 4 passed, 2 failed, 51 assertions. The Stop/save assertion read disk before Obsidian flushed the completed native edit, so it was changed to the established condition-based note-byte wait. The Web setup also incorrectly tried to redefine Chromium's non-configurable `navigator.clipboard` property instead of stubbing its `writeText` method.
+- `focused-dev2-summary.json`: 5 passed, 1 failed, 59 assertions. The draft assertion ran after `deepseek-web.ts` had intentionally reset provisional content upon receiving tool calls. The mock was changed to hold between provisional content and tool-call chunks so the transient UI is observed at its actual stage.
+- `focused-dev3-summary.json`: 5 passed, 1 failed, 59 assertions. The harness incorrectly expected `extractionGoal` in the DeepSeek Fetch API body. Source inspection confirmed that API receives only `url`; assertions now verify the edited URL at `/v1/tools/fetch` and both edited arguments in the actual continuation tool-call request.
+
+### Runtime environment and limits
+
+Evidence used Linux `6.12.117+deb13-amd64` x86_64, the official Obsidian **1.15.0** AppImage, isolated Xvfb `:101` at 1440×1000, CDP port 19224, and the separately provisioned Track Changes **2.3.0** companion. Provider traffic used only `127.0.0.1:18766` OpenAI-compatible SSE/CORS and DeepSeek Fetch mocks with a dummy SecretStorage credential. No real account, paid call, private note, external provider request, or real credential was used.
+
+These results do not establish real-provider behavior, Windows/macOS/mobile coverage, physical OS-level input, or screen-reader/assistive-technology behavior. Keyboard coverage in inherited groups used trusted CDP-dispatched events. The root/loaded hash proves bundle identity in this harness, not behavior in an unexercised Obsidian version or host environment.
 
 ## Remaining issue #76 and user-facing scope
 
@@ -196,4 +224,4 @@ No session, draft, capacity, streaming, Web, menu, notice, persistence-schema, p
 
 The unit tests use Obsidian mocks, fake DOM, synthetic contexts, and dependency doubles. They do not prove actual host note bytes, host synchronization, native undo/redo, real-provider behavior, physical keyboard/pointer input, screen-reader behavior, or Windows/macOS/mobile coverage. The Task 3 production build proves strict compilation and bundling, not runtime behavior in Obsidian. No real account, external provider request, paid call, or real credential is part of the evidence through Task 3.
 
-This Task 4 record intentionally stops at the executed unit/static gates through Task 3 plus a clearly planned runtime matrix. Task 4's documentation regression and link checks belong to its task report and are not host-runtime evidence. Task 5 will add observed pre-final-documentation-head runtime evidence here; final exact-head gate/runtime totals and bundle identities belong to the SDD final report and PR evidence rather than a recursive documentation update.
+Task 4's documentation regression and link checks belong to its task report and are not host-runtime evidence. Task 5 has now added the observed pre-final-documentation-head runtime evidence above, including actual host note bytes and native undo/redo in the exercised environment. Final exact-head gate/runtime totals and bundle identities belong to the SDD Task 5 report and PR evidence rather than a recursive documentation update.
