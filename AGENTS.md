@@ -123,8 +123,15 @@ Live Selection highlighting uses current editor state without I/O, persistence, 
   Resolve exact original anchors atomically; reject ambiguity, overlap, out-of-target ranges, and additional-note-only anchors.
 - Preserve inline-code, fence, table, payload, and CriticMarkup guards. Revalidate compiled markup and the composed
   Selection document before replacement. Never partially apply a rejected candidate.
-- Candidate-validation failure gets one same-provider correction with bounded diagnostics. Provider, abort, stale,
-  capacity, and write failures get none. Raw candidates and feedback remain private.
+- Candidate-validation failure gets one same-provider correction with bounded diagnostics. The sole exception is
+  `in-token-selection`: only after composed complete-note CriticMarkup rejection, a nonempty Selection strictly inside
+  a raw token's `start`/`end` is terminal with `correctionEligible: false`. It still makes the initial request, then
+  skips only the impossible correction, continuation, retry callback, freshness reads, and writes. Every other
+  candidate-validation failure retains correction. Provider, abort, stale, capacity, and write failures get none.
+  Source-valid `[]` and unchanged replacements remain successful no-ops with usage and no freshness reads or writes;
+  delimiter source validation remains authoritative. This is not pending-card merging: accept or reject the pending
+  change in Track Changes, then make a fresh Selection. See [Stage 59](devel_docs/59-actionable-in-token-rejection.md).
+  Raw candidates and feedback remain private.
 - Full annotated responses and rejected-attempt reasoning never enter chat or persistence. Store only concise results,
   optional validated summaries, successful-attempt reasoning, and all-round usage. Never write model summaries into notes.
 - Track Changes is the separate companion and only review surface. Emend has no diff/Apply/Reject UI, does not bundle
