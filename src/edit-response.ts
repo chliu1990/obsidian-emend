@@ -43,7 +43,11 @@ export async function prepareEditResponse(options: {
 				: options.editStrategy.prepareEdit(options.original, result.content);
 			options.validatePrepared?.(prepared);
 		} catch (error) {
-			if (round === 1 || !(error instanceof EditResponseValidationError)) {
+			if (
+				round === 1 ||
+				!(error instanceof EditResponseValidationError) ||
+				!error.correctionEligible
+			) {
 				throw error;
 			}
 			options.onRetry?.();
