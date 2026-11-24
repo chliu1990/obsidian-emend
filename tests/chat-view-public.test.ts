@@ -10,6 +10,7 @@ import {
 import { formatVaultQualifiedPath, type RequestContext } from '../src/context';
 import type { LoadedChatConversation } from '../src/conversation-store';
 import EmendPlugin from '../src/main';
+import { ModificationController } from '../src/modification-controller';
 import { operationEditStrategy } from '../src/operation-edit-strategy';
 import type {
 	AiProviderRequest,
@@ -23,6 +24,7 @@ import { normalizeContextLimit } from '../src/settings';
 import {
 	EditRequestCoordinator,
 	type ChatStreamResult,
+	type EditRequestResult,
 	type EditSubmission,
 	type ReadOnlySubmission,
 } from '../src/request-coordinator';
@@ -193,6 +195,29 @@ function captureReadyMessageSaves(
 		},
 	);
 	return savedSnapshots;
+}
+
+function appliedSelectionResult(summary?: string): SelectionEditResult {
+	return {
+		applied: true,
+		changeCount: 2,
+		summaryItems: [{ type: 'replace', start: 0, end: 4 }],
+		...(summary === undefined ? {} : { summary }),
+		usage: {
+			promptTokens: 30,
+			completionTokens: 7,
+			totalTokens: 37,
+			source: 'provider',
+		},
+	};
+}
+
+function renderedMessageContent(
+	fixture: PublicChatViewFixture,
+	messageId: string,
+): string | undefined {
+	const node = findMessageNode(fixture.contentEl, messageId);
+	return node ? messageContentElements(node)[0]?.textContent : undefined;
 }
 
 function relatedNotePaths(contentEl: FakeElement): string[] {
@@ -767,6 +792,342 @@ describe('EmendChatView public modification submission and persistence', () => {
 		vi.unstubAllGlobals();
 	});
 
+	it('delegates Full-note Edit with the captured context, history, additional notes, and signal', async () => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			defaultMode: 'edit',
+		});
+		const savedSnapshots = captureReadyMessageSaves(fixture, makeSession('session-1', [
+			{
+				...message('earlier-question', 'Note.md'),
+				role: 'user',
+				content: 'Earlier question',
+			},
+			{
+				...message('earlier-answer', 'Note.md'),
+				content: 'Earlier answer',
+			},
+		]));
+		fixture.additionalNotesStore.add('Note.md', 'Reference.md');
+		const controllerSubmit = vi.spyOn(ModificationController.prototype, 'submit');
+		fixture.requestChatCompletion.mockResolvedValue({
+			applied: true,
+			changeCount: 1,
+			summaryItems: [{ type: 'replace', start: 6, end: 10 }],
+			usage: {
+				promptTokens: 12,
+				completionTokens: 8,
+				totalTokens: 20,
+				source: 'provider',
+			},
+		});
+		await fixture.open();
+		setChatInput(fixture, 'Edit note');
+
+		await fixture.view.submitPrompt();
+
+		expect(controllerSubmit).toHaveBeenCalledOnce();
+		const submission = controllerSubmit.mock.calls[0]?.[0];
+		if (!submission || submission.target.type !== 'full-note') {
+			throw new Error('Full-note modification submission missing.');
+		}
+		const expectedHistory = [
+			{ role: 'user', content: 'Earlier question', mode: 'ask', origin: 'user' },
+			{ role: 'assistant', content: 'Earlier answer', mode: 'ask', origin: 'model' },
+		];
+		expect(submission.prompt).toBe('Edit note');
+		expect(submission.history).toEqual(expectedHistory);
+		expect(submission.additionalNotePaths).toEqual(['Reference.md']);
+		expect(submission.signal).toBeInstanceOf(AbortSignal);
+		expect(submission.signal.aborted).toBe(false);
+		expect(submission.target.mode).toBe('edit');
+		expect(submission.target.context.sourceText).toBe('Alpha beta.');
+		expect(submission.target.context.file.path).toBe('Note.md');
+		expect(fixture.requestChatCompletion).toHaveBeenCalledOnce();
+		expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
+		const request = fixture.requestChatCompletion.mock.calls[0]?.[0];
+		if (!request || request.mode !== 'edit') {
+			throw new Error('Full-note Edit request missing.');
+		}
+		expect(request).toMatchObject({
+			mode: 'edit',
+			prompt: 'Edit note',
+			history: expectedHistory,
+			additionalNotePaths: ['Reference.md'],
+		});
+		expect(request.context).toBe(submission.target.context);
+		expect(request.callbacks).toBe(submission.callbacks);
+		expect(request.signal).toBe(submission.signal);
+		const expectedSummary = [
+			'Edit applied — 1 changes tracked. Review in Track Changes.',
+			'Target: Full note.',
+			'',
+			'- Replaced line 1.',
+		].join('\n');
+		expect(savedSnapshots).toHaveLength(2);
+		const assistant = savedSnapshots.at(-1)?.at(-1);
+		expect(assistant).toMatchObject({
+			role: 'assistant',
+			status: 'ready',
+			content: expectedSummary,
+		});
+		if (!assistant) {
+			throw new Error('Full-note Edit assistant message missing.');
+		}
+		expect(renderedMessageContent(fixture, assistant.id)).toBe(expectedSummary);
+	});
+
+	it('delegates Selection Edit with the captured target and Selection context policy', async () => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			selectedText: 'beta',
+			defaultMode: 'edit',
+		});
+		const savedSnapshots = captureReadyMessageSaves(fixture, makeSession());
+		const controllerSubmit = vi.spyOn(ModificationController.prototype, 'submit');
+		fixture.requestSelectionEdit.mockResolvedValue(appliedSelectionResult());
+		await fixture.open();
+		chooseWritingMenuItem(fixture.contentEl, 'Edit · Selection · Full note');
+		setChatInput(fixture, 'Edit selection');
+
+		await fixture.view.submitPrompt();
+
+		expect(controllerSubmit).toHaveBeenCalledOnce();
+		const submission = controllerSubmit.mock.calls[0]?.[0];
+		if (!submission || submission.target.type !== 'selection') {
+			throw new Error('Selection modification submission missing.');
+		}
+		expect(submission.prompt).toBe('Edit selection');
+		expect(submission.target.mode).toBe('edit');
+		expect(submission.target.selectionContext).toBe('full-note');
+		expect(capturedSelectionTargets(fixture)).toContain(submission.target.target);
+		expect(submission.target.target.snapshot).toMatchObject({
+			fullText: 'Alpha beta.',
+			selectedText: 'beta',
+			from: 6,
+			to: 10,
+		});
+		expect(fixture.requestSelectionEdit).toHaveBeenCalledOnce();
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		const args = fixture.requestSelectionEdit.mock.calls[0];
+		expect(args?.[0]).toBe(submission.target.target.snapshot);
+		expect(args?.[1]).toBe('Edit selection');
+		expect(args?.[2]).toBe(submission.signal);
+		expect(args?.[3]).toBe(submission.target.target.editor);
+		expect(args?.[6]).toBe(submission.callbacks);
+		expect(args?.[7]).toBe('full-note');
+		const expectedSummary = [
+			'Edit applied — 2 changes tracked. Review in Track Changes.',
+			'Target: Selection.',
+			'',
+			'- Replaced line 1.',
+		].join('\n');
+		const assistant = savedSnapshots.at(-1)?.at(-1);
+		expect(assistant).toMatchObject({
+			role: 'assistant',
+			status: 'ready',
+			content: expectedSummary,
+		});
+		if (!assistant) {
+			throw new Error('Selection Edit assistant message missing.');
+		}
+		expect(renderedMessageContent(fixture, assistant.id)).toBe(expectedSummary);
+	});
+
+	it.each([
+		{ label: 'Chat', menu: undefined, chatTarget: 'note', webMode: undefined },
+		{ label: 'Chat Selection', menu: 'Chat · Selection', chatTarget: 'selection', webMode: undefined },
+		{ label: 'Web Review', menu: 'Web Review', chatTarget: 'note', webMode: 'review' },
+		{ label: 'Web Auto', menu: 'Web Auto', chatTarget: 'note', webMode: 'auto' },
+	] as const)(
+		'keeps Chat, Chat Selection, Web Review, and Web Auto outside the modification controller: $label',
+		async (scenario) => {
+			const fixture = createPublicChatViewFixture({
+				sourceText: 'Alpha beta.',
+				selectedText: 'beta',
+			});
+			const savedSnapshots = captureReadyMessageSaves(fixture, makeSession());
+			const controllerSubmit = vi.spyOn(ModificationController.prototype, 'submit');
+			fixture.requestChatCompletion.mockImplementation((async (
+				submission: ReadOnlySubmission,
+			) => {
+				submission.callbacks.onContent('Provisional answer');
+				submission.callbacks.onContentReset?.();
+				submission.callbacks.onContent('Terminal answer');
+				return {
+					content: 'Terminal answer',
+					reasoning: '',
+					usage: {
+						promptTokens: 3,
+						completionTokens: 1,
+						totalTokens: 4,
+						source: 'provider',
+					},
+					sources: [],
+					activities: [],
+					failedExtractions: 0,
+					failedSearches: 0,
+					maxToolCalls: 4,
+					skippedWebCalls: 0,
+					omittedEvidence: false,
+				};
+			}) as unknown as EmendPlugin['requestChatCompletion']);
+			await fixture.open();
+			if (scenario.menu) {
+				chooseWritingMenuItem(fixture.contentEl, scenario.menu);
+			}
+			setChatInput(fixture, 'Question');
+
+			await fixture.view.submitPrompt();
+
+			expect(controllerSubmit).not.toHaveBeenCalled();
+			expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
+			expect(fixture.requestChatCompletion).toHaveBeenCalledOnce();
+			const request = fixture.requestChatCompletion.mock.calls[0]?.[0] as unknown as
+				ReadOnlySubmission | undefined;
+			if (!request) {
+				throw new Error('Read-only request missing.');
+			}
+			expect(request.mode).toBe('ask');
+			expect(request.chatTarget).toBe(scenario.chatTarget);
+			expect(request.webSearch?.mode).toBe(scenario.webMode);
+			if (scenario.label === 'Web Review') {
+				expect(typeof request.webSearch?.reviewCalls).toBe('function');
+			}
+			expect(savedSnapshots).toHaveLength(2);
+			const assistant = savedSnapshots.at(-1)?.at(-1);
+			expect(assistant).toMatchObject({
+				role: 'assistant',
+				status: 'ready',
+				content: 'Terminal answer',
+			});
+			for (const saved of savedSnapshots.flat()) {
+				expect(Object.prototype.hasOwnProperty.call(saved, 'webDraft')).toBe(false);
+				expect(saved.content).not.toContain('Edit applied');
+				expect(saved.content).not.toContain('No changes were needed.');
+			}
+		},
+	);
+
+	it('isolates late Edit callbacks and non-applied completion after a note switch and newer Chat request', async () => {
+		const fixture = createPublicChatViewFixture({
+			activePath: 'A.md',
+			defaultMode: 'edit',
+		});
+		const first = makeSession('a1');
+		const second = makeSession('b1');
+		fixture.conversationStore.loadConversation.mockImplementation(async (notePath) =>
+			loadedConversation([notePath === 'A.md' ? first : second])
+		);
+		const oldResponse = deferred<EditRequestResult>();
+		let oldCallbacks: EditSubmission['callbacks'] | undefined;
+		let oldSignal: AbortSignal | undefined;
+		let newSignal: AbortSignal | undefined;
+		fixture.requestChatCompletion
+			.mockImplementationOnce((async (submission: EditSubmission) => {
+				oldCallbacks = submission.callbacks;
+				oldSignal = submission.signal;
+				return oldResponse.promise;
+			}) as unknown as EmendPlugin['requestChatCompletion'])
+			.mockImplementationOnce((async (submission: ReadOnlySubmission) => {
+				newSignal = submission.signal;
+				submission.callbacks.onReasoning('B reasoning');
+				submission.callbacks.onContent('B answer');
+				return {
+					content: 'B answer',
+					reasoning: 'B reasoning',
+					usage: {
+						promptTokens: 3,
+						completionTokens: 1,
+						totalTokens: 4,
+						source: 'provider',
+					},
+					sources: [],
+					activities: [],
+					failedExtractions: 0,
+					failedSearches: 0,
+					maxToolCalls: 4,
+					skippedWebCalls: 0,
+					omittedEvidence: false,
+				};
+			}) as unknown as EmendPlugin['requestChatCompletion']);
+		await fixture.open();
+
+		const oldSubmission = fixture.view.submitPrompt('Edit A');
+		await vi.waitFor(() => expect(fixture.requestChatCompletion).toHaveBeenCalledOnce());
+		expect(oldSignal?.aborted).toBe(false);
+		expect(fixture.conversationStore.appendReadyMessage).toHaveBeenCalledOnce();
+		expect(fixture.conversationStore.appendReadyMessage.mock.calls[0]?.[0]).toBe('A.md');
+		expect(fixture.conversationStore.appendReadyMessage.mock.calls[0]?.[2]).toMatchObject({
+			role: 'user',
+			content: 'Edit A',
+			status: 'ready',
+		});
+
+		fixture.setActivePath('B.md');
+		await fixture.view.refreshTargetNote();
+		expect(oldSignal?.aborted).toBe(true);
+		fixture.view.setMode('ask');
+		await fixture.view.submitPrompt('Question B');
+		expect(newSignal?.aborted).toBe(false);
+		const bAssistant = fixture.conversationStore.appendReadyMessage.mock.calls
+			.find(([notePath, , saved]) => notePath === 'B.md' && saved.role === 'assistant')?.[2];
+		if (!bAssistant) {
+			throw new Error('B assistant message missing.');
+		}
+		expect(textOf(findMessageNode(fixture.contentEl, bAssistant.id)!)).toContain('B answer');
+
+		const noticeStart = noticeMessages().length;
+		if (!oldCallbacks) {
+			throw new Error('Edit callbacks missing.');
+		}
+		oldCallbacks.onReasoning('STALE_EDIT_REASONING');
+		oldCallbacks.onRetry?.();
+		oldCallbacks.onReasoning('STALE_EDIT_RETRY_REASONING');
+		fixture.flushAnimationFrame();
+		oldResponse.resolve({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+			summary: 'STALE_EDIT_SUMMARY',
+			usage: {
+				promptTokens: 2,
+				completionTokens: 1,
+				totalTokens: 3,
+				source: 'provider',
+			},
+		});
+		await oldSubmission;
+
+		const currentText = textOf(fixture.contentEl);
+		expect(currentText).not.toContain('STALE_EDIT_REASONING');
+		expect(currentText).not.toContain('STALE_EDIT_RETRY_REASONING');
+		expect(currentText).not.toContain('STALE_EDIT_SUMMARY');
+		expect(noticeMessages().slice(noticeStart)).toEqual([]);
+		const currentB = findMessageNode(fixture.contentEl, bAssistant.id);
+		expect(currentB?.className.split(' ')).toContain('is-ready');
+		expect(textOf(currentB!)).toContain('B answer');
+		expect(textOf(currentB!)).toContain('B reasoning');
+		expect(newSignal?.aborted).toBe(false);
+		expect(findSubmissionButton(fixture.contentEl, 'Stop')).toBeUndefined();
+		expect(findSubmissionButton(fixture.contentEl, 'Send')?.disabled).toBe(false);
+		expect(fixture.requestChatCompletion).toHaveBeenCalledTimes(2);
+		expect(fixture.requestSelectionEdit).not.toHaveBeenCalled();
+		const saves = fixture.conversationStore.appendReadyMessage.mock.calls.map(
+			([notePath, , saved]) => ({
+				notePath,
+				role: saved.role,
+				content: saved.content,
+				status: saved.status,
+			}),
+		);
+		expect(saves).toEqual([
+			{ notePath: 'A.md', role: 'user', content: 'Edit A', status: 'ready' },
+			{ notePath: 'B.md', role: 'user', content: 'Question B', status: 'ready' },
+			{ notePath: 'B.md', role: 'assistant', content: 'B answer', status: 'ready' },
+		]);
+	});
+
 	it('saves the ready user message and completed assistant message with usage', async () => {
 		const fixture = createPublicChatViewFixture();
 		const savedSnapshots = captureReadyMessageSaves(fixture, makeSession());
@@ -1107,6 +1468,384 @@ describe('EmendChatView public modification submission and persistence', () => {
 			'Edit selection',
 			summary,
 		]);
+	});
+
+	it('keeps full-note Selection context on the native selection writer only', async () => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			selectedText: 'beta',
+			defaultMode: 'edit',
+		});
+		const savedSnapshots = captureReadyMessageSaves(fixture, makeSession());
+		fixture.requestSelectionEdit.mockResolvedValue(appliedSelectionResult());
+		await fixture.open();
+		chooseWritingMenuItem(fixture.contentEl, 'Edit · Selection · Full note');
+		setChatInput(fixture, 'Edit selection');
+
+		await fixture.view.submitPrompt();
+
+		expect(fixture.requestSelectionEdit).toHaveBeenCalledOnce();
+		expect(fixture.requestSelectionEdit.mock.calls[0]?.[7]).toBe('full-note');
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(fixture.captureChatContext).not.toHaveBeenCalled();
+		expect(savedSnapshots[0]?.[0]?.mode).toBe('edit');
+	});
+
+	it('sends the same captured ready history as full-note and read-only requests', async () => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			selectedText: 'beta',
+			defaultMode: 'edit',
+		});
+		captureReadyMessageSaves(fixture, makeSession('session-1', [
+			{
+				...message('earlier-question', 'Note.md'),
+				role: 'user',
+				content: 'Earlier question',
+			},
+			message('earlier-answer', 'Note.md'),
+		]));
+		fixture.requestSelectionEdit.mockResolvedValue(appliedSelectionResult());
+		await fixture.open();
+		setChatInput(fixture, 'Edit selection');
+
+		await fixture.view.submitPrompt();
+
+		const args = fixture.requestSelectionEdit.mock.calls[0];
+		expect(args?.[5]).toEqual([
+			{ role: 'user', content: 'Earlier question', mode: 'ask', origin: 'user' },
+			{ role: 'assistant', content: 'earlier-answer', mode: 'ask', origin: 'model' },
+		]);
+	});
+
+	it('adds the Selection start offset once to note-absolute summary lines', async () => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Intro line.\nFirst target.\nSecond target.\nOutro line.',
+			selectedText: 'First target.\nSecond target.',
+			defaultMode: 'edit',
+		});
+		const savedSnapshots = captureReadyMessageSaves(fixture, makeSession());
+		fixture.requestSelectionEdit.mockResolvedValue({
+			...appliedSelectionResult(),
+			summaryItems: [{ type: 'replace', start: 0, end: 28 }],
+		});
+		await fixture.open();
+		setChatInput(fixture, 'Edit selection');
+
+		await fixture.view.submitPrompt();
+
+		const expected = 'Edit applied — 2 changes tracked. Review in Track Changes.\nTarget: Selection.\n\n- Replaced lines 2–3.';
+		const assistant = savedSnapshots[1]?.[1];
+		if (!assistant) {
+			throw new Error('Selection Edit assistant message missing.');
+		}
+		expect(assistant.content).toBe(expected);
+		expect(renderedMessageContent(fixture, assistant.id)).toBe(expected);
+	});
+
+	it('keeps the exact no-op text when a non-applied result carries summary items', async () => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			selectedText: 'beta',
+			defaultMode: 'edit',
+		});
+		const savedSnapshots = captureReadyMessageSaves(fixture, makeSession());
+		fixture.requestSelectionEdit.mockResolvedValueOnce({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [{ type: 'replace', start: 0, end: 4 }],
+			usage: {
+				promptTokens: 2,
+				completionTokens: 1,
+				totalTokens: 3,
+				source: 'provider',
+			},
+		});
+		await fixture.open();
+		setChatInput(fixture, 'Edit selection');
+
+		await fixture.view.submitPrompt();
+
+		const assistant = savedSnapshots[1]?.[1];
+		if (!assistant) {
+			throw new Error('Selection no-op assistant message missing.');
+		}
+		expect(assistant.content).toBe('No changes were needed.');
+		expect(assistant.content).not.toContain('- ');
+		expect(renderedMessageContent(fixture, assistant.id)).toBe('No changes were needed.');
+	});
+
+	it('renders the Selection target and model summary as persisted plain content', async () => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			selectedText: 'beta',
+			defaultMode: 'edit',
+		});
+		const savedSnapshots = captureReadyMessageSaves(fixture, makeSession());
+		fixture.requestSelectionEdit.mockResolvedValue(
+			appliedSelectionResult('Renamed **beta** to delta.'),
+		);
+		await fixture.open();
+		setChatInput(fixture, 'Edit selection');
+
+		await fixture.view.submitPrompt();
+
+		const expected = [
+			'Edit applied — 2 changes tracked. Review in Track Changes.',
+			'Target: Selection.',
+			'',
+			'Renamed **beta** to delta.',
+			'',
+			'- Replaced line 1.',
+		].join('\n');
+		const saved = savedSnapshots[1]?.[1];
+		if (!saved) {
+			throw new Error('Selection Edit persistence snapshot missing.');
+		}
+		expect(saved.content).toBe(expected);
+		expect(renderedMessageContent(fixture, saved.id)).toBe(expected);
+		expect(Object.prototype.hasOwnProperty.call(saved, 'summary')).toBe(false);
+	});
+
+	it('renders a no-op summary after the exact no-op sentence', async () => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			selectedText: 'beta',
+			defaultMode: 'edit',
+		});
+		const savedSnapshots = captureReadyMessageSaves(fixture, makeSession());
+		fixture.requestSelectionEdit.mockResolvedValueOnce({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+			summary: 'Reviewed without changing the selection.',
+			usage: {
+				promptTokens: 2,
+				completionTokens: 1,
+				totalTokens: 3,
+				source: 'provider',
+			},
+		});
+		await fixture.open();
+		setChatInput(fixture, 'Edit selection');
+
+		await fixture.view.submitPrompt();
+
+		const expected = 'No changes were needed.\n\nReviewed without changing the selection.';
+		const assistant = savedSnapshots[1]?.[1];
+		if (!assistant) {
+			throw new Error('Selection no-op summary message missing.');
+		}
+		expect(assistant.content).toBe(expected);
+		expect(renderedMessageContent(fixture, assistant.id)).toBe(expected);
+	});
+
+	it.each([
+		['provider', 'Provider unavailable'],
+		['validation', 'Invalid operation array'],
+		['stale', 'The note changed while Emend was responding. No edits were applied.'],
+	])('settles a %s failure and permits a selection retry without fallback', async (_kind, errorMessage) => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			selectedText: 'beta',
+			defaultMode: 'edit',
+		});
+		const savedSnapshots = captureReadyMessageSaves(fixture, makeSession());
+		fixture.requestSelectionEdit
+			.mockResolvedValue(appliedSelectionResult())
+			.mockRejectedValueOnce(new Error(errorMessage));
+		await fixture.open();
+		setChatInput(fixture, 'Edit selection');
+
+		await fixture.view.submitPrompt();
+
+		const error = findMessageElements(fixture.contentEl).find(
+			(element) => element.className.split(' ').includes('is-assistant')
+				&& element.className.split(' ').includes('is-error'),
+		);
+		expect(error).toBeDefined();
+		expect(messageContentElements(error!)[0]?.textContent).toBe(errorMessage);
+		expect(findSubmissionButton(fixture.contentEl, 'Send')?.disabled).toBe(false);
+		expect(findSubmissionButton(fixture.contentEl, 'Stop')).toBeUndefined();
+		expect(findSubmissionButton(fixture.contentEl, 'Stopping')).toBeUndefined();
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(savedSnapshots.flat().some(
+			(message) => message.status === 'error',
+		)).toBe(false);
+
+		setChatInput(fixture, 'Retry selection');
+		await fixture.view.submitPrompt();
+
+		expect(fixture.requestSelectionEdit).toHaveBeenCalledTimes(2);
+		const retry = savedSnapshots.at(-1)?.at(-1);
+		if (!retry) {
+			throw new Error('Selection retry assistant message missing.');
+		}
+		expect(retry.status).toBe('ready');
+		expect(findMessageNode(fixture.contentEl, retry.id)?.className.split(' '))
+			.toContain('is-ready');
+	});
+
+	it('uses the existing stopped lifecycle and excludes the partial response from saves', async () => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			selectedText: 'beta',
+			defaultMode: 'edit',
+		});
+		const savedSnapshots = captureReadyMessageSaves(fixture, makeSession());
+		const response = deferred<SelectionEditResult>();
+		fixture.requestSelectionEdit.mockImplementationOnce(() => response.promise);
+		await fixture.open();
+		setChatInput(fixture, 'Edit selection');
+		const submission = fixture.view.submitPrompt();
+		await vi.waitFor(() => expect(fixture.requestSelectionEdit).toHaveBeenCalledOnce());
+
+		const stop = findSubmissionButton(fixture.contentEl, 'Stop');
+		expect(stop).toBeDefined();
+		stop?.dispatch('click');
+		response.resolve({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+			usage: { promptTokens: 2, completionTokens: 1, totalTokens: 3, source: 'provider' },
+		});
+		await submission;
+
+		const stopped = findMessageElements(fixture.contentEl).find(
+			(element) => element.className.split(' ').includes('is-assistant')
+				&& element.className.split(' ').includes('is-stopped'),
+		);
+		expect(stopped).toBeDefined();
+		expect(findSubmissionButton(fixture.contentEl, 'Send')?.disabled).toBe(false);
+		expect(findSubmissionButton(fixture.contentEl, 'Stop')).toBeUndefined();
+		expect(findSubmissionButton(fixture.contentEl, 'Stopping')).toBeUndefined();
+		expect(savedSnapshots.flat().some(
+			(message) => message.status === 'stopped' || message.status === 'error',
+		)).toBe(false);
+		for (const target of capturedSelectionTargets(fixture)) {
+			expect(target.editor.replaceRange).not.toHaveBeenCalled();
+		}
+	});
+
+	it('keeps an applied edit summary when its session was deleted during the request', async () => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			selectedText: 'beta',
+			defaultMode: 'edit',
+		});
+		const session = makeSession('session-1');
+		fixture.conversationStore.loadConversation.mockResolvedValue(
+			loadedConversation([session]),
+		);
+		const appendReadyMessage = fixture.conversationStore.appendReadyMessage;
+		appendReadyMessage.mockImplementation(async (_notePath, _sessionId, appended) => {
+			if (appended.role === 'assistant') {
+				throw new Error('Chat session does not exist.');
+			}
+			return { ...session, messages: [...session.messages, appended] };
+		});
+		fixture.requestSelectionEdit.mockImplementationOnce(async () => ({
+			applied: true,
+			changeCount: 1,
+			summaryItems: [{ type: 'replace', start: 0, end: 4 }],
+			summary: 'Tightened the wording.',
+			usage: {
+				promptTokens: 4,
+				completionTokens: 2,
+				totalTokens: 6,
+				source: 'provider',
+			},
+		}));
+		await fixture.open();
+		setChatInput(fixture, 'Edit selection');
+
+		await fixture.view.submitPrompt();
+
+		const assistantAttempts = appendReadyMessage.mock.calls.filter(
+			([, , appended]) => appended.role === 'assistant',
+		);
+		expect(assistantAttempts).toHaveLength(1);
+		expect(appendReadyMessage).toHaveBeenCalledTimes(2);
+		expect(noticeMessages()).toEqual([
+			'Emend: Edit applied, but this chat could not be saved.',
+		]);
+		const assistant = findMessageElements(fixture.contentEl).find(
+			(element) => element.className.split(' ').includes('is-assistant')
+				&& element.className.split(' ').includes('is-ready'),
+		);
+		expect(assistant).toBeDefined();
+		const content = messageContentElements(assistant!)[0]?.textContent;
+		expect(content).toContain('Edit applied');
+		expect(content).toContain('Target: Selection.');
+		expect(content).toContain('Tightened the wording.');
+		expect(findSubmissionButton(fixture.contentEl, 'Send')?.disabled).toBe(false);
+	});
+
+	it('reports a failed save after a committed edit when Stop raced completion', async () => {
+		const fixture = createPublicChatViewFixture({
+			sourceText: 'Alpha beta.',
+			selectedText: 'beta',
+			defaultMode: 'edit',
+		});
+		const session = makeSession('session-1');
+		fixture.conversationStore.loadConversation.mockResolvedValue(
+			loadedConversation([session]),
+		);
+		fixture.conversationStore.appendReadyMessage.mockImplementation(async (
+			_notePath,
+			_sessionId,
+			appended,
+			options,
+		) => {
+			options?.signal?.throwIfAborted();
+			if (appended.role === 'assistant') {
+				throw new Error('Disk is full.');
+			}
+			return { ...session, messages: [...session.messages, appended] };
+		});
+		let stopClicked = false;
+		fixture.requestSelectionEdit.mockImplementationOnce(async () => {
+			queueMicrotask(() => {
+				const stop = findSubmissionButton(fixture.contentEl, 'Stop');
+				if (!stop) {
+					throw new Error('Stop button missing when the Selection result settled.');
+				}
+				stop.dispatch('click');
+				stopClicked = true;
+			});
+			return {
+				applied: true,
+				changeCount: 1,
+				summaryItems: [{ type: 'replace', start: 0, end: 4 }],
+				summary: 'Tightened the wording.',
+				usage: {
+					promptTokens: 4,
+					completionTokens: 2,
+					totalTokens: 6,
+					source: 'provider',
+				},
+			};
+		});
+		await fixture.open();
+		setChatInput(fixture, 'Edit selection');
+
+		await fixture.view.submitPrompt();
+
+		expect(stopClicked).toBe(true);
+		expect(noticeMessages()).toEqual([
+			'Emend: Could not save this chat. Disk is full.',
+		]);
+		const assistant = findMessageElements(fixture.contentEl).find(
+			(element) => element.className.split(' ').includes('is-assistant')
+				&& element.className.split(' ').includes('is-ready'),
+		);
+		expect(assistant).toBeDefined();
+		const content = messageContentElements(assistant!)[0]?.textContent;
+		expect(content).toContain('Edit applied');
+		expect(content).toContain('Tightened the wording.');
+		expect(findSubmissionButton(fixture.contentEl, 'Send')?.disabled).toBe(false);
+		expect(findSubmissionButton(fixture.contentEl, 'Stop')).toBeUndefined();
+		expect(findSubmissionButton(fixture.contentEl, 'Stopping')).toBeUndefined();
 	});
 
 	it('preserves the typed draft after a successful quick action', async () => {

@@ -40,7 +40,10 @@ import {
 	formatDraftCapacityBlockMessage,
 	type DraftCapacityEstimate,
 } from './context-capacity-ui';
-import { formatEditSummary, formatNoChangeSummary } from './edit-summary';
+import {
+	ModificationController,
+	type ModificationTarget,
+} from './modification-controller';
 import { formatVaultQualifiedPath, type RequestContext } from './context';
 import {
 	refreshEditTargetState,
@@ -53,7 +56,6 @@ import {
 	QUICK_ACTIONS,
 	type QuickAction,
 } from './quick-actions';
-import type { SelectionEditTarget } from './selection-editor';
 import type { ChatTarget, SelectionContextPolicy } from './selection-focus';
 import { AI_PROVIDERS, normalizeContextLimit } from './settings';
 import { formatTokenUsage } from './token-usage';
@@ -154,13 +156,7 @@ type DraftCapacityTarget =
 	};
 
 type CapturedDraftTarget =
-	| { type: 'full-note'; mode: 'edit'; context: RequestContext }
-	| {
-		type: 'selection';
-		mode: 'edit';
-		target: SelectionEditTarget;
-		selectionContext: SelectionContextPolicy;
-	}
+	| ModificationTarget
 	| { type: 'read-only'; mode: Exclude<Mode, 'edit'>; context: RequestContext }
 	| { type: 'read-only-selection'; mode: 'ask'; context: RequestContext };
 
@@ -1819,45 +1815,39 @@ export class EmendChatView extends ItemView {
 						this.scheduleRequestRender(request);
 					},
 				};
-				const result = capturedTarget.type === 'selection'
-					? await this.plugin.requestSelectionEdit(
-						capturedTarget.target.snapshot,
-						prompt,
-						controller.signal,
-						capturedTarget.target.editor,
-						additionalNotePaths,
-						history,
-						callbacks,
-						capturedTarget.selectionContext,
-					)
-					: await this.plugin.requestChatCompletion({
-						context: capturedTarget.context,
-						mode: capturedTarget.mode,
-						prompt,
-						history,
-						additionalNotePaths,
-						callbacks,
-						signal: controller.signal,
-					});
-				const summaryText = capturedTarget.type === 'selection'
-					? capturedTarget.target.snapshot.fullText
-					: capturedTarget.context.sourceText;
-				const summaryOffset = capturedTarget.type === 'selection'
-					? capturedTarget.target.snapshot.from
-					: 0;
+				const modificationController = new ModificationController({
+					requestFullNoteEdit: (submission) =>
+						this.plugin.requestChatCompletion(submission),
+					requestSelectionEdit: (
+						snapshot,
+						selectionPrompt,
+						signal,
+						editor,
+						additionalPaths,
+						selectionHistory,
+						selectionCallbacks,
+						selectionContext,
+					) => this.plugin.requestSelectionEdit(
+						snapshot,
+						selectionPrompt,
+						signal,
+						editor,
+						additionalPaths,
+						selectionHistory,
+						selectionCallbacks,
+						selectionContext,
+					),
+				});
+				const result = await modificationController.submit({
+					target: capturedTarget,
+					prompt,
+					history,
+					additionalNotePaths,
+					signal: controller.signal,
+					callbacks,
+				});
 				committedEdit = result.applied;
-				loadingMessage.content = result.applied
-					? formatEditSummary(
-						result.changeCount,
-						result.summaryItems,
-						summaryText,
-						summaryOffset,
-						{
-							target: capturedTarget.type === 'selection' ? 'selection' : 'full-note',
-							summary: result.summary,
-						},
-					)
-					: formatNoChangeSummary(result.summary);
+				loadingMessage.content = result.content;
 				loadingMessage.usage = result.usage;
 			} else {
 				const result = await this.plugin.requestChatCompletion({
