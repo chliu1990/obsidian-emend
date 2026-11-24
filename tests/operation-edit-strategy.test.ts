@@ -4,6 +4,7 @@ import type { RequestContext } from '../src/context';
 import { parseCriticMarkup, toRejectView } from '../src/critic-markup';
 import * as editStrategyModule from '../src/edit-strategy';
 import { getEditStrategy } from '../src/edit-strategy';
+import { EditResponseValidationError } from '../src/edit-validation';
 import type { NoteWriter } from '../src/note-writer';
 import {
 	compileEditOperations,
@@ -29,6 +30,15 @@ const HISTORY_PERMISSION_PROMPT = 'History annotations describe earlier requests
 
 function prepare(original: string, operations: unknown) {
 	return operationEditStrategy.prepareEdit(original, JSON.stringify(operations));
+}
+
+function structuralError(run: () => unknown): unknown {
+	try {
+		run();
+	} catch (error) {
+		return error;
+	}
+	throw new Error('Expected structural validation to fail.');
 }
 
 function toAcceptView(text: string): string {
@@ -883,15 +893,6 @@ describe('operation validation diagnostics', () => {
 });
 
 describe('Markdown structural edit safeguards', () => {
-	function structuralError(run: () => unknown): unknown {
-		try {
-			run();
-		} catch (error) {
-			return error;
-		}
-		throw new Error('Expected structural validation to fail.');
-	}
-
 	it('compiles a balanced code-block insertion', () => {
 		expect(prepare('Alpha beta.', [
 			{ type: 'insert', anchor: 'beta.', position: 'after', text: '\n```\ncode\n```\n' },
@@ -901,46 +902,51 @@ describe('Markdown structural edit safeguards', () => {
 		]).annotatedMarkdown).toBe('Alpha {~~beta.~>see `code`.~~}');
 	});
 
-	it('rejects an unbalanced fence insertion with a structural error', () => {
-		const error = structuralError(() => prepare('Alpha beta.', [
-			{ type: 'insert', anchor: 'beta.', position: 'after', text: '\n```\ncode' },
-		]));
-
-		expect(error).toMatchObject({
-			name: 'EditResponseValidationError',
-			code: 'fenced-code-edit',
-			operation: 1,
-			operationType: 'insert',
+	it.each([
+		{
 			field: 'text',
-			line: 1,
-		});
-		expect((error as Error).message).toContain('paired');
-		expect((error as Error).message).toContain('No edits were applied.');
-		expect(structuralError(() => prepare('Alpha beta.', [
-			{ type: 'replace', target: 'beta.', replacement: '`beta.' },
-		]))).toMatchObject({
-			code: 'fenced-code-edit',
-			operationType: 'replace',
+			operationType: 'insert',
+			operation: { type: 'insert', anchor: 'beta.', position: 'after', text: '\n```\nPRIVATE TEXT' },
+			sentinel: 'PRIVATE TEXT',
+		},
+		{
 			field: 'replacement',
-			line: 1,
-		});
+			operationType: 'replace',
+			operation: { type: 'replace', target: 'beta.', replacement: '`PRIVATE REPLACEMENT' },
+			sentinel: 'PRIVATE REPLACEMENT',
+		},
+		{
+			field: 'comment',
+			operationType: 'comment',
+			operation: { type: 'comment', target: 'beta.', comment: '\n```\nPRIVATE COMMENT' },
+			sentinel: 'PRIVATE COMMENT',
+		},
+	] as const)('rejects an unbalanced $field payload with exact public diagnostics', ({
+		field,
+		operationType,
+		operation,
+		sentinel,
+	}) => {
+		const error = structuralError(() => prepare('PRIVATE SOURCE Alpha beta.', [operation]));
+
+		expect(error).toEqual(new EditResponseValidationError(
+			'fenced-code-edit',
+			'Operation 1 payload introduces unbalanced fenced code or backtick runs at line 1; keep every fence and backtick run paired inside the operation payload. No edits were applied.',
+			{ operation: 1, operationType, field, line: 1 },
+		));
+		expect((error as Error).message).not.toContain('PRIVATE SOURCE');
+		expect((error as Error).message).not.toContain(sentinel);
 	});
 
 	it('rejects a content-only inline-code target with an actionable diagnostic', () => {
 		const error = structuralError(() => prepare('Before\n`alpha` after', [
 			{ type: 'replace', target: 'alpha', replacement: 'PRIVATE REPLACEMENT' },
 		]));
-		expect(error).toMatchObject({
-			name: 'EditResponseValidationError',
-			code: 'inline-code-range',
-			operation: 1,
-			operationType: 'replace',
-			field: 'target',
-			line: 2,
-		});
-		expect((error as Error).message).toBe(
+		expect(error).toEqual(new EditResponseValidationError(
+			'inline-code-range',
 			'Operation 1 target intersects an inline code span without containing it completely at line 2; target the complete span including backtick delimiters or text wholly outside it. No edits were applied.',
-		);
+			{ operation: 1, operationType: 'replace', field: 'target', line: 2 },
+		));
 		expect((error as Error).message).not.toContain('PRIVATE REPLACEMENT');
 	});
 
@@ -948,10 +954,11 @@ describe('Markdown structural edit safeguards', () => {
 		const error = structuralError(() => prepare('Before `alpha` after', [
 			{ type: 'insert', anchor: 'alpha', position: 'after', text: 'beta' },
 		]));
-		expect(error).toMatchObject({ code: 'inline-code-range', field: 'anchor', line: 1 });
-		expect((error as Error).message).toBe(
+		expect(error).toEqual(new EditResponseValidationError(
+			'inline-code-range',
 			'Operation 1 insertion is inside an inline code span at line 1; insert before or after the complete span instead. No edits were applied.',
-		);
+			{ operation: 1, operationType: 'insert', field: 'anchor', line: 1 },
+		));
 	});
 
 	it('compiles complete-span and larger-span replacements without fragmenting delimiters', () => {
@@ -964,20 +971,26 @@ describe('Markdown structural edit safeguards', () => {
 	});
 
 	it('rejects fenced-code targets and insertions with exact line diagnostics', () => {
-		const fullText = 'Before\n```\nalpha\n```\nAfter';
+		const fullText = 'PRIVATE SOURCE\n```\nalpha\n```\nAfter';
 		const targetError = structuralError(() => prepare(fullText, [
 			{ type: 'comment', target: 'alpha', comment: 'PRIVATE COMMENT' },
 		]));
-		expect(targetError).toMatchObject({
-			code: 'fenced-code-edit', operationType: 'comment', field: 'target', line: 3,
-		});
-		expect((targetError as Error).message).toBe(
+		expect(targetError).toEqual(new EditResponseValidationError(
+			'fenced-code-edit',
 			'Operation 1 edits fenced code at line 3; Track Changes cannot review fenced-code edits. Choose text outside the fenced block. No edits were applied.',
-		);
+			{ operation: 1, operationType: 'comment', field: 'target', line: 3 },
+		));
+		expect((targetError as Error).message).not.toContain('PRIVATE SOURCE');
+		expect((targetError as Error).message).not.toContain('PRIVATE COMMENT');
 		const insertionError = structuralError(() => prepare(fullText, [
-			{ type: 'insert', anchor: 'alpha', position: 'after', text: 'beta' },
+			{ type: 'insert', anchor: 'alpha', position: 'after', text: 'PRIVATE TEXT' },
 		]));
-		expect(insertionError).toMatchObject({ code: 'fenced-code-edit', field: 'anchor', line: 3 });
+		expect(insertionError).toEqual(new EditResponseValidationError(
+			'fenced-code-edit',
+			'Operation 1 edits fenced code at line 3; Track Changes cannot review fenced-code edits. Choose text outside the fenced block. No edits were applied.',
+			{ operation: 1, operationType: 'insert', field: 'anchor', line: 3 },
+		));
+		expect((insertionError as Error).message).not.toContain('PRIVATE TEXT');
 	});
 
 	it('rejects an added table column and preserves ordinary single-cell edits', () => {
@@ -985,17 +998,11 @@ describe('Markdown structural edit safeguards', () => {
 		const error = structuralError(() => prepare(table, [
 			{ type: 'replace', target: '| Alpha | Beta |', replacement: '| Alpha | New | Beta |' },
 		]));
-		expect(error).toMatchObject({
-			name: 'EditResponseValidationError',
-			code: 'table-structure-edit',
-			operation: 1,
-			operationType: 'replace',
-			field: 'target',
-			line: 1,
-		});
-		expect((error as Error).message).toBe(
+		expect(error).toEqual(new EditResponseValidationError(
+			'table-structure-edit',
 			'Operation 1 changes table structure at line 1; edit only text within one existing header or body cell and preserve rows, columns, delimiter rows, and unescaped | separators. No edits were applied.',
-		);
+			{ operation: 1, operationType: 'replace', field: 'target', line: 1 },
+		));
 		expect(prepare(table, [
 			{ type: 'replace', target: 'Alpha', replacement: 'First' },
 			{ type: 'remove', target: 'one' },
@@ -1003,6 +1010,46 @@ describe('Markdown structural edit safeguards', () => {
 		]).annotatedMarkdown).toBe(
 			'| {~~Alpha~>First~~} | Beta |\n| --- | --- |\n| {--one--} | two{>>Review<<} |',
 		);
+	});
+
+	it.each([
+		{
+			field: 'replacement',
+			operationType: 'replace',
+			line: 1,
+			operation: { type: 'replace', target: 'SOURCE SENTINEL', replacement: 'PRIVATE | REPLACEMENT' },
+			sentinel: 'PRIVATE | REPLACEMENT',
+		},
+		{
+			field: 'comment',
+			operationType: 'comment',
+			line: 1,
+			operation: { type: 'comment', target: 'Beta', comment: 'PRIVATE | COMMENT' },
+			sentinel: 'PRIVATE | COMMENT',
+		},
+		{
+			field: 'text',
+			operationType: 'insert',
+			line: 3,
+			operation: { type: 'insert', anchor: 'one', position: 'after', text: 'PRIVATE | TEXT' },
+			sentinel: 'PRIVATE | TEXT',
+		},
+	] as const)('rejects table $field payloads with exact public diagnostics', ({
+		field,
+		operationType,
+		line,
+		operation,
+		sentinel,
+	}) => {
+		const table = '| SOURCE SENTINEL | Beta |\n| --- | --- |\n| one | two |';
+		const error = structuralError(() => prepare(table, [operation]));
+		expect(error).toEqual(new EditResponseValidationError(
+			'table-structure-edit',
+			`Operation 1 changes table structure at line ${line}; edit only text within one existing header or body cell and preserve rows, columns, delimiter rows, and unescaped | separators. No edits were applied.`,
+			{ operation: 1, operationType, field, line },
+		));
+		expect((error as Error).message).not.toContain('SOURCE SENTINEL');
+		expect((error as Error).message).not.toContain(sentinel);
 	});
 
 	it('allows escaped pipes in cells and prose pipes outside tables', () => {
@@ -1016,12 +1063,18 @@ describe('Markdown structural edit safeguards', () => {
 	});
 
 	it('maps selected offsets into full-note structure without expanding occurrence resolution', () => {
-		const error = structuralError(() => compileEditOperations(
+		const error = structuralError(() => operationEditStrategy.prepareEdit(
 			'alpha',
-			JSON.stringify([{ type: 'remove', target: 'alpha' }]),
-			{ fullText: 'Before\n`alpha`', from: 8, to: 13 },
+			JSON.stringify([{ type: 'replace', target: 'alpha', replacement: 'PRIVATE REPLACEMENT' }]),
+			{ fullText: 'PRIVATE SOURCE\n`alpha`', from: 16, to: 21 },
 		));
-		expect(error).toMatchObject({ code: 'inline-code-range', line: 2 });
+		expect(error).toEqual(new EditResponseValidationError(
+			'inline-code-range',
+			'Operation 1 target intersects an inline code span without containing it completely at line 2; target the complete span including backtick delimiters or text wholly outside it. No edits were applied.',
+			{ operation: 1, operationType: 'replace', field: 'target', line: 2 },
+		));
+		expect((error as Error).message).not.toContain('PRIVATE SOURCE');
+		expect((error as Error).message).not.toContain('PRIVATE REPLACEMENT');
 		expect(() => compileEditOperations(
 			'alpha',
 			JSON.stringify([{ type: 'remove', target: 'Before' }]),
@@ -1049,11 +1102,29 @@ describe('Markdown structural edit safeguards', () => {
 		);
 	});
 
+	it('returns the first structural violation in request order with exact diagnostics', () => {
+		const fullText = '`alpha`\n\n| A | B |\n| - | - |\n| c | d |';
+		const error = structuralError(() => prepare(fullText, [
+			{ type: 'replace', target: 'c', replacement: 'safe' },
+			{ type: 'remove', target: 'alpha' },
+			{ type: 'replace', target: 'A | B', replacement: 'A | New | B' },
+		]));
+		expect(error).toEqual(new EditResponseValidationError(
+			'inline-code-range',
+			'Operation 2 target intersects an inline code span without containing it completely at line 1; target the complete span including backtick delimiters or text wholly outside it. No edits were applied.',
+			{ operation: 2, operationType: 'remove', field: 'target', line: 1 },
+		));
+	});
+
 	it('keeps existing range-isolation errors ahead of structural checks', () => {
 		expect(structuralError(() => prepare('`alpha`', [
 			{ type: 'remove', target: 'alpha' },
 			{ type: 'comment', target: 'alpha', comment: 'Review' },
-		]))).toMatchObject({ code: 'overlapping-targets' });
+		]))).toEqual(new EditResponseValidationError(
+			'overlapping-targets',
+			'Operation 1 target overlaps operation 2 target; use disjoint original ranges.',
+			{ operation: 1, relatedOperation: 2, operationType: 'remove', field: 'target' },
+		));
 	});
 });
 
@@ -1321,10 +1392,17 @@ describe('Track Changes bare-fence compatibility', () => {
 	});
 
 	it('treats a longer top-level closing run as a new review-parser shadow', () => {
-		const original = '```\nalpha\n````\nAfter';
-		expect(() => prepare(original, [
-			{ type: 'replace', target: 'After', replacement: 'Following' },
-		])).toThrow(expect.objectContaining({ code: 'fenced-code-edit' }));
+		const original = '```\nalpha\n````\nSOURCE SENTINEL';
+		const error = structuralError(() => prepare(original, [
+			{ type: 'replace', target: 'SOURCE SENTINEL', replacement: 'PRIVATE REPLACEMENT' },
+		]));
+		expect(error).toEqual(new EditResponseValidationError(
+			'fenced-code-edit',
+			'Operation 1 edits fenced code at line 4; Track Changes cannot review fenced-code edits. Choose text outside the fenced block. No edits were applied.',
+			{ operation: 1, operationType: 'replace', field: 'target', line: 4 },
+		));
+		expect((error as Error).message).not.toContain('SOURCE SENTINEL');
+		expect((error as Error).message).not.toContain('PRIVATE REPLACEMENT');
 	});
 
 	it('ends a review-parser shadow only at an exact later bare run', () => {
@@ -1403,9 +1481,13 @@ describe('composed table edit candidates', () => {
 		expect(toAcceptView(currentAnnotated)).toBe(
 			`| Left | Right |\n| --- | --- |\n| ${'\\'.repeat(3)}| two | three |`,
 		);
-		expect(() => prepare(original, [
+		expect(structuralError(() => prepare(original, [
 			{ type: 'replace', target: '\\|', replacement: `${'\\'.repeat(3)}|` },
-		])).toThrow(expect.objectContaining({ code: 'table-structure-edit' }));
+		]))).toEqual(new EditResponseValidationError(
+			'table-structure-edit',
+			'Operation 1 changes table structure at line 3; edit only text within one existing header or body cell and preserve rows, columns, delimiter rows, and unescaped | separators. No edits were applied.',
+			{ operation: 1, operationType: 'replace', field: 'replacement', line: 3 },
+		));
 	});
 
 	it('rejects multi-operation backslash parity changes composed on one original row', () => {
@@ -1570,7 +1652,7 @@ describe('operation strategy coordinator integration', () => {
 	it('routes an unbalanced fence insertion through the single correction round', async () => {
 		const file = new TFile();
 		file.path = 'note.md';
-		const sourceText = 'Alpha beta.';
+		const sourceText = 'PRIVATE SOURCE Alpha beta.';
 		const context: RequestContext = {
 			file,
 			sourceText,
@@ -1584,7 +1666,7 @@ describe('operation strategy coordinator integration', () => {
 			isTargetCurrent: vi.fn(() => true),
 		};
 		const invalid = JSON.stringify([
-			{ type: 'insert', anchor: 'beta.', position: 'after', text: '\n```\ncode\n```' },
+			{ type: 'insert', anchor: 'beta.', position: 'after', text: '\n```\nPRIVATE PAYLOAD\n```' },
 		]);
 		const request = operationRequest(invalid);
 		const onRetry = vi.fn();
@@ -1605,16 +1687,19 @@ describe('operation strategy coordinator integration', () => {
 			additionalNotePaths: [],
 			callbacks: { onReasoning: vi.fn(), onRetry },
 			signal: new AbortController().signal,
-		})).rejects.toMatchObject({
-			name: 'EditResponseValidationError',
-			code: 'fenced-code-edit',
-			field: 'text',
-		});
+		})).rejects.toEqual(new EditResponseValidationError(
+			'fenced-code-edit',
+			'Operation 1 payload introduces unbalanced fenced code or backtick runs at line 1; keep every fence and backtick run paired inside the operation payload. No edits were applied.',
+			{ operation: 1, operationType: 'insert', field: 'text', line: 1 },
+		));
 
 		expect(request).toHaveBeenCalledTimes(2);
-		expect(request.mock.calls[1]?.[0].continuation?.[1]?.content).toContain(
-			'"code":"fenced-code-edit"',
+		const correctionFeedback = request.mock.calls[1]?.[0].continuation?.[1]?.content;
+		expect(correctionFeedback).toBe(
+			'Return only a new complete JSON array of operations, or an envelope object with operations and an optional summary, against the unchanged original snapshot.\n{"code":"fenced-code-edit","operation":1,"operationType":"insert","field":"text","line":1}',
 		);
+		expect(correctionFeedback).not.toContain('PRIVATE SOURCE');
+		expect(correctionFeedback).not.toContain('PRIVATE PAYLOAD');
 		expect(onRetry).toHaveBeenCalledOnce();
 		expect(writer.readCurrentText).not.toHaveBeenCalled();
 		expect(writer.write).not.toHaveBeenCalled();

@@ -170,4 +170,167 @@ describe('buildSmartSelectionContext', () => {
 			`[...]\n${fullText.slice(from - 5, from + 11)}\n[...]`,
 		);
 	});
+
+	describe('legacy Markdown scanner boundaries', () => {
+		it('retains the CRLF frontmatter closing carriage return before the omission suffix', () => {
+			const frontmatter = '---\r\ntitle: TARGET note\r\n---\r';
+			const fullText = `${frontmatter}\n\nBody paragraph.`;
+
+			expect(contextFor(fullText, 'TARGET', frontmatter.length)).toBe(
+				'---\r\ntitle: TARGET note\r\n---\r\n[...]',
+			);
+		});
+
+		it('preserves CRLF multiline paragraph and fence slices with exact UTF-16 offsets', () => {
+			const fullText =
+				'Before\r\n\r\nAlpha TARGET\r\nbeta\r\n\r\n```ts\r\nconst x = 1;\r\n```\r\n\r\nAfter';
+
+			expect(buildSmartSelectionContext(fullText, 16, 46, 47)).toEqual({
+				from: 16,
+				to: 46,
+				selectedText: 'TARGET\r\nbeta\r\n\r\n```ts\r\nconst x',
+				contextText:
+					'[...]\nAlpha TARGET\r\nbeta\r\n\r\n```ts\r\nconst x = 1;\r\n```\r\n[...]',
+			});
+		});
+
+		it('keeps lone carriage returns literal in bounded context', () => {
+			const fullText = 'Alpha\rBeta TARGET\rGamma';
+
+			expect(buildSmartSelectionContext(fullText, 11, 17, 16)).toEqual({
+				from: 11,
+				to: 17,
+				selectedText: 'TARGET',
+				contextText: '[...]\nBeta TARGET\rGamm\n[...]',
+			});
+		});
+
+		it('preserves mixed CR, LF, and CRLF bytes during block expansion', () => {
+			const fullText = 'Before\r\n\nFirst\rSecond TARGET\nThird\r\n\nAfter';
+
+			expect(contextFor(fullText, 'TARGET', 35)).toBe(
+				'Before\r\n\nFirst\rSecond TARGET\nThird\r\n[...]',
+			);
+		});
+
+		it('recognizes a context fence with backticks in its info string', () => {
+			const fence = '```ts`legacy\nconst TARGET = 1;\n```';
+			const fullText = `Before.\n\n${fence}\n\nAfter.`;
+
+			expect(contextFor(fullText, 'TARGET', fence.length)).toBe(
+				'[...]\n```ts`legacy\nconst TARGET = 1;\n```\n[...]',
+			);
+		});
+
+		it('accepts a closing context fence indented beyond three spaces', () => {
+			const fence = '```\nTARGET\n        ```';
+			const fullText = `Before.\n\n${fence}\n\nAfter.`;
+
+			expect(contextFor(fullText, 'TARGET', fence.length)).toBe(
+				'[...]\n```\nTARGET\n        ```\n[...]',
+			);
+		});
+
+		it('does not recognize a blockquote-prefixed context fence across blank lines', () => {
+			const fullText = '> ```\n> quoted\n\n> TARGET\n> ```\n\nAfter.';
+
+			expect(contextFor(fullText, 'TARGET', 14)).toBe(
+				'[...]\n> TARGET\n> ```\n[...]',
+			);
+		});
+
+		it('does not recognize a list-prefixed context fence across blank lines', () => {
+			const fullText = '- ```\n- listed\n\n- TARGET\n- ```\n\nAfter.';
+
+			expect(contextFor(fullText, 'TARGET', 14)).toBe(
+				'[...]\n- TARGET\n- ```\n[...]',
+			);
+		});
+
+		it('trims an indented frontmatter opener and dash closer', () => {
+			const frontmatter = '  ---  \ntitle: TARGET\n  ---  ';
+			const fullText = `${frontmatter}\n\nBody paragraph.`;
+
+			expect(contextFor(fullText, 'TARGET', frontmatter.length)).toBe(
+				'  ---  \ntitle: TARGET\n  ---  \n[...]',
+			);
+		});
+
+		it('trims an indented frontmatter opener and dot closer', () => {
+			const frontmatter = '  ---  \ntitle: TARGET\n\t...  ';
+			const fullText = `${frontmatter}\n\nBody paragraph.`;
+
+			expect(contextFor(fullText, 'TARGET', frontmatter.length)).toBe(
+				'  ---  \ntitle: TARGET\n\t...  \n[...]',
+			);
+		});
+
+		it('keeps unclosed trimmed frontmatter as one bounded block', () => {
+			const fullText = '  ---  \ntitle: TARGET\n\nx';
+
+			expect(contextFor(fullText, 'TARGET', 20)).toBe(
+				'[...]\n-  \ntitle: TARGET\n\nx',
+			);
+		});
+
+		it('omits trailing document newlines after a closed fence', () => {
+			const fence = '```\nfirst\n\nTARGET\n```';
+			const fullText = `${fence}\n\n`;
+
+			expect(contextFor(fullText, 'TARGET', fence.length)).toBe(
+				'```\nfirst\n\nTARGET\n```\n[...]',
+			);
+		});
+
+		it('extends an unclosed fence through internal and trailing blank lines', () => {
+			const fullText = '~~~\nfirst\n\nTARGET\n\n';
+
+			expect(contextFor(fullText, 'TARGET', 18)).toBe(
+				'~~~\nfirst\n\nTARGET\n\n[...]',
+			);
+		});
+
+		it('retains the containing-selection error for empty input during scanning', () => {
+			expect(() => buildSmartSelectionContext('', 0, 0, -1)).toThrow(
+				'Selection must intersect note text.',
+			);
+		});
+
+		it('does not create a synthetic final line after a trailing newline', () => {
+			expect(buildSmartSelectionContext('TARGET\n', 0, 6, 6)).toEqual({
+				from: 0,
+				to: 6,
+				selectedText: 'TARGET',
+				contextText: 'TARGET\n[...]',
+			});
+		});
+
+		it('retains the containing-selection error for an empty selection at EOF', () => {
+			expect(() => buildSmartSelectionContext('TARGET\n', 7, 7, 6)).toThrow(
+				'Selection must intersect note text.',
+			);
+		});
+
+		it('uses exact UTF-16 offsets for CJK, emoji, and decomposed text', () => {
+			const fullText = '前🙂e\u0301漢 TARGET\n\n終';
+
+			expect(buildSmartSelectionContext(fullText, 1, 6, 13)).toEqual({
+				from: 1,
+				to: 6,
+				selectedText: '🙂e\u0301漢',
+				contextText: '前🙂e\u0301漢 TARGET\n[...]',
+			});
+		});
+
+		it('uses paragraph-bounded truncation rather than table-specific expansion', () => {
+			const fullText = '| A | B |\n| - | - |\n| TARGET | x |';
+
+			expect(buildSmartSelectionContext(fullText, 22, 28, 16)).toEqual({
+				from: 22,
+				to: 28,
+				selectedText: 'TARGET',
+				contextText: '[...]\n |\n| TARGET | x \n[...]',
+			});
+		});
+	});
 });

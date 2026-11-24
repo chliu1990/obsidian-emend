@@ -59,11 +59,16 @@ The short request-flow map is:
 1. `main.ts` maintains the Markdown target, captures synchronous context, registers resources, and owns per-note pending requests.
 2. `chat-view.ts` and focused controls manage sessions, drafts, targets, rendering, and submission state.
 3. `context.ts`, `selection-context.ts`, `selection-focus.ts`, and `additional-notes-context.ts` assemble declared context.
-4. `request-coordinator.ts` separates writer-free Chat and full-note Edit; `selection-editor.ts` coordinates Selection-only edits.
-5. `provider-stream.ts` owns SSE transport; `deepseek-web.ts` and `web-*.ts` isolate DeepSeek retrieval and grounded extraction.
-6. `operation-edit-strategy.ts`, `markdown-edit-guards.ts`, `replacement-diff.ts`, and `critic-markup.ts` validate and compile edits; `edit-freshness.ts` owns their shared exact-source freshness guard.
-7. `note-writer.ts` and the native Selection adapter are the only writers. `conversation-store.ts` owns sanitized local conversations.
-8. `settings.ts` normalizes non-secret settings; `secret-storage.ts` resolves provider credentials.
+4. `markdown-scanner.ts` owns lossless lines and named lexical projections only. `scanMarkdownContext` is for Selection context only; `scanMarkdown` plus `scanMarkdownEditStructure` are for edit guards only.
+5. `request-coordinator.ts` separates writer-free Chat and full-note Edit; `selection-editor.ts` coordinates Selection-only edits.
+6. `provider-stream.ts` owns SSE transport; `deepseek-web.ts` and `web-*.ts` isolate DeepSeek retrieval and grounded extraction.
+7. `operation-edit-strategy.ts`, `markdown-edit-guards.ts`, `replacement-diff.ts`, and `critic-markup.ts` validate and compile edits; `edit-freshness.ts` owns their shared exact-source freshness guard.
+8. `note-writer.ts` and the native Selection adapter are the only writers. `conversation-store.ts` owns sanitized local conversations.
+9. `settings.ts` normalizes non-secret settings; `secret-storage.ts` resolves provider credentials.
+
+`selection-context.ts` retains Selection expansion and budget policy; `markdown-edit-guards.ts` retains all edit-violation policy.
+Sharing these projections does not change Stage 38 conservative guards or separate Track Changes compatibility shadows,
+diagnostics, targets, freshness, or writers. See [Stage 57](devel_docs/57-markdown-scanner.md).
 
 Keep capture, coordination, transport, writing, persistence, and UI separate.
 Put new feature logic in focused modules rather than adding unrelated responsibilities to large modules.

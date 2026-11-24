@@ -1,3 +1,8 @@
+import {
+	scanMarkdownContext,
+	type MarkdownContextScan,
+} from './markdown-scanner';
+
 export interface SelectionContext {
 	from: number;
 	to: number;
@@ -5,19 +10,9 @@ export interface SelectionContext {
 	contextText: string;
 }
 
-interface TextLine {
-	start: number;
-	end: number;
-}
-
 interface TextBlock {
 	start: number;
 	end: number;
-}
-
-interface Fence {
-	character: '`' | '~';
-	length: number;
 }
 
 export function buildSmartSelectionContext(
@@ -31,7 +26,8 @@ export function buildSmartSelectionContext(
 		return { from, to, selectedText, contextText: fullText };
 	}
 
-	const blocks = getTextBlocks(fullText);
+	const scan = scanMarkdownContext(fullText);
+	const blocks = getTextBlocks(scan);
 	const containing = getContainingBlocks(blocks, from, to);
 	let start = containing.start;
 	let end = containing.end;
@@ -63,61 +59,29 @@ export function buildSmartSelectionContext(
 	};
 }
 
-function getTextBlocks(fullText: string): TextBlock[] {
-	const lines = getLines(fullText);
+function getTextBlocks(scan: MarkdownContextScan): TextBlock[] {
+	const lines = scan.contextLines;
 	const blocks: TextBlock[] = [];
-	let index = 0;
+	const frontmatter = scan.contextFrontmatter;
+	let index = frontmatter?.nextLine ?? 0;
+	let fenceIndex = 0;
 
-	if (lines[0] && lineText(fullText, lines[0]).trim() === '---') {
-		index = lines.length;
-		let endIndex = lines.length - 1;
-		for (let candidate = 1; candidate < lines.length; candidate++) {
-			const line = lines[candidate];
-			if (!line) {
-				continue;
-			}
-			const text = lineText(fullText, line).trim();
-			if (text === '---' || text === '...') {
-				endIndex = candidate;
-				index = candidate + 1;
-				break;
-			}
-		}
-		const first = lines[0];
-		const last = lines[endIndex];
-		if (first && last) {
-			blocks.push({ start: first.start, end: last.end });
-		}
+	if (frontmatter) {
+		blocks.push({ start: frontmatter.start, end: frontmatter.end });
 	}
 
 	while (index < lines.length) {
 		const line = lines[index];
-		if (!line || isBlankLine(fullText, line)) {
+		if (!line || isBlankLine(line.text)) {
 			index++;
 			continue;
 		}
 
-		const fence = getFenceOpening(lineText(fullText, line));
-		if (fence) {
-			const start = line.start;
-			let end = line.end;
-			index++;
-			while (index < lines.length) {
-				const candidate = lines[index];
-				if (!candidate) {
-					break;
-				}
-				end = candidate.end;
-				const closed = isFenceClosing(
-					lineText(fullText, candidate),
-					fence,
-				);
-				index++;
-				if (closed) {
-					break;
-				}
-			}
-			blocks.push({ start, end });
+		const fence = scan.contextFences[fenceIndex];
+		if (fence?.openingLine === index) {
+			blocks.push({ start: fence.start, end: fence.end });
+			index = fence.nextLine;
+			fenceIndex++;
 			continue;
 		}
 
@@ -126,10 +90,11 @@ function getTextBlocks(fullText: string): TextBlock[] {
 		index++;
 		while (index < lines.length) {
 			const candidate = lines[index];
+			const nextFence = scan.contextFences[fenceIndex];
 			if (
 				!candidate ||
-				isBlankLine(fullText, candidate) ||
-				getFenceOpening(lineText(fullText, candidate))
+				isBlankLine(candidate.text) ||
+				nextFence?.openingLine === index
 			) {
 				break;
 			}
@@ -142,51 +107,8 @@ function getTextBlocks(fullText: string): TextBlock[] {
 	return blocks;
 }
 
-function getLines(fullText: string): TextLine[] {
-	const lines: TextLine[] = [];
-	let start = 0;
-	while (start < fullText.length) {
-		const newline = fullText.indexOf('\n', start);
-		const end = newline === -1 ? fullText.length : newline;
-		lines.push({ start, end });
-		if (newline === -1) {
-			break;
-		}
-		start = newline + 1;
-	}
-	return lines;
-}
-
-function lineText(fullText: string, line: TextLine) {
-	return fullText.slice(line.start, line.end);
-}
-
-function isBlankLine(fullText: string, line: TextLine) {
-	return /^\s*$/.test(lineText(fullText, line));
-}
-
-function getFenceOpening(text: string): Fence | null {
-	const match = /^ {0,3}(`{3,}|~{3,})/.exec(text);
-	const marker = match?.[1];
-	if (!marker) {
-		return null;
-	}
-	return {
-		character: marker[0] === '~' ? '~' : '`',
-		length: marker.length,
-	};
-}
-
-function isFenceClosing(text: string, fence: Fence) {
-	const trimmed = text.trim();
-	let markerLength = 0;
-	while (trimmed[markerLength] === fence.character) {
-		markerLength++;
-	}
-	return (
-		markerLength >= fence.length &&
-		trimmed.slice(markerLength).trim().length === 0
-	);
+function isBlankLine(text: string) {
+	return /^\s*$/.test(text);
 }
 
 function getContainingBlocks(
