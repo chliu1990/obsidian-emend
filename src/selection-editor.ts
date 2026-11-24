@@ -8,7 +8,7 @@ import {
 	requireValidContextCapacity,
 	resolveContextCapacity,
 } from './context-accounting';
-import { prepareCriticMarkupEdit } from './critic-markup';
+import { parseCriticMarkup, prepareCriticMarkupEdit } from './critic-markup';
 import { assertEditFreshness } from './edit-freshness';
 import { prepareEditResponse } from './edit-response';
 import type { EditPreparation, EditStrategy } from './edit-strategy';
@@ -32,6 +32,23 @@ import type {
 
 const COMPOSED_MARKUP_ERROR =
 	'Compiled operations produce invalid CriticMarkup in the complete note. Preserve existing CriticMarkup tokens and do not nest markup.';
+const IN_TOKEN_SELECTION_ERROR =
+	'This selection is inside a pending tracked change. Accept or reject that change in Track Changes first, then try again. No edits were applied.';
+
+function isStrictlyInsideExistingCriticMarkupToken(
+	snapshot: SelectionSnapshot,
+): boolean {
+	if (snapshot.from >= snapshot.to) {
+		return false;
+	}
+	try {
+		return parseCriticMarkup(snapshot.fullText).some((token) =>
+			snapshot.from > token.start && snapshot.to < token.end
+		);
+	} catch {
+		return false;
+	}
+}
 
 function validateComposedSelectionEdit(
 	snapshot: SelectionSnapshot,
@@ -41,6 +58,14 @@ function validateComposedSelectionEdit(
 	try {
 		prepareCriticMarkupEdit(snapshot.fullText, composedFullText);
 	} catch {
+		if (isStrictlyInsideExistingCriticMarkupToken(snapshot)) {
+			throw new EditResponseValidationError(
+				'in-token-selection',
+				IN_TOKEN_SELECTION_ERROR,
+				{},
+				{ correctionEligible: false },
+			);
+		}
 		throw new EditResponseValidationError(
 			'compiled-markup-rejected',
 			COMPOSED_MARKUP_ERROR,

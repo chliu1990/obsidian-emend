@@ -33,6 +33,10 @@ import type {
 
 const STALE_ERROR =
 	'The note changed while Emend was responding. No edits were applied.';
+const IN_TOKEN_SELECTION_ERROR =
+	'This selection is inside a pending tracked change. Accept or reject that change in Track Changes first, then try again. No edits were applied.';
+const COMPOSED_MARKUP_ERROR =
+	'Compiled operations produce invalid CriticMarkup in the complete note. Preserve existing CriticMarkup tokens and do not nest markup.';
 
 const provider: ProviderConfig = {
 	name: 'Local test provider',
@@ -151,6 +155,14 @@ function makeAdapter(snapshot: SelectionSnapshot) {
 			targetCurrent = current;
 		},
 	};
+}
+
+function expectNoFreshnessOrWrite(adapter: SelectionEditorAdapter): void {
+	expect(adapter.readCurrentText).not.toHaveBeenCalled();
+	expect(adapter.readDiskText).not.toHaveBeenCalled();
+	expect(adapter.readEditorTexts).not.toHaveBeenCalled();
+	expect(adapter.isTargetCurrent).not.toHaveBeenCalled();
+	expect(adapter.replaceRange).not.toHaveBeenCalled();
 }
 
 function makeFreshnessReaders(sourceText: string) {
@@ -1659,11 +1671,21 @@ describe('SelectionEditRequestCoordinator', () => {
 		},
 	);
 
-	it('rejects a selection replace that would nest markup inside an existing insertion token', async () => {
-		const fullText = 'a{++x++}b';
-		const snapshot = makeSnapshot(fullText, 'x');
+	it.each([
+		{ label: 'insertion with UTF-16 offsets', fullText: '😀a{++inside++}b', selectedText: 'inside' },
+		{ label: 'deletion', fullText: 'a{--inside--}b', selectedText: 'inside' },
+		{ label: 'substitution old side', fullText: 'a{~~before~>after~~}b', selectedText: 'before' },
+		{ label: 'substitution new side', fullText: 'a{~~before~>after~~}b', selectedText: 'after' },
+		{ label: 'comment', fullText: 'a{>>note<<}b', selectedText: 'note' },
+		{ label: 'highlight', fullText: 'a{==marked==}b', selectedText: 'marked' },
+	])('terminates a changed candidate strictly inside an $label token', async ({
+		fullText,
+		selectedText,
+	}) => {
+		const snapshot = makeSnapshot(fullText, selectedText);
+		const originalSnapshot = { ...snapshot };
 		const nestingResponse = JSON.stringify([
-			{ type: 'replace', target: 'x', replacement: 'y' },
+			{ type: 'replace', target: selectedText, replacement: `${selectedText} changed` },
 		]);
 		const request = selectionRequest(nestingResponse);
 		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
@@ -1674,14 +1696,112 @@ describe('SelectionEditRequestCoordinator', () => {
 			.catch((thrown: unknown) => thrown);
 
 		expect(error).toBeInstanceOf(EditResponseValidationError);
-		expect(error).toMatchObject({ code: 'compiled-markup-rejected' });
-		expect(String((error as Error).message)).toContain(
-			'Preserve existing CriticMarkup tokens and do not nest markup',
+		expect(error).toMatchObject({
+			code: 'in-token-selection',
+			message: IN_TOKEN_SELECTION_ERROR,
+			correctionEligible: false,
+		});
+		expect(request).toHaveBeenCalledTimes(1);
+		expect(request.mock.calls[0]?.[0].continuation).toBeUndefined();
+		expect(onRetry).not.toHaveBeenCalled();
+		expectNoFreshnessOrWrite(adapter);
+		expect(snapshot).toEqual(originalSnapshot);
+		expect(snapshot.fullText).toBe(fullText);
+	});
+
+	it.each([
+		{ label: 'empty operations', response: '[]' },
+		{
+			label: 'unchanged replacement',
+			response: JSON.stringify([{ type: 'replace', target: 'x', replacement: 'x' }]),
+		},
+	])('keeps a strict in-token $label response as a successful no-op', async ({
+		response,
+	}) => {
+		const snapshot = makeSnapshot('a{++x++}b', 'x');
+		const originalSnapshot = { ...snapshot };
+		const request = selectionRequest(response).mockResolvedValueOnce({
+			content: response,
+			reasoning: '',
+			usage: { promptTokens: 11, completionTokens: 3, totalTokens: 14 },
+		});
+		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
+		const onRetry = vi.fn();
+
+		const result = await coordinator.submit(
+			makeSelectionSubmission(snapshot, { callbacks: { onRetry } }),
 		);
-		expect(onRetry).toHaveBeenCalledOnce();
+
+		expect(result).toEqual({
+			applied: false,
+			changeCount: 0,
+			summaryItems: [],
+			summary: undefined,
+			usage: {
+				promptTokens: 11,
+				completionTokens: 3,
+				totalTokens: 14,
+				source: 'provider',
+			},
+		});
+		expect(request).toHaveBeenCalledTimes(1);
+		expect(request.mock.calls[0]?.[0].continuation).toBeUndefined();
+		expect(onRetry).not.toHaveBeenCalled();
+		expectNoFreshnessOrWrite(adapter);
+		expect(snapshot).toEqual(originalSnapshot);
+	});
+
+	it('keeps delimiter-fragment source validation ahead of in-token classification', async () => {
+		const snapshot = makeSnapshot('a{++x++}b', 'x++}');
+		const request = selectionRequest('[]');
+		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
+		const onRetry = vi.fn();
+
+		const error = await coordinator
+			.submit(makeSelectionSubmission(snapshot, { callbacks: { onRetry } }))
+			.catch((thrown: unknown) => thrown);
+
+		expect(error).toMatchObject({
+			name: 'EditSourceValidationError',
+			message: 'The original snapshot contains invalid CriticMarkup; fix the existing markup before requesting edits.',
+		});
+		expect(request).toHaveBeenCalledTimes(1);
+		expect(onRetry).not.toHaveBeenCalled();
+		expectNoFreshnessOrWrite(adapter);
+	});
+
+	it('corrects malformed JSON once then terminates a strict changed candidate', async () => {
+		const snapshot = makeSnapshot('a{++x++}b', 'x');
+		const nestingResponse = JSON.stringify([
+			{ type: 'replace', target: 'x', replacement: 'y' },
+		]);
+		const request = selectionRequest('not-json')
+			.mockResolvedValueOnce({ content: 'not-json', reasoning: 'invalid attempt' })
+			.mockResolvedValueOnce({ content: nestingResponse, reasoning: 'rejected attempt' });
+		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
+		const onRetry = vi.fn();
+
+		const error = await coordinator
+			.submit(makeSelectionSubmission(snapshot, { callbacks: { onRetry } }))
+			.catch((thrown: unknown) => thrown);
+
+		expect(error).toMatchObject({
+			code: 'in-token-selection',
+			message: IN_TOKEN_SELECTION_ERROR,
+			correctionEligible: false,
+		});
 		expect(request).toHaveBeenCalledTimes(2);
-		expect(adapter.readCurrentText).not.toHaveBeenCalled();
-		expect(adapter.replaceRange).not.toHaveBeenCalled();
+		expect(onRetry).toHaveBeenCalledOnce();
+		expect(request.mock.calls[0]?.[0].continuation).toBeUndefined();
+		expect(request.mock.calls[1]?.[0].continuation).toHaveLength(2);
+		expect(request.mock.calls[1]?.[0].continuation?.[0]).toEqual({
+			role: 'assistant',
+			content: 'not-json',
+		});
+		expect(request.mock.calls[1]?.[0].continuation?.[1]?.content).toContain(
+			'"code":"invalid-json"',
+		);
+		expectNoFreshnessOrWrite(adapter);
 	});
 
 	it('applies the corrected candidate after composed-markup rejection', async () => {
@@ -1718,26 +1838,158 @@ describe('SelectionEditRequestCoordinator', () => {
 		).not.toThrow();
 	});
 
-	it('does not write when the composed candidate stays invalid', async () => {
+	it('retains generic correction for two invalid candidates at a non-strict boundary', async () => {
 		const fullText = 'a{++x++}b';
-		const snapshot = makeSnapshot(fullText, 'x');
+		const snapshot = makeSnapshot(fullText, 'a{');
 		const request = selectionRequest('not-json')
 			.mockResolvedValueOnce({
-				content: JSON.stringify([{ type: 'comment', target: 'x', comment: 'note' }]),
+				content: JSON.stringify([{ type: 'comment', target: 'a{', comment: 'note' }]),
 				reasoning: '',
 			})
 			.mockResolvedValueOnce({
-				content: JSON.stringify([{ type: 'remove', target: 'x' }]),
+				content: JSON.stringify([{ type: 'remove', target: 'a{' }]),
 				reasoning: '',
 			});
 		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
+		const onRetry = vi.fn();
 
-		await expect(
-			coordinator.submit(makeSelectionSubmission(snapshot)),
-		).rejects.toMatchObject({ code: 'compiled-markup-rejected' });
+		const error = await coordinator
+			.submit(makeSelectionSubmission(snapshot, { callbacks: { onRetry } }))
+			.catch((thrown: unknown) => thrown);
 
+		expect(error).toMatchObject({
+			code: 'compiled-markup-rejected',
+			message: COMPOSED_MARKUP_ERROR,
+			correctionEligible: true,
+		});
 		expect(request).toHaveBeenCalledTimes(2);
-		expect(adapter.replaceRange).not.toHaveBeenCalled();
+		expect(onRetry).toHaveBeenCalledOnce();
+		expectNoFreshnessOrWrite(adapter);
+	});
+
+	it.each([
+		{
+			label: 'exact whole raw token',
+			fullText: 'a{++x++}b',
+			selectedText: '{++x++}',
+		},
+		{
+			label: 'multi-token span',
+			fullText: 'a{++x++}m{--y--}b',
+			selectedText: 'a{++x++}m{--y--}b',
+		},
+	])('does not reclassify an $label as strict in-token rejection', async ({
+		fullText,
+		selectedText,
+	}) => {
+		const snapshot = makeSnapshot(fullText, selectedText);
+		const response = JSON.stringify([{ type: 'replace', target: 'x', replacement: 'z' }]);
+		const request = selectionRequest(response);
+		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
+		const onRetry = vi.fn();
+
+		const error = await coordinator
+			.submit(makeSelectionSubmission(snapshot, { callbacks: { onRetry } }))
+			.catch((thrown: unknown) => thrown);
+
+		expect(error).toMatchObject({
+			code: 'compiled-markup-rejected',
+			correctionEligible: true,
+		});
+		expect((error as Error).message).not.toBe(IN_TOKEN_SELECTION_ERROR);
+		expect(request).toHaveBeenCalledTimes(2);
+		expect(onRetry).toHaveBeenCalledOnce();
+		expectNoFreshnessOrWrite(adapter);
+	});
+
+	it('keeps malformed complete-note source on the sanitized generic correction path', async () => {
+		const snapshot = makeSnapshot('a{++x b', 'x');
+		const response = JSON.stringify([{ type: 'replace', target: 'x', replacement: 'y' }]);
+		const request = selectionRequest(response);
+		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
+		const onRetry = vi.fn();
+
+		const error = await coordinator
+			.submit(makeSelectionSubmission(snapshot, { callbacks: { onRetry } }))
+			.catch((thrown: unknown) => thrown);
+
+		expect(error).toMatchObject({
+			code: 'compiled-markup-rejected',
+			message: COMPOSED_MARKUP_ERROR,
+			correctionEligible: true,
+		});
+		expect((error as Error).message).not.toContain(snapshot.fullText);
+		expect(request).toHaveBeenCalledTimes(2);
+		expect(onRetry).toHaveBeenCalledOnce();
+		expectNoFreshnessOrWrite(adapter);
+	});
+
+	it.each([
+		{
+			label: 'before',
+			selectedText: 'a',
+			operation: { type: 'insert', anchor: 'a', position: 'after', text: 'p' },
+			annotatedSelection: 'a{++p++}',
+			expectedFullText: 'a{++p++}{++x++}b',
+		},
+		{
+			label: 'after',
+			selectedText: 'b',
+			operation: { type: 'insert', anchor: 'b', position: 'before', text: 'p' },
+			annotatedSelection: '{++p++}b',
+			expectedFullText: 'a{++x++}{++p++}b',
+		},
+	])('applies an immediately adjacent $label edit and preserves the token bytes', async ({
+		selectedText,
+		operation,
+		annotatedSelection,
+		expectedFullText,
+	}) => {
+		const fullText = 'a{++x++}b';
+		const snapshot = makeSnapshot(fullText, selectedText);
+		const request = selectionRequest(JSON.stringify([operation]));
+		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
+		const onRetry = vi.fn();
+
+		const result = await coordinator.submit(
+			makeSelectionSubmission(snapshot, { callbacks: { onRetry } }),
+		);
+
+		expect(result.applied).toBe(true);
+		expect(request).toHaveBeenCalledTimes(1);
+		expect(onRetry).not.toHaveBeenCalled();
+		expect(adapter.replaceRange).toHaveBeenCalledExactlyOnceWith(
+			annotatedSelection,
+			snapshot.from,
+			snapshot.to,
+		);
+		const composed = `${fullText.slice(0, snapshot.from)}${annotatedSelection}${fullText.slice(snapshot.to)}`;
+		expect(composed).toBe(expectedFullText);
+		expect(composed).toContain('{++x++}');
+		expect(snapshot.fullText).toBe(fullText);
+	});
+
+	it('applies an enclosing Selection edit outside the token and preserves its bytes', async () => {
+		const fullText = 'before a{++x++}b after';
+		const snapshot = makeSnapshot(fullText, fullText);
+		const response = JSON.stringify([
+			{ type: 'replace', target: 'before', replacement: 'previous' },
+		]);
+		const request = selectionRequest(response);
+		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
+		const annotatedSelection = '{~~before~>previous~~} a{++x++}b after';
+
+		const result = await coordinator.submit(makeSelectionSubmission(snapshot));
+
+		expect(result.applied).toBe(true);
+		expect(request).toHaveBeenCalledTimes(1);
+		expect(adapter.replaceRange).toHaveBeenCalledExactlyOnceWith(
+			annotatedSelection,
+			0,
+			fullText.length,
+		);
+		expect(annotatedSelection).toContain('a{++x++}b');
+		expect(snapshot.fullText).toBe(fullText);
 	});
 });
 
