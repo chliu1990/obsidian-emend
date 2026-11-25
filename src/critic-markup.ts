@@ -204,7 +204,7 @@ export function createEmendCriticMarkupToken(
 	content: string,
 ): string {
 	const delimiter = MARKUP_DELIMITERS.find((candidate) => candidate.type === type);
-	if (!delimiter) {
+	if (!delimiter || delimiter.type === 'highlight') {
 		throw new Error('Unsupported CriticMarkup token type.');
 	}
 	return `{author="Emend"${delimiter.opener.slice(1)}${content}${delimiter.closer}`;

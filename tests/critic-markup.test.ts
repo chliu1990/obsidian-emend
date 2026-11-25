@@ -622,6 +622,12 @@ describe('Emend CriticMarkup renderer', () => {
 			EmendMarkupTokenType
 		>();
 	});
+
+	it('rejects highlight emission at runtime', () => {
+		expect(() => {
+			Reflect.apply(createEmendCriticMarkupToken, undefined, ['highlight', 'content']);
+		}).toThrow(new Error('Unsupported CriticMarkup token type.'));
+	});
 });
 
 describe('CriticMarkup delimiter classification', () => {
