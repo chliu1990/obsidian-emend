@@ -73,6 +73,7 @@ export interface EditSubmission {
 }
 
 interface ReadOnlyRequestCoordinatorDependencies {
+	goSession?: string;
 	provider: ProviderConfig;
 	loadAdditionalNotes(
 		paths: readonly string[],
@@ -177,7 +178,7 @@ export class ReadOnlyRequestCoordinator {
 		}
 
 		const result = await this.dependencies.request(
-			request,
+			this.dependencies.goSession ? { ...request, goSession: this.dependencies.goSession } : request,
 			callbacks,
 			submission.signal,
 		);

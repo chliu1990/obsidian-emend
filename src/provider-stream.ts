@@ -1,5 +1,6 @@
 import { assertRequestWithinCapacity, resolveContextCapacity } from './context-accounting';
 import { formatProviderHistory } from './provider-history';
+import { postGoChat } from './opencode-go-transport';
 import { isConsistentTokenUsage } from './token-usage';
 import type { ProviderConfig, ProviderHistoryMessage } from './types';
 
@@ -37,6 +38,7 @@ export type ProviderContinuationMessage =
 	| { role: 'tool'; toolCallId: string; content: string };
 
 export interface AiProviderRequest {
+	goSession?: string;
 	provider: ProviderConfig;
 	systemPrompt: string;
 	userPrompt: string;
@@ -100,47 +102,48 @@ export async function requestAiResponse(
 	);
 
 	try {
-		// eslint-disable-next-line no-restricted-globals -- requestUrl does not expose streaming response bodies.
-		const response = await fetch(`${baseUrl}/chat/completions`, {
-			method: 'POST',
-			headers: {
-				Authorization: `Bearer ${apiKey}`,
-				'Content-Type': 'application/json',
-			},
-			body: JSON.stringify({
-				model,
-				messages: [
-					{ role: 'system', content: request.systemPrompt },
-					...formatProviderHistory(request.history),
-					{ role: 'user', content: request.userPrompt },
-					...formatContinuationMessages(request.continuation ?? []),
-				],
-				temperature: 0.3,
-				reasoning_effort: provider.reasoningEffort,
-				stream: true,
-				...(request.responseFormat === 'json_object'
-					? { response_format: { type: 'json_object' } }
-					: {}),
-				...(request.tools?.length
-					? { tools: request.tools, tool_choice: 'auto' }
-					: {}),
-				...(provider.requestUsage
-					? { stream_options: { include_usage: true } }
-					: {}),
-			}),
-			signal,
+		const body = JSON.stringify({
+			model,
+			messages: [
+				{ role: 'system', content: request.systemPrompt },
+				...formatProviderHistory(request.history),
+				{ role: 'user', content: request.userPrompt },
+				...formatContinuationMessages(request.continuation ?? []),
+			],
+			temperature: 0.3,
+			reasoning_effort: provider.reasoningEffort,
+			stream: true,
+			...(request.responseFormat === 'json_object'
+				? { response_format: { type: 'json_object' } }
+				: {}),
+			...(request.tools?.length
+				? { tools: request.tools, tool_choice: 'auto' }
+				: {}),
+			...(provider.requestUsage
+				? { stream_options: { include_usage: true } }
+				: {}),
 		});
+		const response = request.goSession
+			? await postGoChat(baseUrl, request.goSession, apiKey, body, signal)
+			// eslint-disable-next-line no-restricted-globals -- Streaming requires a readable response body.
+			: await fetch(`${baseUrl}/chat/completions`, {
+				method: 'POST',
+				headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+				body,
+				signal,
+			});
 
 		if (!response.ok) {
 			const responseText = await response.text();
 			throw new Error(formatHttpProviderError(response.status, responseText));
 		}
-		if (!response.body) {
+		const stream = response.body;
+		if (!stream) {
 			throw new Error('The provider response did not contain a stream.');
 		}
 
 		const parser = createSseParser();
-		const reader = response.body.getReader();
+		const reader = stream.getReader();
 		let content = '';
 		let reasoning = '';
 		let usage: ProviderTokenUsage | undefined;
@@ -196,6 +199,7 @@ export async function requestAiResponse(
 			reader.releaseLock();
 		}
 	} catch (error) {
+		if (request.goSession) signal.throwIfAborted();
 		if (signal.aborted || (isRecord(error) && error.name === 'AbortError')) {
 			throw error;
 		}
