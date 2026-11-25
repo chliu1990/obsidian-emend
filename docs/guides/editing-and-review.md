@@ -21,6 +21,8 @@ Emend and Track Changes have separate jobs:
 2. **Emend writes CriticMarkup.** Valid Operations compile into CriticMarkup. Full-note Edit uses a guarded vault write. Selection Edit uses exact native range replacement.
 3. **Track Changes presents the review.** The separate Track Changes community plugin visualizes the CriticMarkup and supplies Accept/Reject controls.
 
+Every new insertion, deletion, substitution, and comment that Emend emits carries `author="Emend"`, so Track Changes labels the new suggestions and comments as **Emend**. Emend adds no date to new markup and has no author setting. Supported existing bare and other-author markup—including any existing attribution or date—is preserved byte-for-byte rather than rewritten. Comment discussions and replies remain outside Emend's scope; see [Stage 60: Emend authorship](../../devel_docs/60-emend-authorship.md).
+
 Emend has no competing diff, Apply, Accept, or Reject interface. Track Changes is the only CriticMarkup review surface. It is not bundled with Emend and is never installed automatically; follow the [installation requirements](../../INSTALLATION.md#requirements).
 
 Chat needs no Track Changes because Chat has no note writer. Selection edits also preserve Obsidian's native undo, whether or not you review them first.

@@ -15,7 +15,7 @@ Read the architecture contract and relevant stage record before changing behavio
 
 Use canonical records instead of copying their details into contributor prose:
 
-- Editing: [minimal Operations ranges](devel_docs/37-minimal-edit-ranges.md) and [Selection context](devel_docs/49-selection-focus-and-context.md).
+- Editing: [minimal Operations ranges](devel_docs/37-minimal-edit-ranges.md), [Selection context](devel_docs/49-selection-focus-and-context.md), and [Emend authorship](devel_docs/60-emend-authorship.md).
 - Providers and Web: [online search](devel_docs/36-deepseek-online-search.md) and [grounded extraction](devel_docs/40-web-content-budget-diagnostics.md).
 - Context and UI: [capacity](devel_docs/42-context-accounting-capacity.md) and [Related notes](devel_docs/45-related-notes-explorer.md).
 - Cross-cutting hardening and evidence limits: [2.10 stabilization](devel_docs/51-2-10-stabilization.md). Use the stage index for other records.
@@ -121,6 +121,12 @@ Live Selection highlighting uses current editor state without I/O, persistence, 
   synchronously hands the captured offsets to native `editor.replaceRange` without another `await`, preserving undo.
 - Operations are the only model-facing edit protocol, as a closed bare array or `{summary, operations}` envelope.
   Resolve exact original anchors atomically; reject ambiguity, overlap, out-of-target ranges, and additional-note-only anchors.
+- `critic-markup.ts` parses supported bare and Track Changes 2.3.0-attributed CriticMarkup. Every newly emitted
+  insertion, deletion, substitution, and comment uses the shared fixed `author="Emend"` renderer; new output has no
+  dates, configurable author, or comment discussions. Supported pre-existing bare and attributed tokens retain their
+  exact raw bytes and order, and raw original-token matching remains authoritative rather than normalized metadata.
+  Writers, freshness, correction, strict in-token rejection, and pending-card exclusions remain unchanged. See
+  [Stage 60](devel_docs/60-emend-authorship.md).
 - Preserve inline-code, fence, table, payload, and CriticMarkup guards. Revalidate compiled markup and the composed
   Selection document before replacement. Never partially apply a rejected candidate.
 - Candidate-validation failure gets one same-provider correction with bounded diagnostics. The sole exception is
