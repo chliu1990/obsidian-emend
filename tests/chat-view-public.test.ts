@@ -18,7 +18,11 @@ import type {
 	StreamResult,
 } from '../src/provider-stream';
 import { QUICK_ACTIONS } from '../src/quick-actions';
-import type { SelectionEditResult, SelectionEditTarget } from '../src/selection-editor';
+import {
+	SelectionEditRequestCoordinator,
+	type SelectionEditResult,
+	type SelectionEditTarget,
+} from '../src/selection-editor';
 import type { SelectionContextPolicy } from '../src/selection-focus';
 import { normalizeContextLimit } from '../src/settings';
 import {
@@ -54,6 +58,9 @@ import {
 	textOf,
 	type PublicChatViewFixture,
 } from './helpers/chat-view-public-fixture';
+
+const IN_TOKEN_SELECTION_ERROR =
+	'This selection is inside a pending tracked change. Accept or reject that change in Track Changes first, then try again. No edits were applied.';
 
 function noticeMessages(): string[] {
 	return (Notice as unknown as { messages: string[] }).messages;
@@ -1468,6 +1475,172 @@ describe('EmendChatView public modification submission and persistence', () => {
 			'Edit selection',
 			summary,
 		]);
+	});
+
+	it('shows actionable in-token guidance through the real Selection coordinator without leaking rejected data', async () => {
+		const fullText = 'a{++x++}b SOURCE_SNAPSHOT_SECRET';
+		const fixture = createPublicChatViewFixture({
+			sourceText: fullText,
+			selectedText: 'x',
+			defaultMode: 'edit',
+		});
+		const savedSnapshots = captureReadyMessageSaves(fixture, makeSession());
+		const nestingResponse = JSON.stringify([
+			{ type: 'replace', target: 'x', replacement: 'PRIVATE_CANDIDATE' },
+		]);
+		const request = vi.fn(async (
+			_request: AiProviderRequest,
+			callbacks: { onEvent(event: StreamEvent): void },
+		): Promise<StreamResult> => {
+			callbacks.onEvent({ type: 'reasoning', text: 'REJECTED_REASONING' });
+			return {
+				content: nestingResponse,
+				reasoning: 'REJECTED_REASONING',
+				usage: { promptTokens: 111, completionTokens: 222, totalTokens: 777 },
+			};
+		});
+		const onRetry = vi.fn();
+		fixture.requestSelectionEdit.mockImplementation(async (
+			snapshot,
+			prompt,
+			signal,
+			editor,
+			additionalNotePaths,
+			history,
+			callbacks,
+			selectionContext,
+		) => {
+			const coordinator = new SelectionEditRequestCoordinator({
+				provider: fixture.settings.providers[fixture.settings.activeProvider],
+				loadAdditionalNotes: async () => [],
+				loadInstructions: async () => ({ skillTexts: new Map() }),
+				request,
+				editor,
+				editStrategy: operationEditStrategy,
+			});
+			return coordinator.submit({
+				snapshot,
+				prompt,
+				maxContextCharacters: 1000,
+				smartSelectionContext: true,
+				selectionContext: selectionContext ?? 'default',
+				additionalNotePaths: additionalNotePaths ?? [],
+				history: history ?? [],
+				signal,
+				callbacks: {
+					onReasoning: callbacks?.onReasoning,
+					onRetry: () => {
+						onRetry();
+						callbacks?.onRetry?.();
+					},
+				},
+			});
+		});
+		fixture.requestChatCompletion.mockImplementation((async (
+			submission: ReadOnlySubmission,
+		) => {
+			submission.callbacks.onContent('Follow-up answer');
+			return {
+				content: 'Follow-up answer',
+				reasoning: '',
+				usage: {
+					promptTokens: 3,
+					completionTokens: 1,
+					totalTokens: 4,
+					source: 'provider',
+				},
+			};
+		}) as unknown as EmendPlugin['requestChatCompletion']);
+		const captureTarget = fixture.captureSelectionEditTarget.getMockImplementation();
+		if (!captureTarget) {
+			throw new Error('Selection capture double missing.');
+		}
+		const capturedTargets: SelectionEditTarget[] = [];
+		fixture.captureSelectionEditTarget.mockImplementation(() => {
+			const target = captureTarget();
+			const instrumented: SelectionEditTarget = {
+				...target,
+				editor: {
+					readCurrentText: vi.fn(target.editor.readCurrentText),
+					readDiskText: vi.fn(target.editor.readDiskText),
+					readEditorTexts: vi.fn(target.editor.readEditorTexts),
+					isTargetCurrent: vi.fn(target.editor.isTargetCurrent),
+					replaceRange: vi.fn(target.editor.replaceRange),
+				},
+			};
+			capturedTargets.push(instrumented);
+			return instrumented;
+		});
+		await fixture.open();
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Selection');
+		setChatInput(fixture, 'Edit selection');
+
+		await fixture.view.submitPrompt();
+
+		expect(fixture.requestSelectionEdit).toHaveBeenCalledOnce();
+		expect(request).toHaveBeenCalledTimes(1);
+		expect(request.mock.calls[0]?.[0].continuation).toBeUndefined();
+		expect(onRetry).not.toHaveBeenCalled();
+		const error = findMessageElements(fixture.contentEl).find(
+			(element) => element.className.split(' ').includes('is-assistant')
+				&& element.className.split(' ').includes('is-error'),
+		);
+		expect(error).toBeDefined();
+		expect(messageContentElements(error!)[0]?.textContent).toBe(IN_TOKEN_SELECTION_ERROR);
+		expect(noticeMessages()).toEqual([`Emend: ${IN_TOKEN_SELECTION_ERROR}`]);
+		expect(findSubmissionButton(fixture.contentEl, 'Send')?.disabled).toBe(false);
+		expect(findSubmissionButton(fixture.contentEl, 'Stop')).toBeUndefined();
+		expect(findSubmissionButton(fixture.contentEl, 'Stopping')).toBeUndefined();
+		expect(findWritingTrigger(fixture.contentEl)?.textContent).toBe('Edit · Selection');
+		expect(fixture.requestChatCompletion).not.toHaveBeenCalled();
+		expect(savedSnapshots).toHaveLength(1);
+		expect(savedSnapshots[0]?.map((saved) => [saved.role, saved.status])).toEqual([
+			['user', 'ready'],
+		]);
+		const target = capturedTargets[0];
+		if (!target) {
+			throw new Error('Captured Selection target missing.');
+		}
+		expect(target.editor.readCurrentText).not.toHaveBeenCalled();
+		expect(target.editor.readDiskText).not.toHaveBeenCalled();
+		expect(target.editor.readEditorTexts).not.toHaveBeenCalled();
+		expect(target.editor.isTargetCurrent).not.toHaveBeenCalled();
+		expect(target.editor.replaceRange).not.toHaveBeenCalled();
+		expect(target.snapshot).toMatchObject({
+			fullText,
+			selectedText: 'x',
+			from: 4,
+			to: 5,
+		});
+
+		chooseWritingMenuItem(fixture.contentEl, 'Chat');
+		setChatInput(fixture, 'Next question');
+		await fixture.view.submitPrompt();
+
+		const followUp = fixture.requestChatCompletion.mock.calls[0]?.[0];
+		if (!followUp) {
+			throw new Error('Follow-up Chat request missing.');
+		}
+		expect(followUp.history.map((item) => item.content)).toEqual(['Edit selection']);
+		expect(savedSnapshots).toHaveLength(3);
+		expect(savedSnapshots.flat().every((saved) => saved.status === 'ready')).toBe(true);
+		expect(savedSnapshots.flat().some((saved) => saved.usage?.totalTokens === 777)).toBe(false);
+		const privateArtifacts = JSON.stringify([
+			savedSnapshots,
+			followUp.history,
+		]);
+		for (const secret of [
+			IN_TOKEN_SELECTION_ERROR,
+			'PRIVATE_CANDIDATE',
+			'REJECTED_REASONING',
+			'compiled-markup-rejected',
+			'Preserve existing CriticMarkup tokens',
+			'SOURCE_SNAPSHOT_SECRET',
+			'"totalTokens":777',
+		]) {
+			expect(privateArtifacts).not.toContain(secret);
+		}
+		expect(target.editor.replaceRange).not.toHaveBeenCalled();
 	});
 
 	it('keeps full-note Selection context on the native selection writer only', async () => {

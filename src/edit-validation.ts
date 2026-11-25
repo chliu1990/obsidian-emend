@@ -14,7 +14,8 @@ export type EditResponseValidationCode =
 	| 'inline-code-range'
 	| 'fenced-code-edit'
 	| 'table-structure-edit'
-	| 'compiled-markup-rejected';
+	| 'compiled-markup-rejected'
+	| 'in-token-selection';
 
 export interface EditResponseValidationDetails {
 	operation?: number;
@@ -27,6 +28,10 @@ export interface EditResponseValidationDetails {
 	line?: number;
 }
 
+export interface EditResponseValidationOptions {
+	readonly correctionEligible?: boolean;
+}
+
 export class EditResponseValidationError extends Error {
 	readonly code: EditResponseValidationCode;
 	readonly operation?: number;
@@ -37,11 +42,13 @@ export class EditResponseValidationError extends Error {
 	readonly occurrence?: number;
 	readonly matchLines?: number[];
 	readonly line?: number;
+	readonly correctionEligible: boolean;
 
 	constructor(
 		code: EditResponseValidationCode,
 		message: string,
 		details: EditResponseValidationDetails = {},
+		options: EditResponseValidationOptions = {},
 	) {
 		super(message);
 		this.name = 'EditResponseValidationError';
@@ -54,6 +61,7 @@ export class EditResponseValidationError extends Error {
 		this.occurrence = details.occurrence;
 		this.matchLines = details.matchLines?.slice(0, 8);
 		this.line = details.line;
+		this.correctionEligible = options.correctionEligible ?? true;
 	}
 }
 

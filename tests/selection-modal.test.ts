@@ -26,6 +26,9 @@ import type { SelectionContextPolicy } from '../src/selection-focus';
 import { SelectionModal } from '../src/selection-modal';
 import type { ProviderConfig, SelectionSnapshot } from '../src/types';
 
+const IN_TOKEN_SELECTION_ERROR =
+	'This selection is inside a pending tracked change. Accept or reject that change in Track Changes first, then try again. No edits were applied.';
+
 beforeEach(() => {
 	vi.stubGlobal('window', { setTimeout, clearTimeout });
 });
@@ -559,6 +562,101 @@ describe('SelectionModal quick actions', () => {
 			expect(editor.replaceRange).not.toHaveBeenCalled();
 		},
 	);
+
+	it('shows actionable in-token guidance through the real coordinator and recovers without writing', async () => {
+		const file = new TFile();
+		file.path = 'note.md';
+		const fullText = 'a{++x++}b';
+		const snapshot: SelectionSnapshot = {
+			file,
+			fullText,
+			selectedText: 'x',
+			from: 4,
+			to: 5,
+		};
+		const originalSnapshot = { ...snapshot };
+		const editor: SelectionEditorAdapter = {
+			readCurrentText: vi.fn(() => fullText),
+			readDiskText: vi.fn(async () => fullText),
+			readEditorTexts: vi.fn(() => [fullText]),
+			isTargetCurrent: vi.fn(() => true),
+			replaceRange: vi.fn(),
+		};
+		const nestingResponse = JSON.stringify([
+			{ type: 'replace', target: 'x', replacement: 'y' },
+		]);
+		const request = vi.fn(async (_request: AiProviderRequest): Promise<StreamResult> => ({
+			content: nestingResponse,
+			reasoning: 'rejected attempt',
+		}));
+		const coordinator = new SelectionEditRequestCoordinator({
+			provider,
+			loadAdditionalNotes: async () => [],
+			loadInstructions: async () => ({ skillTexts: new Map() }),
+			request,
+			editor,
+			editStrategy: operationEditStrategy,
+		});
+		const onRetry = vi.fn();
+		const submitSelection = vi.fn((prompt: string, signal: AbortSignal) =>
+			coordinator.submit({
+				snapshot,
+				prompt,
+				maxContextCharacters: 1000,
+				smartSelectionContext: true,
+				selectionContext: 'default',
+				additionalNotePaths: [],
+				history: [],
+				signal,
+				callbacks: { onRetry },
+			})
+		);
+		const {
+			modal,
+			contentEl,
+			input,
+			contextSelect,
+			quickActions,
+			additionalButtons,
+		} = openModal(submitSelection);
+		const noticeMessages = (Notice as unknown as { readonly messages: string[] }).messages;
+		const noticeCount = noticeMessages.length;
+		if (!input) {
+			throw new Error('Selection input missing.');
+		}
+		input.value = 'Edit inside the pending change';
+
+		findButtonByClass(contentEl, 'emend-chat-primary-button')?.click();
+
+		await vi.waitFor(() => {
+			expect(request).toHaveBeenCalledTimes(1);
+			expect(input.disabled).toBe(false);
+			expect(quickActions.every((item) => !item.disabled)).toBe(true);
+		});
+		expect(submitSelection).toHaveBeenCalledOnce();
+		expect(request.mock.calls[0]?.[0].continuation).toBeUndefined();
+		expect(onRetry).not.toHaveBeenCalled();
+		expect(noticeMessages.slice(noticeCount)).toEqual([
+			`Emend: ${IN_TOKEN_SELECTION_ERROR}`,
+		]);
+		expect(contextSelect?.disabled).toBe(false);
+		expect(additionalButtons.every((item) => !item.disabled)).toBe(true);
+		expect(findButtonByClass(contentEl, 'emend-chat-primary-button')?.disabled).toBe(false);
+		const cancelButton = findButtonByClass(contentEl, 'emend-chat-secondary-button');
+		expect(cancelButton?.disabled).toBe(false);
+		expect(cancelButton?.textContent).toBe('Cancel');
+		// eslint-disable-next-line @typescript-eslint/unbound-method -- Inspect the modal close double without invoking it.
+		expect(modal.close).not.toHaveBeenCalled();
+		expect(findElements(contentEl, (element) =>
+			element.className.split(' ').includes('emend-chat-message')
+		)).toEqual([]);
+		expect(editor.readCurrentText).not.toHaveBeenCalled();
+		expect(editor.readDiskText).not.toHaveBeenCalled();
+		expect(editor.readEditorTexts).not.toHaveBeenCalled();
+		expect(editor.isTargetCurrent).not.toHaveBeenCalled();
+		expect(editor.replaceRange).not.toHaveBeenCalled();
+		expect(snapshot).toEqual(originalSnapshot);
+	});
 
 	it('keeps controls pending through the correction round and restores them after final validation fails', async () => {
 		const file = new TFile();

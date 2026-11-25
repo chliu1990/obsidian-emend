@@ -163,6 +163,39 @@ describe('prepareEditResponse', () => {
 		);
 	});
 
+	it('does not correct a non-correctable validatePrepared rejection', async () => {
+		const rejection = new EditResponseValidationError(
+			'in-token-selection',
+			'Selection is inside a pending tracked change.',
+			{},
+			{ correctionEligible: false },
+		);
+		const validatePrepared = vi.fn<(candidate: EditPreparation) => void>(() => {
+			throw rejection;
+		});
+		const prepareEdit = vi.fn<EditStrategy['prepareEdit']>().mockReturnValue(prepared);
+		const requestRound = vi.fn<typeof requestAiResponse>()
+			.mockResolvedValue(result('first-candidate', {
+				usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12 },
+			}));
+		const onRetry = vi.fn();
+		const onFulfilled = vi.fn();
+
+		await expect(prepareEditResponse(prepareOptions(
+			requestRound,
+			prepareEdit,
+			{ validatePrepared, onRetry },
+		)).then(onFulfilled)).rejects.toBe(rejection);
+
+		expect(onFulfilled).not.toHaveBeenCalled();
+		expect(requestRound).toHaveBeenCalledTimes(1);
+		expect(requestRound.mock.calls[0]?.[0].continuation).toBeUndefined();
+		expect(prepareEdit).toHaveBeenCalledOnce();
+		expect(validatePrepared).toHaveBeenCalledOnce();
+		expect(validatePrepared).toHaveBeenCalledWith(prepared);
+		expect(onRetry).not.toHaveBeenCalled();
+	});
+
 	it('does not retry a non-validation error thrown by validatePrepared', async () => {
 		const failure = new Error('Unexpected validator failure');
 		const validatePrepared = vi.fn<(candidate: EditPreparation) => void>(() => {

@@ -130,11 +130,17 @@ The model does not write arbitrary response text into your note. It returns Oper
 - **Structural safeguards:** Checks protect inline code, fenced code, table structure, and existing CriticMarkup. Selection candidates are also checked in the composed full note.
 - **CriticMarkup compilation:** Valid replacements become deterministic review markup. Emend minimizes replacement ranges where safe rather than rewriting the whole target by default.
 - **Freshness checks:** Full-note and Selection Edit require the saved note, the captured editor, and every open editor for that note to match the complete captured note before writing. The original target must still be active and the request must not be cancelled. Comparisons are exact; line-ending or other normalization cannot make a changed source writable.
-- **One candidate correction:** A candidate-validation failure can trigger one automatic correction request to the same provider and model. It includes the original request, invalid candidate, and bounded feedback. A second invalid candidate writes nothing.
+- **One candidate correction:** Except for the terminal in-token Selection rejection below, a candidate-validation failure can trigger one automatic correction request to the same provider and model. It includes the original request, invalid candidate, and bounded feedback. A second invalid candidate writes nothing.
 
 Provider errors, cancellation, stale sources, and write failures do not start that candidate-validation correction. No failure path applies a partial candidate.
 
-For technical details, see [Stage 37: Minimal edit ranges and guarded correction](../../devel_docs/37-minimal-edit-ranges.md), [Stage 38: Markdown edit safeguards](../../devel_docs/38-markdown-edit-safeguards.md), [Stage 51: 2.10 stabilization](../../devel_docs/51-2-10-stabilization.md), and [Stage 56: Shared edit freshness](../../devel_docs/56-edit-freshness.md).
+If a nonempty Selection is strictly inside an existing pending tracked change and its changed candidate fails composed complete-note CriticMarkup validation, Emend instead shows:
+
+> This selection is inside a pending tracked change. Accept or reject that change in Track Changes first, then try again. No edits were applied.
+
+The initial provider request has already happened, but Emend skips only this impossible correction, its continuation and retry callback, and all edit freshness reads and writes. Other candidate-validation failures keep their correction round. Accept or reject the pending change in Track Changes, then make a fresh Selection and submit a new request. Selecting the whole pending change does not enable follow-up editing or pending-card merging. A source-valid response that changes nothing remains an ordinary `No changes were needed.` result, not this error.
+
+For technical details, see [Stage 37: Minimal edit ranges and guarded correction](../../devel_docs/37-minimal-edit-ranges.md), [Stage 38: Markdown edit safeguards](../../devel_docs/38-markdown-edit-safeguards.md), [Stage 51: 2.10 stabilization](../../devel_docs/51-2-10-stabilization.md), [Stage 56: Shared edit freshness](../../devel_docs/56-edit-freshness.md), and [Stage 59: Actionable in-token rejection](../../devel_docs/59-actionable-in-token-rejection.md).
 
 ## Review and undo
 

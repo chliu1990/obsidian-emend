@@ -19,6 +19,44 @@ function captureError(run: () => unknown): unknown {
 }
 
 describe('edit validation feedback', () => {
+	it('defaults response validation errors to correction eligible', () => {
+		const error = new EditResponseValidationError('invalid-json', 'Invalid response.');
+
+		expect(error.correctionEligible).toBe(true);
+	});
+
+	it('supports explicitly non-correctable in-token selection errors', () => {
+		const error = new EditResponseValidationError(
+			'in-token-selection',
+			'Selection is inside a pending tracked change.',
+			{},
+			{ correctionEligible: false },
+		);
+
+		expect(error.code).toBe('in-token-selection');
+		expect(error.correctionEligible).toBe(false);
+	});
+
+	it('keeps bounded diagnostics unchanged for non-correctable errors', () => {
+		const error = new EditResponseValidationError(
+			'compiled-markup-rejected',
+			'PRIVATE SOURCE TARGET REPLACEMENT COMMENT',
+			{
+				operation: 2,
+				operationType: 'replace',
+				field: 'target',
+				matchLines: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+			},
+			{ correctionEligible: false },
+		);
+
+		const feedback = formatEditValidationFeedback(error);
+		expect(feedback).toBe('Return only a new complete JSON array of operations, or an envelope object with operations and an optional summary, against the unchanged original snapshot.\n{"code":"compiled-markup-rejected","operation":2,"operationType":"replace","field":"target","matchLines":[1,2,3,4,5,6,7,8]}');
+		expect(feedback.length).toBeLessThan(4000);
+		expect(feedback).not.toContain('PRIVATE SOURCE TARGET REPLACEMENT COMMENT');
+		expect(feedback).not.toContain('correctionEligible');
+	});
+
 	it('returns the fixed retry instruction and one compact JSON diagnostic', () => {
 		const error = captureError(() => compileEditOperations(
 			'PRIVATE SOURCE EXCERPT',
