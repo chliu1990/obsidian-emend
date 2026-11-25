@@ -7,6 +7,15 @@ export type MarkupTokenType =
 	| 'comment'
 	| 'highlight';
 
+export type EmendMarkupTokenType = Exclude<MarkupTokenType, 'highlight'>;
+
+export interface MarkupTokenMetadata {
+	raw: string;
+	attributes: Readonly<Record<string, string>>;
+	author?: string;
+	date?: string;
+}
+
 export interface MarkupToken {
 	type: MarkupTokenType;
 	raw: string;
@@ -15,12 +24,19 @@ export interface MarkupToken {
 	end: number;
 	oldText?: string;
 	newText?: string;
+	metadata?: MarkupTokenMetadata;
 }
 
 interface MarkupDelimiter {
 	type: MarkupTokenType;
 	opener: string;
 	closer: string;
+}
+
+interface MarkupOpenerMatch {
+	delimiter: MarkupDelimiter;
+	contentStart: number;
+	metadata?: MarkupTokenMetadata;
 }
 
 const MARKUP_DELIMITERS: MarkupDelimiter[] = [
@@ -31,15 +47,108 @@ const MARKUP_DELIMITERS: MarkupDelimiter[] = [
 	{ type: 'highlight', opener: '{==', closer: '==}' },
 ];
 
+function matchMarkupOpener(text: string, index: number): MarkupOpenerMatch | undefined {
+	const bareDelimiter = MARKUP_DELIMITERS.find((candidate) =>
+		text.startsWith(candidate.opener, index),
+	);
+	if (bareDelimiter) {
+		return {
+			delimiter: bareDelimiter,
+			contentStart: index + bareDelimiter.opener.length,
+		};
+	}
+	if (text[index] !== '{') {
+		return undefined;
+	}
+
+	const attributes = Object.create(null) as Record<string, string>;
+	let cursor = index + 1;
+	while (cursor < text.length) {
+		const keyStart = cursor;
+		if (!isAsciiLetter(text[cursor])) {
+			return undefined;
+		}
+		cursor += 1;
+		while (isAttributeKeyCharacter(text[cursor])) {
+			cursor += 1;
+		}
+		const key = text.slice(keyStart, cursor).toLowerCase();
+		if (text[cursor] !== '=' || text[cursor + 1] !== '"') {
+			return undefined;
+		}
+		cursor += 2;
+		const valueStart = cursor;
+		while (cursor < text.length && text[cursor] !== '"') {
+			const character = text[cursor];
+			if (character === '{' || character === '}' || character === '\n') {
+				return undefined;
+			}
+			cursor += 1;
+		}
+		if (text[cursor] !== '"') {
+			return undefined;
+		}
+		const value = text.slice(valueStart, cursor).trim();
+		cursor += 1;
+		if (value && !Object.prototype.hasOwnProperty.call(attributes, key)) {
+			attributes[key] = value;
+		}
+
+		const attributeEnd = cursor;
+		while (text[cursor] === ' ' || text[cursor] === '\t') {
+			cursor += 1;
+		}
+		const delimiter = MARKUP_DELIMITERS.find((candidate) =>
+			text.startsWith(candidate.opener.slice(1), cursor),
+		);
+		if (delimiter) {
+			const metadata: MarkupTokenMetadata = {
+				raw: text.slice(index + 1, cursor),
+				attributes,
+			};
+			if (attributes.author !== undefined) {
+				metadata.author = attributes.author;
+			}
+			if (attributes.date !== undefined) {
+				metadata.date = attributes.date;
+			}
+			return {
+				delimiter,
+				contentStart: cursor + delimiter.opener.length - 1,
+				metadata,
+			};
+		}
+		if (cursor === attributeEnd) {
+			return undefined;
+		}
+	}
+	return undefined;
+}
+
+function isAsciiLetter(character: string | undefined): boolean {
+	return (
+		character !== undefined &&
+		((character >= 'A' && character <= 'Z') ||
+			(character >= 'a' && character <= 'z'))
+	);
+}
+
+function isAttributeKeyCharacter(character: string | undefined): boolean {
+	return (
+		isAsciiLetter(character) ||
+		(character !== undefined && character >= '0' && character <= '9') ||
+		character === '_' ||
+		character === '-'
+	);
+}
+
 export function parseCriticMarkup(text: string): MarkupToken[] {
 	const tokens: MarkupToken[] = [];
 	let index = 0;
 
 	while (index < text.length) {
-		const delimiter = MARKUP_DELIMITERS.find((candidate) =>
-			text.startsWith(candidate.opener, index),
-		);
-		if (!delimiter) {
+		const opener = matchMarkupOpener(text, index);
+		if (!opener) {
 			const unexpectedCloser = MARKUP_DELIMITERS.find((candidate) =>
 				text.startsWith(candidate.closer, index),
 			);
@@ -52,13 +161,13 @@ export function parseCriticMarkup(text: string): MarkupToken[] {
 			continue;
 		}
 
-		const contentStart = index + delimiter.opener.length;
-		const contentEnd = text.indexOf(delimiter.closer, contentStart);
+		const { delimiter } = opener;
+		const contentEnd = text.indexOf(delimiter.closer, opener.contentStart);
 		if (contentEnd === -1) {
 			throw new Error(`Unclosed ${delimiter.type} at offset ${index}.`);
 		}
 
-		const content = text.slice(contentStart, contentEnd);
+		const content = text.slice(opener.contentStart, contentEnd);
 		assertNoNestedDelimiters(content, index);
 		const end = contentEnd + delimiter.closer.length;
 		const token: MarkupToken = {
@@ -68,6 +177,9 @@ export function parseCriticMarkup(text: string): MarkupToken[] {
 			start: index,
 			end,
 		};
+		if (opener.metadata) {
+			token.metadata = opener.metadata;
+		}
 
 		if (delimiter.type === 'substitution') {
 			const separatorIndex = content.indexOf('~>');
@@ -85,6 +197,34 @@ export function parseCriticMarkup(text: string): MarkupToken[] {
 	}
 
 	return tokens;
+}
+
+export function createEmendCriticMarkupToken(
+	type: EmendMarkupTokenType,
+	content: string,
+): string {
+	const delimiter = MARKUP_DELIMITERS.find((candidate) => candidate.type === type);
+	if (!delimiter) {
+		throw new Error('Unsupported CriticMarkup token type.');
+	}
+	return `{author="Emend"${delimiter.opener.slice(1)}${content}${delimiter.closer}`;
+}
+
+export function containsCriticMarkupDelimiter(text: string): boolean {
+	if (text.includes('~>')) {
+		return true;
+	}
+	for (let index = 0; index < text.length; index += 1) {
+		if (matchMarkupOpener(text, index)) {
+			return true;
+		}
+		if (
+			MARKUP_DELIMITERS.some((candidate) => text.startsWith(candidate.closer, index))
+		) {
+			return true;
+		}
+	}
+	return false;
 }
 
 export function toRejectView(text: string): string {
@@ -146,6 +286,16 @@ export function prepareCriticMarkupEdit(
 }
 
 function assertNoNestedDelimiters(content: string, tokenStart: number): void {
+	let hasAttributedOpener = false;
+	for (let index = 0; index < content.length; index += 1) {
+		if (matchMarkupOpener(content, index)?.metadata) {
+			hasAttributedOpener = true;
+			break;
+		}
+	}
+	if (hasAttributedOpener) {
+		throw new Error(`Nested CriticMarkup token inside token at offset ${tokenStart}.`);
+	}
 	for (const delimiter of MARKUP_DELIMITERS) {
 		if (content.includes(delimiter.opener)) {
 			throw new Error(`Nested CriticMarkup token inside token at offset ${tokenStart}.`);
