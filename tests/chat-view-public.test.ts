@@ -1276,7 +1276,7 @@ describe('EmendChatView public modification submission and persistence', () => {
 		}
 		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
 			editSubmission.context.file,
-			'Alpha {~~beta~>delta~~}.',
+			'Alpha {author="Emend"~~beta~>delta~~}.',
 		);
 		expect(savedSnapshots).toHaveLength(2);
 		const savedUser = savedSnapshots[0]?.[0];

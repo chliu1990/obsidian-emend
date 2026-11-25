@@ -846,7 +846,7 @@ describe('EditRequestCoordinator', () => {
 		);
 		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
 			submission.context.file,
-			'# Note\n{~~Original~>Edited~~} text',
+			'# Note\n{author="Emend"~~Original~>Edited~~} text',
 		);
 		expect(request.mock.invocationCallOrder[0]).toBeLessThan(
 			(writer.write as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0] ??
@@ -875,7 +875,7 @@ describe('EditRequestCoordinator', () => {
 		});
 		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
 			submission.context.file,
-			'# Note\n{~~Original~>Edited~~} text',
+			'# Note\n{author="Emend"~~Original~>Edited~~} text',
 		);
 		expect(
 			(writer.write as ReturnType<typeof vi.fn>).mock.calls[0]?.[1],
@@ -930,7 +930,7 @@ describe('EditRequestCoordinator', () => {
 		expect(result.summary).not.toContain('Rejected');
 		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
 			submission.context.file,
-			'# Note\n{~~Original~>Edited~~} text',
+			'# Note\n{author="Emend"~~Original~>Edited~~} text',
 		);
 	});
 
@@ -953,7 +953,7 @@ describe('EditRequestCoordinator', () => {
 		}]);
 		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
 			submission.context.file,
-			'# Note\nOriginal{>>Review this.<<} text',
+			'# Note\nOriginal{author="Emend">>Review this.<<} text',
 		);
 	});
 
@@ -998,7 +998,7 @@ describe('EditRequestCoordinator', () => {
 
 		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
 			submission.context.file,
-			'# Note\nOriginal{++ changed++} text',
+			'# Note\nOriginal{author="Emend"++ changed++} text',
 		);
 		expect(additionalNote.markdown).toBe('Additional only.');
 	});
@@ -1143,7 +1143,7 @@ describe('EditRequestCoordinator', () => {
 		expect(writer.readCurrentText).toHaveBeenCalledOnce();
 		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
 			submission.context.file,
-			'# Note\nThey {~~have~>has~~} a plan.',
+			'# Note\nThey {author="Emend"~~have~>has~~} a plan.',
 		);
 		expect(result).toEqual({
 			applied: true,
@@ -1326,7 +1326,7 @@ describe('EditRequestCoordinator', () => {
 		expect(feedback).not.toContain('PRIVATE REPLACEMENT');
 		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
 			submission.context.file,
-			'Before {~~`alpha`~>`beta`~~} after',
+			'Before {author="Emend"~~`alpha`~>`beta`~~} after',
 		);
 	});
 
@@ -1354,7 +1354,7 @@ describe('EditRequestCoordinator', () => {
 		expect(request.mock.calls[1]?.[0].continuation?.[1]?.content).toContain('"code":"table-structure-edit"');
 		expect(writer.write).toHaveBeenCalledExactlyOnceWith(
 			submission.context.file,
-			'| {~~Alpha~>First~~} | Beta |\n| --- | --- |\n| one | two |',
+			'| {author="Emend"~~Alpha~>First~~} | Beta |\n| --- | --- |\n| one | two |',
 		);
 	});
 
@@ -2168,7 +2168,7 @@ describe('authoritative assembled-request capacity checks', () => {
 		expect(retryFetch).toHaveBeenCalledTimes(2);
 		expect(retry.writer.write).toHaveBeenCalledExactlyOnceWith(
 			submission.context.file,
-			'# Note\n{~~Original~>Edited~~} text',
+			'# Note\n{author="Emend"~~Original~>Edited~~} text',
 		);
 	});
 });

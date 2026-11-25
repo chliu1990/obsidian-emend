@@ -267,9 +267,9 @@ describe('sequential full-note edits', () => {
 	it('uses each annotated result as the next source and keeps only concise history', async () => {
 		const fixture = makePluginFixture({ 'Note.md': 'Alpha beta gamma.' });
 		const responses = [
-			'Alpha {~~beta~>delta~~} gamma.',
-			'Alpha {~~beta~>delta~~} {~~gamma~>epsilon~~}.',
-			'Alpha {~~beta~>delta~~} {~~gamma~>epsilon~~}.{++Tail++}',
+			'Alpha {author="Emend"~~beta~>delta~~} gamma.',
+			'Alpha {author="Emend"~~beta~>delta~~} {author="Emend"~~gamma~>epsilon~~}.',
+			'Alpha {author="Emend"~~beta~>delta~~} {author="Emend"~~gamma~>epsilon~~}.{author="Emend"++Tail++}',
 		];
 		const operationResponses = [
 			[{ type: 'replace', target: 'beta', replacement: 'delta' }],
@@ -352,8 +352,8 @@ describe('sequential full-note edits', () => {
 			{ role: 'assistant', content: `${editStatusAnnotation}\n${summary}` },
 		]);
 		expect(fixture.getText('Note.md')).toBe(responses[2]);
-		expect(fixture.getText('Note.md')).toContain('{~~beta~>delta~~}');
-		expect(fixture.getText('Note.md')).toContain('{~~gamma~>epsilon~~}');
+		expect(fixture.getText('Note.md')).toContain('{author="Emend"~~beta~>delta~~}');
+		expect(fixture.getText('Note.md')).toContain('{author="Emend"~~gamma~>epsilon~~}');
 		expect(fixture.writes.map((write) => write.text)).toEqual(responses);
 		const assistantMessages = (view as unknown as { messages: ChatMessage[] }).messages
 			.filter((message) => message.role === 'assistant');
@@ -363,7 +363,7 @@ describe('sequential full-note edits', () => {
 			insertionSummary,
 		]);
 		expect(
-			savedSnapshots.flat().every((message) => !message.content.includes('{~~')),
+			savedSnapshots.flat().every((message) => !message.content.includes('~>')),
 		).toBe(true);
 	});
 
@@ -419,7 +419,7 @@ describe('sequential full-note edits', () => {
 			operations,
 		);
 		expect(fixture.writes).toEqual([
-			{ path: 'Note.md', text: 'Alpha {~~beta~>delta~~}.' },
+			{ path: 'Note.md', text: 'Alpha {author="Emend"~~beta~>delta~~}.' },
 		]);
 	});
 });
@@ -466,7 +466,7 @@ describe('shared per-note request isolation', () => {
 			usage: { source: 'estimated' },
 		});
 		expect(fixture.getText('Note.md')).toBe(
-			'Alpha{++ chat++} {~~beta~>delta~~}.',
+			'Alpha{author="Emend"++ chat++} {author="Emend"~~beta~>delta~~}.',
 		);
 	});
 
@@ -558,7 +558,7 @@ describe('shared per-note request isolation', () => {
 		pendingResponse.finish();
 		await pending;
 
-		expect(fixture.getText('Note.md')).toBe('Alpha {~~beta~>delta~~}.');
+		expect(fixture.getText('Note.md')).toBe('Alpha {author="Emend"~~beta~>delta~~}.');
 		expect(selection.editor.replaceRange).toHaveBeenCalledOnce();
 		expect(fixture.writes).toEqual([]);
 	});
@@ -735,9 +735,9 @@ describe('shared per-note request isolation', () => {
 		await expect(pendingA).rejects.toThrow(STALE_ERROR);
 
 		expect(fixture.getText('A.md')).toBe('A original.');
-		expect(fixture.getText('B.md')).toBe('B{++ applied++} original.');
+		expect(fixture.getText('B.md')).toBe('B{author="Emend"++ applied++} original.');
 		expect(fixture.writes).toEqual([
-			{ path: 'B.md', text: 'B{++ applied++} original.' },
+			{ path: 'B.md', text: 'B{author="Emend"++ applied++} original.' },
 		]);
 		expect(requestMock.mock.calls[0]?.[0].history).toEqual([
 			{ role: 'assistant', content: 'A history', mode: 'edit', origin: 'model' },
@@ -831,8 +831,8 @@ describe('second-round request isolation', () => {
 			changeCount: 1,
 		});
 		expect(fixture.writes).toEqual([
-			{ path: 'B.md', text: '{~~B~>Corrected~~} original.' },
-			{ path: 'A.md', text: 'A{++ corrected++} original.' },
+			{ path: 'B.md', text: '{author="Emend"~~B~>Corrected~~} original.' },
+			{ path: 'A.md', text: 'A{author="Emend"++ corrected++} original.' },
 		]);
 	});
 

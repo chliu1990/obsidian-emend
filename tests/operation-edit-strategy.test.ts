@@ -70,7 +70,7 @@ describe('operation EditStrategy protocol', () => {
 		expect(prepare('Alpha beta', [
 			{ type: 'insert', anchor: 'beta', position: 'before', text: 'new ' },
 		])).toEqual({
-			annotatedMarkdown: 'Alpha {++new ++}beta',
+			annotatedMarkdown: 'Alpha {author="Emend"++new ++}beta',
 			changeCount: 1,
 			summaryItems: [{ type: 'insert', start: 6, end: 10, insertionPoint: 6 }],
 		});
@@ -80,7 +80,7 @@ describe('operation EditStrategy protocol', () => {
 		expect(prepare('Alpha beta', [
 			{ type: 'insert', anchor: 'Alpha', position: 'after', text: ' new' },
 		])).toEqual({
-			annotatedMarkdown: 'Alpha{++ new++} beta',
+			annotatedMarkdown: 'Alpha{author="Emend"++ new++} beta',
 			changeCount: 1,
 			summaryItems: [{ type: 'insert', start: 0, end: 5, insertionPoint: 5 }],
 		});
@@ -88,7 +88,7 @@ describe('operation EditStrategy protocol', () => {
 
 	it('compiles a removal', () => {
 		expect(prepare('Alpha beta', [{ type: 'remove', target: 'beta' }])).toEqual({
-			annotatedMarkdown: 'Alpha {--beta--}',
+			annotatedMarkdown: 'Alpha {author="Emend"--beta--}',
 			changeCount: 1,
 			summaryItems: [{ type: 'remove', start: 6, end: 10 }],
 		});
@@ -98,7 +98,7 @@ describe('operation EditStrategy protocol', () => {
 		expect(prepare('Alpha beta', [
 			{ type: 'replace', target: 'beta', replacement: 'gamma' },
 		])).toEqual({
-			annotatedMarkdown: 'Alpha {~~beta~>gamma~~}',
+			annotatedMarkdown: 'Alpha {author="Emend"~~beta~>gamma~~}',
 			changeCount: 1,
 			summaryItems: [{ type: 'replace', start: 6, end: 10 }],
 		});
@@ -108,7 +108,7 @@ describe('operation EditStrategy protocol', () => {
 		expect(prepare('They have a plan.', [
 			{ type: 'replace', target: 'They have a plan.', replacement: 'They has a plan.' },
 		])).toEqual({
-			annotatedMarkdown: 'They {~~have~>has~~} a plan.',
+			annotatedMarkdown: 'They {author="Emend"~~have~>has~~} a plan.',
 			changeCount: 1,
 			summaryItems: [{ type: 'replace', start: 0, end: 17 }],
 		});
@@ -123,7 +123,7 @@ describe('operation EditStrategy protocol', () => {
 				replacement: 'The quick red fox leaps over the lazy dog.',
 			},
 		])).toEqual({
-			annotatedMarkdown: 'The quick {~~brown~>red~~} fox {~~jumps~>leaps~~} over the lazy dog.',
+			annotatedMarkdown: 'The quick {author="Emend"~~brown~>red~~} fox {author="Emend"~~jumps~>leaps~~} over the lazy dog.',
 			changeCount: 2,
 			summaryItems: [{ type: 'replace', start: 0, end: 44 }],
 		});
@@ -138,7 +138,7 @@ describe('operation EditStrategy protocol', () => {
 				occurrence: 2,
 			},
 		])).toEqual({
-			annotatedMarkdown: 'I have one.\nI {~~have~>has~~} one.',
+			annotatedMarkdown: 'I have one.\nI {author="Emend"~~have~>has~~} one.',
 			changeCount: 1,
 			summaryItems: [{ type: 'replace', start: 12, end: 23 }],
 		});
@@ -158,7 +158,7 @@ describe('operation EditStrategy protocol', () => {
 		expect(prepare('Alpha beta', [
 			{ type: 'comment', target: 'beta', comment: 'Review this.' },
 		])).toEqual({
-			annotatedMarkdown: 'Alpha beta{>>Review this.<<}',
+			annotatedMarkdown: 'Alpha beta{author="Emend">>Review this.<<}',
 			changeCount: 0,
 			summaryItems: [{ type: 'comment', start: 6, end: 10 }],
 		});
@@ -198,7 +198,7 @@ describe('operation EditStrategy protocol', () => {
 			},
 			{ type: 'insert', anchor: '後', position: 'before', text: '終\n' },
 		])).toEqual({
-			annotatedMarkdown: '前🙂\n{~~第一行~>新しい🙂~~}\n{--第二--}行\n{++終\n++}後',
+			annotatedMarkdown: '前🙂\n{author="Emend"~~第一行~>新しい🙂~~}\n{author="Emend"--第二--}行\n{author="Emend"++終\n++}後',
 			changeCount: 3,
 			summaryItems: [
 				{ type: 'replace', start: 4, end: 11 },
@@ -220,12 +220,12 @@ describe('operation EditStrategy protocol', () => {
 
 			expect(prepare('same same same', [operation]).annotatedMarkdown).toBe(
 				type === 'insert'
-					? 'same same{++!++} same'
+					? 'same same{author="Emend"++!++} same'
 					: type === 'remove'
-						? 'same {--same--} same'
+						? 'same {author="Emend"--same--} same'
 						: type === 'replace'
-							? 'same {~~same~>new~~} same'
-							: 'same same{>>note<<} same',
+							? 'same {author="Emend"~~same~>new~~} same'
+							: 'same same{author="Emend">>note<<} same',
 			);
 		},
 	);
@@ -237,8 +237,26 @@ describe('operation EditStrategy protocol', () => {
 			{ type: 'insert', anchor: 'one', position: 'after', text: '!' },
 			{ type: 'comment', target: 'three', comment: 'keep' },
 		]).annotatedMarkdown).toBe(
-			'one{++!++} {~~two~>2~~} three{>>keep<<} {--four--}',
+			'one{author="Emend"++!++} {author="Emend"~~two~>2~~} three{author="Emend">>keep<<} {author="Emend"--four--}',
 		);
+	});
+
+	it('attributes a mixed four-operation candidate and counts only text changes', () => {
+		expect(prepare('Alpha beta gamma delta', [
+			{ type: 'insert', anchor: 'Alpha', position: 'after', text: '!' },
+			{ type: 'remove', target: 'beta' },
+			{ type: 'replace', target: 'gamma', replacement: 'Gamma' },
+			{ type: 'comment', target: 'delta', comment: 'Review.' },
+		])).toEqual({
+			annotatedMarkdown: 'Alpha{author="Emend"++!++} {author="Emend"--beta--} {author="Emend"~~gamma~>Gamma~~} delta{author="Emend">>Review.<<}',
+			changeCount: 3,
+			summaryItems: [
+				{ type: 'insert', start: 0, end: 5, insertionPoint: 5 },
+				{ type: 'remove', start: 6, end: 10 },
+				{ type: 'replace', start: 11, end: 16 },
+				{ type: 'comment', start: 17, end: 22 },
+			],
+		});
 	});
 
 	it('keeps multiple insertions at one original position in request order', () => {
@@ -247,7 +265,7 @@ describe('operation EditStrategy protocol', () => {
 			{ type: 'insert', anchor: 'anchor', position: 'after', text: 'second' },
 			{ type: 'insert', anchor: 'anchor', position: 'after', text: 'third' },
 		]).annotatedMarkdown).toBe(
-			'anchor{++first++}{++second++}{++third++}',
+			'anchor{author="Emend"++first++}{author="Emend"++second++}{author="Emend"++third++}',
 		);
 	});
 
@@ -256,10 +274,35 @@ describe('operation EditStrategy protocol', () => {
 		expect(prepare(original, [
 			{ type: 'replace', target: 'alpha', replacement: 'beta' },
 		])).toEqual({
-			annotatedMarkdown: '{++Existing++} {~~alpha~>beta~~}',
+			annotatedMarkdown: '{++Existing++} {author="Emend"~~alpha~>beta~~}',
 			changeCount: 1,
 			summaryItems: [{ type: 'replace', start: 15, end: 20 }],
 		});
+	});
+
+	it('preserves bare and attributed tokens across follow-up edits', () => {
+		const original = '{++Bare++} {author="Other"--old--} {author="Other"==highlight==} alpha beta';
+		const first = prepare(original, [
+			{ type: 'replace', target: 'alpha', replacement: 'Alpha' },
+			{ type: 'comment', target: 'beta', comment: 'First.' },
+		]);
+		expect(first.annotatedMarkdown).toBe(
+			'{++Bare++} {author="Other"--old--} {author="Other"==highlight==} {author="Emend"~~alpha~>Alpha~~} beta{author="Emend">>First.<<}',
+		);
+		expect(first.changeCount).toBe(1);
+		expect(first.summaryItems.map((item) => item.type)).toEqual(['replace', 'comment']);
+
+		const second = prepare(first.annotatedMarkdown, [
+			{ type: 'replace', target: 'beta', replacement: 'Beta' },
+		]);
+		expect(second.annotatedMarkdown).toBe(
+			'{++Bare++} {author="Other"--old--} {author="Other"==highlight==} {author="Emend"~~alpha~>Alpha~~} {author="Emend"~~beta~>Beta~~}{author="Emend">>First.<<}',
+		);
+		expect(second.changeCount).toBe(1);
+		expect(second.annotatedMarkdown).toContain('{++Bare++}');
+		expect(second.annotatedMarkdown).toContain('{author="Other"--old--}');
+		expect(second.annotatedMarkdown).toContain('{author="Other"==highlight==}');
+		expect(second.annotatedMarkdown).toContain('{author="Emend"~~alpha~>Alpha~~}');
 	});
 
 	it('classifies Stage 07 candidate rejection without exposing the compiler error', () => {
@@ -398,6 +441,64 @@ describe('operation EditStrategy protocol', () => {
 			}));
 		},
 	);
+
+	it.each([
+		{
+			field: 'anchor',
+			operationType: 'insert',
+			operation: { type: 'insert', anchor: '{author="PRIVATE_ATTRIBUTE"++', position: 'after', text: 'x' },
+		},
+		{
+			field: 'target',
+			operationType: 'remove',
+			operation: { type: 'remove', target: '{author="PRIVATE_ATTRIBUTE"--' },
+		},
+		{
+			field: 'target',
+			operationType: 'replace',
+			operation: { type: 'replace', target: '{author="PRIVATE_ATTRIBUTE"~~', replacement: 'x' },
+		},
+		{
+			field: 'target',
+			operationType: 'comment',
+			operation: { type: 'comment', target: '{author="PRIVATE_ATTRIBUTE">>', comment: 'x' },
+		},
+		{
+			field: 'text',
+			operationType: 'insert',
+			operation: { type: 'insert', anchor: 'Alpha', position: 'after', text: '{author="PRIVATE_ATTRIBUTE"==' },
+		},
+		{
+			field: 'replacement',
+			operationType: 'replace',
+			operation: { type: 'replace', target: 'Alpha', replacement: '{author="PRIVATE_ATTRIBUTE"++' },
+		},
+		{
+			field: 'comment',
+			operationType: 'comment',
+			operation: { type: 'comment', target: 'Alpha', comment: '{author="PRIVATE_ATTRIBUTE">>' },
+		},
+	] as const)('rejects attributed delimiter injection through $operationType $field without source leakage', ({
+		field,
+		operationType,
+		operation,
+	}) => {
+		const error = structuralError(() => compileEditOperations(
+			'PRIVATE SOURCE Alpha',
+			JSON.stringify([operation]),
+		));
+
+		expect(error).toMatchObject({
+			name: 'EditResponseValidationError',
+			code: 'invalid-operation',
+			operation: 1,
+			operationType,
+			field,
+		});
+		expect((error as Error).message).not.toContain('PRIVATE SOURCE');
+		expect((error as Error).message).not.toContain('PRIVATE_ATTRIBUTE');
+		expect((error as Error).message).not.toContain('author=');
+	});
 
 	it('rejects the entire array when a later operation is invalid', () => {
 		expect(() => prepare('Alpha beta', [
@@ -567,7 +668,7 @@ describe('operation summary envelope', () => {
 		{ type: 'replace', target: 'beta', replacement: 'gamma' },
 		{ type: 'insert', anchor: 'Alpha', position: 'after', text: '!' },
 	] as const;
-	const annotated = 'Alpha{++!++} {~~beta~>gamma~~}';
+	const annotated = 'Alpha{author="Emend"++!++} {author="Emend"~~beta~>gamma~~}';
 
 	it('returns the trimmed envelope summary with the same compiled edit as the bare array', () => {
 		const bare = prepare('Alpha beta', operations);
@@ -896,10 +997,10 @@ describe('Markdown structural edit safeguards', () => {
 	it('compiles a balanced code-block insertion', () => {
 		expect(prepare('Alpha beta.', [
 			{ type: 'insert', anchor: 'beta.', position: 'after', text: '\n```\ncode\n```\n' },
-		]).annotatedMarkdown).toBe('Alpha beta.{++\n```\ncode\n```\n++}');
+		]).annotatedMarkdown).toBe('Alpha beta.{author="Emend"++\n```\ncode\n```\n++}');
 		expect(prepare('Alpha beta.', [
 			{ type: 'replace', target: 'beta.', replacement: 'see `code`.' },
-		]).annotatedMarkdown).toBe('Alpha {~~beta.~>see `code`.~~}');
+		]).annotatedMarkdown).toBe('Alpha {author="Emend"~~beta.~>see `code`.~~}');
 	});
 
 	it.each([
@@ -964,10 +1065,10 @@ describe('Markdown structural edit safeguards', () => {
 	it('compiles complete-span and larger-span replacements without fragmenting delimiters', () => {
 		expect(prepare('Before `alpha` after', [
 			{ type: 'replace', target: '`alpha`', replacement: '`beta`' },
-		]).annotatedMarkdown).toBe('Before {~~`alpha`~>`beta`~~} after');
+		]).annotatedMarkdown).toBe('Before {author="Emend"~~`alpha`~>`beta`~~} after');
 		expect(prepare('Before `alpha` after', [
 			{ type: 'replace', target: 'Before `alpha` after', replacement: 'Before `beta` after' },
-		]).annotatedMarkdown).toBe('{~~Before `alpha` after~>Before `beta` after~~}');
+		]).annotatedMarkdown).toBe('{author="Emend"~~Before `alpha` after~>Before `beta` after~~}');
 	});
 
 	it('rejects fenced-code targets and insertions with exact line diagnostics', () => {
@@ -1008,7 +1109,7 @@ describe('Markdown structural edit safeguards', () => {
 			{ type: 'remove', target: 'one' },
 			{ type: 'comment', target: 'two', comment: 'Review' },
 		]).annotatedMarkdown).toBe(
-			'| {~~Alpha~>First~~} | Beta |\n| --- | --- |\n| {--one--} | two{>>Review<<} |',
+			'| {author="Emend"~~Alpha~>First~~} | Beta |\n| --- | --- |\n| {author="Emend"--one--} | two{author="Emend">>Review<<} |',
 		);
 	});
 
@@ -1059,7 +1160,7 @@ describe('Markdown structural edit safeguards', () => {
 		]).annotatedMarkdown).toContain('A \\| B');
 		expect(prepare('Alpha | Beta', [
 			{ type: 'replace', target: 'Alpha | Beta', replacement: 'Alpha | Gamma' },
-		]).annotatedMarkdown).toBe('Alpha | {~~Beta~>Gamma~~}');
+		]).annotatedMarkdown).toBe('Alpha | {author="Emend"~~Beta~>Gamma~~}');
 	});
 
 	it('maps selected offsets into full-note structure without expanding occurrence resolution', () => {
@@ -1131,7 +1232,7 @@ describe('Markdown structural edit safeguards', () => {
 describe('conservative Markdown boundary safeguards', () => {
 	it('rejects removing a backslash that would expose a table delimiter', () => {
 		const original = '| Left | Right |\n| --- | --- |\n| one \\| two | three |';
-		const currentAnnotated = '| Left | Right |\n| --- | --- |\n| one {--\\--}| two | three |';
+		const currentAnnotated = '| Left | Right |\n| --- | --- |\n| one {author="Emend"--\\--}| two | three |';
 		expect(toRejectView(currentAnnotated)).toBe(original);
 		expect(toAcceptView(currentAnnotated)).toBe(
 			'| Left | Right |\n| --- | --- |\n| one | two | three |',
@@ -1143,7 +1244,7 @@ describe('conservative Markdown boundary safeguards', () => {
 
 	it('rejects inserting a backslash that escapes an existing table delimiter', () => {
 		const original = '| Left | Right |\n| --- | --- |\n| one | two |';
-		const currentAnnotated = '| Left | Right |\n| --- | --- |\n| one {++\\++}| two |';
+		const currentAnnotated = '| Left | Right |\n| --- | --- |\n| one {author="Emend"++\\++}| two |';
 		expect(toRejectView(currentAnnotated)).toBe(original);
 		expect(toAcceptView(currentAnnotated)).toBe(
 			'| Left | Right |\n| --- | --- |\n| one \\| two |',
@@ -1167,7 +1268,7 @@ describe('conservative Markdown boundary safeguards', () => {
 			{ type: 'insert', anchor: 'three', position: 'before', text: '\\| ' },
 		]);
 		expect(preparation.annotatedMarkdown).toBe(
-			'| Left | Right |\n| --- | --- |\n| {~~one~>first~~} \\| two | {++\\| ++}three |',
+			'| Left | Right |\n| --- | --- |\n| {author="Emend"~~one~>first~~} \\| two | {author="Emend"++\\| ++}three |',
 		);
 		expect(toRejectView(preparation.annotatedMarkdown)).toBe(original);
 		expect(toAcceptView(preparation.annotatedMarkdown)).toBe(
@@ -1268,7 +1369,7 @@ describe('remaining Markdown boundary bypasses', () => {
 		['fenced code', '\\``` | two', '``` | two'],
 	])('rejects a backslash removal that exposes an %s start', (_label, originalRow, acceptedRow) => {
 		const original = `Alpha | Beta\n--- | ---\n${originalRow}`;
-		const currentAnnotated = original.replace('\\', '{--\\--}');
+		const currentAnnotated = original.replace('\\', '{author="Emend"--\\--}');
 		expect(toRejectView(currentAnnotated)).toBe(original);
 		expect(toAcceptView(currentAnnotated)).toBe(`Alpha | Beta\n--- | ---\n${acceptedRow}`);
 		expect(() => prepare(original, [
@@ -1476,7 +1577,7 @@ describe('scoped fence opening exemptions', () => {
 describe('composed table edit candidates', () => {
 	it('rejects actual minimized delimiter fragmentation in the composed annotated row', () => {
 		const original = '| Left | Right |\n| --- | --- |\n| \\| two | three |';
-		const currentAnnotated = '| Left | Right |\n| --- | --- |\n| \\{++\\\\++}| two | three |';
+		const currentAnnotated = '| Left | Right |\n| --- | --- |\n| \\{author="Emend"++\\\\++}| two | three |';
 		expect(toRejectView(currentAnnotated)).toBe(original);
 		expect(toAcceptView(currentAnnotated)).toBe(
 			`| Left | Right |\n| --- | --- |\n| ${'\\'.repeat(3)}| two | three |`,
@@ -1492,7 +1593,7 @@ describe('composed table edit candidates', () => {
 
 	it('rejects multi-operation backslash parity changes composed on one original row', () => {
 		const original = '| Left | Right |\n| --- | --- |\n| \\ab\\| two | three |';
-		const currentAnnotated = '| Left | Right |\n| --- | --- |\n| \\{--a--}{--b--}\\| two | three |';
+		const currentAnnotated = '| Left | Right |\n| --- | --- |\n| \\{author="Emend"--a--}{author="Emend"--b--}\\| two | three |';
 		expect(toRejectView(currentAnnotated)).toBe(original);
 		expect(toAcceptView(currentAnnotated)).toBe(
 			'| Left | Right |\n| --- | --- |\n| \\\\| two | three |',
@@ -1505,7 +1606,7 @@ describe('composed table edit candidates', () => {
 
 	it('composes an insertion at its zero-width insertionPoint rather than its anchor bounds', () => {
 		const original = 'Alpha | Beta\n--- | ---\none\\\\|two';
-		const currentAnnotated = 'Alpha | Beta\n--- | ---\none\\{++x++}\\|two';
+		const currentAnnotated = 'Alpha | Beta\n--- | ---\none\\{author="Emend"++x++}\\|two';
 		expect(toRejectView(currentAnnotated)).toBe(original);
 		expect(toAcceptView(currentAnnotated)).toBe('Alpha | Beta\n--- | ---\none\\x\\|two');
 		expect(() => prepare(original, [
@@ -1525,7 +1626,7 @@ describe('composed table edit candidates', () => {
 		const preparation = prepare(original, [
 			{ type: 'replace', target: 'one', replacement: 'first' },
 		]);
-		expect(preparation.annotatedMarkdown).toBe('Alpha | Beta\n--- | ---\n{~~one~>first~~} | two');
+		expect(preparation.annotatedMarkdown).toBe('Alpha | Beta\n--- | ---\n{author="Emend"~~one~>first~~} | two');
 		expect(toRejectView(preparation.annotatedMarkdown)).toBe(original);
 		expect(toAcceptView(preparation.annotatedMarkdown)).toBe('Alpha | Beta\n--- | ---\nfirst | two');
 	});
@@ -1744,7 +1845,7 @@ describe('operation strategy coordinator integration', () => {
 			signal: new AbortController().signal,
 		})).resolves.toMatchObject({ applied: true, changeCount: 1 });
 		expect(request.mock.calls[0]?.[0].systemPrompt).toContain('bare JSON array');
-		expect(writer.write).toHaveBeenCalledExactlyOnceWith(file, 'Alpha {~~beta~>gamma~~}');
+		expect(writer.write).toHaveBeenCalledExactlyOnceWith(file, 'Alpha {author="Emend"~~beta~>gamma~~}');
 	});
 
 	it('uses the selected strategy for selections and rejects out-of-selection targets without a read or write', async () => {
@@ -1837,6 +1938,88 @@ describe('operation strategy coordinator integration', () => {
 			usage: { source: 'estimated' },
 		});
 		expect(request.mock.calls[0]?.[0].systemPrompt).toContain('inside the selection');
-		expect(editor.replaceRange).toHaveBeenCalledExactlyOnceWith('beta{>>Review<<}', 6, 10);
+		expect(editor.replaceRange).toHaveBeenCalledExactlyOnceWith('beta{author="Emend">>Review<<}', 6, 10);
+	});
+
+	it('writes identical attributed mixed operations through Full-note and full-range Selection', async () => {
+		const file = new TFile();
+		file.path = 'note.md';
+		const original = 'Alpha beta gamma delta';
+		const annotated = 'Alpha{author="Emend"++!++} {author="Emend"--beta--} {author="Emend"~~gamma~>Gamma~~} delta{author="Emend">>Review.<<}';
+		const response = JSON.stringify([
+			{ type: 'insert', anchor: 'Alpha', position: 'after', text: '!' },
+			{ type: 'remove', target: 'beta' },
+			{ type: 'replace', target: 'gamma', replacement: 'Gamma' },
+			{ type: 'comment', target: 'delta', comment: 'Review.' },
+		]);
+		const context: RequestContext = {
+			file,
+			sourceText: original,
+			markdown: original,
+			selection: { from: 0, to: 0 },
+			noteLabel: 'note.md',
+		};
+		const writer: NoteWriter = {
+			readCurrentText: vi.fn(async () => original),
+			write: vi.fn(async () => undefined),
+			isTargetCurrent: vi.fn(() => true),
+		};
+		const editor: SelectionEditorAdapter = {
+			readCurrentText: vi.fn(() => original),
+			readDiskText: vi.fn(async () => original),
+			readEditorTexts: vi.fn(() => [original]),
+			isTargetCurrent: vi.fn(() => true),
+			replaceRange: vi.fn(),
+		};
+		const request = operationRequest(response);
+		const fullNote = new EditRequestCoordinator({
+			provider,
+			loadAdditionalNotes: async () => [],
+			loadInstructions: async () => ({ skillTexts: new Map() }),
+			request,
+			writer,
+			editStrategy: operationEditStrategy,
+		});
+
+		await expect(fullNote.submit({
+			context,
+			mode: 'edit',
+			prompt: 'Apply all four operations.',
+			history: [],
+			additionalNotePaths: [],
+			callbacks: { onReasoning: vi.fn() },
+			signal: new AbortController().signal,
+		})).resolves.toMatchObject({ applied: true, changeCount: 3 });
+		expect(writer.write).toHaveBeenCalledExactlyOnceWith(file, annotated);
+		expect(editor.replaceRange).not.toHaveBeenCalled();
+
+		const snapshot: SelectionSnapshot = {
+			file,
+			fullText: original,
+			selectedText: original,
+			from: 0,
+			to: original.length,
+		};
+		const selection = new SelectionEditRequestCoordinator({
+			provider,
+			loadAdditionalNotes: async () => [],
+			loadInstructions: async () => ({ skillTexts: new Map() }),
+			request,
+			editor,
+			editStrategy: operationEditStrategy,
+		});
+		await expect(selection.submit({
+			snapshot,
+			prompt: 'Apply all four operations.',
+			maxContextCharacters: 1000,
+			smartSelectionContext: true,
+			selectionContext: 'default',
+			additionalNotePaths: [],
+			history: [],
+			signal: new AbortController().signal,
+		})).resolves.toMatchObject({ applied: true, changeCount: 3 });
+
+		expect(editor.replaceRange).toHaveBeenCalledExactlyOnceWith(annotated, 0, original.length);
+		expect(writer.write).toHaveBeenCalledTimes(1);
 	});
 });

@@ -1458,7 +1458,7 @@ describe('EmendPlugin edit freshness', () => {
 		expect(otherGetValue).not.toHaveBeenCalled();
 		expect(vaultModify).toHaveBeenCalledExactlyOnceWith(
 			file,
-			'# Note\nAlpha {~~beta~>delta~~}.',
+			'# Note\nAlpha {author="Emend"~~beta~>delta~~}.',
 		);
 	});
 
@@ -1703,7 +1703,7 @@ describe('EmendPlugin edit freshness', () => {
 		expect(fixture.vaultRead).toHaveBeenCalledExactlyOnceWith(fixture.file);
 		expect(fixture.unrelatedGetValue).not.toHaveBeenCalled();
 		expect(fixture.replaceRange).toHaveBeenCalledExactlyOnceWith(
-			'{~~beta~>delta~~}',
+			'{author="Emend"~~beta~>delta~~}',
 			{ offset: 6 },
 			{ offset: 10 },
 		);

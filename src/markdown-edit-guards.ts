@@ -1,3 +1,4 @@
+import { createEmendCriticMarkupToken } from './critic-markup';
 import {
 	isMarkdownBlockStart,
 	isMarkdownEscaped,
@@ -204,26 +205,30 @@ function wrapOperationPayload(
 ): WrappedOperationPayload | undefined {
 	switch (operation.operationType) {
 		case 'insert': {
-			const prefix = '{++';
+			const payload = operation.text ?? '';
+			const text = createEmendCriticMarkupToken('insertion', payload);
 			return {
-				text: `${prefix}${operation.text ?? ''}++}`,
-				payloadStart: prefix.length,
+				text,
+				payloadStart: text.length - payload.length - '++}'.length,
 				field: 'text',
 			};
 		}
 		case 'replace': {
-			const prefix = `{~~${fullText.slice(operation.start, operation.end)}~>`;
+			const payload = operation.replacement ?? '';
+			const oldText = fullText.slice(operation.start, operation.end);
+			const text = createEmendCriticMarkupToken('substitution', `${oldText}~>${payload}`);
 			return {
-				text: `${prefix}${operation.replacement ?? ''}~~}`,
-				payloadStart: prefix.length,
+				text,
+				payloadStart: text.length - payload.length - '~~}'.length,
 				field: 'replacement',
 			};
 		}
 		case 'comment': {
-			const prefix = '{>>';
+			const payload = operation.comment ?? '';
+			const text = createEmendCriticMarkupToken('comment', payload);
 			return {
-				text: `${prefix}${operation.comment ?? ''}<<}`,
-				payloadStart: prefix.length,
+				text,
+				payloadStart: text.length - payload.length - '<<}'.length,
 				field: 'comment',
 			};
 		}
@@ -330,13 +335,16 @@ function compiledOperationStart(operation: GuardedMarkdownOperation): number {
 function fallbackCompiledText(operation: GuardedMarkdownOperation, target: string): string {
 	switch (operation.operationType) {
 		case 'insert':
-			return `{++${operation.text ?? ''}++}`;
+			return createEmendCriticMarkupToken('insertion', operation.text ?? '');
 		case 'remove':
-			return `{--${target}--}`;
+			return createEmendCriticMarkupToken('deletion', target);
 		case 'replace':
-			return `{~~${target}~>${operation.replacement ?? ''}~~}`;
+			return createEmendCriticMarkupToken(
+				'substitution',
+				`${target}~>${operation.replacement ?? ''}`,
+			);
 		case 'comment':
-			return `${target}{>>${operation.comment ?? ''}<<}`;
+			return `${target}${createEmendCriticMarkupToken('comment', operation.comment ?? '')}`;
 	}
 }
 

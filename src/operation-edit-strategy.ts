@@ -1,4 +1,8 @@
-import { prepareCriticMarkupEdit } from './critic-markup';
+import {
+	containsCriticMarkupDelimiter,
+	createEmendCriticMarkupToken,
+	prepareCriticMarkupEdit,
+} from './critic-markup';
 import type {
 	EditSourceContext,
 	EditStrategy,
@@ -17,20 +21,6 @@ import {
 import { appendInstructions, HISTORY_PERMISSION_PROMPT } from './mode';
 import { createReplacementCompiler } from './replacement-diff';
 import type { EditOperation, InstructionPromptParts } from './types';
-
-const CRITIC_MARKUP_DELIMITERS = [
-	'{++',
-	'++}',
-	'{--',
-	'--}',
-	'{~~',
-	'~~}',
-	'~>',
-	'{>>',
-	'<<}',
-	'{==',
-	'==}',
-];
 
 const OPERATION_FIELDS: Record<EditOperation['type'], readonly string[]> = {
 	insert: ['type', 'anchor', 'position', 'text', 'occurrence'],
@@ -166,10 +156,19 @@ function compileEditOperationsWithSummary(
 				const start = operation.position === 'before'
 					? anchorRange.start
 					: anchorRange.end;
-				return { start, end: start, text: `{++${operation.text}++}`, order };
+				return {
+					start,
+					end: start,
+					text: createEmendCriticMarkupToken('insertion', operation.text),
+					order,
+				};
 			}
 			case 'remove':
-				return { ...anchorRange, text: `{--${operation.target}--}`, order };
+				return {
+					...anchorRange,
+					text: createEmendCriticMarkupToken('deletion', operation.target),
+					order,
+				};
 			case 'replace':
 				return {
 					...anchorRange,
@@ -179,7 +178,7 @@ function compileEditOperationsWithSummary(
 			case 'comment':
 				return {
 					...anchorRange,
-					text: `${operation.target}{>>${operation.comment}<<}`,
+					text: `${operation.target}${createEmendCriticMarkupToken('comment', operation.comment)}`,
 					order,
 				};
 		}
@@ -434,7 +433,7 @@ function requiredString(
 			{ operation: index + 1, operationType, field },
 		);
 	}
-	if (CRITIC_MARKUP_DELIMITERS.some((delimiter) => text.includes(delimiter))) {
+	if (containsCriticMarkupDelimiter(text)) {
 		throw new EditResponseValidationError(
 			'invalid-operation',
 			`Operation ${index + 1} contains a CriticMarkup delimiter in ${field}; remove the delimiter.`,
