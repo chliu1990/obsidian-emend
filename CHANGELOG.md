@@ -2,6 +2,23 @@
 
 All notable changes to Emend are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.0-beta.1] - 2026-11-25
+
+First beta of 2.11.0, published as a GitHub pre-release for early testing. Stable Obsidian community updates are unaffected.
+
+### Fixed
+
+- Custom-provider Chat against the OpenCode Go endpoints now connects directly over desktop HTTPS with an opaque conversation identifier that changes when Emend reloads, so no local proxy is required. This covers Chat and Chat Selection; OpenCode Go Edit and Web research remain unavailable. ([#103](https://github.com/chliu1990/obsidian-emend/pull/103))
+- Selection edits whose target lies strictly inside a pending tracked change now stop after the first response with exact recovery guidance — accept or reject the pending change in Track Changes, then make a fresh Selection — instead of spending an impossible automatic correction round. Every other candidate-validation failure keeps its one same-provider correction. ([#88](https://github.com/chliu1990/obsidian-emend/issues/88))
+
+### Changed
+
+- Internal consolidation with no intended behavior change: Edit-target resolution with pure Markdown target lookup, one exact disk/every-editor freshness contract shared by the Full-note and Selection writers, one lossless Markdown scanner behind separate Selection-context and edit-guard projections, and a request-scoped modification controller for Edit dispatch and result formatting.
+
+### Internal
+
+- Chat-view behavioral tests now run through a public lifecycle, submission, and rendering test seam instead of private-prototype access.
+
 ## [2.10.0] - 2026-11-19
 
 ### Added
@@ -239,7 +256,8 @@ Web retrieval remains default Off and available only for DeepSeek `deepseek-flas
 - Strict provider error redaction and bounded error output.
 - Validated anchors, ambiguity/overlap rejection, stale-source/target checks, and abort/unload protection for note writes.
 
-[Unreleased]: https://github.com/chliu1990/obsidian-emend/compare/2.10.0...HEAD
+[Unreleased]: https://github.com/chliu1990/obsidian-emend/compare/2.11.0-beta.1...HEAD
+[2.11.0-beta.1]: https://github.com/chliu1990/obsidian-emend/compare/2.10.0...2.11.0-beta.1
 [2.10.0]: https://github.com/chliu1990/obsidian-emend/compare/2.9.0...2.10.0
 [2.9.0]: https://github.com/chliu1990/obsidian-emend/compare/2.8.0...2.9.0
 [2.8.0]: https://github.com/chliu1990/obsidian-emend/releases/tag/2.8.0
