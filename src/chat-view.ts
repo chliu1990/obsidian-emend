@@ -1852,6 +1852,7 @@ export class EmendChatView extends ItemView {
 			} else {
 				const result = await this.plugin.requestChatCompletion({
 					context: capturedTarget.context,
+					chatSessionId: identity.sessionId,
 					mode: capturedTarget.mode,
 					chatTarget: capturedTarget.type === 'read-only-selection'
 						? 'selection'

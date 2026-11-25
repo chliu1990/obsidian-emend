@@ -25,6 +25,8 @@ Preset base URLs are `https://api.deepseek.com` for DeepSeek and `https://api.ki
 
 **Prerequisites:** [Install and enable Emend](../../INSTALLATION.md). Have an endpoint, API key, and model name from your provider.
 
+**OpenCode Go Chat:** Select **Custom**, enter `https://opencode.ai/inference/go/openai/v1` (the existing `https://opencode.ai/zen/go/v1` setting also works), save your Go key, and select your model. Chat connects directly over desktop HTTPS and sends an opaque conversation identifier; it changes when Emend reloads. No local proxy is required. This connection is specific to Chat, including Chat Selection, and does not enable OpenCode Go Edit or Web research.
+
 **Actions:**
 
 1. Choose the **Active provider**.
