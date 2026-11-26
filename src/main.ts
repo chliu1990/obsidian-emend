@@ -18,6 +18,7 @@ import { loadAllInstructions } from './instructions-loader';
 import type { SelectableMode } from './mode';
 import { createVaultNoteWriter } from './note-writer';
 import { requestAiResponse } from './provider-stream';
+import { goSessionId, isGoBase } from './opencode-go-transport';
 import {
 	EditRequestCoordinator,
 	ReadOnlyRequestCoordinator,
@@ -54,6 +55,7 @@ import type {
 import { supportsDeepSeekWeb } from './web-search';
 
 type ReadOnlyMainSubmission = Omit<ReadOnlySubmission, 'additionalNotePaths'> & {
+	chatSessionId?: string;
 	additionalNotePaths?: readonly string[];
 };
 
@@ -469,6 +471,9 @@ export default class EmendPlugin extends Plugin {
 				: undefined;
 			const coordinator = new ReadOnlyRequestCoordinator({
 				...dependencies,
+				...(activeProvider === 'custom' && submission.chatSessionId && !submission.webSearch &&
+					isGoBase(dependencies.provider.baseUrl)
+					? { goSession: goSessionId(submission.context.file.path, submission.chatSessionId) } : {}),
 				...(webSearch ? { webSearch } : {}),
 			});
 			return coordinator.submit({

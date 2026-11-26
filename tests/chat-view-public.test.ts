@@ -614,6 +614,7 @@ describe('EmendChatView public session and stream generation', () => {
 		if (!submission || submission.mode === 'edit') {
 			throw new Error('Session follow-up was not submitted.');
 		}
+		expect(submission).toMatchObject({ chatSessionId: 'a2' });
 		expect(submission.history).toEqual([
 			{ role: 'assistant', content: 'second-answer', mode: 'ask', origin: 'model' },
 		]);

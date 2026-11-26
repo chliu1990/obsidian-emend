@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Release version in x.y.z format
+        description: Release version in x.y.z or x.y.z-prerelease format
         required: true
         type: string
 
@@ -30,7 +30,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node -e "const manifest = require('./manifest.json'); if (!/^\\d+\\.\\d+\\.\\d+$/.test(process.env.RELEASE_VERSION ?? '') || manifest.version !== process.env.RELEASE_VERSION) { throw new Error('Release tag ' + process.env.RELEASE_VERSION + ' must exactly match manifest version ' + manifest.version + '.'); }"
+          node -e "const manifest = require('./manifest.json'); if (!/^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.-]+)?$/.test(process.env.RELEASE_VERSION ?? '') || manifest.version !== process.env.RELEASE_VERSION) { throw new Error('Release tag ' + process.env.RELEASE_VERSION + ' must exactly match manifest version ' + manifest.version + '.'); }"
       - run: npm ci
       - run: npm run lint
       - run: npm test
@@ -50,6 +50,7 @@ jobs:
         with:
           tag_name: ${{ env.RELEASE_VERSION }}
           name: Emend ${{ env.RELEASE_VERSION }}
+          prerelease: ${{ contains(env.RELEASE_VERSION, '-') }}
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |

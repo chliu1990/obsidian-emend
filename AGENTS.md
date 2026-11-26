@@ -51,7 +51,7 @@ Never commit generated bundles, vault content, credentials, mock secrets, or loc
 Emend is desktop-only and requires Obsidian 1.11.4 or newer. Keep plugin ID `emend`, view type `emend-chat-view`,
 and existing `emend:` command IDs stable.
 
-DeepSeek, Kimi, and custom providers share one OpenAI-compatible streaming `fetch`/SSE transport in `provider-stream.ts`.
+DeepSeek, Kimi, and custom providers share OpenAI-compatible payload construction and SSE parsing in `provider-stream.ts`. Only Custom Chat to the two exact OpenCode Go HTTPS bases uses desktop HTTPS instead of renderer `fetch`; never follow redirects or forward the local conversation identity.
 Keep provider-specific retrieval in focused adapters; never copy DeepSeek tool schemas to other providers.
 
 The short request-flow map is:

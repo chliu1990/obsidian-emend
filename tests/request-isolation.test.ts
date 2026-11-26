@@ -263,6 +263,43 @@ beforeEach(() => {
 	requestMock.mockReset();
 });
 
+describe('OpenCode Go request routing', () => {
+	it.each([
+		'https://opencode.ai/zen/go/v1',
+		'https://opencode.ai/inference/go/openai/v1/',
+	])('selects desktop HTTPS only for Custom Chat at %s', async (baseUrl) => {
+		const f = makePluginFixture({ 'A.md': 'Hello' });
+		const settings = f.plugin.settings;
+		settings.providers.custom = { ...provider, baseUrl };
+		const chat = { ...makeReadOnlySubmission(f, 'A.md'), chatSessionId: 'a' };
+		requestMock.mockResolvedValue({ content: '[]', reasoning: '' });
+		await f.plugin.requestChatCompletion(chat);
+		const id = requestMock.mock.lastCall?.[0].goSession;
+		expect(id).toMatch(/^[a-f0-9]{64}$/);
+		await f.plugin.requestChatCompletion(chat);
+		expect(requestMock.mock.lastCall?.[0].goSession).toBe(id);
+		await f.plugin.requestChatCompletion({ ...chat, chatSessionId: 'b' });
+		expect(requestMock.mock.lastCall?.[0].goSession).not.toBe(id);
+		await f.plugin.requestChatCompletion(makeEditSubmission(f, 'A.md'));
+		expect(requestMock.mock.lastCall?.[0]).not.toHaveProperty('goSession');
+		await expect(f.plugin.requestChatCompletion({ ...chat, webSearch: {
+			mode: 'auto', maxToolCalls: 1, maxContentCharactersPerCall: 100,
+			reviewCalls: async () => [], onActivity: vi.fn(),
+		} })).rejects.toThrow(/only available for DeepSeek/);
+		expect(requestMock).toHaveBeenCalledTimes(4);
+		for (const other of ['deepseek', 'kimi'] as const) {
+			settings.activeProvider = other;
+			settings.providers[other] = { ...provider, baseUrl };
+			await f.plugin.requestChatCompletion(chat);
+			expect(requestMock.mock.lastCall?.[0]).not.toHaveProperty('goSession');
+		}
+		settings.activeProvider = 'custom';
+		settings.providers.custom.baseUrl = `${baseUrl}//`;
+		await f.plugin.requestChatCompletion(chat);
+		expect(requestMock.mock.lastCall?.[0]).not.toHaveProperty('goSession');
+	});
+});
+
 describe('sequential full-note edits', () => {
 	it('uses each annotated result as the next source and keeps only concise history', async () => {
 		const fixture = makePluginFixture({ 'Note.md': 'Alpha beta gamma.' });
