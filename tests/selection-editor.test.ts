@@ -4,7 +4,7 @@ import type { AdditionalNoteSnapshot } from '../src/additional-notes-context';
 import { ContextCapacityError, accountRequestCharacters } from '../src/context-accounting';
 import { prepareCriticMarkupEdit } from '../src/critic-markup';
 import type { EditPreparation } from '../src/edit-strategy';
-import { EditResponseValidationError } from '../src/edit-validation';
+import { EditResponseValidationError, EditSourceValidationError } from '../src/edit-validation';
 import { operationEditStrategy } from '../src/operation-edit-strategy';
 import { formatProviderHistory } from '../src/provider-history';
 import type {
@@ -1008,7 +1008,7 @@ describe('SelectionEditRequestCoordinator', () => {
 		expect(userPrompt).not.toContain('Context before:');
 		expect(userPrompt).not.toContain(sourceText);
 		expect(adapter.replaceRange).toHaveBeenCalledExactlyOnceWith(
-			'{~~beta~>delta~~}',
+			'{author="Emend"~~beta~>delta~~}',
 			snapshot.from,
 			snapshot.to,
 		);
@@ -1073,7 +1073,7 @@ describe('SelectionEditRequestCoordinator', () => {
 		});
 		expect(result.summary).toBeUndefined();
 		expect(adapter.replaceRange).toHaveBeenCalledExactlyOnceWith(
-			'{~~beta~>delta~~}',
+			'{author="Emend"~~beta~>delta~~}',
 			snapshot.from,
 			snapshot.to,
 		);
@@ -1130,7 +1130,7 @@ describe('SelectionEditRequestCoordinator', () => {
 		});
 		expect(result.summaryItems).toEqual([{ type: 'replace', start: 0, end: 4 }]);
 		expect(adapter.replaceRange).toHaveBeenCalledExactlyOnceWith(
-			'{~~beta~>delta~~}',
+			'{author="Emend"~~beta~>delta~~}',
 			snapshot.from,
 			snapshot.to,
 		);
@@ -1222,7 +1222,7 @@ describe('SelectionEditRequestCoordinator', () => {
 		});
 
 		expect(adapter.replaceRange).toHaveBeenCalledExactlyOnceWith(
-			'beta{++ changed++}',
+			'beta{author="Emend"++ changed++}',
 			snapshot.from,
 			snapshot.to,
 		);
@@ -1545,7 +1545,7 @@ describe('SelectionEditRequestCoordinator', () => {
 			usage: { source: 'estimated' },
 		});
 		expect(adapter.replaceRange).toHaveBeenCalledExactlyOnceWith(
-			'{~~`alpha`~>`beta`~~}',
+			'{author="Emend"~~`alpha`~>`beta`~~}',
 			snapshot.from,
 			snapshot.to,
 		);
@@ -1594,7 +1594,7 @@ describe('SelectionEditRequestCoordinator', () => {
 		expect(loadInstructions).toHaveBeenCalledOnce();
 		expect(adapter.readCurrentText).toHaveBeenCalledOnce();
 		expect(adapter.replaceRange).toHaveBeenCalledExactlyOnceWith(
-			'They {~~have~>has~~} a plan.',
+			'They {author="Emend"~~have~>has~~} a plan.',
 			snapshot.from,
 			snapshot.to,
 		);
@@ -1672,12 +1672,42 @@ describe('SelectionEditRequestCoordinator', () => {
 	);
 
 	it.each([
+		{ label: 'empty operations', response: '[]' },
+		{
+			label: 'unchanged replacement',
+			response: JSON.stringify([{ type: 'replace', target: 'plain', replacement: 'plain' }]),
+		},
+	])('preserves attributed follow-up markup on an $label no-op', async ({ response }) => {
+		const fullText = '{++Bare++} {author="Other"--old--} {author="Other"==highlight==} plain';
+		const snapshot = makeSnapshot(fullText, 'plain');
+		const request = selectionRequest(response);
+		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
+		const onRetry = vi.fn();
+
+		await expect(coordinator.submit(
+			makeSelectionSubmission(snapshot, { callbacks: { onRetry } }),
+		)).resolves.toMatchObject({ applied: false, changeCount: 0 });
+		expect(request).toHaveBeenCalledTimes(1);
+		expect(onRetry).not.toHaveBeenCalled();
+		expectNoFreshnessOrWrite(adapter);
+		expect(snapshot.fullText).toBe(fullText);
+	});
+
+	it.each([
 		{ label: 'insertion with UTF-16 offsets', fullText: '😀a{++inside++}b', selectedText: 'inside' },
 		{ label: 'deletion', fullText: 'a{--inside--}b', selectedText: 'inside' },
 		{ label: 'substitution old side', fullText: 'a{~~before~>after~~}b', selectedText: 'before' },
 		{ label: 'substitution new side', fullText: 'a{~~before~>after~~}b', selectedText: 'after' },
 		{ label: 'comment', fullText: 'a{>>note<<}b', selectedText: 'note' },
 		{ label: 'highlight', fullText: 'a{==marked==}b', selectedText: 'marked' },
+		{ label: 'attributed insertion', fullText: '😀a{author="Other"++inside++}b', selectedText: 'inside' },
+		{ label: 'attributed deletion', fullText: 'a{author="Other"--inside--}b', selectedText: 'inside' },
+		{ label: 'attributed substitution old side', fullText: 'a{author="Other"~~before~>after~~}b', selectedText: 'before' },
+		{ label: 'attributed substitution new side', fullText: 'a{author="Other"~~before~>after~~}b', selectedText: 'after' },
+		{ label: 'attributed comment', fullText: 'a{author="Other">>note<<}b', selectedText: 'note' },
+		{ label: 'attributed highlight', fullText: 'a{author="Other"==marked==}b', selectedText: 'marked' },
+		{ label: 'attribute key', fullText: 'a{author="Other"++x++}b', selectedText: 'author' },
+		{ label: 'attribute value', fullText: 'a{author="Other"++x++}b', selectedText: 'Other' },
 	])('terminates a changed candidate strictly inside an $label token', async ({
 		fullText,
 		selectedText,
@@ -1770,6 +1800,53 @@ describe('SelectionEditRequestCoordinator', () => {
 		expectNoFreshnessOrWrite(adapter);
 	});
 
+	it('sanitizes malformed attributed source without correction or a write', async () => {
+		const snapshot = makeSnapshot(
+			'a{author="PRIVATE_ATTRIBUTE"++x b',
+			'{author="PRIVATE_ATTRIBUTE"++x b',
+		);
+		const request = selectionRequest('[]');
+		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
+		const onRetry = vi.fn();
+
+		const error = await coordinator
+			.submit(makeSelectionSubmission(snapshot, { callbacks: { onRetry } }))
+			.catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(EditSourceValidationError);
+		expect(error).toMatchObject({
+			name: 'EditSourceValidationError',
+			message: 'The original snapshot contains invalid CriticMarkup; fix the existing markup before requesting edits.',
+		});
+		expect((error as Error).message).not.toContain('author');
+		expect((error as Error).message).not.toContain('PRIVATE_ATTRIBUTE');
+		expect(request).toHaveBeenCalledTimes(1);
+		expect(onRetry).not.toHaveBeenCalled();
+		expectNoFreshnessOrWrite(adapter);
+	});
+
+	it.each([
+		{ label: 'empty operations', response: '[]' },
+		{
+			label: 'unchanged replacement',
+			response: JSON.stringify([{ type: 'replace', target: 'x++}', replacement: 'x++}' }]),
+		},
+	])('keeps attributed delimiter-fragment source validation ahead of $label', async ({ response }) => {
+		const snapshot = makeSnapshot('a{author="Other"++x++}b', 'x++}');
+		const request = selectionRequest(response);
+		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
+		const onRetry = vi.fn();
+
+		const error = await coordinator
+			.submit(makeSelectionSubmission(snapshot, { callbacks: { onRetry } }))
+			.catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(EditSourceValidationError);
+		expect(request).toHaveBeenCalledTimes(1);
+		expect(onRetry).not.toHaveBeenCalled();
+		expectNoFreshnessOrWrite(adapter);
+	});
+
 	it('corrects malformed JSON once then terminates a strict changed candidate', async () => {
 		const snapshot = makeSnapshot('a{++x++}b', 'x');
 		const nestingResponse = JSON.stringify([
@@ -1826,13 +1903,13 @@ describe('SelectionEditRequestCoordinator', () => {
 		expect(request).toHaveBeenCalledTimes(2);
 		expect(onRetry).toHaveBeenCalledOnce();
 		expect(adapter.replaceRange).toHaveBeenCalledExactlyOnceWith(
-			'{++p++}a{',
+			'{author="Emend"++p++}a{',
 			snapshot.from,
 			snapshot.to,
 		);
 		expect(result.applied).toBe(true);
-		const composedFullText = `${fullText.slice(0, snapshot.from)}{++p++}a{${fullText.slice(snapshot.to)}`;
-		expect(composedFullText).toBe('{++p++}a{++x++}b');
+		const composedFullText = `${fullText.slice(0, snapshot.from)}{author="Emend"++p++}a{${fullText.slice(snapshot.to)}`;
+		expect(composedFullText).toBe('{author="Emend"++p++}a{++x++}b');
 		expect(() =>
 			prepareCriticMarkupEdit(composedFullText, composedFullText),
 		).not.toThrow();
@@ -1872,6 +1949,11 @@ describe('SelectionEditRequestCoordinator', () => {
 			label: 'exact whole raw token',
 			fullText: 'a{++x++}b',
 			selectedText: '{++x++}',
+		},
+		{
+			label: 'exact whole attributed raw token',
+			fullText: 'a{author="Other"++x++}b',
+			selectedText: '{author="Other"++x++}',
 		},
 		{
 			label: 'multi-token span',
@@ -1929,15 +2011,15 @@ describe('SelectionEditRequestCoordinator', () => {
 			label: 'before',
 			selectedText: 'a',
 			operation: { type: 'insert', anchor: 'a', position: 'after', text: 'p' },
-			annotatedSelection: 'a{++p++}',
-			expectedFullText: 'a{++p++}{++x++}b',
+			annotatedSelection: 'a{author="Emend"++p++}',
+			expectedFullText: 'a{author="Emend"++p++}{++x++}b',
 		},
 		{
 			label: 'after',
 			selectedText: 'b',
 			operation: { type: 'insert', anchor: 'b', position: 'before', text: 'p' },
-			annotatedSelection: '{++p++}b',
-			expectedFullText: 'a{++x++}{++p++}b',
+			annotatedSelection: '{author="Emend"++p++}b',
+			expectedFullText: 'a{++x++}{author="Emend"++p++}b',
 		},
 	])('applies an immediately adjacent $label edit and preserves the token bytes', async ({
 		selectedText,
@@ -1969,6 +2051,52 @@ describe('SelectionEditRequestCoordinator', () => {
 		expect(snapshot.fullText).toBe(fullText);
 	});
 
+	it.each([
+		{
+			label: 'before',
+			selectedText: 'a',
+			operation: { type: 'insert', anchor: 'a', position: 'after', text: 'p' },
+			annotatedSelection: 'a{author="Emend"++p++}',
+			expectedFullText: 'a{author="Emend"++p++}{author="Other" date="2026-01-02"++x++}b',
+		},
+		{
+			label: 'after',
+			selectedText: 'b',
+			operation: { type: 'insert', anchor: 'b', position: 'before', text: 'p' },
+			annotatedSelection: '{author="Emend"++p++}b',
+			expectedFullText: 'a{author="Other" date="2026-01-02"++x++}{author="Emend"++p++}b',
+		},
+	])('preserves attributed token metadata on an immediately adjacent $label edit', async ({
+		selectedText,
+		operation,
+		annotatedSelection,
+		expectedFullText,
+	}) => {
+		const existing = '{author="Other" date="2026-01-02"++x++}';
+		const fullText = `a${existing}b`;
+		const snapshot = makeSnapshot(fullText, selectedText);
+		const request = selectionRequest(JSON.stringify([operation]));
+		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
+		const onRetry = vi.fn();
+
+		const result = await coordinator.submit(
+			makeSelectionSubmission(snapshot, { callbacks: { onRetry } }),
+		);
+
+		expect(result.applied).toBe(true);
+		expect(request).toHaveBeenCalledTimes(1);
+		expect(onRetry).not.toHaveBeenCalled();
+		expect(adapter.replaceRange).toHaveBeenCalledExactlyOnceWith(
+			annotatedSelection,
+			snapshot.from,
+			snapshot.to,
+		);
+		const composed = `${fullText.slice(0, snapshot.from)}${annotatedSelection}${fullText.slice(snapshot.to)}`;
+		expect(composed).toBe(expectedFullText);
+		expect(composed).toContain(existing);
+		expect(snapshot.fullText).toBe(fullText);
+	});
+
 	it('applies an enclosing Selection edit outside the token and preserves its bytes', async () => {
 		const fullText = 'before a{++x++}b after';
 		const snapshot = makeSnapshot(fullText, fullText);
@@ -1977,7 +2105,7 @@ describe('SelectionEditRequestCoordinator', () => {
 		]);
 		const request = selectionRequest(response);
 		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
-		const annotatedSelection = '{~~before~>previous~~} a{++x++}b after';
+		const annotatedSelection = '{author="Emend"~~before~>previous~~} a{++x++}b after';
 
 		const result = await coordinator.submit(makeSelectionSubmission(snapshot));
 
@@ -1989,6 +2117,30 @@ describe('SelectionEditRequestCoordinator', () => {
 			fullText.length,
 		);
 		expect(annotatedSelection).toContain('a{++x++}b');
+		expect(snapshot.fullText).toBe(fullText);
+	});
+
+	it('preserves attributed token metadata on an enclosing Selection edit', async () => {
+		const existing = '{author="Other" date="2026-01-02"++x++}';
+		const fullText = `before a${existing}b after`;
+		const snapshot = makeSnapshot(fullText, fullText);
+		const response = JSON.stringify([
+			{ type: 'replace', target: 'before', replacement: 'previous' },
+		]);
+		const request = selectionRequest(response);
+		const { adapter, coordinator } = makeSelectionCoordinator(request, snapshot);
+		const annotatedSelection = `{author="Emend"~~before~>previous~~} a${existing}b after`;
+
+		const result = await coordinator.submit(makeSelectionSubmission(snapshot));
+
+		expect(result.applied).toBe(true);
+		expect(request).toHaveBeenCalledTimes(1);
+		expect(adapter.replaceRange).toHaveBeenCalledExactlyOnceWith(
+			annotatedSelection,
+			0,
+			fullText.length,
+		);
+		expect(annotatedSelection).toContain(`a${existing}b`);
 		expect(snapshot.fullText).toBe(fullText);
 	});
 });

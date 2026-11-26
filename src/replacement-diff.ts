@@ -1,3 +1,5 @@
+import { createEmendCriticMarkupToken } from './critic-markup';
+
 const MAX_MIDDLE_TOKENS = 1000;
 const MAX_REPLACEMENT_WORK = 250000;
 const MAX_RESPONSE_WORK = 1000001;
@@ -193,10 +195,10 @@ function renderVerifiedFragments(
 
 function emitEdit(oldText: string, newText: string): string {
 	if (oldText.length === 0) {
-		return `{++${newText}++}`;
+		return createEmendCriticMarkupToken('insertion', newText);
 	}
 	if (newText.length === 0) {
-		return `{--${oldText}--}`;
+		return createEmendCriticMarkupToken('deletion', oldText);
 	}
-	return `{~~${oldText}~>${newText}~~}`;
+	return createEmendCriticMarkupToken('substitution', `${oldText}~>${newText}`);
 }

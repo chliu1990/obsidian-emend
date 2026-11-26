@@ -1,9 +1,12 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
+	containsCriticMarkupDelimiter,
+	createEmendCriticMarkupToken,
 	parseCriticMarkup,
 	prepareCriticMarkupEdit,
 	toRejectView,
 } from '../src/critic-markup';
+import type { EmendMarkupTokenType } from '../src/critic-markup';
 import type { EditPreparation, EditSummaryItem } from '../src/edit-strategy';
 
 function tokenSummary(text: string) {
@@ -321,5 +324,340 @@ describe('edit preparation contract', () => {
 			summaryItems: readonly EditSummaryItem[];
 			summary?: string;
 		}>();
+	});
+});
+
+describe('attributed CriticMarkup parser', () => {
+	it('parses an attributed insertion with exact metadata and offsets', () => {
+		expect(parseCriticMarkup('a{author="Alice"++new++}b')).toEqual([
+			{
+				type: 'insertion',
+				raw: '{author="Alice"++new++}',
+				content: 'new',
+				start: 1,
+				end: 24,
+				metadata: {
+					raw: 'author="Alice"',
+					attributes: { author: 'Alice' },
+					author: 'Alice',
+				},
+			},
+		]);
+	});
+
+	it.each([
+		{
+			text: '{author="Alice"--old--}',
+			expected: {
+				type: 'deletion',
+				raw: '{author="Alice"--old--}',
+				content: 'old',
+				start: 0,
+				end: 23,
+				metadata: {
+					raw: 'author="Alice"',
+					attributes: { author: 'Alice' },
+					author: 'Alice',
+				},
+			},
+		},
+		{
+			text: '{author="Alice"~~old~>new~~}',
+			expected: {
+				type: 'substitution',
+				raw: '{author="Alice"~~old~>new~~}',
+				content: 'old~>new',
+				oldText: 'old',
+				newText: 'new',
+				start: 0,
+				end: 28,
+				metadata: {
+					raw: 'author="Alice"',
+					attributes: { author: 'Alice' },
+					author: 'Alice',
+				},
+			},
+		},
+		{
+			text: '{author="Alice">>note<<}',
+			expected: {
+				type: 'comment',
+				raw: '{author="Alice">>note<<}',
+				content: 'note',
+				start: 0,
+				end: 24,
+				metadata: {
+					raw: 'author="Alice"',
+					attributes: { author: 'Alice' },
+					author: 'Alice',
+				},
+			},
+		},
+		{
+			text: '{author="Alice"==important==}',
+			expected: {
+				type: 'highlight',
+				raw: '{author="Alice"==important==}',
+				content: 'important',
+				start: 0,
+				end: 29,
+				metadata: {
+					raw: 'author="Alice"',
+					attributes: { author: 'Alice' },
+					author: 'Alice',
+				},
+			},
+		},
+	])('parses an attributed $expected.type', ({ text, expected }) => {
+		expect(parseCriticMarkup(text)).toEqual([expected]);
+	});
+
+	it('preserves multiple attributes and trailing whitespace exactly', () => {
+		const text = 'a{author=" Alice " date="2026-11-25" reviewer="A B" ++new++}b';
+		expect(parseCriticMarkup(text)).toEqual([
+			{
+				type: 'insertion',
+				raw: '{author=" Alice " date="2026-11-25" reviewer="A B" ++new++}',
+				content: 'new',
+				start: 1,
+				end: 60,
+				metadata: {
+					raw: 'author=" Alice " date="2026-11-25" reviewer="A B" ',
+					attributes: {
+						author: 'Alice',
+						date: '2026-11-25',
+						reviewer: 'A B',
+					},
+					author: 'Alice',
+					date: '2026-11-25',
+				},
+			},
+		]);
+	});
+
+	it('normalizes keys and keeps the first nonempty duplicate value', () => {
+		const text = '{AUTHOR=" Alice " author="Bob" DATE="" date="2026-11-25" REVIEWER=" \t" ++new++}';
+		const [token] = parseCriticMarkup(text);
+		expect(token?.metadata).toEqual({
+			raw: 'AUTHOR=" Alice " author="Bob" DATE="" date="2026-11-25" REVIEWER=" \t" ',
+			attributes: { author: 'Alice', date: '2026-11-25' },
+			author: 'Alice',
+			date: '2026-11-25',
+		});
+	});
+
+	it('stores valid prototype-related keys as harmless own data', () => {
+		const [token] = parseCriticMarkup(
+			'{constructor="safe" hasOwnProperty="value" ++new++}',
+		);
+		const attributes = token?.metadata?.attributes;
+		if (!attributes) {
+			throw new Error('Expected parsed attributes.');
+		}
+		expect(Object.getPrototypeOf(attributes)).toBeNull();
+		expect(Object.prototype.hasOwnProperty.call(attributes, 'constructor')).toBe(true);
+		expect(Object.prototype.hasOwnProperty.call(attributes, 'hasownproperty')).toBe(true);
+		expect(attributes.constructor).toBe('safe');
+		expect(attributes.hasownproperty).toBe('value');
+		expect({}.constructor).toBe(Object);
+	});
+
+	it('preserves a lone CR in an attribute value', () => {
+		const text = '{author="Ali\rce"++new++}';
+		expect(parseCriticMarkup(text)).toEqual([
+			{
+				type: 'insertion',
+				raw: text,
+				content: 'new',
+				start: 0,
+				end: 24,
+				metadata: {
+					raw: 'author="Ali\rce"',
+					attributes: { author: 'Ali\rce' },
+					author: 'Ali\rce',
+				},
+			},
+		]);
+	});
+
+	it.each([
+		['digit-led key', '{1author="Alice"++new++}', 21],
+		['underscore-led key', '{_author="Alice"++new++}', 21],
+		['prototype key with a leading underscore', '{__proto__="safe"++new++}', 22],
+		['whitespace around equals', '{author = "Alice"++new++}', 22],
+		['whitespace after equals', '{author= "Alice"++new++}', 21],
+		['missing quotes', '{author=Alice++new++}', 18],
+		['unterminated quote', '{author="Alice++new++}', 19],
+		['quote inside a value', '{author="Ali"ce"++new++}', 21],
+		['opening brace inside a value', '{author="Ali{ce"++new++}', 21],
+		['closing brace inside a value', '{author="Ali}ce"++new++}', 21],
+		['LF inside a value', '{author="Ali\nce"++new++}', 21],
+		['whitespace without an attribute', '{ ++new++}', 7],
+	])('retains bare closer scanning for a malformed %s', (_name, text, offset) => {
+		expect(() => parseCriticMarkup(text)).toThrow(
+			new Error(`Unexpected CriticMarkup closing delimiter at offset ${offset}.`),
+		);
+	});
+
+	it.each([
+		'{1author="Alice"++new++}',
+		'{_author="Alice"++new++}',
+		'{__proto__="safe"++new++}',
+		'{author = "Alice"++new++}',
+		'{author= "Alice"++new++}',
+		'{author=Alice++new++}',
+		'{author="Alice++new++}',
+		'{author="Ali"ce"++new++}',
+		'{author="Ali{ce"++new++}',
+		'{author="Ali}ce"++new++}',
+		'{author="Ali\nce"++new++}',
+		'{ ++new++}',
+	])('does not manufacture a token from malformed attributes without a closer: %j', (text) => {
+		const withoutCloser = text.slice(0, -3);
+		expect(parseCriticMarkup(withoutCloser)).toEqual([]);
+		expect(toRejectView(withoutCloser)).toBe(withoutCloser);
+	});
+
+	it.each([
+		['insertion', '++'],
+		['deletion', '--'],
+		['substitution', '~~'],
+		['comment', '>>'],
+		['highlight', '=='],
+	])('reports an unclosed attributed %s without exposing metadata', (type, marker) => {
+		const text = `x{author="SecretAlice"${marker}content`;
+		expect(() => parseCriticMarkup(text)).toThrow(
+			new Error(`Unclosed ${type} at offset 1.`),
+		);
+	});
+
+	it('rejects nested attributed openers', () => {
+		const text = '{author="Outer"++outer {author="Inner"--inner--} outer++}';
+		expect(() => parseCriticMarkup(text)).toThrow(
+			new Error('Nested CriticMarkup token inside token at offset 0.'),
+		);
+	});
+});
+
+describe('attributed CriticMarkup projections and preservation', () => {
+	it.each([
+		['insertions', 'a {author="Alice"++new++}b', 'a {++new++}b', 'a b'],
+		['deletions', 'a {author="Alice"--old--}b', 'a {--old--}b', 'a oldb'],
+		[
+			'substitutions',
+			'a {author="Alice"~~old~>new~~}b',
+			'a {~~old~>new~~}b',
+			'a oldb',
+		],
+		['comments', 'a {author="Alice">>note<<}b', 'a {>>note<<}b', 'a b'],
+		[
+			'highlights',
+			'a {author="Alice"==important==}b',
+			'a {==important==}b',
+			'a importantb',
+		],
+	])('gives attributed %s their bare reject view', (_name, attributed, bare, expected) => {
+		expect(toRejectView(attributed)).toBe(expected);
+		expect(toRejectView(attributed)).toBe(toRejectView(bare));
+	});
+
+	it('preserves bare and attributed originals while counting only new non-comment tokens', () => {
+		const original =
+			'Before {++bare++} {author="Alice"--old--} {author="Alice">>keep<<} after.';
+		const response =
+			'Before {++bare++}{author="Emend"++new++} {author="Alice"--old--} {author="Alice">>keep<<}{author="Emend">>new comment<<} after.';
+		expect(prepareCriticMarkupEdit(original, response)).toEqual({
+			annotatedMarkdown: response,
+			changeCount: 1,
+		});
+	});
+
+	it.each([
+		['rewritten', '{author="Bob"++existing++}Body'],
+		['dropped', '{++existing++}Body'],
+	])('rejects %s attribution even when the reject view matches', (_name, response) => {
+		const original = '{author="Alice"++existing++}Body';
+		expect(toRejectView(response)).toBe(toRejectView(original));
+		expect(() => prepareCriticMarkupEdit(original, response)).toThrow(/original token/i);
+	});
+
+	it('rejects nesting an attributed token in a new token during edit validation', () => {
+		expect(() =>
+			prepareCriticMarkupEdit(
+				'Body',
+				'{==outer {author="Alice"++Body++} outer==}',
+			),
+		).toThrow(/nested|mismatched/i);
+	});
+
+	it('rejects an unclosed attributed token during edit validation', () => {
+		expect(() => prepareCriticMarkupEdit('Body', '{author="Alice"++Body')).toThrow(
+			/unclosed insertion/i,
+		);
+	});
+
+	it('keeps legacy comment-prefix text in attributed comment content', () => {
+		const [token] = parseCriticMarkup('{author="Alice">>Alice: legacy note<<}');
+		expect(token?.content).toBe('Alice: legacy note');
+	});
+});
+
+describe('Emend CriticMarkup renderer', () => {
+	it.each([
+		['insertion', 'new', '{author="Emend"++new++}'],
+		['deletion', 'old', '{author="Emend"--old--}'],
+		['substitution', 'old~>new', '{author="Emend"~~old~>new~~}'],
+		['comment', 'note', '{author="Emend">>note<<}'],
+	] as const)('renders an exact attributed %s without a date', (type, content, expected) => {
+		const rendered = createEmendCriticMarkupToken(type, content);
+		expect(rendered).toBe(expected);
+		expect(rendered).not.toContain('date=');
+	});
+
+	it('excludes highlights from the renderer type parameter', () => {
+		expectTypeOf<EmendMarkupTokenType>().toEqualTypeOf<
+			'insertion' | 'deletion' | 'substitution' | 'comment'
+		>();
+		expectTypeOf<Parameters<typeof createEmendCriticMarkupToken>[0]>().toEqualTypeOf<
+			EmendMarkupTokenType
+		>();
+	});
+
+	it('rejects highlight emission at runtime', () => {
+		expect(() => {
+			Reflect.apply(createEmendCriticMarkupToken, undefined, ['highlight', 'content']);
+		}).toThrow(new Error('Unsupported CriticMarkup token type.'));
+	});
+});
+
+describe('CriticMarkup delimiter classification', () => {
+	it.each([
+		'{++',
+		'++}',
+		'{--',
+		'--}',
+		'{~~',
+		'~~}',
+		'~>',
+		'{>>',
+		'<<}',
+		'{==',
+		'==}',
+		'{author="Alice"++',
+		'{author="Alice" date="2026-11-25" --',
+		'{author="Ali\rce"~~',
+	])('recognizes the delimiter or valid attributed opener %j', (text) => {
+		expect(containsCriticMarkupDelimiter(text)).toBe(true);
+	});
+
+	it.each([
+		'{like: true}',
+		'author="Alice"',
+		'{author = "Alice"++new',
+		'{_author="Alice"++new',
+		'{ ++new',
+		'ordinary prose',
+	])('does not classify ordinary or malformed text as a delimiter: %j', (text) => {
+		expect(containsCriticMarkupDelimiter(text)).toBe(false);
 	});
 });

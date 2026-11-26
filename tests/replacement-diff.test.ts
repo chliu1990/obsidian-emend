@@ -40,8 +40,8 @@ function largeBoundaryPair() {
 		newMiddle,
 		target: `=${oldMiddle}=`,
 		replacement: `=${newMiddle}=`,
-		minimal: `={~~!~>?~~}${common}{~~?~>!~~}=`,
-		fallback: `={~~${oldMiddle}~>${newMiddle}~~}=`,
+		minimal: `={author="Emend"~~!~>?~~}${common}{author="Emend"~~?~>!~~}=`,
+		fallback: `={author="Emend"~~${oldMiddle}~>${newMiddle}~~}=`,
 	};
 }
 
@@ -50,7 +50,7 @@ describe('createReplacementCompiler', () => {
 		const compile = createReplacementCompiler();
 		const markup = compile('They have a plan.', 'They has a plan.');
 
-		expect(markup).toBe('They {~~have~>has~~} a plan.');
+		expect(markup).toBe('They {author="Emend"~~have~>has~~} a plan.');
 		expectReconstruction(markup, 'They have a plan.', 'They has a plan.');
 	});
 
@@ -60,7 +60,7 @@ describe('createReplacementCompiler', () => {
 		const replacement = 'The quick red fox leaps over the lazy dog.';
 
 		expect(compile(target, replacement)).toBe(
-			'The quick {~~brown~>red~~} fox {~~jumps~>leaps~~} over the lazy dog.',
+			'The quick {author="Emend"~~brown~>red~~} fox {author="Emend"~~jumps~>leaps~~} over the lazy dog.',
 		);
 	});
 
@@ -68,7 +68,7 @@ describe('createReplacementCompiler', () => {
 		const compile = createReplacementCompiler();
 		const markup = compile('Alpha beta gamma', 'Alpha brave beta gamma');
 
-		expect(markup).toBe('Alpha {++brave ++}beta gamma');
+		expect(markup).toBe('Alpha {author="Emend"++brave ++}beta gamma');
 		expectReconstruction(markup, 'Alpha beta gamma', 'Alpha brave beta gamma');
 	});
 
@@ -76,7 +76,7 @@ describe('createReplacementCompiler', () => {
 		const compile = createReplacementCompiler();
 		const markup = compile('Alpha brave beta gamma', 'Alpha beta gamma');
 
-		expect(markup).toBe('Alpha {--brave --}beta gamma');
+		expect(markup).toBe('Alpha {author="Emend"--brave --}beta gamma');
 		expectReconstruction(markup, 'Alpha brave beta gamma', 'Alpha beta gamma');
 	});
 
@@ -91,7 +91,7 @@ describe('createReplacementCompiler', () => {
 		const replacement = '`driver`';
 		const markup = compile(target, replacement);
 
-		expect(markup).toBe('{~~`send_coords`~>`driver`~~}');
+		expect(markup).toBe('{author="Emend"~~`send_coords`~>`driver`~~}');
 		expectReconstruction(markup, target, replacement);
 	});
 
@@ -101,7 +101,7 @@ describe('createReplacementCompiler', () => {
 		const replacement = 'Use `driver` here.';
 		const markup = compile(target, replacement);
 
-		expect(markup).toBe('{~~Use `send_coords` here.~>Use `driver` here.~~}');
+		expect(markup).toBe('{author="Emend"~~Use `send_coords` here.~>Use `driver` here.~~}');
 		expectReconstruction(markup, target, replacement);
 	});
 
@@ -111,7 +111,7 @@ describe('createReplacementCompiler', () => {
 		const replacement = 'Use `driver` here.';
 		const markup = compile(target, replacement);
 
-		expect(markup).toBe('{~~Use send_coords here.~>Use `driver` here.~~}');
+		expect(markup).toBe('{author="Emend"~~Use send_coords here.~>Use `driver` here.~~}');
 		expectReconstruction(markup, target, replacement);
 	});
 
@@ -119,12 +119,12 @@ describe('createReplacementCompiler', () => {
 		[
 			'``send_coords`',
 			'`driver``',
-			'{~~``send_coords`~>`driver``~~}',
+			'{author="Emend"~~``send_coords`~>`driver``~~}',
 		],
 		[
 			'before ```alpha and `beta',
 			'after ``gamma and delta```',
-			'{~~before ```alpha and `beta~>after ``gamma and delta```~~}',
+			'{author="Emend"~~before ```alpha and `beta~>after ``gamma and delta```~~}',
 		],
 	])('reconstructs variable-length and unmatched backtick runs exactly', (target, replacement, expected) => {
 		const markup = createReplacementCompiler()(target, replacement);
@@ -138,15 +138,15 @@ describe('createReplacementCompiler', () => {
 		const insertion = compile('', '`driver`');
 		const deletion = compile('`send_coords`', '');
 
-		expect(insertion).toBe('{++`driver`++}');
-		expect(deletion).toBe('{--`send_coords`--}');
+		expect(insertion).toBe('{author="Emend"++`driver`++}');
+		expect(deletion).toBe('{author="Emend"--`send_coords`--}');
 		expectReconstruction(insertion, '', '`driver`');
 		expectReconstruction(deletion, '`send_coords`', '');
 	});
 
 	it('prefers deletion when repeated-token LCS choices tie', () => {
 		const compile = createReplacementCompiler();
-		expect(compile('!?', '?!')).toBe('{--!--}?{++!++}');
+		expect(compile('!?', '?!')).toBe('{author="Emend"--!--}?{author="Emend"++!++}');
 	});
 
 	it('preserves Markdown punctuation and newlines outside the changed token', () => {
@@ -155,14 +155,26 @@ describe('createReplacementCompiler', () => {
 		const replacement = '# Title\n\n- new item\n- keep\n';
 
 		expect(compile(target, replacement)).toBe(
-			'# Title\n\n- {~~old~>new~~} item\n- keep\n',
+			'# Title\n\n- {author="Emend"~~old~>new~~} item\n- keep\n',
 		);
 	});
 
+	it('preserves CRLF bytes outside the minimized replacement', () => {
+		const compile = createReplacementCompiler();
+		const target = '# Title\r\n\r\n- old item\r\n- keep\r\n';
+		const replacement = '# Title\r\n\r\n- new item\r\n- keep\r\n';
+		const markup = compile(target, replacement);
+
+		expect(markup).toBe(
+			'# Title\r\n\r\n- {author="Emend"~~old~>new~~} item\r\n- keep\r\n',
+		);
+		expectReconstruction(markup, target, replacement);
+	});
+
 	it.each([
-		['我們有一個計畫。', '我們有一份計畫。', '我們有{~~一個~>一份~~}計畫。'],
-		['前🙂後', '前🙃後', '前{~~🙂~>🙃~~}後'],
-		['Cafe\u0301 noir', 'Café noir', '{~~Cafe\u0301~>Café~~} noir'],
+		['我們有一個計畫。', '我們有一份計畫。', '我們有{author="Emend"~~一個~>一份~~}計畫。'],
+		['前🙂後', '前🙃後', '前{author="Emend"~~🙂~>🙃~~}後'],
+		['Cafe\u0301 noir', 'Café noir', '{author="Emend"~~Cafe\u0301~>Café~~} noir'],
 	])('preserves Unicode while minimizing %s', (target, replacement, expected) => {
 		const compile = createReplacementCompiler();
 		const markup = compile(target, replacement);
@@ -182,7 +194,7 @@ describe('createReplacementCompiler', () => {
 
 	it('produces deterministic output across repeated calls and compiler instances', () => {
 		const compile = createReplacementCompiler();
-		const expected = 'They {~~have~>has~~} a plan.';
+		const expected = 'They {author="Emend"~~have~>has~~} a plan.';
 		for (let index = 0; index < 5; index += 1) {
 			expect(compile('They have a plan.', 'They has a plan.')).toBe(expected);
 			expect(createReplacementCompiler()('They have a plan.', 'They has a plan.')).toBe(expected);
@@ -196,10 +208,10 @@ describe('createReplacementCompiler', () => {
 			const compile = createReplacementCompiler();
 
 			expect(compile('They have a plan.', 'They has a plan.')).toBe(
-				'{~~They have a plan.~>They has a plan.~~}',
+				'{author="Emend"~~They have a plan.~>They has a plan.~~}',
 			);
-			expect(compile('', 'add')).toBe('{++add++}');
-			expect(compile('remove', '')).toBe('{--remove--}');
+			expect(compile('', 'add')).toBe('{author="Emend"++add++}');
+			expect(compile('remove', '')).toBe('{author="Emend"--remove--}');
 			expect(compile('same', 'same')).toBe('same');
 		} finally {
 			if (descriptor) {
@@ -216,14 +228,14 @@ describe('createReplacementCompiler', () => {
 			`=${eligibleOldMiddle}=`,
 			'=?@=',
 		);
-		expect(eligible).toBe(`={--${'!'.repeat(998)}--}?{~~#~>@~~}=`);
+		expect(eligible).toBe(`={author="Emend"--${'!'.repeat(998)}--}?{author="Emend"~~#~>@~~}=`);
 
 		const fallbackOldMiddle = `${'!'.repeat(999)}?#`;
 		const fallback = createReplacementCompiler()(
 			`=${fallbackOldMiddle}=`,
 			'=?@=',
 		);
-		expect(fallback).toBe(`={~~${fallbackOldMiddle}~>?@~~}=`);
+		expect(fallback).toBe(`={author="Emend"~~${fallbackOldMiddle}~>?@~~}=`);
 		expectReconstruction(fallback, `=${fallbackOldMiddle}=`, '=?@=');
 	});
 
@@ -251,7 +263,7 @@ describe('createReplacementCompiler', () => {
 			const replacement = `=${newMiddle}=`;
 			const markup = createReplacementCompiler()(target, replacement);
 
-			expect(markup).toBe(`={~~!~>${newMiddle}~~}=`);
+			expect(markup).toBe(`={author="Emend"~~!~>${newMiddle}~~}=`);
 			expectReconstruction(markup, target, replacement);
 		} finally {
 			if (descriptor) {
@@ -273,7 +285,7 @@ describe('createReplacementCompiler', () => {
 	it('falls back at exactly 1,000,001 accumulated response work', () => {
 		const fixture = largeBoundaryPair();
 		const compile = createReplacementCompiler();
-		expect(compile('have', 'has')).toBe('{~~have~>has~~}');
+		expect(compile('have', 'has')).toBe('{author="Emend"~~have~>has~~}');
 		for (let index = 0; index < 3; index += 1) {
 			expect(compile(fixture.target, fixture.replacement)).toBe(fixture.minimal);
 		}

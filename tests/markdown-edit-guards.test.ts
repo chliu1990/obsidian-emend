@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as criticMarkup from '../src/critic-markup';
 import {
 	findMarkdownEditViolation,
 	findPayloadStructureViolation,
@@ -39,6 +40,10 @@ function insertionOperation(
 		...overrides,
 	};
 }
+
+afterEach(() => {
+	vi.restoreAllMocks();
+});
 
 describe('inline code edit guards', () => {
 	it('rejects content-only and cross-delimiter targets with exact diagnostics', () => {
@@ -186,6 +191,26 @@ describe('table edit guards', () => {
 			targetOperation(table, 'two', { operation: 3, operationType: 'comment', comment: 'Review' }),
 			insertionOperation(table, 'three', 'after', { operation: 4, text: ' value' }),
 		])).toBeUndefined();
+	});
+
+	it('uses the shared renderer for all four fallback table projections', () => {
+		const renderer = vi.spyOn(criticMarkup, 'createEmendCriticMarkupToken');
+		const operations = [
+			insertionOperation(table, 'Alpha', 'after', { text: ' value' }),
+			targetOperation(table, 'one'),
+			targetOperation(table, 'two', { operationType: 'replace', replacement: 'Second' }),
+			targetOperation(table, 'three', { operationType: 'comment', comment: 'Review' }),
+		];
+
+		for (const operation of operations) {
+			expect(findMarkdownEditViolation(table, [operation])).toBeUndefined();
+		}
+		expect(renderer.mock.calls).toEqual([
+			['insertion', ' value'],
+			['deletion', 'one'],
+			['substitution', 'two~>Second'],
+			['comment', 'Review'],
+		]);
 	});
 
 	it('allows emptying cell text and escaped pipes in cell payloads', () => {
@@ -852,7 +877,7 @@ describe('Markdown scanner lossless boundaries', () => {
 		expect(findMarkdownEditViolation(fullText, [operation])).toBeUndefined();
 		expect(findMarkdownEditViolation(fullText, [{
 			...operation,
-			compiledText: '\\{++\\\\++}|',
+			compiledText: '\\{author="Emend"++\\\\++}|',
 		}])).toEqual({
 			code: 'table-structure-edit',
 			operation: 1,
@@ -882,6 +907,35 @@ describe('violation ordering', () => {
 });
 
 describe('payload structure guards', () => {
+	it('uses attributed wrappers without changing unmatched-backtick diagnostics', () => {
+		const renderer = vi.spyOn(criticMarkup, 'createEmendCriticMarkupToken');
+		const fullText = 'Before\nAlpha beta.';
+		const operations = [
+			insertionOperation(fullText, 'Alpha', 'after', { text: '`' }),
+			targetOperation(fullText, 'beta', { operationType: 'replace', replacement: '`' }),
+			targetOperation(fullText, 'Alpha', { operationType: 'comment', comment: '`' }),
+		];
+
+		for (const operation of operations) {
+			expect(findPayloadStructureViolation(fullText, [operation])).toEqual({
+				code: 'fenced-code-edit',
+				operation: 1,
+				operationType: operation.operationType,
+				field: operation.operationType === 'insert'
+					? 'text'
+					: operation.operationType === 'replace'
+						? 'replacement'
+						: 'comment',
+				line: 2,
+			});
+		}
+		expect(renderer.mock.calls).toEqual([
+			['insertion', '`'],
+			['substitution', 'beta~>`'],
+			['comment', '`'],
+		]);
+	});
+
 	it('rejects an insertion payload that opens a fence without closing it', () => {
 		const fullText = 'Alpha beta.';
 

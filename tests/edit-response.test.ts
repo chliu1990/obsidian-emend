@@ -292,7 +292,7 @@ describe('prepareEditResponse', () => {
 			'"code":"fenced-code-edit"',
 		);
 		expect(response.prepared.annotatedMarkdown).toBe(
-			'# Note\n```\nalpha\n```\n{~~beta~>delta~~}',
+			'# Note\n```\nalpha\n```\n{author="Emend"~~beta~>delta~~}',
 		);
 		expect(response.prepared.changeCount).toBe(1);
 		expect(response.prepared.summary).toBe('Replaced beta with delta.');
