@@ -128,7 +128,7 @@ Expected: nonzero exit, zero passed scenarios, and a summary identifying the int
 
 - [ ] **Step 2: Add the ignored characterization fixture catalog**
 
-Create paired bare and `{author="Emend"...}` forms. Use LF for every fixture except `table-crlf-row-replace`. Every original, annotated, accepted, and rejected document ends with exactly one final LF, or final CRLF for the CRLF fixture. Complete-row token payloads include the target row’s own terminating line ending; they never absorb the preceding row’s ending.
+Create paired bare and `{author="Emend"...}` forms. Use LF for every fixture except `table-crlf-row-replace`. Every original, accepted, and rejected document ends with exactly one final LF, or final CRLF for the CRLF fixture. Annotated documents preserve those exact resolution semantics: when a complete-row token owns the final row ending, the raw closing delimiter is the final annotated byte and no extra newline follows it; other annotated documents end with the same single final line ending. Complete-row token payloads include the target row’s own terminating line ending; they never absorb the preceding row’s ending.
 
 Use these exact source constants:
 
