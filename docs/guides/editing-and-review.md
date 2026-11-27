@@ -25,6 +25,10 @@ Every new insertion, deletion, substitution, and comment that Emend emits carrie
 
 Emend has no competing diff, Apply, Accept, or Reject interface. Track Changes is the only CriticMarkup review surface. It is not bundled with Emend and is never installed automatically; follow the [installation requirements](../../INSTALLATION.md#requirements).
 
+Track Changes 2.3.0 is the baseline tested version for current bare and `author="Emend"` markup. This compatibility evidence does not expand what Emend may write: each table text Operation remains confined to one existing cell, and row, column, delimiter, and cross-cell Operations remain rejected. Structural compatibility fixtures are direct companion setup, not PR 09/10 feature enablement.
+
+[Stage 61](../../devel_docs/61-track-changes-compatibility.md) also records structural-card visualization evidence from a local, unmerged, unreleased companion branch. That branch is not a released compatible version; overall presentation compatibility remains false, and PR 09 still requires a merged companion change with a declared integrated compatible version/commit. Raw markup in Source Mode or with the cursor inside markup is host/companion behavior, not an Emend review UI.
+
 Chat needs no Track Changes because Chat has no note writer. Selection edits also preserve Obsidian's native undo, whether or not you review them first.
 
 ![Conceptual comparison of writer-free Chat, Full-note Edit through guarded vault modify, and Selection-only native replacement, with Emend producing CriticMarkup and Track Changes providing separate review](../images/emend-edit-flow.svg)

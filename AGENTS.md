@@ -15,7 +15,7 @@ Read the architecture contract and relevant stage record before changing behavio
 
 Use canonical records instead of copying their details into contributor prose:
 
-- Editing: [minimal Operations ranges](devel_docs/37-minimal-edit-ranges.md), [Selection context](devel_docs/49-selection-focus-and-context.md), and [Emend authorship](devel_docs/60-emend-authorship.md).
+- Editing: [minimal Operations ranges](devel_docs/37-minimal-edit-ranges.md), [Selection context](devel_docs/49-selection-focus-and-context.md), [Emend authorship](devel_docs/60-emend-authorship.md), and [Track Changes compatibility](devel_docs/61-track-changes-compatibility.md).
 - Providers and Web: [online search](devel_docs/36-deepseek-online-search.md) and [grounded extraction](devel_docs/40-web-content-budget-diagnostics.md).
 - Context and UI: [capacity](devel_docs/42-context-accounting-capacity.md) and [Related notes](devel_docs/45-related-notes-explorer.md).
 - Cross-cutting hardening and evidence limits: [2.10 stabilization](devel_docs/51-2-10-stabilization.md). Use the stage index for other records.
@@ -72,6 +72,7 @@ The short request-flow map is:
 `selection-context.ts` retains Selection expansion and budget policy; `markdown-edit-guards.ts` retains all edit-violation policy.
 Sharing these projections does not change Stage 38 conservative guards or separate Track Changes compatibility shadows,
 diagnostics, targets, freshness, or writers. See [Stage 57](devel_docs/57-markdown-scanner.md).
+[Stage 61](devel_docs/61-track-changes-compatibility.md) is the current Track Changes compatibility record; its direct fixtures do not relax those guards or enable writers.
 
 Keep capture, coordination, transport, writing, persistence, and UI separate.
 Put new feature logic in focused modules rather than adding unrelated responsibilities to large modules.
@@ -142,6 +143,14 @@ Live Selection highlighting uses current editor state without I/O, persistence, 
   optional validated summaries, successful-attempt reasoning, and all-round usage. Never write model summaries into notes.
 - Track Changes is the separate companion and only review surface. Emend has no diff/Apply/Reject UI, does not bundle
   or auto-install it, and requires separate design for any missing-plugin affordance.
+  Track Changes 2.3.0 is the tested baseline for current bare and `Emend` markup. Each table text Operation remains
+  confined to one existing cell; row, column, delimiter, and cross-cell Operations remain rejected. Direct structural
+  fixtures are compatibility setup, not writer-enablement evidence. The local unmerged, unreleased companion at
+  `2678dc03b5c84fe58a48b45c48b317e20d772e16` is verified only for the exercised structural review-card surface, not
+  as a released compatible version; overall presentation compatibility remains false. PR 09 remains blocked until a
+  companion change is merged and its integrated compatible version/commit is declared. Runtime Accept/Reject
+  command/button checks and static source/bundle audit jointly support the no-Emend-review-UI, no-bundling, and
+  no-auto-install claims. See [Stage 61](devel_docs/61-track-changes-compatibility.md).
 
 ### Requests, privacy, and credentials
 
