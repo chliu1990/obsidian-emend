@@ -1,0 +1,207 @@
+{
+	"sourceConstants": {
+		"H2": "| A | B |",
+		"D2": "| --- | --- |",
+		"R1": "| one | two |",
+		"R2": "| keep | last |",
+		"TABLE": "| A | B |\n| --- | --- |\n| one | two |\n",
+		"H3": "| A | B | C |",
+		"D3": "| --- | --- | --- |",
+		"R3": "| one | two | three |",
+		"TABLE3": "| A | B | C |\n| --- | --- | --- |\n| one | two | three |\n",
+		"ESCAPED_OLD": "one \\| two",
+		"ESCAPED_NEW": "first \\| second"
+	},
+	"fixtures": [
+		{
+			"id": "legacy-prose",
+			"family": "legacy",
+			"original": "Alpha beta.\n",
+			"bareAnnotated": "Alpha {~~beta~>Beta~~}{++!++}.\n",
+			"emendAnnotated": "Alpha {author=\"Emend\"~~beta~>Beta~~}{author=\"Emend\"++!++}.\n",
+			"accepted": "Alpha Beta!.\n",
+			"rejected": "Alpha beta.\n",
+			"changeCount": 2,
+			"disposition": "selected"
+		},
+		{
+			"id": "table-cell-escaped-pipe-whole-cell",
+			"family": "table-cell",
+			"original": "| A | B |\n| --- | --- |\n| one \\| two |\n",
+			"bareAnnotated": "| A | B |\n| --- | --- |\n| {~~one \\| two~>first \\| second~~} |\n",
+			"emendAnnotated": "| A | B |\n| --- | --- |\n| {author=\"Emend\"~~one \\| two~>first \\| second~~} |\n",
+			"accepted": "| A | B |\n| --- | --- |\n| first \\| second |\n",
+			"rejected": "| A | B |\n| --- | --- |\n| one \\| two |\n",
+			"changeCount": 1,
+			"disposition": "rejected-alternative",
+			"limitation": "Synthetic whole-cell control; actual minimized Emend output uses two substitutions around the escaped pipe."
+		},
+		{
+			"id": "table-cell-escaped-pipe-minimized",
+			"family": "table-cell",
+			"original": "| A | B |\n| --- | --- |\n| one \\| two |\n",
+			"bareAnnotated": "| A | B |\n| --- | --- |\n| {~~one~>first~~} \\| {~~two~>second~~} |\n",
+			"emendAnnotated": "| A | B |\n| --- | --- |\n| {author=\"Emend\"~~one~>first~~} \\| {author=\"Emend\"~~two~>second~~} |\n",
+			"accepted": "| A | B |\n| --- | --- |\n| first \\| second |\n",
+			"rejected": "| A | B |\n| --- | --- |\n| one \\| two |\n",
+			"changeCount": 2,
+			"disposition": "selected"
+		},
+		{
+			"id": "table-row-insert-append",
+			"family": "table-row",
+			"original": "| A | B |\n| --- | --- |\n| one | two |\n",
+			"bareAnnotated": "| A | B |\n| --- | --- |\n| one | two |\n{++| middle | added |\n++}",
+			"emendAnnotated": "| A | B |\n| --- | --- |\n| one | two |\n{author=\"Emend\"++| middle | added |\n++}",
+			"accepted": "| A | B |\n| --- | --- |\n| one | two |\n| middle | added |\n",
+			"rejected": "| A | B |\n| --- | --- |\n| one | two |\n",
+			"changeCount": 1,
+			"disposition": "selected"
+		},
+		{
+			"id": "table-row-insert-interior",
+			"family": "table-row",
+			"original": "| A | B |\n| --- | --- |\n| one | two |\n| keep | last |\n",
+			"bareAnnotated": "| A | B |\n| --- | --- |\n| one | two |\n{++| middle | added |\n++}| keep | last |\n",
+			"emendAnnotated": "| A | B |\n| --- | --- |\n| one | two |\n{author=\"Emend\"++| middle | added |\n++}| keep | last |\n",
+			"accepted": "| A | B |\n| --- | --- |\n| one | two |\n| middle | added |\n| keep | last |\n",
+			"rejected": "| A | B |\n| --- | --- |\n| one | two |\n| keep | last |\n",
+			"changeCount": 1,
+			"disposition": "selected"
+		},
+		{
+			"id": "table-row-delete",
+			"family": "table-row",
+			"original": "| A | B |\n| --- | --- |\n| one | two |\n| keep | last |\n",
+			"bareAnnotated": "| A | B |\n| --- | --- |\n{--| one | two |\n--}| keep | last |\n",
+			"emendAnnotated": "| A | B |\n| --- | --- |\n{author=\"Emend\"--| one | two |\n--}| keep | last |\n",
+			"accepted": "| A | B |\n| --- | --- |\n| keep | last |\n",
+			"rejected": "| A | B |\n| --- | --- |\n| one | two |\n| keep | last |\n",
+			"changeCount": 1,
+			"disposition": "selected"
+		},
+		{
+			"id": "table-row-replace",
+			"family": "table-row",
+			"original": "| A | B |\n| --- | --- |\n| one | two |\n",
+			"bareAnnotated": "| A | B |\n| --- | --- |\n{~~| one | two |\n~>| first | second |\n~~}",
+			"emendAnnotated": "| A | B |\n| --- | --- |\n{author=\"Emend\"~~| one | two |\n~>| first | second |\n~~}",
+			"accepted": "| A | B |\n| --- | --- |\n| first | second |\n",
+			"rejected": "| A | B |\n| --- | --- |\n| one | two |\n",
+			"changeCount": 1,
+			"disposition": "selected"
+		},
+		{
+			"id": "table-column-add-whole-table",
+			"family": "table-column",
+			"original": "| A | B |\n| --- | --- |\n| one | two |\n",
+			"bareAnnotated": "{~~| A | B |\n| --- | --- |\n| one | two |\n~>| A | B | C |\n| --- | --- | --- |\n| one | two | three |\n~~}",
+			"emendAnnotated": "{author=\"Emend\"~~| A | B |\n| --- | --- |\n| one | two |\n~>| A | B | C |\n| --- | --- | --- |\n| one | two | three |\n~~}",
+			"accepted": "| A | B | C |\n| --- | --- | --- |\n| one | two | three |\n",
+			"rejected": "| A | B |\n| --- | --- |\n| one | two |\n",
+			"changeCount": 1,
+			"disposition": "rejected-alternative",
+			"limitation": "Whole-table substitution replaces unaffected rows; retained as an alternative to the per-row encoding."
+		},
+		{
+			"id": "table-column-add-per-row",
+			"family": "table-column",
+			"original": "| A | B |\n| --- | --- |\n| one | two |\n",
+			"bareAnnotated": "{~~| A | B |~>| A | B | C |~~}\n{~~| --- | --- |~>| --- | --- | --- |~~}\n{~~| one | two |\n~>| one | two | three |\n~~}",
+			"emendAnnotated": "{author=\"Emend\"~~| A | B |~>| A | B | C |~~}\n{author=\"Emend\"~~| --- | --- |~>| --- | --- | --- |~~}\n{author=\"Emend\"~~| one | two |\n~>| one | two | three |\n~~}",
+			"accepted": "| A | B | C |\n| --- | --- | --- |\n| one | two | three |\n",
+			"rejected": "| A | B |\n| --- | --- |\n| one | two |\n",
+			"changeCount": 3,
+			"disposition": "selected"
+		},
+		{
+			"id": "table-column-delete-whole-table",
+			"family": "table-column",
+			"original": "| A | B | C |\n| --- | --- | --- |\n| one | two | three |\n",
+			"bareAnnotated": "{~~| A | B | C |\n| --- | --- | --- |\n| one | two | three |\n~>| A | B |\n| --- | --- |\n| one | two |\n~~}",
+			"emendAnnotated": "{author=\"Emend\"~~| A | B | C |\n| --- | --- | --- |\n| one | two | three |\n~>| A | B |\n| --- | --- |\n| one | two |\n~~}",
+			"accepted": "| A | B |\n| --- | --- |\n| one | two |\n",
+			"rejected": "| A | B | C |\n| --- | --- | --- |\n| one | two | three |\n",
+			"changeCount": 1,
+			"disposition": "rejected-alternative",
+			"limitation": "Whole-table substitution replaces unaffected rows; retained as an alternative to the per-row encoding."
+		},
+		{
+			"id": "table-column-delete-per-row",
+			"family": "table-column",
+			"original": "| A | B | C |\n| --- | --- | --- |\n| one | two | three |\n",
+			"bareAnnotated": "{~~| A | B | C |~>| A | B |~~}\n{~~| --- | --- | --- |~>| --- | --- |~~}\n{~~| one | two | three |\n~>| one | two |\n~~}",
+			"emendAnnotated": "{author=\"Emend\"~~| A | B | C |~>| A | B |~~}\n{author=\"Emend\"~~| --- | --- | --- |~>| --- | --- |~~}\n{author=\"Emend\"~~| one | two | three |\n~>| one | two |\n~~}",
+			"accepted": "| A | B |\n| --- | --- |\n| one | two |\n",
+			"rejected": "| A | B | C |\n| --- | --- | --- |\n| one | two | three |\n",
+			"changeCount": 3,
+			"disposition": "selected"
+		},
+		{
+			"id": "table-delimiter-replace",
+			"family": "table-delimiter",
+			"original": "| A | B |\n| --- | --- |\n| one | two |\n",
+			"bareAnnotated": "| A | B |\n{~~| --- | --- |\n~>| :--- | ---: |\n~~}| one | two |\n",
+			"emendAnnotated": "| A | B |\n{author=\"Emend\"~~| --- | --- |\n~>| :--- | ---: |\n~~}| one | two |\n",
+			"accepted": "| A | B |\n| :--- | ---: |\n| one | two |\n",
+			"rejected": "| A | B |\n| --- | --- |\n| one | two |\n",
+			"changeCount": 1,
+			"disposition": "selected"
+		},
+		{
+			"id": "table-cross-cell-replace",
+			"family": "table-cross-cell",
+			"original": "| A | B |\n| --- | --- |\n| one | two |\n",
+			"bareAnnotated": "| A | B |\n| --- | --- |\n| {~~one | two~>first | second~~} |\n",
+			"emendAnnotated": "| A | B |\n| --- | --- |\n| {author=\"Emend\"~~one | two~>first | second~~} |\n",
+			"accepted": "| A | B |\n| --- | --- |\n| first | second |\n",
+			"rejected": "| A | B |\n| --- | --- |\n| one | two |\n",
+			"changeCount": 1,
+			"disposition": "selected"
+		},
+		{
+			"id": "table-crlf-row-replace",
+			"family": "table-row",
+			"original": "| A | B |\r\n| --- | --- |\r\n| one | two |\r\n",
+			"bareAnnotated": "| A | B |\r\n| --- | --- |\r\n{~~| one | two |\r\n~>| first | second |\r\n~~}",
+			"emendAnnotated": "| A | B |\r\n| --- | --- |\r\n{author=\"Emend\"~~| one | two |\r\n~>| first | second |\r\n~~}",
+			"accepted": "| A | B |\r\n| --- | --- |\r\n| first | second |\r\n",
+			"rejected": "| A | B |\r\n| --- | --- |\r\n| one | two |\r\n",
+			"changeCount": 1,
+			"disposition": "selected"
+		},
+		{
+			"id": "list-item-insert",
+			"family": "list",
+			"original": "- one\n",
+			"bareAnnotated": "- one\n{++- two\n++}",
+			"emendAnnotated": "- one\n{author=\"Emend\"++- two\n++}",
+			"accepted": "- one\n- two\n",
+			"rejected": "- one\n",
+			"changeCount": 1,
+			"disposition": "selected"
+		},
+		{
+			"id": "list-item-delete",
+			"family": "list",
+			"original": "- one\n- two\n",
+			"bareAnnotated": "- one\n{--- two\n--}",
+			"emendAnnotated": "- one\n{author=\"Emend\"--- two\n--}",
+			"accepted": "- one\n",
+			"rejected": "- one\n- two\n",
+			"changeCount": 1,
+			"disposition": "selected"
+		},
+		{
+			"id": "blockquote-line-replace",
+			"family": "blockquote",
+			"original": "> one\n> keep\n",
+			"bareAnnotated": "{~~> one\n~>> two\n~~}> keep\n",
+			"emendAnnotated": "{author=\"Emend\"~~> one\n~>> two\n~~}> keep\n",
+			"accepted": "> two\n> keep\n",
+			"rejected": "> one\n> keep\n",
+			"changeCount": 1,
+			"disposition": "selected"
+		}
+	]
+}
