@@ -49,6 +49,19 @@ const fixtureDispositions = [
 	'selected',
 	'rejected-alternative',
 ] as const satisfies readonly FixtureDisposition[];
+const expectedSourceConstants = {
+	H2: '| A | B |',
+	D2: '| --- | --- |',
+	R1: '| one | two |',
+	R2: '| keep | last |',
+	TABLE: '| A | B |\n| --- | --- |\n| one | two |\n',
+	H3: '| A | B | C |',
+	D3: '| --- | --- | --- |',
+	R3: '| one | two | three |',
+	TABLE3: '| A | B | C |\n| --- | --- | --- |\n| one | two | three |\n',
+	ESCAPED_OLD: 'one \\| two',
+	ESCAPED_NEW: 'first \\| second',
+} as const;
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
 	if (typeof value !== 'object' || value === null) {
@@ -110,6 +123,9 @@ function parseFixture(value: unknown): TrackChangesCompatibilityFixture {
 	const limitation = value.limitation;
 	if (limitation !== undefined && typeof limitation !== 'string') {
 		throw new Error(`Fixture ${id} limitation must be a string when present.`);
+	}
+	if (disposition === 'selected' && limitation !== undefined) {
+		throw new Error(`Selected fixture ${id} must not have a limitation.`);
 	}
 	if (
 		disposition === 'rejected-alternative' &&
@@ -193,6 +209,17 @@ function validFixture(overrides: Record<string, unknown> = {}): Record<string, u
 	};
 }
 
+function expectExactSourceConstants(value: unknown): void {
+	expect(value).toEqual(expectedSourceConstants);
+}
+
+function expectOnlyEmendAttributionDifference(fixture: {
+	bareAnnotated: string;
+	emendAnnotated: string;
+}): void {
+	expect(fixture.emendAnnotated.replaceAll('{author="Emend"', '{')).toBe(fixture.bareAnnotated);
+}
+
 function targetOperation(
 	fullText: string,
 	target: string,
@@ -242,8 +269,37 @@ describe('Track Changes compatibility fixture catalog', () => {
 			expect(fixture.rejected).toBe(fixture.original);
 			expect(fixture.bareAnnotated).not.toContain('author=');
 			expect(fixture.emendAnnotated).toContain('{author="Emend"');
+			expectOnlyEmendAttributionDifference(fixture);
 			expect(parseCriticMarkup(fixture.bareAnnotated).length).toBeGreaterThan(0);
 			expect(parseCriticMarkup(fixture.emendAnnotated).length).toBeGreaterThan(0);
+		}
+	});
+
+	it('validates the exact sourceConstants record', () => {
+		if (!isPlainRecord(raw)) {
+			throw new Error('Fixture catalog must be a plain record.');
+		}
+		expectExactSourceConstants(raw.sourceConstants);
+	});
+
+	it('detects source constant and non-attribution fixture drift', () => {
+		for (const sourceConstants of [
+			{ ...expectedSourceConstants, H2: '| Changed | B |' },
+			Object.fromEntries(Object.entries(expectedSourceConstants)
+				.filter(([key]) => key !== 'ESCAPED_OLD')),
+		]) {
+			expect(() => expectExactSourceConstants(sourceConstants)).toThrow();
+		}
+		const valid = {
+			bareAnnotated: '{~~before~>after~~}\n',
+			emendAnnotated: '{author="Emend"~~before~>after~~}\n',
+		};
+		expectOnlyEmendAttributionDifference(valid);
+		for (const fixture of [
+			{ ...valid, bareAnnotated: '{~~before~>changed~~}\n' },
+			{ ...valid, emendAnnotated: '{author="Reviewer"~~before~>after~~}\n' },
+		]) {
+			expect(() => expectOnlyEmendAttributionDifference(fixture)).toThrow();
 		}
 	});
 
@@ -308,6 +364,15 @@ describe('Track Changes compatibility fixture catalog', () => {
 				fixtures: [validFixture({ disposition: 'rejected-alternative', limitation })],
 			})).toThrow(/limitation/i);
 		}
+	});
+
+	it.each([
+		{ kind: 'nonempty', limitation: 'Selected fixtures must not document a limitation.' },
+		{ kind: 'empty', limitation: '' },
+	])('rejects a $kind limitation on a selected fixture', ({ limitation }) => {
+		expect(() => parseFixtureCatalog({
+			fixtures: [validFixture({ limitation })],
+		})).toThrow(/selected fixture.*limitation/i);
 	});
 
 	it('exposes only selected fixtures to PR 09 selectedFixtureIds', () => {
